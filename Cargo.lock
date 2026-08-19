@@ -4922,6 +4922,7 @@ dependencies = [
 name = "terminal"
 version = "0.1.0"
 dependencies = [
+ "pos-domain",
  "serde",
  "serde_json",
  "tauri",
