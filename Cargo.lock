@@ -2930,6 +2930,11 @@ version = "0.1.0"
 [[package]]
 name = "pos-sync"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uuid",
+]
 
 [[package]]
 name = "potential_utf"
