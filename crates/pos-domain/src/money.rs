@@ -71,10 +71,17 @@ mod tests {
         let parts = Money::from_minor(100).split_evenly(3).unwrap();
         assert_eq!(
             parts,
-            vec![Money::from_minor(34), Money::from_minor(33), Money::from_minor(33)]
+            vec![
+                Money::from_minor(34),
+                Money::from_minor(33),
+                Money::from_minor(33)
+            ]
         );
         assert_eq!(Money::from_minor(0).split_evenly(5).unwrap().len(), 5);
-        assert_eq!(Money::from_minor(10).split_evenly(0), Err(MoneyError::ZeroParts));
+        assert_eq!(
+            Money::from_minor(10).split_evenly(0),
+            Err(MoneyError::ZeroParts)
+        );
     }
 
     proptest! {

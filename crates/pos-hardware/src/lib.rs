@@ -84,7 +84,10 @@ mod tests {
     #[test]
     fn simulator_captures_prints_and_drawer_kicks() {
         let p = SimulatedPrinter::new();
-        p.print(&RenderedReceipt { bytes: b"\x1b@RECEIPT".to_vec() }).unwrap();
+        p.print(&RenderedReceipt {
+            bytes: b"\x1b@RECEIPT".to_vec(),
+        })
+        .unwrap();
         p.open_drawer().unwrap();
 
         assert_eq!(p.printed.lock().unwrap().len(), 1);

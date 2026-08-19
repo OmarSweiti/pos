@@ -1,0 +1,29 @@
+{
+  "files": {
+    "includes": [
+      "apps/**",
+      "packages/**",
+      "!**/dist",
+      "!**/src-tauri",
+      "!**/node_modules",
+      "!**/public"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space"
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true
+    }
+  },
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  }
+}

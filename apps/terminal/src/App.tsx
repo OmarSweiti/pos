@@ -1,18 +1,24 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useCart } from "./store/cart";
 import { formatMinor } from "./lib/money";
+import { useCart } from "./store/cart";
 
 export default function App() {
-  const { totalMinor, parts, splits, setTotalMinor, setParts, setSplits } = useCart();
+  const { totalMinor, parts, splits, setTotalMinor, setParts, setSplits } =
+    useCart();
 
   async function split() {
-    const result = await invoke<number[]>("split_tender", { totalMinor, parts });
+    const result = await invoke<number[]>("split_tender", {
+      totalMinor,
+      parts,
+    });
     setSplits(result);
   }
 
   return (
     <main className="min-h-screen bg-zinc-950 p-8 text-zinc-100">
-      <h1 className="mb-6 text-2xl font-semibold">POS Terminal — Phase 0 smoke panel</h1>
+      <h1 className="mb-6 text-2xl font-semibold">
+        POS Terminal — Phase 0 smoke panel
+      </h1>
 
       <div className="flex flex-wrap items-end gap-4">
         <label className="flex flex-col gap-1 text-sm">
@@ -46,6 +52,7 @@ export default function App() {
       {splits.length > 0 && (
         <ul className="mt-6 space-y-1 font-mono">
           {splits.map((s, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: tender position *is* its identity
             <li key={i}>
               tender {i + 1}: {formatMinor(s)}
             </li>

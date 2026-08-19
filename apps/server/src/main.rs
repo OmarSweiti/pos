@@ -1,7 +1,7 @@
-use axum::{extract::State, http::StatusCode, routing::get, Json, Router};
-use serde_json::{json, Value};
-use sqlx::postgres::PgPoolOptions;
+use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
+use serde_json::{Value, json};
 use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 
 #[derive(Clone)]
 struct AppState {
@@ -48,7 +48,10 @@ async fn health_db(State(state): State<AppState>) -> (StatusCode, Json<Value>) {
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({ "db": "unconfigured" })),
         ),
-        Some(pool) => match sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(pool).await {
+        Some(pool) => match sqlx::query_scalar::<_, i32>("SELECT 1")
+            .fetch_one(pool)
+            .await
+        {
             Ok(_) => (StatusCode::OK, Json(json!({ "db": "ok" }))),
             Err(e) => (
                 StatusCode::SERVICE_UNAVAILABLE,

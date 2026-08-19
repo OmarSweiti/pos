@@ -11,6 +11,12 @@
     "format": "biome format --write ."
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "@tailwindcss/oxide"]
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "@tailwindcss/oxide"
+    ]
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.9"
   }
 }

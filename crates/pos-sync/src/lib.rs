@@ -15,13 +15,13 @@ pub struct PushBatch {
 pub struct Change {
     pub entity: String,
     pub entity_id: uuid::Uuid,
-    pub op: String,      // "insert" for facts; "upsert"/"tombstone" for reference data
+    pub op: String, // "insert" for facts; "upsert"/"tombstone" for reference data
     pub payload: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PullRequest {
     pub entity: String,
-    pub after: i64,      // server version cursor
+    pub after: i64, // server version cursor
     pub limit: u32,
 }
