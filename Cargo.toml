@@ -1,0 +1,46 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/pos-domain",
+  "crates/pos-db",
+  "crates/pos-sync",
+  "crates/pos-hardware",
+  "apps/server",
+  "apps/terminal/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[workspace.dependencies]
+# ── shared internal crates ──────────────────────────────────────────────
+pos-domain   = { path = "crates/pos-domain" }
+pos-db       = { path = "crates/pos-db" }
+pos-sync     = { path = "crates/pos-sync" }
+pos-hardware = { path = "crates/pos-hardware" }
+
+# ── core ────────────────────────────────────────────────────────────────
+serde        = { version = "1", features = ["derive"] }
+serde_json   = "1"
+thiserror    = "2"
+uuid         = { version = "1", features = ["v4", "v7", "serde"] }
+rust_decimal = "1"
+
+# ── data ────────────────────────────────────────────────────────────────
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
+keyring  = "4"
+sqlx     = { version = "0.9", default-features = false, features = [
+  "runtime-tokio", "tls-rustls", "postgres", "uuid", "time", "migrate", "derive", "macros",
+] }
+
+# ── server / async ──────────────────────────────────────────────────────
+tokio              = { version = "1", features = ["full"] }
+axum               = "0.8"
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# ── testing ─────────────────────────────────────────────────────────────
+proptest = "1"
+tempfile = "3"

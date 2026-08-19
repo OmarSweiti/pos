@@ -1,0 +1,16 @@
+{
+  "name": "pos",
+  "private": true,
+  "packageManager": "pnpm@11.22.0",
+  "scripts": {
+    "dev:terminal": "pnpm --filter terminal tauri dev",
+    "dev:backoffice": "pnpm --filter backoffice dev",
+    "build:web": "pnpm -r --if-present build",
+    "test": "pnpm -r --if-present test",
+    "lint": "biome ci .",
+    "format": "biome format --write ."
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "@tailwindcss/oxide"]
+  }
+}

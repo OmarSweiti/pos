@@ -1,0 +1,10 @@
+packages:
+  - apps/terminal
+  - apps/backoffice
+  - packages/*
+allowBuilds:
+  esbuild: false
+
+onlyBuiltDependencies:
+  - esbuild
+  - "@tailwindcss/oxide"

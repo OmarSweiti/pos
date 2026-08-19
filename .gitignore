@@ -1,0 +1,30 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Node
+node_modules/
+dist/
+*.local
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# Databases & artifacts
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Tauri
+apps/terminal/src-tauri/gen/schemas
