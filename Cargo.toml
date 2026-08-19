@@ -29,12 +29,11 @@ uuid         = { version = "1", features = ["v4", "v7", "serde"] }
 rust_decimal = "1"
 
 # ── data ────────────────────────────────────────────────────────────────
-rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
+rusqlite = { version = "0.39", features = ["bundled-sqlcipher-vendored-openssl"] }
 keyring  = "4"
-sqlx     = { version = "0.9", default-features = false, features = [
+sqlx = { version = "0.9", default-features = false, features = [
   "runtime-tokio", "tls-rustls", "postgres", "uuid", "time", "migrate", "derive", "macros",
 ] }
-
 # ── server / async ──────────────────────────────────────────────────────
 tokio              = { version = "1", features = ["full"] }
 axum               = "0.8"
