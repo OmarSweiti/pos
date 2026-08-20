@@ -1,0 +1,5 @@
+# Pinned deliberately: a Rust release must never turn a green build red on a
+# day you are shipping. Bump it as a commit, with CI proving it.
+[toolchain]
+channel = "1.97.1"
+components = ["rustfmt", "clippy"]

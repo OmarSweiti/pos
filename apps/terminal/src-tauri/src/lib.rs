@@ -1,8 +1,5 @@
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
+//! Tauri shell: the UI → IPC → pure-domain boundary.
+//! Business rules live in `pos-domain`; this crate only marshals.
 
 /// First proof of the blueprint's core boundary: UI → Tauri IPC → pure Rust domain.
 #[tauri::command]
@@ -15,9 +12,11 @@ fn split_tender(total_minor: i64, parts: u32) -> Result<Vec<i64>, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // `expect` is permitted here: a failure to start the webview is
+    // unrecoverable and must be loud (conventions §4 exempts main/run).
+    #[allow(clippy::expect_used)]
     tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, split_tender])
+        .invoke_handler(tauri::generate_handler![split_tender])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

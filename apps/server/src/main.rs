@@ -10,6 +10,10 @@ struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Load apps/server/.env if present. Absent in production, where the
+    // environment supplies DATABASE_URL directly; never an error either way.
+    let _ = dotenvy::dotenv();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

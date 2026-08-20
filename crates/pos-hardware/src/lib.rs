@@ -1,7 +1,7 @@
 //! Hardware abstraction layer (blueprint §5).
 //! Traits here; drivers (ESC/POS over TCP/serial/USB) in submodules later.
 
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 #[derive(Debug, thiserror::Error)]
 pub enum HwError {
@@ -56,11 +56,17 @@ impl SimulatedPrinter {
     }
 }
 
+/// Recover from a poisoned lock rather than panicking: a printer simulator
+/// must never be the reason a register dies (conventions §4).
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 impl ReceiptPrinter for SimulatedPrinter {
     fn print(&self, doc: &RenderedReceipt) -> Result<(), HwError> {
         match self.status() {
             PrinterStatus::Ready => {
-                self.printed.lock().unwrap().push(doc.clone());
+                lock(&self.printed).push(doc.clone());
                 Ok(())
             }
             _ => Err(HwError::Offline),
@@ -68,17 +74,19 @@ impl ReceiptPrinter for SimulatedPrinter {
     }
 
     fn open_drawer(&self) -> Result<(), HwError> {
-        *self.drawer_opens.lock().unwrap() += 1;
+        *lock(&self.drawer_opens) += 1;
         Ok(())
     }
 
     fn status(&self) -> PrinterStatus {
-        *self.force_status.lock().unwrap()
+        *lock(&self.force_status)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
     use super::*;
 
     #[test]

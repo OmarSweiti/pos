@@ -14,6 +14,17 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 
+[workspace.lints.clippy]
+# A panic in a register is a lost sale. Tests and main() opt out locally.
+unwrap_used      = "deny"
+expect_used      = "deny"
+panic            = "deny"
+indexing_slicing = "warn"
+# conventions I-1: no float ever touches money.
+float_arithmetic = "deny"
+todo             = "warn"
+dbg_macro        = "deny"
+
 [workspace.dependencies]
 # ── shared internal crates ──────────────────────────────────────────────
 pos-domain   = { path = "crates/pos-domain" }
@@ -31,6 +42,7 @@ rust_decimal = "1"
 # ── data ────────────────────────────────────────────────────────────────
 rusqlite = { version = "0.39", features = ["bundled-sqlcipher-vendored-openssl"] }
 keyring  = "4"
+dotenvy = "0.15"
 sqlx = { version = "0.9", default-features = false, features = [
   "runtime-tokio", "tls-rustls", "postgres", "uuid", "time", "migrate", "derive", "macros",
 ] }

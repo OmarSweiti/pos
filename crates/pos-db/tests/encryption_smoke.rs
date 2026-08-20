@@ -1,3 +1,6 @@
+//! Integration test: unwrap is the assertion style here.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use uuid::Uuid;
 
 #[test]
