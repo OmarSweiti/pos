@@ -13,6 +13,11 @@ members = [
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
+# Proprietary and never published to crates.io. Both facts are load-bearing for
+# the supply-chain gate: `publish = false` is what lets deny.toml skip our own
+# crates in the licence audit and permit workspace path dependencies.
+license = "LicenseRef-Proprietary"
+publish = false
 
 [workspace.lints.clippy]
 # A panic in a register is a lost sale. Tests and main() opt out locally.
@@ -41,6 +46,9 @@ rust_decimal = "1"
 
 # ── data ────────────────────────────────────────────────────────────────
 rusqlite = { version = "0.39", features = ["bundled-sqlcipher-vendored-openssl"] }
+# The OS CSPRNG, for the SQLCipher key. Not `rand`: this needs one call and no
+# distributions, and a key generator should have the shortest path to the OS.
+getrandom = "0.3"
 keyring  = "4"
 dotenvy = "0.15"
 sqlx = { version = "0.9", default-features = false, features = [
