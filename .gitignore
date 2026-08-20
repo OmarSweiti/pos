@@ -28,3 +28,6 @@ Thumbs.db
 
 # Tauri
 apps/terminal/src-tauri/gen/schemas
+
+# Claude Code — machine-local settings (project settings.json IS committed)
+.claude/settings.local.json
