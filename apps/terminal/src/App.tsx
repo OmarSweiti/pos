@@ -1,10 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
+import { directionFor, toggleLabel } from "./lib/direction";
 import { formatMinor } from "./lib/money";
 import { useCart } from "./store/cart";
+import { useLocale } from "./store/locale";
 
 export default function App() {
   const { totalMinor, parts, splits, setTotalMinor, setParts, setSplits } =
     useCart();
+  const { locale, toggle } = useLocale();
 
   async function split() {
     const result = await invoke<number[]>("split_tender", {
@@ -16,9 +19,23 @@ export default function App() {
 
   return (
     <main className="min-h-screen bg-zinc-950 p-8 text-zinc-100">
-      <h1 className="mb-6 text-2xl font-semibold">
-        POS Terminal — Phase 0 smoke panel
-      </h1>
+      <header className="mb-6 flex items-center justify-between gap-4">
+        <h1 className="text-2xl font-semibold">
+          POS Terminal — Phase 0 smoke panel
+        </h1>
+        <button
+          type="button"
+          onClick={toggle}
+          lang={locale === "ar" ? "en" : "ar"}
+          className="min-h-12 rounded border border-zinc-700 px-4 py-3 text-lg active:bg-zinc-800"
+        >
+          {toggleLabel(locale)}
+        </button>
+      </header>
+
+      <p className="mb-6 font-mono text-sm text-zinc-400">
+        lang={locale} dir={directionFor(locale)}
+      </p>
 
       <div className="flex flex-wrap items-end gap-4">
         <label className="flex flex-col gap-1 text-sm">
