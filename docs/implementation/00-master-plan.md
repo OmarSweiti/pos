@@ -54,7 +54,7 @@ Add correct instincts on semi-integrated payments, on treating card timeouts as 
 |---|---|
 | [`ref/plan-validation.md`](ref/plan-validation.md) | the audit, the four corrections, every source |
 | [`ref/domain-api.md`](ref/domain-api.md) | every `pos-domain` type and signature |
-| [`ref/schema.md`](ref/schema.md) | migrations 0002→0011, SQLite and Postgres |
+| [`ref/schema.md`](ref/schema.md) | migrations 0002→0012, SQLite and Postgres |
 | [`ref/tax-jordan.md`](ref/tax-jordan.md) | GST as an engine: categories, rates-as-data, rounding, the filing report |
 | [`ref/fiscal-jofotara.md`](ref/fiscal-jofotara.md) | the highest-risk component in the product |
 | [`ref/ipc-contract.md`](ref/ipc-contract.md) | every Tauri command, its capability, its audit |

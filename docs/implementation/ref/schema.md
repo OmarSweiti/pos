@@ -1,25 +1,91 @@
 # Schema — every migration, SQLite and Postgres
 
-`0001_init.sql` exists (product, sale, sale_line, sale_tender, sync_outbox, sync_cursor). Everything below is new, appended in order, **never edited once committed** (conventions §9).
+`0001_init.sql` and `0002_sale_integrity.sql` exist and are committed. Everything below them is new, appended in order, **never edited once committed** (conventions §9).
 
 **Conventions applied throughout:** UUIDv7 as 16-byte `BLOB` primary keys · money as `INTEGER` minor units named `*_minor` · quantity as `INTEGER` milli-units named `*_milli` · rates as `INTEGER` parts-per-million named `*_ppm` · timestamps as ISO-8601 UTC `TEXT` named `*_at` · store-local trading days as `YYYY-MM-DD` `TEXT` named `*_date` · booleans as `INTEGER` 0/1 named `is_*` · soft-delete tombstones (`deleted_at`) on **reference** data only, never on facts.
 
 | # | File | Adds | Phase |
 |---|---|---|---|
-| 0002 | `0002_catalog_depth.sql` | stores, registers, categories, tax categories & rates, barcodes, settings; fixes `sale_line.qty` | 1 |
-| 0003 | `0003_people_and_audit.sql` | users, roles, capabilities, sessions, hash-chained audit log | 1 |
-| 0004 | `0004_sale_columns_and_sequences.sql` | sale identity/shift/training/rounding columns, per-register counters | 1 |
-| 0005 | `0005_stock_ledger.sql` | stock ledger + rebuildable on-hand/WAC cache | 1 |
-| 0006 | `0006_search_and_seed.sql` | FTS5 index + triggers, price-embedded barcode rules | 1 |
-| 0007 | `0007_shifts_and_cash.sql` | shifts, cash movements, Z reports | 2 |
-| 0008 | `0008_refunds_and_returns.sql` | refund links, restock decisions, refund policy | 2 |
-| 0009 | `0009_fiscal.sql` | fiscal queue, results, dead letters, reconciliation | 2 |
-| 0010 | `0010_customers_loyalty.sql` | customers, consents, loyalty ledger | 3 |
-| 0011 | `0011_pricing_promotions_supply.sql` | price lists, promotions, suppliers, receipts, counts, transfers | 4 |
+| 0002 | `0002_sale_integrity.sql` | **shipped** — `sale_line.qty`→`qty_milli` (G-12), FK indexes, receipt-number uniqueness, I-4 immutability triggers | 1 |
+| 0003 | `0003_catalog_depth.sql` | stores, registers, categories, tax categories & rates, barcodes, settings | 1 |
+| 0004 | `0004_people_and_audit.sql` | users, roles, capabilities, sessions, hash-chained audit log | 1 |
+| 0005 | `0005_sale_columns_and_sequences.sql` | sale identity/shift/training/rounding columns, per-register counters | 1 |
+| 0006 | `0006_stock_ledger.sql` | stock ledger + rebuildable on-hand/WAC cache | 1 |
+| 0007 | `0007_search_and_seed.sql` | FTS5 index + triggers, price-embedded barcode rules | 1 |
+| 0008 | `0008_shifts_and_cash.sql` | shifts, cash movements, Z reports | 2 |
+| 0009 | `0009_refunds_and_returns.sql` | refund links, restock decisions, refund policy | 2 |
+| 0010 | `0010_fiscal.sql` | fiscal queue, results, dead letters, reconciliation | 2 |
+| 0011 | `0011_customers_loyalty.sql` | customers, consents, loyalty ledger | 3 |
+| 0012 | `0012_pricing_promotions_supply.sql` | price lists, promotions, suppliers, receipts, counts, transfers | 4 |
 
 ---
 
-## 0002 — catalog depth  ·  Phase 1, microsteps 1.2.1–1.2.3
+## 0002 — sale integrity  ·  Phase 1, microstep 1.1.1  ·  SHIPPED
+
+Two things 0001 got wrong, fixed together because the first destroys the second
+if they are done in the other order.
+
+**G-12 · `sale_line.qty` → `qty_milli`.** 0001 declared `qty INTEGER`,
+contradicting I-3. This was originally scheduled for catalog depth, on the
+grounds that the rebuilt table wants a `tax_category_id` and `tax_category` does
+not exist until then. That was the wrong trade: SQLite accepts `ALTER TABLE …
+ADD COLUMN … REFERENCES`, so catalog depth adds its columns without a second
+rebuild, and the schema stops contradicting its own invariant immediately rather
+than eventually. The data step multiplies by 1000 — existing rows are unit
+counts — and is covered by `crates/pos-db/tests/migration_0002_qty_milli.rs`.
+
+**I-4 has enforcement now.** Conventions §1 claimed a completed sale was
+immutable "by review, by a `#[test]` that greps the repositories, and by the
+absence of a repository method that could do it". Only the first existed, and it
+is the weakest. Triggers hold it in the storage engine instead, which works
+against repositories that have not been written yet.
+
+The exception is deliberate: a tender's settlement columns stay writable, because
+a semi-integrated card capture confirms after the sale closes (0005 adds
+`tender_state` and `captured_at` for exactly that). Its **amount** does not move.
+
+```sql
+-- The file is ordered rebuild → indexes → triggers, because a rebuild drops
+-- every trigger and index attached to the old table.
+CREATE TABLE sale_line_new (
+  id               BLOB PRIMARY KEY,
+  sale_id          BLOB NOT NULL REFERENCES sale(id),
+  product_id       BLOB NOT NULL REFERENCES product(id),
+  qty_milli        INTEGER NOT NULL,          -- G-12: 1 unit = 1000 (I-3)
+  unit_price_minor INTEGER NOT NULL,
+  discount_minor   INTEGER NOT NULL DEFAULT 0,
+  tax_minor        INTEGER NOT NULL DEFAULT 0,
+  total_minor      INTEGER NOT NULL
+);
+INSERT INTO sale_line_new
+  (id, sale_id, product_id, qty_milli, unit_price_minor,
+   discount_minor, tax_minor, total_minor)
+SELECT id, sale_id, product_id, qty * 1000, unit_price_minor,
+       discount_minor, tax_minor, total_minor
+FROM sale_line;
+DROP TABLE sale_line;
+ALTER TABLE sale_line_new RENAME TO sale_line;
+
+-- A receipt number identifies exactly one sale. Numbers come from a per-register
+-- counter (0005), so uniqueness is per register: two registers legitimately both
+-- print 000123.
+CREATE UNIQUE INDEX idx_sale_receipt_number ON sale(register_id, receipt_number);
+
+-- SQLite does not index a foreign key for you, and "the lines of this sale" is
+-- what a reprint, a refund and every report do.
+CREATE INDEX idx_sale_line_sale   ON sale_line(sale_id);
+CREATE INDEX idx_sale_tender_sale ON sale_tender(sale_id);
+```
+
+The eight triggers are in `crates/pos-db/migrations/0002_sale_integrity.sql` and
+enumerated in `REQUIRED_TRIGGERS` in the test above. **Any later migration that
+rebuilds `sale`, `sale_line` or `sale_tender` must recreate them in that same
+migration** — a rebuild takes its triggers with it, silently. That test is what
+catches it.
+
+---
+
+## 0003 — catalog depth  ·  Phase 1, microsteps 1.2.1–1.2.3
 
 Introduces the organisational spine the whole schema hangs from. `store` and `register` must exist in Phase 1 even though multi-store is Phase 4 — retrofitting a `store_id` onto a live stock ledger is a data migration nobody enjoys.
 
@@ -168,45 +234,71 @@ CREATE TABLE setting (
 );
 ```
 
-### The `sale_line.qty` fix — gap G-12
+### Filling out `sale_line` — the capture-time columns
 
-`0001_init` declared `qty INTEGER`, contradicting the milli-unit decision (conventions I-3). SQLite cannot rename-and-retype in place, so the table is rebuilt. **This must land before a single sale row exists.**
+G-12 is already fixed: `0002_sale_integrity.sql` rebuilt the table and
+`qty_milli` has been correct since. What is left is the columns this migration's
+tax and discount machinery needs, and they are `ALTER TABLE ADD COLUMN` — SQLite
+accepts a `REFERENCES` clause there, so there is no second rebuild.
+
+**The triggers have to come off first.** `0002` froze every line of a completed
+sale, and the backfill below is an `UPDATE` on exactly those rows. Dropping and
+recreating them in this same migration is the rule stated in 0002: a guard is
+either restored in the migration that suspends it, or it is gone. The trigger
+test in `crates/pos-db/tests/sale_immutability.rs` is what notices if it is not.
 
 ```sql
-PRAGMA foreign_keys = OFF;
+DROP TRIGGER sale_line_no_insert_once_completed;
+DROP TRIGGER sale_line_no_update_once_completed;
+DROP TRIGGER sale_line_no_delete_once_completed;
 
-CREATE TABLE sale_line_new (
-  id               BLOB PRIMARY KEY,
-  sale_id          BLOB NOT NULL REFERENCES sale(id),
-  line_no          INTEGER NOT NULL,
-  product_id       BLOB NOT NULL REFERENCES product(id),
-  name_snapshot    TEXT NOT NULL,        -- I-5: copied at capture, never re-read
-  qty_milli        INTEGER NOT NULL,     -- G-12
-  unit_price_minor INTEGER NOT NULL,     -- I-5
-  discount_minor   INTEGER NOT NULL DEFAULT 0,
-  net_minor        INTEGER NOT NULL DEFAULT 0,
-  tax_minor        INTEGER NOT NULL DEFAULT 0,
-  tax_category_id  BLOB REFERENCES tax_category(id),
-  tax_rate_ppm     INTEGER NOT NULL DEFAULT 0,
-  total_minor      INTEGER NOT NULL,
-  is_weighed       INTEGER NOT NULL DEFAULT 0,
-  UNIQUE (sale_id, line_no)
-);
+ALTER TABLE sale_line ADD COLUMN line_no         INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sale_line ADD COLUMN name_snapshot   TEXT    NOT NULL DEFAULT '';
+ALTER TABLE sale_line ADD COLUMN net_minor       INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sale_line ADD COLUMN tax_category_id BLOB REFERENCES tax_category(id);
+ALTER TABLE sale_line ADD COLUMN tax_rate_ppm    INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sale_line ADD COLUMN is_weighed      INTEGER NOT NULL DEFAULT 0;
 
-INSERT INTO sale_line_new
-  (id, sale_id, line_no, product_id, name_snapshot, qty_milli,
-   unit_price_minor, discount_minor, tax_minor, total_minor)
-SELECT l.id, l.sale_id,
-       ROW_NUMBER() OVER (PARTITION BY l.sale_id ORDER BY l.rowid),
-       l.product_id, COALESCE(p.name, ''), l.qty * 1000,
-       l.unit_price_minor, l.discount_minor, l.tax_minor, l.total_minor
-FROM sale_line l LEFT JOIN product p ON p.id = l.product_id;
+-- I-5: the name is copied onto the line at capture time. Backfilling from
+-- today's catalog is the best available answer for rows that predate the column
+-- and is wrong for any product renamed since — which is precisely why the
+-- column exists, and why this is the last moment it can be approximate.
+UPDATE sale_line
+   SET name_snapshot = COALESCE(
+         (SELECT name FROM product WHERE product.id = sale_line.product_id), '');
 
-DROP TABLE sale_line;
-ALTER TABLE sale_line_new RENAME TO sale_line;
-CREATE INDEX idx_sale_line_sale ON sale_line(sale_id);
-PRAGMA foreign_keys = ON;
+UPDATE sale_line
+   SET line_no = (SELECT n FROM (
+         SELECT id, ROW_NUMBER() OVER (PARTITION BY sale_id ORDER BY rowid) AS n
+           FROM sale_line
+       ) ordered WHERE ordered.id = sale_line.id);
 
+CREATE UNIQUE INDEX idx_sale_line_no ON sale_line(sale_id, line_no);
+
+-- Restored exactly as 0002 defined them.
+CREATE TRIGGER sale_line_no_insert_once_completed
+BEFORE INSERT ON sale_line
+WHEN (SELECT status FROM sale WHERE id = NEW.sale_id) = 'completed'
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: cannot add a line to a completed sale');
+END;
+
+CREATE TRIGGER sale_line_no_update_once_completed
+BEFORE UPDATE ON sale_line
+WHEN (SELECT status FROM sale WHERE id = OLD.sale_id) = 'completed'
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: a line of a completed sale is immutable');
+END;
+
+CREATE TRIGGER sale_line_no_delete_once_completed
+BEFORE DELETE ON sale_line
+WHEN (SELECT status FROM sale WHERE id = OLD.sale_id) = 'completed'
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: a line of a completed sale cannot be deleted');
+END;
+```
+
+```sql
 -- Per-component tax on a line: v1 writes one GST row, and Special Sales Tax
 -- becomes a second row with no schema change (master plan B.1).
 CREATE TABLE sale_line_tax (
@@ -238,7 +330,7 @@ CREATE INDEX idx_sale_line_discount_line ON sale_line_discount(sale_line_id);
 
 ---
 
-## 0003 — people and audit  ·  Phase 1, microsteps 1.6.1–1.6.4
+## 0004 — people and audit  ·  Phase 1, microsteps 1.6.1–1.6.4
 
 ```sql
 CREATE TABLE app_user (                    -- `user` is reserved in Postgres
@@ -310,7 +402,7 @@ CREATE INDEX idx_audit_actor_at  ON audit_log(actor_id, at);
 
 ---
 
-## 0004 — sale columns and sequences  ·  Phase 1, microsteps 1.4.11, 1.9.1
+## 0005 — sale columns and sequences  ·  Phase 1, microsteps 1.4.11, 1.9.1
 
 ```sql
 ALTER TABLE sale ADD COLUMN store_id            BLOB REFERENCES store(id);
@@ -385,7 +477,7 @@ CREATE TABLE doc_sequence (
 
 ---
 
-## 0005 — stock ledger  ·  Phase 1, microstep 1.10.1
+## 0006 — stock ledger  ·  Phase 1, microstep 1.10.1
 
 ```sql
 -- Stock is a LEDGER, not a column (I-6). On-hand = Σ qty_delta_milli.
@@ -423,7 +515,7 @@ CREATE INDEX idx_stock_cache_negative ON stock_cache(store_id) WHERE on_hand_mil
 
 ---
 
-## 0006 — search and scan rules  ·  Phase 1, microsteps 1.2.5–1.2.7
+## 0007 — search and scan rules  ·  Phase 1, microsteps 1.2.5–1.2.7
 
 ```sql
 -- FTS5 over Arabic AND English names plus SKU. Budget: <50 ms over 50k SKUs.
@@ -431,17 +523,86 @@ CREATE INDEX idx_stock_cache_negative ON stock_cache(store_id) WHERE on_hand_mil
 CREATE VIRTUAL TABLE product_fts USING fts5(
   name_ar, name_en, sku, barcodes,
   content='',                                  -- external content, manually synced
+  contentless_delete=1,                        -- delete by rowid alone (SQLite 3.43+)
   tokenize="unicode61 remove_diacritics 2"
 );
 
 CREATE TABLE product_fts_map (rowid INTEGER PRIMARY KEY, product_id BLOB NOT NULL UNIQUE);
 
 -- Triggers keep FTS in step with product and barcode writes.
-CREATE TRIGGER product_ai AFTER INSERT ON product BEGIN … END;
-CREATE TRIGGER product_au AFTER UPDATE ON product BEGIN … END;
-CREATE TRIGGER product_ad AFTER DELETE ON product BEGIN … END;
-CREATE TRIGGER barcode_ai AFTER INSERT ON barcode BEGIN … END;
-CREATE TRIGGER barcode_ad AFTER DELETE ON barcode BEGIN … END;
+--
+-- `contentless_delete=1` is what makes these writable as ordinary SQL. Without
+-- it, removing a row from a contentless FTS5 table means re-supplying every
+-- original indexed value to a 'delete' command — and `barcodes` is an aggregate
+-- over another table, so the old value is not reconstructable from OLD.* at all.
+-- With it, a plain DELETE by rowid is enough, and every trigger below reduces to
+-- the same "drop the row, re-index the product" shape.
+
+CREATE TRIGGER product_ai AFTER INSERT ON product BEGIN
+  INSERT INTO product_fts_map (product_id) VALUES (new.id);
+  INSERT INTO product_fts (rowid, name_ar, name_en, sku, barcodes)
+  VALUES (
+    (SELECT rowid FROM product_fts_map WHERE product_id = new.id),
+    new.name_ar, new.name_en, new.sku,
+    (SELECT COALESCE(group_concat(code, ' '), '')
+       FROM barcode WHERE product_id = new.id AND deleted_at IS NULL)
+  );
+END;
+
+CREATE TRIGGER product_au AFTER UPDATE ON product BEGIN
+  DELETE FROM product_fts
+   WHERE rowid = (SELECT rowid FROM product_fts_map WHERE product_id = new.id);
+  INSERT INTO product_fts (rowid, name_ar, name_en, sku, barcodes)
+  VALUES (
+    (SELECT rowid FROM product_fts_map WHERE product_id = new.id),
+    new.name_ar, new.name_en, new.sku,
+    (SELECT COALESCE(group_concat(code, ' '), '')
+       FROM barcode WHERE product_id = new.id AND deleted_at IS NULL)
+  );
+END;
+
+CREATE TRIGGER product_ad AFTER DELETE ON product BEGIN
+  DELETE FROM product_fts
+   WHERE rowid = (SELECT rowid FROM product_fts_map WHERE product_id = old.id);
+  DELETE FROM product_fts_map WHERE product_id = old.id;
+END;
+
+-- A barcode write changes the parent product's `barcodes` column, so each one
+-- re-indexes that product. Reference data is tombstoned rather than deleted
+-- (deleted_at), which arrives as an UPDATE — hence barcode_au, without which a
+-- retired code stays scannable for as long as the index lives.
+CREATE TRIGGER barcode_ai AFTER INSERT ON barcode BEGIN
+  DELETE FROM product_fts
+   WHERE rowid = (SELECT rowid FROM product_fts_map WHERE product_id = new.product_id);
+  INSERT INTO product_fts (rowid, name_ar, name_en, sku, barcodes)
+  SELECT m.rowid, p.name_ar, p.name_en, p.sku,
+         (SELECT COALESCE(group_concat(code, ' '), '')
+            FROM barcode WHERE product_id = p.id AND deleted_at IS NULL)
+    FROM product p JOIN product_fts_map m ON m.product_id = p.id
+   WHERE p.id = new.product_id;
+END;
+
+CREATE TRIGGER barcode_au AFTER UPDATE ON barcode BEGIN
+  DELETE FROM product_fts
+   WHERE rowid = (SELECT rowid FROM product_fts_map WHERE product_id = new.product_id);
+  INSERT INTO product_fts (rowid, name_ar, name_en, sku, barcodes)
+  SELECT m.rowid, p.name_ar, p.name_en, p.sku,
+         (SELECT COALESCE(group_concat(code, ' '), '')
+            FROM barcode WHERE product_id = p.id AND deleted_at IS NULL)
+    FROM product p JOIN product_fts_map m ON m.product_id = p.id
+   WHERE p.id = new.product_id;
+END;
+
+CREATE TRIGGER barcode_ad AFTER DELETE ON barcode BEGIN
+  DELETE FROM product_fts
+   WHERE rowid = (SELECT rowid FROM product_fts_map WHERE product_id = old.product_id);
+  INSERT INTO product_fts (rowid, name_ar, name_en, sku, barcodes)
+  SELECT m.rowid, p.name_ar, p.name_en, p.sku,
+         (SELECT COALESCE(group_concat(code, ' '), '')
+            FROM barcode WHERE product_id = p.id AND deleted_at IS NULL)
+    FROM product p JOIN product_fts_map m ON m.product_id = p.id
+   WHERE p.id = old.product_id;
+END;
 
 -- Deli-scale barcodes: prefix means "the digits that follow are a weight/price".
 -- Store-configured because every scale vendor picks a different layout (C.1).
@@ -491,7 +652,7 @@ CREATE TABLE tile (
 
 ---
 
-## 0007 — shifts and cash  ·  Phase 2, microsteps 2.4.1–2.4.2
+## 0008 — shifts and cash  ·  Phase 2, microsteps 2.4.1–2.4.2
 
 ```sql
 CREATE TABLE shift (
@@ -563,7 +724,7 @@ CREATE TABLE drawer_event (              -- no-sale opens are the classic theft 
 
 ---
 
-## 0008 — refunds and returns  ·  Phase 2, microsteps 2.3.1–2.3.2
+## 0009 — refunds and returns  ·  Phase 2, microsteps 2.3.1–2.3.2
 
 ```sql
 -- Post-completion "void" DOES NOT EXIST. It is a same-day full refund document
@@ -616,7 +777,7 @@ CREATE TABLE document_link (
 
 ---
 
-## 0009 — fiscal  ·  Phase 2, microsteps 2.7.1–2.7.3
+## 0010 — fiscal  ·  Phase 2, microsteps 2.7.1–2.7.3
 
 Full pipeline design in [`fiscal-jofotara.md`](fiscal-jofotara.md).
 
@@ -683,7 +844,7 @@ CREATE TABLE fiscal_credentials_ref (       -- POINTER only. Secrets live in the
 
 ---
 
-## 0010 — customers and loyalty  ·  Phase 3, microsteps 3.4.1–3.4.2
+## 0011 — customers and loyalty  ·  Phase 3, microsteps 3.4.1–3.4.2
 
 PDPL is the spec for this migration (master plan B.3).
 
@@ -753,7 +914,7 @@ CREATE TABLE stored_value_ledger (
 
 ---
 
-## 0011 — pricing, promotions, supply  ·  Phase 4, microsteps 4.1.1, 4.2.1, 4.4.1
+## 0012 — pricing, promotions, supply  ·  Phase 4, microsteps 4.1.1, 4.2.1, 4.4.1
 
 ```sql
 CREATE TABLE price_list (
@@ -863,7 +1024,11 @@ CREATE TABLE label_reprint_queue (
 | — | `version BIGINT DEFAULT nextval('change_seq')` | the pull cursor; `change_seq` exists already |
 | — | partial indexes on `deleted_at IS NULL` | same intent as SQLite |
 
-**Two rules that keep them honest.** (1) Every server table carrying reference data has a `BEFORE UPDATE` trigger assigning `version = nextval('change_seq')` — the cursor cannot drift because nobody remembers to bump it. (2) Fact tables (`sale`, `sale_line`, `stock_ledger`, `cash_movement`, `audit_log`, `z_report`, `loyalty_ledger`) carry a `REVOKE UPDATE, DELETE` grant on the application role. Immutability enforced by the database, not by discipline (I-4).
+**Two rules that keep them honest.** (1) Every server table carrying reference data has a `BEFORE INSERT OR UPDATE` trigger assigning `version = nextval('change_seq')` — the cursor cannot drift because nobody remembers to bump it. (2) Fact tables (`sale`, `sale_line`, `stock_ledger`, `cash_movement`, `audit_log`, `z_report`, `loyalty_ledger`) carry a `REVOKE UPDATE, DELETE` grant on the application role. Immutability enforced by the database, not by discipline (I-4).
+
+**Shipped:** `20260820120000_change_sequence.sql` implements rule (1) for `product` — `assign_change_version()` plus `idx_product_version`, because the pull is `WHERE version > $after ORDER BY version` and without the index that is a sequential scan on every poll from every register. Before it, `change_seq` existed and nothing called `nextval` on it: the column defaulted to 0 and stayed there, so the comment in `20260819200319_init.sql` described a mechanism that was never built. Add the same trigger to each new reference table as it lands.
+
+Rule (2) has no server-side counterpart yet because the server has no fact tables yet. The register's half of it is live — the triggers in `0002_sale_integrity.sql`. When `sale` reaches Postgres, the `REVOKE` lands in the same migration that creates it, not afterwards.
 
 ---
 
@@ -880,6 +1045,10 @@ Added deliberately; each one exists to serve a named query.
 | `idx_stock_ledger_product_store` | on-hand rebuild, movement report |
 | `idx_stock_cache_negative` | negative-stock report (C.7) |
 | `idx_outbox_unpushed` *(exists)* | sync drain |
+| `idx_sale_line_sale` *(exists, 0002)* | the lines of a sale — reprint, refund, every report |
+| `idx_sale_tender_sale` *(exists, 0002)* | the payments of a sale — reprint, reconciliation |
+| `idx_sale_receipt_number` *(exists, 0002)* | unique per register; also receipt lookup by number |
+| `idx_product_version` *(exists, Postgres)* | the pull cursor, `version > $after` |
 | `idx_fiscal_queue_pending` | fiscal retry loop, uncleared-count badge |
 | `idx_refund_link_original` | remaining-refundable check, the E.16 hot path |
 | `idx_audit_action_at` / `idx_audit_actor_at` | fraud reports: overrides & refunds by user |

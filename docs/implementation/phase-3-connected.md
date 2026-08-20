@@ -110,7 +110,7 @@ A parked cart is a register-physical concept: the customer is standing at *that*
 *PDPL is the specification for this group. Read [`ref/security-compliance.md`](ref/security-compliance.md) §2 first.*
 
 ### 3.4.1 — Migration `0010`
-**Files:** `crates/pos-db/migrations/0010_customers_loyalty.sql`
+**Files:** `crates/pos-db/migrations/0011_customers_loyalty.sql`
 
 ### 3.4.2 — Consent as a record, not a boolean
 **Files:** `crates/pos-domain/src/customer.rs` (new)

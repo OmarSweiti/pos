@@ -125,7 +125,7 @@ Waiting for card → Processing → result. **The timeout state is visible**: *"
 *The fraud-and-money feature. Most rules here are anti-abuse.*
 
 ### 2.3.1 — Migration `0008`
-**Files:** `crates/pos-db/migrations/0008_refunds_and_returns.sql`
+**Files:** `crates/pos-db/migrations/0009_refunds_and_returns.sql`
 Per [`ref/schema.md`](ref/schema.md) §0008.
 
 ### 2.3.2 — Refundable balances
@@ -177,7 +177,7 @@ Shared pattern: action summary, reason picker, PIN pad. **Logs the approver dist
 ## Group 2.4 — Shifts and cash management
 
 ### 2.4.1 — Migration `0007`
-**Files:** `crates/pos-db/migrations/0007_shifts_and_cash.sql`
+**Files:** `crates/pos-db/migrations/0008_shifts_and_cash.sql`
 Note the partial unique index enforcing one open shift per register.
 
 ### 2.4.2 — Shift lifecycle
@@ -284,7 +284,7 @@ Corrections **C-2** and **C-3**: absolute → percentage → re-derive → asser
 **Done when:** a document that would drift is caught **locally, before submission**, with the offending line named.
 
 ### 2.7.4 — Migration `0009` and the queue
-**Files:** `crates/pos-db/migrations/0009_fiscal.sql`, `crates/pos-fiscal/src/queue.rs`
+**Files:** `crates/pos-db/migrations/0010_fiscal.sql`, `crates/pos-fiscal/src/queue.rs`
 Durable queue, backoff with jitter, dead letters, `depends_on` for credit-note ordering. The queue row is written **in the same transaction as the sale** — the drain loop is a background task and never sits in the checkout path.
 **Tests:** `queue_row_written_in_sale_transaction` · `prop_credit_note_never_precedes_its_invoice` (E.26) · `backoff_has_jitter` · `dead_after_max_attempts_alerts`
 

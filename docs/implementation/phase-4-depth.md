@@ -28,7 +28,7 @@ Nothing here is on the money-critical path. That is exactly why it comes fourth 
 ## Group 4.1 — Price lists
 
 ### 4.1.1 — Migration `0011`, part one
-**Files:** `crates/pos-db/migrations/0011_pricing_promotions_supply.sql`
+**Files:** `crates/pos-db/migrations/0012_pricing_promotions_supply.sql`
 `price_list`, `price` per [`ref/schema.md`](ref/schema.md) §0011.
 
 ### 4.1.2 — Resolution order
@@ -46,7 +46,7 @@ Any effective price change writes a `label_reprint_queue` row. Not optional — 
 ## Group 4.2 — Receiving and weighted-average cost
 
 ### 4.2.1 — Migration `0011`, part two
-**Files:** `crates/pos-db/migrations/0011_pricing_promotions_supply.sql`
+**Files:** `crates/pos-db/migrations/0012_pricing_promotions_supply.sql`
 `supplier`, `goods_receipt`, `goods_receipt_line`.
 
 ### 4.2.2 — Receiving posts stock and updates WAC
@@ -97,7 +97,7 @@ From `reorder_point_milli` per product per store.
 *Resisted for three phases. Manual discounts genuinely covered Phases 1–3.*
 
 ### 4.4.1 — Migration `0011`, part three
-**Files:** `crates/pos-db/migrations/0011_pricing_promotions_supply.sql`
+**Files:** `crates/pos-db/migrations/0012_pricing_promotions_supply.sql`
 `promotion` with `config_json` and `priority`.
 
 ### 4.4.2 — Types, in order of real-world frequency

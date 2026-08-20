@@ -8,7 +8,9 @@ The buildable plan for this POS: what to type, in what order, and how you will k
 
 1. **[`00-master-plan.md`](00-master-plan.md)** — the spine. Verdict on the master plan, the four corrections research turned up, the phase map, the risk register. **20 minutes.**
 2. **[`01-conventions.md`](01-conventions.md)** — the engineering law. Nine invariants, naming, errors, testing, definition of done. **Read once, then keep it open.**
-3. **[`phase-0-closeout.md`](phase-0-closeout.md)** — where the repository actually is, and the 1–2 days it takes to make it a foundation.
+3. **[`02-development-workflow.md`](02-development-workflow.md)** — how the work gets done: every command, the feature lifecycle, manual testing, the drills, the rituals. **Keep it open next to the law.**
+4. **[`03-github-workflow.md`](03-github-workflow.md)** — how the work gets tracked and shipped: the four branches, issues, the board, pull requests, the two release channels. **Read §3 before your first push** — it says which rules a machine enforces and which are only written down.
+5. **[`phase-0-closeout.md`](phase-0-closeout.md)** — where the repository actually is, and the 1–2 days it takes to make it a foundation.
 
 Then work the phase you are in, consulting `ref/` as the microsteps point you there.
 
@@ -21,6 +23,8 @@ docs/implementation/
 ├── README.md                      ← you are here
 ├── 00-master-plan.md              the spine: verdict, corrections, phases, risks
 ├── 01-conventions.md              the engineering law
+├── 02-development-workflow.md     how the work gets done: commands, loops, manual tests
+├── 03-github-workflow.md          branches, issues, the board, PRs, release channels
 │
 ├── phase-0-closeout.md            finish what's started        1–2 days
 ├── phase-1-sellable-mvp.md        cash · tax · Arabic receipts 8–12 weeks
@@ -32,7 +36,7 @@ docs/implementation/
 └── ref/
     ├── plan-validation.md         the audit + every source
     ├── domain-api.md              every pos-domain type & signature
-    ├── schema.md                  migrations 0002→0011
+    ├── schema.md                  migrations 0002→0012
     ├── tax-jordan.md              GST as an engine
     ├── fiscal-jofotara.md         the highest-risk component
     ├── ipc-contract.md            every Tauri command
@@ -108,6 +112,10 @@ If you read nothing else:
 |---|---|
 | Is the business plan any good? | [`ref/plan-validation.md`](ref/plan-validation.md) |
 | What do I do first? | [`phase-0-closeout.md`](phase-0-closeout.md) |
+| Which command do I type, and how do I test it by hand? | [`02-development-workflow.md`](02-development-workflow.md) |
+| Which branch do I work from, and how does a change reach a merchant? | [`03-github-workflow.md`](03-github-workflow.md) |
+| Is this rule actually enforced, or only written down? | [`03-github-workflow.md`](03-github-workflow.md) §3 |
+| Should we use Jira, and is it free? | [`03-github-workflow.md`](03-github-workflow.md) §9 |
 | What does this function look like? | [`ref/domain-api.md`](ref/domain-api.md) |
 | What columns does this table have? | [`ref/schema.md`](ref/schema.md) |
 | How does Jordanian GST actually work? | [`ref/tax-jordan.md`](ref/tax-jordan.md) |

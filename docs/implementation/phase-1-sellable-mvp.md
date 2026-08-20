@@ -74,7 +74,7 @@ Default `HalfAwayFromZero`, not banker's — see [`ref/tax-jordan.md`](ref/tax-j
 
 ### 1.1.7 — Migration `0002`, part one: the qty fix
 *Gap G-12. **Must land before any sale row exists.***
-**Files:** `crates/pos-db/migrations/0002_catalog_depth.sql`, `crates/pos-db/src/lib.rs` (`MIGRATIONS` array)
+**Files:** `crates/pos-db/migrations/0003_catalog_depth.sql`, `crates/pos-db/src/lib.rs` (`MIGRATIONS` array)
 The `sale_line` rebuild from [`ref/schema.md`](ref/schema.md) §0002, plus `sale_line_tax` and `sale_line_discount`.
 **Tests:** `crates/pos-db/tests/migrations.rs::migration_0002_converts_qty_to_milli` — seed a `0001`-shaped row, migrate, assert `qty_milli == qty * 1000`.
 **Done when:** `PRAGMA user_version` is 2 and the seeded row survives with `qty_milli = 2000`.
@@ -97,7 +97,7 @@ Per API reference §3, including `business_date_of` and `MonotonicClock`.
 ## Group 1.2 — Catalog, barcodes, search
 
 ### 1.2.1 — Migration `0002`, part two: org / store / register / taxonomy
-**Files:** `crates/pos-db/migrations/0002_catalog_depth.sql`
+**Files:** `crates/pos-db/migrations/0003_catalog_depth.sql`
 The `org`, `store`, `register`, `category`, `tax_category`, `tax_rate`, `barcode`, `setting` tables and the `product` `ALTER`s from [`ref/schema.md`](ref/schema.md).
 **Tests:** `migration_0002_creates_all_tables` · `barcode_live_uniqueness_allows_reissue_after_tombstone`
 **Done when:** a tombstoned barcode code can be reassigned to a different product; two live rows with the same code cannot exist.
@@ -128,7 +128,7 @@ Repository law (conventions §3): returns owned domain types, never a `rusqlite:
 **Done when (E.40):** flipping any single digit of a valid embedded barcode either fails the checksum or produces a *different* item code — it never silently produces a wrong price for the right item.
 
 ### 1.2.5 — Migration `0006`: FTS5, PLU, tiles, scan rules
-**Files:** `crates/pos-db/migrations/0006_search_and_seed.sql`
+**Files:** `crates/pos-db/migrations/0007_search_and_seed.sql`
 Per [`ref/schema.md`](ref/schema.md) §0006. Tokeniser `unicode61 remove_diacritics 2` so Arabic tashkeel folds.
 **Tests:** `fts_matches_arabic_with_and_without_diacritics` · `fts_matches_english_and_sku` · `fts_survives_product_update` · `fts_row_removed_on_tombstone`
 
@@ -191,7 +191,7 @@ Grouped by `(component, treatment, rate)`. The **exact sum** of line taxes, neve
 **Done when:** exempt and zero-rated items on one receipt produce two summary rows, not one.
 
 ### 1.3.7 — Seed the Jordanian tax data
-**Files:** `crates/pos-db/migrations/0002_catalog_depth.sql` (seed block)
+**Files:** `crates/pos-db/migrations/0003_catalog_depth.sql` (seed block)
 `STD16` 16%, `RED04` 4%, `ZERO` 0%, `EXEMPT`. `valid_from` at go-live, `valid_to` NULL.
 **Done when:** `resolve_components(STD16, …, now)` returns one GST component at 160 000 ppm.
 > Which product sits in which category is the merchant's accountant's call, not this seed's. Flagged as merchant decision #10.
@@ -288,7 +288,7 @@ JOD denominations (50, 20, 10, 5, 1 dinar; 500, 250, 100, 50, 25, 10 fils) for t
 *Gaps G-6 and G-7. Independent of the cart work.*
 
 ### 1.6.1 — Migration `0003`
-**Files:** `crates/pos-db/migrations/0003_people_and_audit.sql`
+**Files:** `crates/pos-db/migrations/0004_people_and_audit.sql`
 Per [`ref/schema.md`](ref/schema.md) §0003. Note `app_user`, not `user` — reserved in Postgres.
 
 ### 1.6.2 — Argon2id PINs
@@ -459,7 +459,7 @@ Every fact write appends its outbox row in the same transaction (I-9). No pusher
 *Gap G-2.*
 
 ### 1.9.1 — Migration `0004`
-**Files:** `crates/pos-db/migrations/0004_sale_columns_and_sequences.sql`
+**Files:** `crates/pos-db/migrations/0005_sale_columns_and_sequences.sql`
 Per [`ref/schema.md`](ref/schema.md) §0004: sale columns, `sale_tax_summary`, tender columns, `tender_type`, `parked_cart`, `doc_sequence`.
 
 ### 1.9.2 — `SequenceRepository`
@@ -487,7 +487,7 @@ Derived from the shift (conventions §11), not from wall-clock midnight.
 ## Group 1.10 — Stock ledger
 
 ### 1.10.1 — Migration `0005`
-**Files:** `crates/pos-db/migrations/0005_stock_ledger.sql`
+**Files:** `crates/pos-db/migrations/0006_stock_ledger.sql`
 
 ### 1.10.2 — `StockRepository`
 **Files:** `crates/pos-db/src/repo/stock.rs` (new)
