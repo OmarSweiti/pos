@@ -7,14 +7,8 @@
     "dev:backoffice": "pnpm --filter backoffice dev",
     "build:web": "pnpm -r --if-present build",
     "test": "pnpm -r --if-present test",
-    "lint": "biome ci .",
+    "lint": "biome ci --error-on-warnings .",
     "format": "biome format --write ."
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "@tailwindcss/oxide"
-    ]
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.9"
