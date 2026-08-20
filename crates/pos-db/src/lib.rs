@@ -15,6 +15,13 @@ pub enum DbError {
     BadKey,
     #[error("keyring: {0}")]
     Keyring(#[from] keyring::Error),
+    #[error(
+        "database schema is version {found}, but this build only knows {supported}; \
+         it was written by a newer version of the application"
+    )]
+    SchemaTooNew { found: i64, supported: usize },
+    #[error("database reports an impossible schema version ({found})")]
+    SchemaVersionInvalid { found: i64 },
 }
 
 /// Ordered, forward-only migrations (blueprint §8). `PRAGMA user_version`
@@ -43,8 +50,20 @@ pub fn open(path: &Path, key: &str) -> Result<Connection, DbError> {
 }
 
 fn migrate(conn: &Connection) -> Result<(), DbError> {
-    let applied: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-    for (idx, sql) in MIGRATIONS.iter().enumerate().skip(applied as usize) {
+    let found: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    let supported = MIGRATIONS.len();
+
+    // Conventions §9.5 (E.58): refuse a database this build cannot account for,
+    // and say why. A counter above `supported` was written by a newer build whose
+    // schema this code does not know how to read; a negative one is corruption.
+    // `try_from` rather than `as usize`, which would wrap -1 to a huge number and
+    // silently skip every migration.
+    let applied = usize::try_from(found).map_err(|_| DbError::SchemaVersionInvalid { found })?;
+    if applied > supported {
+        return Err(DbError::SchemaTooNew { found, supported });
+    }
+
+    for (idx, sql) in MIGRATIONS.iter().enumerate().skip(applied) {
         let tx = conn.unchecked_transaction()?;
         tx.execute_batch(sql)?;
         tx.pragma_update(None, "user_version", (idx + 1) as i64)?;
