@@ -15,6 +15,8 @@ pub enum DbError {
     BadKey,
     #[error("keyring: {0}")]
     Keyring(#[from] keyring::Error),
+    #[error("could not generate a database key from the OS: {0}")]
+    KeyGeneration(String),
     #[error(
         "database schema is version {found}, but this build only knows {supported}; \
          it was written by a newer version of the application"
