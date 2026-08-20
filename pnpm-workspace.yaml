@@ -3,6 +3,11 @@ packages:
   - apps/backoffice
   - packages/*
 
-onlyBuiltDependencies:
-  - esbuild
-  - "@tailwindcss/oxide"
+# pnpm 11 gates post-install scripts through `allowBuilds`, as an explicit
+# per-package decision — `onlyBuiltDependencies` is the pnpm 10 spelling and no
+# longer governs an install. Anything not named here has its build script
+# silently skipped, and a fresh install then FAILS with ERR_PNPM_IGNORED_BUILDS.
+# esbuild's postinstall fetches its platform binary; without it, vite cannot run.
+allowBuilds:
+  esbuild: true
+  "@tailwindcss/oxide": true
