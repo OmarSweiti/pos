@@ -1,0 +1,51 @@
+version: 2
+
+# Grouped and monthly on purpose. A money system does not want a daily stream of
+# single-crate bumps: each one is a diff somebody has to actually read, and an
+# unread dependency bump is how a supply-chain problem arrives politely.
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 5
+    target-branch: development
+    commit-message:
+      prefix: "chore(repo)"
+    labels: ["type: chore", "area: repo", "meta: dependencies"]
+    groups:
+      rust-patch:
+        applies-to: version-updates
+        update-types: ["patch"]
+      rust-minor:
+        applies-to: version-updates
+        update-types: ["minor"]
+    ignore:
+      # The toolchain is pinned in rust-toolchain.toml and moved deliberately (§13).
+      - dependency-name: "rust-toolchain"
+
+  - package-ecosystem: npm
+    directory: "/"
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 5
+    target-branch: development
+    commit-message:
+      prefix: "chore(repo)"
+    labels: ["type: chore", "area: repo", "meta: dependencies"]
+    groups:
+      js-patch:
+        applies-to: version-updates
+        update-types: ["patch"]
+      js-minor:
+        applies-to: version-updates
+        update-types: ["minor"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule: { interval: monthly }
+    target-branch: development
+    commit-message:
+      prefix: "chore(repo)"
+    labels: ["type: chore", "area: repo", "meta: dependencies"]
+    groups:
+      actions:
+        patterns: ["*"]

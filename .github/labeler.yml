@@ -1,0 +1,54 @@
+# Path → label, applied by .github/workflows/labeler.yml.
+# Labels you have to remember to add are labels nobody adds.
+
+"area: domain":
+  - changed-files: [{ any-glob-to-any-file: "crates/pos-domain/**" }]
+"area: db":
+  - changed-files: [{ any-glob-to-any-file: "crates/pos-db/**" }]
+"area: sync":
+  - changed-files: [{ any-glob-to-any-file: "crates/pos-sync/**" }]
+"area: hardware":
+  - changed-files: [{ any-glob-to-any-file: "crates/pos-hardware/**" }]
+"area: terminal":
+  - changed-files: [{ any-glob-to-any-file: "apps/terminal/**" }]
+"area: server":
+  - changed-files: [{ any-glob-to-any-file: "apps/server/**" }]
+"area: backoffice":
+  - changed-files: [{ any-glob-to-any-file: "apps/backoffice/**" }]
+"area: repo":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "justfile"
+          - "scripts/**"
+          - ".github/**"
+          - ".githooks/**"
+          - ".claude/**"
+          - "Cargo.toml"
+          - "package.json"
+          - "biome.json"
+          - "rust-toolchain.toml"
+          - "pnpm-workspace.yaml"
+          - "infra/**"
+"type: docs":
+  - changed-files: [{ any-glob-to-any-file: "docs/**" }]
+
+# The three that change how a PR is reviewed, not merely where it lands.
+"risk: migration":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/pos-db/migrations/**"
+          - "apps/server/migrations/**"
+"risk: money path":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/pos-domain/src/money*"
+          - "crates/pos-domain/src/tax*"
+          - "crates/pos-domain/src/cart*"
+          - "crates/pos-domain/src/discount*"
+"risk: security":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/auth*"
+          - "**/crypto*"
+          - "**/secret*"
+          - "docs/implementation/ref/security-compliance.md"

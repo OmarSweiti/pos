@@ -1,0 +1,66 @@
+name: Bug
+description: Something behaves wrongly. Money bugs are P0 by default.
+title: "fix: "
+labels: ["type: fix"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Three lines before you start fixing — §5.11 of the development workflow.
+        A bug written down is a test; a bug in your head is a bug that comes back.
+  - type: textarea
+    id: expected
+    attributes:
+      label: What I expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Exact figures, to the fil. "The total was wrong" is not a bug report.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Smallest reproduction
+      description: Start from a clean test bed (§5.1) — a fresh database, not the one you have been poking at.
+      placeholder: |
+        1. just db-local-reset && just dev-terminal
+        2. add 3 × item priced 1.250 JOD, inclusive 16%
+        3. tender 5.000 JOD cash
+        Expected change 1.250, got 1.249
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - "P0 — wrong money, lost sale, corrupted data, or a compliance breach"
+        - "P1 — a cashier cannot complete a normal task"
+        - "P2 — wrong but has a workaround"
+    validations:
+      required: true
+  - type: input
+    id: invariant
+    attributes:
+      label: Invariant broken, if any
+      description: conventions §1. If an invariant broke, the fix needs a property test, not an example test.
+      placeholder: "I-1 — a second rounding in the discount path"
+  - type: input
+    id: catalog
+    attributes:
+      label: New test-catalog row
+      description: A surprise becomes an `E.n` row, an accepted risk, or an explicit out-of-scope. None of the three means it happens again.
+      placeholder: "E.73"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      placeholder: "v0.1.4 · 24a0283"
+    validations:
+      required: true
