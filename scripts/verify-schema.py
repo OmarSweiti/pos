@@ -35,7 +35,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_DOC = ROOT / "docs" / "implementation" / "ref" / "schema.md"
-BASE_MIGRATION = ROOT / "crates" / "pos-db" / "migrations" / "0001_init.sql"
+MIGRATIONS_DIR = ROOT / "crates" / "pos-db" / "migrations"
+
+
+def shipped_migrations() -> list[Path]:
+    """Every committed SQLite migration, in the order the runner applies them."""
+    return sorted(MIGRATIONS_DIR.glob("*.sql"))
 
 FENCE = re.compile(r"^```sql\s*$")
 FENCE_END = re.compile(r"^```\s*$")
@@ -92,18 +97,40 @@ def blocks(doc: str) -> list[tuple[str, str]]:
     return out
 
 
-def apply_all(conn: sqlite3.Connection, report: Report, verbose: bool) -> int:
+def apply_migrations(conn: sqlite3.Connection, report: Report, verbose: bool) -> int:
+    """Apply the shipped migrations, in runner order, to `conn`."""
     applied = 0
-    base = BASE_MIGRATION.read_text(encoding="utf-8")
-    try:
-        conn.executescript(base)
-        applied += 1
-    except sqlite3.Error as exc:
-        report.fail(f"{BASE_MIGRATION.relative_to(ROOT)} does not execute: {exc}")
+    for path in shipped_migrations():
+        try:
+            conn.executescript(path.read_text(encoding="utf-8"))
+            applied += 1
+            if verbose:
+                print(f"  applied  {path.name}")
+        except sqlite3.Error as exc:
+            report.fail(f"{path.relative_to(ROOT)} does not execute: {exc}")
+            return applied
+    return applied
+
+
+def apply_all(conn: sqlite3.Connection, report: Report, verbose: bool) -> int:
+    # Count only the failures THIS pass produces: the caller has already
+    # recorded any from the shipped-migrations pass, and inheriting those would
+    # skip the document entirely.
+    before = len(report.failures)
+    applied = apply_migrations(conn, report, verbose)
+    if len(report.failures) > before:
         return applied
 
     for heading, sql in blocks(SCHEMA_DOC.read_text(encoding="utf-8")):
         if not sql.strip():
+            continue
+        # A section marked SHIPPED documents a migration that already ran, from
+        # disk, in pass 1 — re-executing its DDL here would just fail against
+        # the schema it produced. The file is the source of truth for those; the
+        # doc block is the explanation.
+        if "SHIPPED" in heading.upper():
+            if verbose:
+                print(f"  skipped  {heading} (applied from disk in pass 1)")
             continue
         try:
             conn.executescript(sql)
@@ -270,12 +297,40 @@ def main() -> int:
         return self_test()
 
     verbose = "--verbose" in sys.argv
-    for path in (SCHEMA_DOC, BASE_MIGRATION):
-        if not path.is_file():
-            print(f"cannot find {path}", file=sys.stderr)
-            return 2
+    if not SCHEMA_DOC.is_file():
+        print(f"cannot find {SCHEMA_DOC}", file=sys.stderr)
+        return 2
+    if not shipped_migrations():
+        print(f"no migrations in {MIGRATIONS_DIR}", file=sys.stderr)
+        return 2
 
     report = Report()
+
+    # ── Pass 1: the schema that actually ships, audited on its own ──────────
+    #
+    # This pass exists because of gap G-12. `0001_init` shipped `sale_line.qty`
+    # where conventions §2 requires `qty_milli`, and this script did not notice
+    # for four commits — because the only pass was the one below, which layers
+    # the DOC's future migrations on top. Migration 0003 rebuilds the table with
+    # the correct name, so by the time the audit ran, the defect had been fixed
+    # by a migration that does not exist yet.
+    #
+    # A plan is allowed to describe a fix that has not landed. A register runs
+    # what is in `crates/pos-db/migrations/`, so that is audited first and by
+    # itself.
+    shipped = sqlite3.connect(":memory:")
+    shipped.execute("PRAGMA foreign_keys=ON")
+    ship_report = Report()
+    n_shipped = apply_migrations(shipped, ship_report, verbose)
+    ship_tables, ship_columns = audit_columns(shipped, ship_report)
+    audit_foreign_keys(shipped, ship_report)
+    print(f"shipped: {n_shipped} migration(s), {ship_tables} tables, {ship_columns} columns")
+    for msg in ship_report.failures:
+        report.fail(f"[shipped migrations] {msg}")
+    for msg in ship_report.notes:
+        report.note(f"[shipped migrations] {msg}")
+
+    # ── Pass 2: the plan of record, shipped migrations + every doc block ────
     conn = sqlite3.connect(":memory:")
     conn.execute("PRAGMA foreign_keys=ON")
 
@@ -297,6 +352,7 @@ def main() -> int:
         for f in report.failures:
             print(f"  FAIL  {f}")
         print("\nref/schema.md is the plan of record — fix the doc, or the migration that drifted from it.")
+        print("A [shipped migrations] failure is stronger: that is what a register runs today.")
         return 1
     print("schema reference is executable and conforms to conventions §2")
     return 0
