@@ -4,7 +4,13 @@ The crown jewel. Pure, no I/O, shared by register and server so the two can neve
 
 This document is the **target shape**, assembled across Phases 1–4. Each item is annotated with the microstep that creates it. Signatures here are normative: if a phase file shows something different, this file wins.
 
-**Purity is enforced mechanically.** `pos-domain/Cargo.toml` may depend only on `serde`, `thiserror`, `uuid`, `rust_decimal`, and (dev) `proptest`, `criterion`. Adding anything capable of I/O is a design review, not a commit.
+**Purity is enforced mechanically.** `pos-domain/Cargo.toml` may depend only on `serde`, `thiserror`, `uuid`, `rust_decimal`, and (dev) `proptest`, `criterion`, `trybuild`. Adding anything capable of I/O is a design review, not a commit.
+
+> `trybuild` is a dev-dependency and ships nothing, which is why it is allowed: purity governs what
+> reaches a register, and a `[dev-dependencies]` entry never does. It is here because 1.1.8's claim —
+> that two id types cannot be interchanged — is only provable by code that **fails** to compile, and
+> `cargo nextest` does not run doctests, so a ` ```compile_fail ` block would be invisible to both
+> `just test` and CI. `trybuild` runs as an ordinary integration test.
 
 ```
 crates/pos-domain/src/
@@ -57,6 +63,17 @@ impl Currency {
 
 `Currency` is `Copy` and three bytes plus one. It rides on every `Money`, so it must stay small.
 
+`code()` returns `&'static str` with no allocation because the known currencies are a private `const`
+table and `code()` returns a slice of it. `from_code` is the only constructor for an arbitrary code
+and it rejects anything not in that table, so the table is total: there is no `Currency` whose code
+is unknown.
+
+**`Serialize`/`Deserialize` are implemented by hand, as the ISO string `"JOD"`** — not derived. The
+derive over private fields would emit `{"code":[74,79,68],"exponent":3}`, which is unreadable over
+IPC and, worse, puts the exponent on the wire as data a client could disagree with. Deserialisation
+goes through `from_code`, so an unknown currency is a parse error rather than a struct with a
+plausible-looking exponent. `Money` therefore serialises as `{"minor":1250,"currency":"JOD"}`.
+
 ### 1.2 `Money` — extended [1.1.2]
 
 Existing methods (`from_minor`, `minor`, `checked_add`, `checked_sub`, `split_evenly`, `ZERO`) keep their behaviour but gain currency. `split_evenly`'s largest-remainder implementation and its property test are already correct — do not rewrite them, only thread `Currency` through.
@@ -79,6 +96,12 @@ impl Money {
     pub fn checked_sub(self, o: Money) -> Result<Money, MoneyError>;
     pub fn checked_neg(self) -> Result<Money, MoneyError>;
     pub fn sum<I: IntoIterator<Item = Money>>(iter: I, c: Currency) -> Result<Money, MoneyError>;
+
+    /// Ordering is CHECKED, because `PartialOrd`/`Ord` are deliberately NOT
+    /// derived: over `(minor, currency)` a derive would rank a JOD amount
+    /// against a USD one and answer confidently. Mixed currencies are an error
+    /// here too, so `<` and `sort` on a Money do not compile at all.
+    pub fn checked_cmp(self, o: Money) -> Result<core::cmp::Ordering, MoneyError>;
 
     /// Multiply by a quantity in milli-units, rounding ONCE by `rule`.
     /// This is the only path from (unit price × qty) to a line amount.
@@ -201,9 +224,10 @@ Purity means `pos-domain` cannot call `Uuid::now_v7()` or read a clock. Both are
 ```rust
 macro_rules! typed_id { … }   // newtype over Uuid, Copy, Serialize, Display
 
-typed_id!(SaleId); typed_id!(SaleLineId); typed_id!(ProductId); typed_id!(StoreId);
-typed_id!(RegisterId); typed_id!(UserId); typed_id!(ShiftId); typed_id!(CustomerId);
-typed_id!(TenderId); typed_id!(TaxCategoryId); typed_id!(PromotionId); typed_id!(StockEventId);
+typed_id!(OrgId); typed_id!(SaleId); typed_id!(SaleLineId); typed_id!(ProductId);
+typed_id!(StoreId); typed_id!(RegisterId); typed_id!(UserId); typed_id!(ShiftId);
+typed_id!(CustomerId); typed_id!(TenderId); typed_id!(CategoryId); typed_id!(TaxCategoryId);
+typed_id!(PromotionId); typed_id!(StockEventId);
 
 /// Injected so domain functions stay pure and tests stay deterministic.
 pub trait IdSource { fn next(&self) -> Uuid; }        // UUIDv7 in production
@@ -216,6 +240,11 @@ pub struct FixedClock  { … }
 ```
 
 **Why typed ids.** `fn refund(sale: SaleId, line: SaleLineId)` cannot be called with the arguments swapped. Over a schema with fourteen id columns, that is worth the boilerplate.
+
+Fourteen types, listed in full above. `OrgId` and `CategoryId` are easy to miss because they are used
+before they are declared — `CategoryId` by `Product.category_id` in §4, `OrgId` by `store.org_id` in
+schema §0003 — and an earlier revision of this section omitted both while the phase file already said
+"fourteen".
 
 ---
 
@@ -255,7 +284,22 @@ impl<C: Clock> MonotonicClock<C> {
     pub fn now(&mut self) -> (Timestamp, Option<ClockAnomaly>);
 }
 pub struct ClockAnomaly { pub jumped_back_by_ms: i64 }   // → audit entry
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum TimeError {
+    #[error("cannot parse {0:?} as an ISO-8601 UTC timestamp")]  Parse(String),
+    #[error("cannot parse {0:?} as a YYYY-MM-DD date")]          ParseDate(String),
+    #[error("timestamp {0} is outside the representable range")] OutOfRange(i64),
+    #[error("{0}-{1}-{2} is not a real calendar date")]          NotACalendarDate(i16, u8, u8),
+    #[error("utc offset {0} minutes is not a real offset")]      BadOffset(i16),
+    #[error("cutover {0} minutes is not inside a day")]          BadCutover(u16),
+}
 ```
+
+`TimeError` is exhaustive and carries what a UI needs to say what was wrong. Note `NotACalendarDate`
+and `BadOffset`/`BadCutover`: a `BusinessDate` is three integers and a `DayBoundary` is two, so both
+are constructible with nonsense unless construction is validated. 31 February and an offset of 4 000
+minutes are the kind of input that arrives from a corrupted settings row, not from a keyboard.
 
 > **Timezone handling deliberately does not pull in a tz database.** The store stores a fixed UTC offset and a DST rule chosen at configuration time, refreshed from the server. `pos-domain` receiving a *resolved offset* keeps it pure; resolving Asia/Amman → offset happens in the shell with `jiff`.
 
