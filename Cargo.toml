@@ -48,7 +48,7 @@ rust_decimal = "1"
 rusqlite = { version = "0.39", features = ["bundled-sqlcipher-vendored-openssl"] }
 # The OS CSPRNG, for the SQLCipher key. Not `rand`: this needs one call and no
 # distributions, and a key generator should have the shortest path to the OS.
-getrandom = "0.3"
+getrandom = "0.4"
 keyring  = "4"
 dotenvy = "0.15"
 sqlx = { version = "0.9", default-features = false, features = [
