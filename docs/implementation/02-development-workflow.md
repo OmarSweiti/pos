@@ -234,7 +234,8 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just test` | `cargo nextest run --workspace` · `pnpm -r --if-present test` |
 | `just acyclic` | `pos-domain`'s module graph has no cycles |
 | `just docs-links` | no broken relative `.md` link under `docs/` |
-| `just verify-schema` | executes every SQL block in `ref/schema.md` against real SQLite |
+| `just verify-schema` | executes every shipped migration and every SQL block in `ref/schema.md` against real SQLite |
+| `just verify-pg` | the Postgres mirror's declared mapping, and the SQL against a real PostgreSQL server |
 | `just guards` | the write guards **and** the git hooks still refuse what they must |
 | `just build-web` | `pnpm -r --if-present build` — **the only place `tsc` runs** |
 | `just pre-push` | `lint` + `test` + `build-web` + `guards` |
@@ -349,12 +350,17 @@ Use the `add-migration` skill — it does the whole sequence correctly. By hand 
 ```bash
 ls crates/pos-db/migrations/                                   # next number, no gaps
 # author crates/pos-db/migrations/000N_short_name.sql from ref/schema.md
-sqlite3 :memory: ".read crates/pos-db/migrations/000N_short_name.sql" ".tables"   # dry-run
+just verify-schema                                             # applies the WHOLE chain, yours included
 # append the include_str! entry to MIGRATIONS in crates/pos-db/src/lib.rs
-# mirror it in apps/server/migrations/ — same number, same name, same semantics
+# mirror it in apps/server/migrations/ — same semantics, with a header comment
+# saying "Mirrors SQLite 000N_short_name.sql"; the numbers cannot match
+just verify-pg                                                 # the mirror, on a real server
 cargo nextest run -p pos-db                                    # migrations + round-trip
-just verify-schema                                             # schema.md and the migrations agree
 ```
+
+`just verify-schema` replaces the `sqlite3 :memory: ".read …"` dry-run that used to be here.
+That command applied only the files you named — so an `ALTER` against an earlier migration's
+table went unchecked — and it accepts a `REFERENCES ghost(id)` in silence.
 
 Non-negotiables, from conventions §9 and `.claude/rules/sql-migrations.md`:
 
@@ -905,6 +911,8 @@ on this plan — [`03-github-workflow.md`](03-github-workflow.md) §8.
 | biome passes locally, fails in CI | `biome ci --error-on-warnings` is stricter than `biome check`; `just lint` uses the CI form |
 | doc-links fails | a renamed or deleted `.md`; `just docs-links` names the file and the target |
 | a build fails on Linux only | a Tauri system dependency; the workflow's `apt-get` list is the reference |
+| `supply-chain` fails and nothing local did | expected: `just pre-push` deliberately omits `just audit`, because both halves reach the network and read advisory databases that change hourly. Run `just audit` to see it |
+| the Postgres mirror fails only in CI | `just verify-pg` skips the engine pass with no `$DATABASE_URL` and no Docker. `just db-up` first, or read the skip line — it is not a pass |
 
 **Flake policy: there isn't one.** A flaky test in a money system is worse than no test, because it
 teaches you to ignore red. Quarantine it in the same hour — either make it deterministic or delete
