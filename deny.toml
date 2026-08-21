@@ -24,9 +24,32 @@ yanked = "deny"
 # is worse than no gate. So: flag an unmaintained crate WE chose to depend on,
 # stay quiet about one Tauri chose. Revisit when Tauri moves off GTK3.
 unmaintained = "workspace"
+# Unsoundness is a third claim again, and the strictest of the three: it is
+# undefined behaviour that happens not to have a CVE number. Denied everywhere,
+# at any depth.
+#
+# This key defaults to `none`, which meant the paragraph above was overstating
+# the gate — RUSTSEC-2024-0429, undefined behaviour in `glib`, was passing
+# `cargo deny check` in silence while Dependabot reported it on the default
+# branch. A gate whose comment claims more than it does is worse than a missing
+# gate, because it is trusted.
+unsound = "all"
 # Every ignore is a decision with a name and a reason. An empty list is the goal;
 # an entry with no comment is a decision nobody made.
-ignore = []
+ignore = [
+  # Unsoundness (UB) in the Iterator impls for `glib::VariantStrIter`, fixed in
+  # glib 0.20. This one cannot be taken: glib 0.18.5 is pinned by gtk 0.18,
+  # which is pinned by tauri, and `cargo update -p glib` locks 0 packages.
+  #
+  # Scope is narrower than the severity suggests. glib is in the LINUX graph
+  # only — `cargo tree -i glib --target x86_64-apple-darwin` finds nothing — so
+  # a macOS or Windows register never links it. Nothing in this workspace calls
+  # VariantStrIter; it is reachable only inside GTK's own variant handling.
+  #
+  # Revisit when Tauri moves off GTK3, which also closes 16 of the unmaintained
+  # advisories the rule above is quiet about.
+  { id = "RUSTSEC-2024-0429", reason = "glib 0.18 pinned by gtk 0.18 <- tauri; no upgrade exists; Linux-only, and unreachable from this workspace" },
+]
 
 [licenses]
 version = 2
