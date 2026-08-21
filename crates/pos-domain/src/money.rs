@@ -275,7 +275,7 @@ mod tests {
     proptest! {
         /// Blueprint §8: "splitting a tender never changes the total."
         #[test]
-        fn split_preserves_total(minor in 0i64..=1_000_000_000_000, parts in 1u32..=64) {
+        fn prop_split_preserves_total(minor in 0i64..=1_000_000_000_000, parts in 1u32..=64) {
             let m = Money::from_minor(minor);
             let pieces = m.split_evenly(parts).unwrap();
             prop_assert_eq!(pieces.len(), parts as usize);
@@ -290,7 +290,7 @@ mod tests {
 
         /// Addition round-trips: (a + b) - b == a whenever a + b doesn't overflow.
         #[test]
-        fn add_sub_roundtrip(a in -1_000_000_000_000i64..=1_000_000_000_000,
+        fn prop_add_sub_roundtrip(a in -1_000_000_000_000i64..=1_000_000_000_000,
                              b in -1_000_000_000_000i64..=1_000_000_000_000) {
             let (ma, mb) = (Money::from_minor(a), Money::from_minor(b));
             if let Ok(sum) = ma.checked_add(mb) {

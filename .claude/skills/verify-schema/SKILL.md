@@ -5,21 +5,35 @@ description: Execute every SQL block in docs/implementation/ref/schema.md agains
 
 # Verify the schema reference
 
-`ref/schema.md` is ~888 lines of DDL that nothing compiles. Prose SQL rots silently:
-a column referenced in one migration and never created in another reads perfectly
-and fails at runtime.
+`docs/implementation/ref/schema.md` is a thousand-odd lines of DDL that nothing
+compiles. Prose SQL rots silently: a column referenced in one migration and never
+created in another reads perfectly and fails at runtime.
 
 ## Run it
 
 ```bash
-./scripts/verify-schema.py            # the check
-./scripts/verify-schema.py --verbose  # name each block as it applies
+./scripts/verify-schema.py              # the check
+./scripts/verify-schema.py --verbose    # name each block as it applies
 ./scripts/verify-schema.py --self-test  # prove the checks still fire
 ```
 
-It applies `crates/pos-db/migrations/0001_init.sql` first, then every ` ```sql `
-block in `schema.md` in document order, against an in-memory database — so
-migration 0004's `ALTER TABLE` is checked against the table 0002 actually created.
+It runs **two passes** against separate in-memory databases:
+
+1. **Shipped.** Every migration in `crates/pos-db/migrations/`, in the order the
+   `PRAGMA user_version` runner applies them, audited on its own. This is what a
+   register runs today, so a failure here is the stronger signal — and it is
+   reported with a `[shipped migrations]` prefix.
+2. **Plan of record.** The same migrations, then every ` ```sql ` block in
+   `schema.md` in document order — so migration 0004's `ALTER TABLE` is checked
+   against the table 0002 actually created.
+
+The first pass exists because of gap G-12: layering the doc's *future* migrations
+on top hid a defect in a shipped one, because a migration that does not exist yet
+had already "fixed" it.
+
+Because the pass reads the directory rather than git, a migration you have just
+written but not committed is included — which makes this the check to run on a new
+migration, ahead of `just lint`.
 
 ## Reading the output
 
@@ -47,6 +61,11 @@ should trust.
 
 ## What it does not do
 
-It does not check the Postgres mirror, and it does not compare `schema.md` against
-the migrations actually committed in `crates/pos-db/migrations/`. Drift between the
-doc and the shipped migrations is still a human read.
+It does not touch the Postgres mirror — `./scripts/verify-pg-migrations.py` does
+that, and it both checks the declared SQLite↔Postgres mapping and applies the
+mirror to a real PostgreSQL server.
+
+It also does not *compare* `schema.md` against the shipped migrations. Each is
+audited against conventions §2 independently, so a doc that describes a table the
+migrations never created passes both passes. Drift between the doc and what
+shipped is still a human read.

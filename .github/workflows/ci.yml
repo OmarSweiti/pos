@@ -39,14 +39,15 @@ jobs:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/pos
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Tauri's Linux system deps (the src-tauri crate is a workspace member)
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
-            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config \
+            postgresql-client
 
       # rust-toolchain.toml is the single source of the pin, read here and handed
       # to the action. `@stable` would install stable and then let rustup silently
@@ -77,10 +78,23 @@ jobs:
       - name: Domain crate must stay acyclic
         run: ./scripts/check-domain-acyclic.py
 
-      # The schema reference is 888 lines of DDL that nothing compiles, and the
-      # shipped migrations are audited against conventions §2 in the same pass.
+      # ref/domain-api.md names every property test with a prop_ prefix, and
+      # microstep 1.1.5 verifies them with a filter. A dropped prefix makes that
+      # filter match nothing and report success on zero tests.
+      - name: Property tests are named prop_<invariant>
+        run: ./scripts/check-prop-test-names.py
+
+      # ref/schema.md is DDL that nothing compiles, and the shipped migrations are
+      # audited against conventions §2 in the same pass.
       - name: Schema reference and shipped migrations conform
         run: ./scripts/verify-schema.py
+
+      # The register's migrations are executed against real SQLite by the step
+      # above. Until this step existed, nothing executed the server's against real
+      # Postgres — the mirror was reviewed and never run. The Postgres service on
+      # this job is the server; the script creates its own scratch database.
+      - name: Postgres mirror is declared and applies to real PostgreSQL
+        run: ./scripts/verify-pg-migrations.py --verbose
 
   # The write guards are the enforcement this repository has instead of branch
   # protection, which the Free plan refuses. CLAUDE.md: "a guard nobody has seen
@@ -89,25 +103,42 @@ jobs:
   guards:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Write guards still refuse what they must
         run: ./.claude/hooks/test-protect-immutable.sh
+      - name: The documentation-link guard still reports a broken link
+        run: ./.claude/hooks/test-docs-links.sh
       - name: Git hooks still refuse what they must
         run: ./.githooks/test-hooks.sh
+      - name: The CI backstop still refuses an edited plan or migration
+        run: ./scripts/check-protected-paths.sh --self-test
       - name: The schema auditor's own checks still fire
         run: ./scripts/verify-schema.py --self-test
+      - name: The Postgres mapping audit's own checks still fire
+        run: ./scripts/verify-pg-migrations.py --self-test
+      - name: The logical-CSS check's own checks still fire
+        run: ./scripts/check-logical-css.sh --self-test
+      - name: The property-test-name check's own checks still fire
+        run: ./scripts/check-prop-test-names.py --self-test
 
   web:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4          # reads "packageManager" from package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6          # reads "packageManager" from package.json
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm biome ci --error-on-warnings .
+
+      # Conventions §10: RTL is the default direction, so a physical CSS side is a
+      # layout bug in Arabic that reviewing the English build cannot catch. biome's
+      # recommended preset knows nothing about Tailwind utilities or CSS sides.
+      - name: CSS logical properties only
+        run: ./scripts/check-logical-css.sh
+
       - run: pnpm -r --if-present test
       - run: pnpm -r --if-present build     # this is where `tsc` runs
 
@@ -128,7 +159,7 @@ jobs:
   supply-chain:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Rust advisories, licences, and duplicate/banned crates
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
@@ -136,8 +167,8 @@ jobs:
           # `cargo deny check --all-features` is not a valid invocation.
           command: check
 
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - name: npm advisories
@@ -159,7 +190,7 @@ jobs:
         platform: [macos-latest, windows-latest]
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Read the pinned toolchain
         id: pin
         shell: bash

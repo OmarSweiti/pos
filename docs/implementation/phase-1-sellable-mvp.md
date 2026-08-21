@@ -84,7 +84,7 @@ Per §1.3 of the API reference. `Qty::ONE == 1000`.
 ### 1.1.5 — Money property suite
 **Files:** `crates/pos-domain/src/money.rs`
 All eight properties from API reference §1.6. This is the layer that finds what you did not imagine; do not shortcut it.
-**Verify:** `cargo nextest run -p pos-domain money::prop_`
+**Verify:** `cargo nextest run -p pos-domain money::tests::prop_`
 
 ### 1.1.6 — `RoundingRule` and `RoundingDirection`
 **Files:** `crates/pos-domain/src/money.rs`

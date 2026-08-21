@@ -8,7 +8,8 @@ Law: `docs/implementation/01-conventions.md` §9. Target shapes: `docs/implement
 
 - **Never edit a committed migration.** Not for a typo. Not "it hasn't shipped yet." A new
   migration fixes it. A `PreToolUse` hook denies the write — if you hit it, the hook is working;
-  write the next migration instead of arguing with it.
+  write the next migration instead of arguing with it. **Deleting or renaming one is the same
+  edit**, and `.githooks/pre-commit` refuses that too.
 - **No down migrations.** The runner is a `PRAGMA user_version` counter with no down path, by
   design. The rollback story is restore-from-encrypted-backup.
 - **Register it in the same commit**: `crates/pos-db/migrations/NNNN_short_name.sql`, appended to
@@ -16,11 +17,37 @@ Law: `docs/implementation/01-conventions.md` §9. Target shapes: `docs/implement
 - **Naming is not optional.** `*_minor` money · `*_milli` quantities · `*_ppm` rates (16% =
   `160_000`) · `*_at` UTC ISO-8601 TEXT · `*_date` store-local `YYYY-MM-DD` · `is_*`/`has_*`
   INTEGER 0/1 · `<table>_id` BLOB(16) · enums TEXT + `CHECK (x IN (…))`.
-- **Run the DDL through real SQLite before committing** — `sqlite3 :memory: ".read <file>"`.
-  This is not theoretical: it is how a missing `product_id` was caught.
+- **Run the whole chain through real SQLite before committing** — `./scripts/verify-schema.py`.
+  It applies every file in `crates/pos-db/migrations/`, committed or not, in runner order, so
+  an `ALTER` against an earlier migration's table is actually checked. Do **not** hand-roll
+  `sqlite3 :memory: ".read …"` for this: it applies only the files you happen to name, and it
+  accepts a `REFERENCES ghost(id)` in silence. This is not theoretical — it is how a missing
+  `product_id` was caught.
 - **A shape change ships with its data migration in the same file**, plus a test that seeds the
   old shape, migrates, and asserts the new one.
-- **Postgres mirrors SQLite** in `apps/server/migrations/` — same number, same name, same
-  semantics. Divergence is a sync bug waiting.
 - **No path that `UPDATE`s a completed sale (I-4).** Not in DDL, not in a trigger, not in a
   repository method — not even a private one.
+
+## The Postgres mirror, and how the two are mapped
+
+`apps/server/migrations/` mirrors the register's schema with the **same semantics**, and
+`./scripts/verify-pg-migrations.py` checks it — the mapping on every run, and the SQL itself
+against a real PostgreSQL server whenever one is reachable.
+
+The numbers cannot match, so do not pretend they do: sqlx names its files
+`<timestamp>_<name>.sql`, and a timestamp is not `NNNN`. **The mapping is declared, not
+inferred.** Every Postgres migration carries one of these lines in its header comment:
+
+```sql
+-- Mirrors SQLite 0002_sale_integrity.sql (conventions §9 rule 4).
+-- Server-only: <why nothing on the register corresponds>.
+```
+
+The name may differ too, and often should: `0002_sale_integrity` is mirrored by
+`20260820120000_change_sequence`, because the register's half of that migration was
+trigger-enforced sale immutability and the server's half was the change sequence those triggers
+imply. A mirror is the same *semantics*, not the same file with a different extension.
+
+A migration for an entity that never syncs has no mirror at all. Record it in `REGISTER_LOCAL`
+in `scripts/verify-pg-migrations.py` with the reason, rather than committing an empty file that
+claims a mirror exists.

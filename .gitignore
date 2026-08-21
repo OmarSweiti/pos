@@ -12,6 +12,17 @@ dist/
 .env.*
 !.env.example
 
+# Registry and package-manager credentials. An .npmrc or a cargo token in history
+# is a rotation, not a revert — and each of these is a file a tool writes for you,
+# in the repository root, without asking.
+.npmrc
+.netrc
+_netrc
+.git-credentials
+.cargo/credentials
+.cargo/credentials.toml
+.docker/config.json
+
 # Databases & artifacts
 *.sqlite
 *.sqlite3
@@ -31,3 +42,7 @@ apps/terminal/src-tauri/gen/schemas
 
 # Claude Code — machine-local settings (project settings.json IS committed)
 .claude/settings.local.json
+# Per-developer notes and scratch worktrees. `*.local` above does not cover
+# CLAUDE.local.md, which ends in .md.
+CLAUDE.local.md
+.claude/worktrees/

@@ -23,6 +23,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The immutability rules are enforced locally by .claude/hooks/protect-immutable.py
+  # and .githooks/pre-commit, and both of those live on a developer's machine: the
+  # Claude hook fails open by design, and `git commit --no-verify` is one flag. This
+  # job asks the same question of the merge candidate, where nothing local reaches.
+  protected-paths:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0          # the check diffs two revisions
+      - name: No PR may edit a source plan or a committed migration
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: ./scripts/check-protected-paths.sh "$BASE_SHA" "$HEAD_SHA"
+
   topology:
     runs-on: ubuntu-latest
     steps:

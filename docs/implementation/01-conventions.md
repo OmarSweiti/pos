@@ -183,7 +183,7 @@ Rules:
 1. `crates/pos-db/migrations/NNNN_name.sql`, appended to the `MIGRATIONS` array in order. **Never edit a committed migration.** Not to fix a typo. Not "it hasn't shipped yet."
 2. Every migration is idempotent under the runner (the runner guarantees each runs once; the SQL must not assume more).
 3. A migration that changes the shape of existing data ships with a data migration in the same file and a test that seeds the old shape, migrates, and asserts the new one.
-4. Postgres mirrors SQLite in `apps/server/migrations/` via sqlx, same number, same name, same semantics. Divergence is a sync bug waiting.
+4. Postgres mirrors SQLite in `apps/server/migrations/` via sqlx, **same semantics**. The numbers cannot match — sqlx names files `<timestamp>_<name>.sql` — so the mapping is *declared*, not inferred: every mirror opens with `-- Mirrors SQLite NNNN_name.sql` or `-- Server-only: <why>`, and `./scripts/verify-pg-migrations.py` checks it both ways and applies the mirror to a real PostgreSQL server. The name may differ where the server's half of the work differs. A register-local entity gets no mirror at all — record it in `REGISTER_LOCAL` in that script rather than committing an empty file. Undeclared divergence is a sync bug waiting.
 5. The app **refuses to start on a half-migrated database** (E.58) and says so — it does not guess.
 
 ---
@@ -192,7 +192,7 @@ Rules:
 
 Arabic is not a translation of this product. It is the product; English is the toggle.
 
-- **Direction:** the app is RTL by default. `<html dir="rtl" lang="ar">`; the English toggle flips `dir`/`lang` only. Every layout uses **CSS logical properties** — `margin-inline-start`, not `margin-left`; `inset-inline-end`, not `right`. Tailwind's `ps-*`/`pe-*`/`ms-*`/`me-*`/`start-*`/`end-*` throughout; `pl-*`/`left-*` is a lint failure.
+- **Direction:** the app is RTL by default. `<html dir="rtl" lang="ar">`; the English toggle flips `dir`/`lang` only. Every layout uses **CSS logical properties** — `margin-inline-start`, not `margin-left`; `inset-inline-end`, not `right`. Tailwind's `ps-*`/`pe-*`/`ms-*`/`me-*`/`start-*`/`end-*` throughout; `pl-*`/`left-*` is a lint failure — `./scripts/check-logical-css.sh`, in `just lint` and CI's `web` job. Biome's recommended preset knows nothing about Tailwind utilities or CSS sides, so until that script existed this rule was written down and unenforced. A case that really is physical carries `physical-ok: <reason>` on the line.
 - **Numerals:** Western Arabic digits (0–9) everywhere. That is Jordanian retail practice; Eastern Arabic-Indic digits on a receipt confuse more than they serve.
 - **Catalog:** a typed message catalog, keys as §2, `ar` and `en` files kept in lockstep by a test that fails when a key exists in one and not the other. The catalog is the single source for UI strings; a string literal in a component is a lint failure.
 - **Money and dates render through one function.** `formatMoney(minor, currency, locale)` and `formatDate(iso, tz, locale)` — never `toLocaleString` scattered inline, because display precision (2 vs 3 decimals, B.5) is a store setting.

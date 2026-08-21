@@ -5,7 +5,8 @@ description: Add a database migration correctly — next number, conventions §2
 
 # Add a migration
 
-Law: `docs/implementation/01-conventions.md` §9. Target shapes: `ref/schema.md`.
+Law: `docs/implementation/01-conventions.md` §9.
+Target shapes: `docs/implementation/ref/schema.md`.
 **Forward-only, append-only.** A committed migration is never edited — a
 `PreToolUse` hook enforces it, and if you hit that denial the answer is a new file,
 never an argument with the hook.
@@ -24,8 +25,9 @@ hasn't shipped yet."
 ## 2 · Write the SQL
 
 `crates/pos-db/migrations/NNNN_short_name.sql`. Check the intended shape in
-`ref/schema.md` first — migrations 0002–0012 are already specified there, and
-deviating from the doc without updating it turns the reference into a liability.
+`docs/implementation/ref/schema.md` first — migrations 0002–0012 are already
+specified there, and deviating from the doc without updating it turns the
+reference into a liability.
 
 Naming is not optional (§2):
 
@@ -43,17 +45,20 @@ Naming is not optional (§2):
 No `REAL`/`FLOAT`/`NUMERIC` column, ever (I-1). No path that `UPDATE`s a completed
 sale (I-4) — not in DDL, not in a trigger.
 
-## 3 · Run it through real SQLite before committing
+## 3 · Run the whole chain through real SQLite before committing
 
 ```bash
-sqlite3 :memory: ".read crates/pos-db/migrations/0001_init.sql" \
-                 ".read crates/pos-db/migrations/NNNN_short_name.sql"
+./scripts/verify-schema.py --verbose
 ```
 
-Apply the earlier migrations too when yours `ALTER`s their tables — SQLite will not
-tell you a column is missing until it runs. Note what this does **not** catch: a
-`REFERENCES ghost(id)` to a table nothing creates is accepted silently. For that,
-and for the naming audit, run `./scripts/verify-schema.py`.
+This applies **every** file in `crates/pos-db/migrations/` — including the one you
+just wrote, because the pass reads the directory rather than git — in the order the
+`PRAGMA user_version` runner applies them. That matters when yours `ALTER`s an
+earlier migration's table: SQLite will not tell you a column is missing until it
+runs, and a hand-written `sqlite3 :memory: ".read …"` applies only the files you
+remembered to name. It also catches what plain `.read` cannot — a
+`REFERENCES ghost(id)` to a table nothing creates, which raw SQLite accepts in
+silence — and audits every new column against the naming table above.
 
 ## 4 · Register it
 
@@ -71,26 +76,46 @@ version. Inserting rather than appending silently re-numbers every later migrati
 
 ## 5 · Mirror it on Postgres
 
-`apps/server/migrations/`, same snake_case name, same semantics (§9 rule 4).
-Note the friction: sqlx names files with a timestamp, so the SQLite number and the
-Postgres number cannot literally match. Use the same name and record the SQLite
-number in a header comment. If the entity is register-local and never syncs, say so
-in the commit message instead of writing an empty mirror.
+`apps/server/migrations/`, same **semantics** (§9 rule 4). sqlx names files with a
+timestamp, so the numbers cannot match and the mapping is *declared* rather than
+inferred. Open the new file with one of these, and `verify-pg-migrations.py` will
+check it:
+
+```sql
+-- Mirrors SQLite NNNN_short_name.sql (conventions §9 rule 4).
+-- Server-only: <why nothing on the register corresponds>.
+```
+
+The name may differ too when the server's half of the work is different — see
+`20260820120000_change_sequence.sql`, which mirrors `0002_sale_integrity.sql`.
+
+If the entity is register-local and never syncs, do not write an empty mirror: add
+it to `REGISTER_LOCAL` in `scripts/verify-pg-migrations.py` with the reason.
+
+Then check it against a real server:
+
+```bash
+./scripts/verify-pg-migrations.py --verbose
+```
+
+It uses `$DATABASE_URL` when one is set and a throwaway Docker container otherwise.
+With neither it audits the mapping, says it skipped the engine pass, and leaves the
+real check to CI — which is not the same as passing.
 
 ## 6 · Test it, if the shape changed
 
 A migration that changes existing data ships with the data migration **in the same
 file** plus a test that seeds the old shape, migrates, and asserts the new one
 (§9 rule 3). `crates/pos-db/tests/`. The `sale_line.qty` → `qty_milli` fix (G-12,
-`ref/schema.md`) is the worked example: existing rows are unit counts and must be
+`docs/implementation/ref/schema.md`) is the worked example: existing rows are unit counts and must be
 multiplied by 1000, so a migration without a data step corrupts every historical
 sale by a factor of a thousand.
 
 ## 7 · Close it out
 
 ```bash
-just lint && just test
-./scripts/verify-schema.py
+just lint && just test    # lint runs verify-schema.py and the mapping audit
+just verify-pg            # the mirror against a real PostgreSQL server
 ```
 
 Commit with the microstep number: `feat(db): stock ledger tables   [1.10.1]`.

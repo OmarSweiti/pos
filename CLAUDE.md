@@ -54,15 +54,22 @@ Not style preferences. Each one, violated, produces a class of bug that costs mo
 ## Quality gates
 
 ```bash
-just lint     # fmt --check · clippy -D warnings · acyclic · schema · biome ci · doc-links
-just test     # cargo nextest --workspace · pnpm -r test
-just audit    # cargo-deny advisories/licences · pnpm audit
-just guards   # prove the write guards still refuse
-just pre-push # all of the above
-just setup    # after pulling
+just lint       # fmt --check · clippy -D warnings · acyclic · schema · pg-mapping · logical-css · prop-names · biome ci · doc-links
+just test       # cargo nextest --workspace · pnpm -r test
+just guards     # prove the write guards still refuse
+just verify-pg  # the Postgres mirror, against a real server
+just pre-push   # lint · test · build-web · guards — the gate before a push
+just audit      # cargo-deny advisories/licences · pnpm audit
+just setup      # after pulling
 ```
 
-CI runs exactly these, so a green local `just pre-push` predicts a green build.
+`just pre-push` runs everything CI runs **except** `just audit`, which is left out on
+purpose: both halves reach the network and read advisory databases that change hourly, so
+it can fail a push that changed nothing. CI's `supply-chain` job is where that gate lives.
+Everything else in `pre-push` is hermetic, so a green local run predicts a green build.
+
+`just verify-pg` needs a Postgres — `$DATABASE_URL` or Docker. Without one it audits the
+SQLite↔Postgres mapping, says it skipped the engine pass, and leaves that to CI.
 `unwrap()` and `expect()` are **denied** outside tests and `main()`.
 
 ## What is enforced, not merely written down
@@ -73,15 +80,30 @@ when a matching file is read, so a Rust rule costs nothing while you edit React.
 
 | Guard | Refuses |
 |---|---|
-| `.claude/hooks/protect-immutable.py` | writing a **committed migration**, or anything in `docs/plan/` |
+| `.claude/hooks/protect-immutable.py` | writing, deleting, or moving a **committed migration** or anything in `docs/plan/` — via a write tool, or via a shell command from `Bash` or `Monitor` |
 | `.claude/hooks/docs-links-on-write.sh` | leaving a broken cross-reference in `docs/**.md` |
 | `.githooks/commit-msg` | a commit subject outside `<type>(<scope>): <summary>  [<step>]` |
-| `.githooks/pre-commit` | committing a key, an `.env`, a database file, or a committed migration |
+| `.githooks/pre-commit` | committing a key, an `.env`, a database file, or a change **or deletion** of a committed migration |
 | `.githooks/pre-push` | a direct push, force-push, or deletion of `main`/`staging`/`development` |
+| `scripts/check-protected-paths.sh` | a **pull request** that edits a source plan, or a migration that already existed in its base — the backstop nothing local can skip (`branch-flow.yml`) |
 
-All are negative-tested — `just guards` runs both suites
-(`.claude/hooks/test-protect-immutable.sh` and `.githooks/test-hooks.sh`). Run it after touching
-any of them. A guard nobody has seen fail is a guard nobody should trust.
+All are negative-tested — `just guards` runs every suite
+(`.claude/hooks/test-protect-immutable.sh`, `.claude/hooks/test-docs-links.sh`,
+`.githooks/test-hooks.sh`, and three `--self-test`s: `check-protected-paths.sh`,
+`verify-schema.py`, `verify-pg-migrations.py`). Run it after touching any of them.
+A guard nobody has seen fail is a guard nobody should trust.
+
+The shell arm of `protect-immutable.py` is defence in depth, not a proof: it follows `cd`,
+covers redirects, copy destinations, and PowerShell verbs, and protects both directories —
+but it cannot read an interpreter, so `python3 -c "open('docs/plan/x','w')"` gets through.
+Three other layers stand there: `.claude/settings.json` denies `Edit`/`Write` under
+`docs/plan/**` at the permission layer (which still holds when the hook does not run at all,
+and it *fails open* by design), `pre-commit` refuses the staged result, and
+`check-protected-paths.sh` refuses the pull request.
+
+**Known gap:** the hook *invocations* are POSIX — one calls `python3`, one is a `.sh`. On
+Windows without Git Bash neither runs, and a failed-open guard is a silent one. The CI
+backstop is the mitigation until someone develops on Windows.
 
 ## Where things live
 
@@ -96,6 +118,12 @@ apps/backoffice/       React admin
 packages/money/        the minor-unit rule, shared by both front ends
 ```
 
-Migrations are **forward-only** and are **never edited once committed**. Two are
-committed: `0001_init.sql`, and `0002_sale_integrity.sql`, which fixed `qty` →
-`qty_milli` (gap G-12) and put I-4 into triggers.
+Migrations are **forward-only** and are **never edited once committed** — deleting or renaming
+one counts as editing it. Two are committed: `0001_init.sql`, and `0002_sale_integrity.sql`,
+which fixed `qty` → `qty_milli` (gap G-12) and put I-4 into triggers.
+
+The Postgres mirror in `apps/server/migrations/` cannot share those numbers — sqlx names files
+by timestamp — so each mirror **declares** the SQLite migration it corresponds to in a header
+comment, and `./scripts/verify-pg-migrations.py` checks the declaration both ways. The names
+may differ where the server's half of the work differs: `20260820120000_change_sequence.sql`
+mirrors `0002_sale_integrity.sql`.

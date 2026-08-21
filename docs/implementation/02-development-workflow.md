@@ -234,12 +234,15 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just test` | `cargo nextest run --workspace` · `pnpm -r --if-present test` |
 | `just acyclic` | `pos-domain`'s module graph has no cycles |
 | `just docs-links` | no broken relative `.md` link under `docs/` |
-| `just verify-schema` | executes every SQL block in `ref/schema.md` against real SQLite |
+| `just verify-schema` | executes every shipped migration and every SQL block in `ref/schema.md` against real SQLite |
+| `just verify-pg` | the Postgres mirror's declared mapping, and the SQL against a real PostgreSQL server |
+| `just prop-names` | property tests are `prop_<invariant>` — the prefix microstep 1.1.5's verify filter depends on |
+| `just logical-css` | no physical CSS side in `apps/**` — §10 is RTL by default, so a physical side is a layout bug in Arabic |
 | `just guards` | the write guards **and** the git hooks still refuse what they must |
 | `just build-web` | `pnpm -r --if-present build` — **the only place `tsc` runs** |
 | `just pre-push` | `lint` + `test` + `build-web` + `guards` |
-| `just branch <name>` | fresh `development`, then a branch off it |
-| `just pr` | gates → push → PR into `development` → watch CI |
+| `just branch <name>` | fresh `development`, then a branch off it — **needs a clean tree** (§4.2) |
+| `just pr [title] [body-file]` | gates → push → PR into `development` → watch CI. Pass the title on a branch with more than one commit (§4.12) |
 | `just flow` | what is on `development` but not `staging`, and on `staging` but not `main` |
 | `just promote-staging` | PR: `development` → `staging` (a release candidate) |
 | `just promote-main` | PR: `staging` → `main` (production) |
@@ -296,6 +299,27 @@ commit unit.
 just branch phase-1/group-3-tax     # git switch development && pull --ff-only && switch -c
 ```
 
+**`just branch` needs a clean tree.** It switches to `development` first, and git refuses that
+switch when your uncommitted edits touch a file that differs between the two branches. When you
+have already started work — the common case, because you rarely know it is a separate branch until
+you are in it — carry it across by hand:
+
+```bash
+git stash push -u -m "wip"          # -u: without it, NEW untracked files stay behind
+git switch development && git pull --ff-only
+git switch -c chore/<slug>
+git stash pop                       # conflicts surface here, not later
+```
+
+**Check what you are branching off, not just what you are branching to.** If the branch you are
+standing on has commits that are not yet on `development`, branching from where you stand drags
+them into your PR:
+
+```bash
+git merge-base --is-ancestor HEAD origin/development && echo "already integrated" || \
+  git log --oneline origin/development..HEAD          # these would come along
+```
+
 Naming: `phase-<n>/group-<m>-<slug>`. Fixes that are not part of a group:
 `fix/<slug>`, `chore/<slug>`, `docs/<slug>`. The `branch-flow` check refuses a name outside the
 scheme, and `.githooks/pre-push` refuses a direct push to any of the three long-lived branches.
@@ -349,12 +373,17 @@ Use the `add-migration` skill — it does the whole sequence correctly. By hand 
 ```bash
 ls crates/pos-db/migrations/                                   # next number, no gaps
 # author crates/pos-db/migrations/000N_short_name.sql from ref/schema.md
-sqlite3 :memory: ".read crates/pos-db/migrations/000N_short_name.sql" ".tables"   # dry-run
+just verify-schema                                             # applies the WHOLE chain, yours included
 # append the include_str! entry to MIGRATIONS in crates/pos-db/src/lib.rs
-# mirror it in apps/server/migrations/ — same number, same name, same semantics
+# mirror it in apps/server/migrations/ — same semantics, with a header comment
+# saying "Mirrors SQLite 000N_short_name.sql"; the numbers cannot match
+just verify-pg                                                 # the mirror, on a real server
 cargo nextest run -p pos-db                                    # migrations + round-trip
-just verify-schema                                             # schema.md and the migrations agree
 ```
+
+`just verify-schema` replaces the `sqlite3 :memory: ".read …"` dry-run that used to be here.
+That command applied only the files you named — so an `ALTER` against an earlier migration's
+table went unchecked — and it accepts a `REFERENCES ghost(id)` in silence.
 
 Non-negotiables, from conventions §9 and `.claude/rules/sql-migrations.md`:
 
@@ -460,10 +489,37 @@ Summary in the imperative, no trailing period, ≤ 72 characters before the step
 The body — when the change deserves one — answers **why**, not what. The diff already says what.
 Mention the invariant, the `E.n` case, or the correction (`C-1`…`C-4`) that forced the design.
 
+**Check the subjects before you write any of them.** `commit-msg` is a plain script, so you can
+call it on a file. Finding out mid-commit that a subject is two characters too long is avoidable:
+
+```bash
+f=$(mktemp); printf '%s\n' 'feat(domain): tax engine   [1.3.4]' > "$f"
+.githooks/commit-msg "$f" && echo legal; rm -f "$f"
+```
+
+**Use `-F <file>` when the message describes a destructive command.** The write guard
+(`.claude/hooks/protect-immutable.py`) scans the whole shell command, and a heredoc puts the
+message text inside it — so a body explaining that you fixed the handling of, say, removing a plan
+directory gets refused, having named a protected path next to a write verb. Writing the message to
+a file first sidesteps it entirely, and is better practice for a long body anyway:
+
+```bash
+git add <only the files for this one concern>     # never `git add -A`
+git commit -F .git/COMMIT_DRAFT
+```
+
+**Before the push, check whose commits these are.** `just setup` sets the identity per clone, but a
+fresh clone that skipped it inherits whatever the machine's global config says:
+
+```bash
+git log development..HEAD --format='%an <%ae>' | sort -u              # expect one line
+git log development..HEAD --format='%B' | grep -iE '^co-authored-by|generated with'   # expect nothing
+```
+
 ### 4.12 Push, CI, review, merge
 
 ```bash
-just pr                                 # pre-push, push, PR into development, watch CI
+just pr 'feat(domain): tax engine, inclusive + exclusive extraction   [1.3.4]'
 gh pr merge --squash --delete-branch    # only when green
 ```
 
@@ -472,14 +528,22 @@ Longhand, when you want to see it:
 ```bash
 just pre-push
 git push -u origin phase-1/group-3-tax
-gh pr create --base development --fill-first
-gh pr checks --watch                    # rust · web · topology
+gh pr create --base development --title '<conventions §8 subject>' --body-file notes/pr.md
+gh pr checks --watch                    # rust · web · guards · protected-paths · topology
 gh pr merge --squash --delete-branch    # only when green
 ```
 
 **The PR title becomes the commit.** A squash-merge discards your commit subjects and commits the
 PR *title*, so the title obeys conventions §8 — and the `branch-flow` check enforces exactly that.
 Your microstep messages survive in the squash body, which is where they belong.
+
+**Which is why `just pr` takes the title.** Bare `just pr` fills it from the *first commit* on the
+branch (`gh pr create --fill-first`). On a one-commit branch that is exactly right. On a branch
+carrying a group of microsteps it is wrong in a way that is easy to miss: `development` gets a
+commit describing microstep one and standing for all seven. Pass the title whenever the branch has
+more than one commit, and `just pr` runs it through `commit-msg` before pushing anything, because
+that is what it becomes. A second argument is a body file when the change deserves prose; without
+one, the body is the list of microstep subjects.
 
 A PR description that a reviewer (or you, in three months) can act on:
 
@@ -508,6 +572,18 @@ Reduced-rate seeding — that is a merchant decision (#10), tracked in ref/merch
 Squash-merge, so `development` gets one commit per group with the microsteps in the body. Delete
 the branch. Never merge red: a red `development` means the next person cannot tell whether they
 broke it.
+
+**Read the log of any check that can skip.** A green tick means the job exited 0, which is not the
+same as the check having run. `verify-pg-migrations.py` exits 0 and prints `SKIPPED` when no
+Postgres is reachable — by design, because a check that cannot run must not look like one that
+passed. Once per gate, confirm from the log that it did the work:
+
+```bash
+gh run view --job <job-id> --log | grep -E 'engine:|SKIPPED'
+```
+
+The same applies to `pnpm -r --if-present test`, which is why CI has `report-test-coverage.sh`:
+`--if-present` makes a package with no test script indistinguishable from one that passed.
 
 Promotion — `development → staging → main` — is a different act with a different merge button, and
 it is [`03-github-workflow.md`](03-github-workflow.md) §2 and §6. The short version: **a promotion
@@ -905,6 +981,8 @@ on this plan — [`03-github-workflow.md`](03-github-workflow.md) §8.
 | biome passes locally, fails in CI | `biome ci --error-on-warnings` is stricter than `biome check`; `just lint` uses the CI form |
 | doc-links fails | a renamed or deleted `.md`; `just docs-links` names the file and the target |
 | a build fails on Linux only | a Tauri system dependency; the workflow's `apt-get` list is the reference |
+| `supply-chain` fails and nothing local did | expected: `just pre-push` deliberately omits `just audit`, because both halves reach the network and read advisory databases that change hourly. Run `just audit` to see it |
+| the Postgres mirror fails only in CI | `just verify-pg` skips the engine pass with no `$DATABASE_URL` and no Docker. `just db-up` first, or read the skip line — it is not a pass |
 
 **Flake policy: there isn't one.** A flaky test in a money system is worse than no test, because it
 teaches you to ignore red. Quarantine it in the same hour — either make it deterministic or delete
