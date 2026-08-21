@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Execute every SQL block in ref/schema.md against real SQLite, then audit it.
 
-The schema reference is 888 lines of DDL that nothing compiles. Prose SQL rots:
-a column referenced in one migration and never created in another reads fine and
-fails at runtime. This applies the whole set to an in-memory database, in order,
+The schema reference is a thousand-odd lines of DDL that nothing compiles. Prose
+SQL rots: a column referenced in one migration and never created in another reads
+fine and fails at runtime. This applies the whole set to an in-memory database, in
+order,
 and then asserts the naming and type rules from 01-conventions.md §2 against the
 *result* — PRAGMA table_info, not a regex over the text.
 

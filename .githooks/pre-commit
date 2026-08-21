@@ -4,8 +4,15 @@
 # and the path .gitignore did not anticipate.
 set -uo pipefail
 
+# Two lists, because the two checks below ask different questions. The
+# never-committed list cares about content *arriving*, so ACMR is right. The
+# committed-migration check cares about the file changing at all — and a
+# deletion is the widest possible change to a forward-only migration, which
+# ACMR never showed. That gap meant `git rm` walked past both this hook and the
+# Claude write guard.
 staged=$(git diff --cached --name-only --diff-filter=ACMR)
-[ -z "$staged" ] && exit 0
+touched=$(git diff --cached --name-status --diff-filter=ACMRD)
+[ -z "$staged" ] && [ -z "$touched" ] && exit 0
 refuse=0
 
 while IFS= read -r f; do
@@ -43,17 +50,25 @@ done <<< "$staged"
 
 # The five permanent exceptions include editing a committed migration. The Claude
 # write guard refuses this too; a guard on one path only is not a guard.
-while IFS= read -r f; do
+#
+# A rename reports `R100 <old> <new>`, so reading the first path catches moving a
+# committed migration as well as editing or deleting one.
+while IFS=$'\t' read -r status f _rest; do
+  [ -z "${f:-}" ] && continue
   case "$f" in
-    crates/pos-db/migrations/*|apps/server/migrations/*)
-      if git ls-tree -r --name-only HEAD 2>/dev/null | grep -qxF "$f"; then
-        if ! git diff --cached --quiet -- "$f"; then
-          echo "pre-commit: REFUSED — $f is a COMMITTED migration. Forward-only: write the next one."
-          refuse=1
-        fi
-      fi ;;
+    crates/pos-db/migrations/*|apps/server/migrations/*) ;;
+    *) continue ;;
   esac
-done <<< "$staged"
+  git ls-tree -r --name-only HEAD 2>/dev/null | grep -qxF "$f" || continue
+  if [ "$status" = "D" ]; then
+    echo "pre-commit: REFUSED — $f is a COMMITTED migration and this DELETES it."
+    echo "            Forward-only means the file stays. Databases in the field have"
+    echo "            applied it; a later migration undoes its effect, a deletion cannot."
+  else
+    echo "pre-commit: REFUSED — $f is a COMMITTED migration. Forward-only: write the next one."
+  fi
+  refuse=1
+done < <(printf '%s\n' "$touched")
 
 if [ "$refuse" -ne 0 ]; then
   echo
