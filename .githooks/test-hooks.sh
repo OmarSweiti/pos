@@ -260,6 +260,51 @@ expect_commit 1 "a generated Tauri schema" "apps/terminal/src-tauri/gen/schemas/
 expect_commit 1 "a build artefact"         "target/debug/thing"
 expect_commit 0 "ordinary source"          "crates/pos-domain/src/tax.rs"  "fn main() {}"
 
+# expect_migration <expected-exit> <label> <action run on the fixture tree>
+#
+# A separate fixture because "committed" is the entire question: the hook must
+# refuse a change to a migration that is already in HEAD, and stay silent while
+# the next one is added beside it. Both migration directories are seeded, so the
+# server mirror is covered by the same cases as the register.
+expect_migration() {
+  local want="$1" label="$2" action="$3" got tmp
+  tmp=$(mktemp -d)
+  (
+    cd "$tmp" || exit 1
+    git init -q .
+    git config user.email t@t; git config user.name t
+    mkdir -p crates/pos-db/migrations apps/server/migrations
+    printf 'CREATE TABLE a (id BLOB);\n' > crates/pos-db/migrations/0001_init.sql
+    printf 'CREATE TABLE a (id UUID);\n' > apps/server/migrations/20260819200319_init.sql
+    git add -A >/dev/null 2>&1
+    git commit -q --no-verify -m seed >/dev/null 2>&1
+    eval "$action" >/dev/null 2>&1
+    "$HOOKS/pre-commit" >/dev/null 2>&1
+  )
+  got=$?
+  rm -rf "$tmp"
+  [ "$got" -eq "$want" ] && ok "$label" || bad "$label (wanted exit $want, got $got)"
+}
+
+echo "pre-commit — a committed migration is forward-only (conventions §9)"
+expect_migration 1 "editing a committed migration" \
+  'printf "ALTER TABLE a ADD b TEXT;\n" >> crates/pos-db/migrations/0001_init.sql; git add -A'
+# The deletion cases are why this block exists. `--diff-filter=ACMR` never
+# reported a removal, so `git rm` on a committed migration passed this hook and
+# the Claude write guard both, and the file left the tree unremarked.
+expect_migration 1 "git rm on a committed migration" \
+  'git rm -q crates/pos-db/migrations/0001_init.sql'
+expect_migration 1 "rm then stage the deletion" \
+  'rm crates/pos-db/migrations/0001_init.sql; git add -A'
+expect_migration 1 "renaming a committed migration" \
+  'git mv crates/pos-db/migrations/0001_init.sql crates/pos-db/migrations/0001_initial.sql'
+expect_migration 1 "deleting the Postgres mirror" \
+  'git rm -q apps/server/migrations/20260819200319_init.sql'
+expect_migration 0 "adding the NEXT migration beside it" \
+  'printf "CREATE TABLE b (id BLOB);\n" > crates/pos-db/migrations/0002_next.sql; git add -A'
+expect_migration 0 "deleting an UNCOMMITTED migration" \
+  'printf "x\n" > crates/pos-db/migrations/0002_next.sql; git add -A; rm crates/pos-db/migrations/0002_next.sql; git add -A'
+
 echo
 if [ "$fail" -ne 0 ]; then
   echo "git hooks: $pass passed, $fail FAILED"
