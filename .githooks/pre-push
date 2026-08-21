@@ -25,8 +25,25 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   # new remote branch that no branch rule covers. --mirror is not the only vector.
   # This scan is bounded to commits origin does not already have, so it is cheap.
   if [ "$local_sha" != "$zero" ]; then
-    if git log "$local_sha" --not --remotes=origin --format='%B' 2>/dev/null \
-       | grep -qiE '^[[:space:]]*Co-authored-by:.*<[^>]*(anthropic\.com|copilot@|\[bot\]@|\[bot\]>)'; then
+    # Read the log into a variable first, and count matches rather than asking
+    # `grep -q` whether there was one.
+    #
+    # This used to be `git log ... | grep -qiE ...` directly in the `if`, which
+    # was WRONG under `set -o pipefail` — and wrong in the direction that lets a
+    # trailer through. `grep -q` exits the moment it matches, which closes the
+    # pipe; `git log` then dies of SIGPIPE with status 141; pipefail reports the
+    # pipeline as 141, and the `if` reads that as "no match found". The guard
+    # then said nothing and returned 0 on a branch that genuinely carried an
+    # agent trailer. Whether it fired at all depended on whether git finished
+    # writing before grep stopped reading — a race, which is why it passed for
+    # weeks and then failed once the fixture changed size.
+    #
+    # `grep -c` reads its input to the end, so nothing gets SIGPIPE'd, and the
+    # count is the answer rather than a side effect of process scheduling.
+    attributed_log=$(git log "$local_sha" --not --remotes=origin --format='%B' 2>/dev/null || true)
+    attributed_hits=$(printf '%s\n' "$attributed_log" \
+      | grep -ciE '^[[:space:]]*Co-authored-by:.*<[^>]*(anthropic\.com|copilot@|\[bot\]@|\[bot\]>)' || true)
+    if [ "${attributed_hits:-0}" -gt 0 ]; then
       echo "pre-push: REFUSED — '$branch' carries agent-attribution trailers in commits"
       echo "          that origin does not have. Publishing them undoes the rewrite that"
       echo "          removed them (user instruction, 2026-08-20)."
