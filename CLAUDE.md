@@ -54,7 +54,7 @@ Not style preferences. Each one, violated, produces a class of bug that costs mo
 ## Quality gates
 
 ```bash
-just lint       # fmt --check · clippy -D warnings · acyclic · schema · pg-mapping · logical-css · biome ci · doc-links
+just lint       # fmt --check · clippy -D warnings · acyclic · schema · pg-mapping · logical-css · prop-names · biome ci · doc-links
 just test       # cargo nextest --workspace · pnpm -r test
 just guards     # prove the write guards still refuse
 just verify-pg  # the Postgres mirror, against a real server

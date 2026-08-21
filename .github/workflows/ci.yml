@@ -78,6 +78,12 @@ jobs:
       - name: Domain crate must stay acyclic
         run: ./scripts/check-domain-acyclic.py
 
+      # ref/domain-api.md names every property test with a prop_ prefix, and
+      # microstep 1.1.5 verifies them with a filter. A dropped prefix makes that
+      # filter match nothing and report success on zero tests.
+      - name: Property tests are named prop_<invariant>
+        run: ./scripts/check-prop-test-names.py
+
       # ref/schema.md is DDL that nothing compiles, and the shipped migrations are
       # audited against conventions §2 in the same pass.
       - name: Schema reference and shipped migrations conform
@@ -112,6 +118,8 @@ jobs:
         run: ./scripts/verify-pg-migrations.py --self-test
       - name: The logical-CSS check's own checks still fire
         run: ./scripts/check-logical-css.sh --self-test
+      - name: The property-test-name check's own checks still fire
+        run: ./scripts/check-prop-test-names.py --self-test
 
   web:
     runs-on: ubuntu-latest

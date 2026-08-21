@@ -81,6 +81,11 @@ docs-links:
 logical-css:
     ./scripts/check-logical-css.sh
 
+# Property tests are prop_<invariant>; microstep 1.1.5 verifies the suite with a
+# filter, so a dropped prefix runs zero tests and calls it success.
+prop-names:
+    ./scripts/check-prop-test-names.py
+
 # pos-domain's module graph must stay acyclic (ref/domain-api.md §15)
 acyclic:
     ./scripts/check-domain-acyclic.py
@@ -119,6 +124,7 @@ lint:
     ./scripts/verify-schema.py
     ./scripts/verify-pg-migrations.py --mapping-only
     ./scripts/check-logical-css.sh
+    ./scripts/check-prop-test-names.py
     pnpm biome ci --error-on-warnings .
     ./scripts/check-doc-links.sh
 
@@ -135,6 +141,7 @@ guards:
     ./scripts/verify-schema.py --self-test
     ./scripts/verify-pg-migrations.py --self-test
     ./scripts/check-logical-css.sh --self-test
+    ./scripts/check-prop-test-names.py --self-test
 
 # `lint` is biome (style) and `test` is vitest, so a TypeScript type error passes
 # both and fails CI's `web` job instead. Mirrors that job's build step.
