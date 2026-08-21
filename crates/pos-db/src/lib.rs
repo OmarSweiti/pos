@@ -15,6 +15,8 @@ pub enum DbError {
     BadKey,
     #[error("keyring: {0}")]
     Keyring(#[from] keyring::Error),
+    #[error("could not generate a database key from the OS: {0}")]
+    KeyGeneration(String),
     #[error(
         "database schema is version {found}, but this build only knows {supported}; \
          it was written by a newer version of the application"
@@ -26,7 +28,14 @@ pub enum DbError {
 
 /// Ordered, forward-only migrations (blueprint §8). `PRAGMA user_version`
 /// tracks how many have been applied. Append new files; never edit old ones.
-const MIGRATIONS: &[&str] = &[include_str!("../migrations/0001_init.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("../migrations/0001_init.sql"),
+    include_str!("../migrations/0002_sale_integrity.sql"),
+];
+
+/// The schema version this build understands: the number of migrations it
+/// carries, and what `PRAGMA user_version` reads after a successful open.
+pub const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 
 /// Open (or create) an encrypted database and bring it to the latest schema.
 pub fn open(path: &Path, key: &str) -> Result<Connection, DbError> {

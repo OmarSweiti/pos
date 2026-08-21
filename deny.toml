@@ -1,0 +1,100 @@
+# cargo-deny — the supply-chain gate (CI job `supply-chain`).
+#
+# Dependabot proposes monthly version bumps. That is a maintenance rhythm, not a
+# security control: it says nothing about a crate that grew an advisory this
+# morning, nothing about a licence that would make this product unshippable, and
+# nothing about a dependency that quietly started coming from somewhere else.
+#
+# Run it the same way CI does:   cargo deny check --all-features
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+# A SECURITY advisory on any crate, at any depth, fails the build. That is the
+# gate and it is not negotiable.
+#
+# "Unmaintained" is a different claim and gets a different rule. Today it fires
+# on 16 crates, every one of them transitive through Tauri and GTK — the unic-*
+# Unicode set behind `urlpattern`, `proc-macro-error`, and the GTK3 bindings —
+# and RustSec says plainly of each: "No safe upgrade is available!". Denying
+# those would mean a permanently red gate that everyone learns to ignore, which
+# is worse than no gate. So: flag an unmaintained crate WE chose to depend on,
+# stay quiet about one Tauri chose. Revisit when Tauri moves off GTK3.
+unmaintained = "workspace"
+# Unsoundness is a third claim again, and the strictest of the three: it is
+# undefined behaviour that happens not to have a CVE number. Denied everywhere,
+# at any depth.
+#
+# This key defaults to `none`, which meant the paragraph above was overstating
+# the gate — RUSTSEC-2024-0429, undefined behaviour in `glib`, was passing
+# `cargo deny check` in silence while Dependabot reported it on the default
+# branch. A gate whose comment claims more than it does is worse than a missing
+# gate, because it is trusted.
+unsound = "all"
+# Every ignore is a decision with a name and a reason. An empty list is the goal;
+# an entry with no comment is a decision nobody made.
+ignore = [
+  # Unsoundness (UB) in the Iterator impls for `glib::VariantStrIter`, fixed in
+  # glib 0.20. This one cannot be taken: glib 0.18.5 is pinned by gtk 0.18,
+  # which is pinned by tauri, and `cargo update -p glib` locks 0 packages.
+  #
+  # Scope is narrower than the severity suggests. glib is in the LINUX graph
+  # only — `cargo tree -i glib --target x86_64-apple-darwin` finds nothing — so
+  # a macOS or Windows register never links it. Nothing in this workspace calls
+  # VariantStrIter; it is reachable only inside GTK's own variant handling.
+  #
+  # Revisit when Tauri moves off GTK3, which also closes 16 of the unmaintained
+  # advisories the rule above is quiet about.
+  { id = "RUSTSEC-2024-0429", reason = "glib 0.18 pinned by gtk 0.18 <- tauri; no upgrade exists; Linux-only, and unreachable from this workspace" },
+]
+
+[licenses]
+version = 2
+# Permissive licences only. This is a commercial, closed-source product sold to
+# merchants: a copyleft dependency in the register binary is a legal problem
+# discovered at exactly the wrong moment, so it fails the build instead.
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "Unicode-3.0",
+  "Unlicense",
+  "BSL-1.0",
+  "CC0-1.0",
+  # webpki-roots ships Mozilla's CA root store under a data licence, not a code
+  # one. Permissive, and the alternative is not verifying TLS certificates.
+  "CDLA-Permissive-2.0",
+  # SQLCipher is built against vendored OpenSSL (see rusqlite's feature in the
+  # workspace manifest), so the OpenSSL licence is load-bearing here.
+  "OpenSSL",
+  # Weak copyleft, file-level. Safe to link; a MODIFIED MPL file must be
+  # published. We do not modify dependencies, so this is allowed and the rule is
+  # written down here rather than rediscovered.
+  "MPL-2.0",
+]
+confidence-threshold = 0.9
+# Our own crates are `publish = false` and proprietary (see workspace.package).
+# Auditing them against a list of open-source licences is asking the wrong
+# question — this rule is about what we DEPEND on.
+private = { ignore = true }
+
+[bans]
+# A duplicate version is usually harmless and occasionally the reason two halves
+# of the tree disagree about a type. Worth seeing, not worth blocking on.
+multiple-versions = "warn"
+wildcards = "deny"
+# `*` in a manifest means "whatever resolves today", which is the opposite of a
+# lockfile. Workspace-internal path dependencies are exempt.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

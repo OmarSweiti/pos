@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: The plan — what to build, and in what order
+    url: https://github.com/OmarSweiti/pos/blob/development/docs/implementation/README.md
+    about: Microsteps are already written. Read the phase file before opening an issue.
+  - name: The engineering law
+    url: https://github.com/OmarSweiti/pos/blob/development/docs/implementation/01-conventions.md
+    about: Nine invariants, naming, errors, testing, definition of done.
+  - name: A merchant question, not an engineering one
+    url: https://github.com/OmarSweiti/pos/blob/development/docs/implementation/ref/merchant-decisions.md
+    about: Use the "Merchant decision" form so the answer lands in the questionnaire.

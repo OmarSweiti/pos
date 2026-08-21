@@ -3,8 +3,69 @@ on:
   push:
     tags: ["v*"]
 
+# Two channels, one workflow:
+#   v0.2.0-rc.1  tagged on staging  → a PRE-release, for the pilot channel
+#   v0.2.0       tagged on main     → a production draft release
+# A tag is immutable. A bad build is a new patch, never a moved tag.
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false        # never cancel a release build
+
 jobs:
+  # Three platform builds cost real money on a private Free-plan repo (macOS
+  # bills at 10x). Refusing a mistagged commit before the matrix starts is the
+  # cheapest check in this repository.
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      prerelease: ${{ steps.channel.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: The tag decides the channel
+        id: channel
+        run: |
+          set -uo pipefail
+          tag="${GITHUB_REF_NAME}"
+          case "$tag" in
+            *-*) echo "prerelease=true"  >> "$GITHUB_OUTPUT"; channel=staging ;;
+            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT"; channel=main ;;
+          esac
+          echo "tag=$tag channel=$channel"
+          echo "expected_branch=$channel" >> "$GITHUB_ENV"
+
+      - name: A release tag must sit on its own branch
+        run: |
+          set -uo pipefail
+          branches=$(git branch -r --contains "$GITHUB_SHA" \
+                     | sed 's|origin/||' | tr -d ' ' | paste -sd, -)
+          echo "tagged commit is on: ${branches:-<nothing>}"
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" "origin/$expected_branch"; then
+            echo "::error::$GITHUB_REF_NAME is not an ancestor of origin/$expected_branch."
+            echo "::error::A final vX.Y.Z tag belongs on main; a -rc/-beta tag belongs on staging."
+            echo "::error::Delete the tag, promote properly, and tag again — do not move it."
+            exit 1
+          fi
+
+      - name: Version in the tag must match the version in the tree
+        run: |
+          set -uo pipefail
+          tag_ver="${GITHUB_REF_NAME#v}"
+          base_ver="${tag_ver%%-*}"                     # strip -rc.1
+          cargo_ver=$(sed -n 's/^version *= *"\(.*\)".*/\1/p' Cargo.toml | head -1)
+          tauri_ver=$(node -p "require('./apps/terminal/src-tauri/tauri.conf.json').version")
+          pkg_ver=$(node -p "require('./apps/terminal/package.json').version")
+          echo "tag=$base_ver  Cargo.toml=$cargo_ver  tauri.conf.json=$tauri_ver  package.json=$pkg_ver"
+          [ "$base_ver" = "$cargo_ver" ] || { echo "::error::tag disagrees with Cargo.toml"; exit 1; }
+          [ "$base_ver" = "$tauri_ver" ] || { echo "::error::tag disagrees with tauri.conf.json"; exit 1; }
+          # package.json is the fourth place the version lives and the one nothing
+          # was checking, so it is the one that drifts.
+          [ "$base_ver" = "$pkg_ver" ] || { echo "::error::tag disagrees with apps/terminal/package.json"; exit 1; }
+
   build:
+    needs: guard
     permissions:
       contents: write
     strategy:
@@ -26,8 +87,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config
-      - uses: dtolnay/rust-toolchain@stable
+      # rust-toolchain.toml is the single source of the pin — a release must not
+      # be the one build that silently used a different compiler.
+      - name: Read the pinned toolchain
+        id: pin
+        shell: bash
+        run: |
+          set -uo pipefail
+          channel=$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml | head -1)
+          [ -n "$channel" ] || { echo "::error::no channel in rust-toolchain.toml"; exit 1; }
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ steps.pin.outputs.channel }}
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - uses: Swatinem/rust-cache@v2
       - uses: pnpm/action-setup@v4
@@ -50,4 +122,5 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "POS Terminal ${{ github.ref_name }}"
           releaseDraft: true
+          prerelease: ${{ needs.guard.outputs.prerelease == 'true' }}
           args: ${{ matrix.args }}

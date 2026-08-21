@@ -1,0 +1,33 @@
+# Every path has an owner, so nothing merges unreviewed by someone who knows it.
+# One developer today: every line resolves to the same person. That is not pointless —
+# it is the file that stops being a formality the day a second developer arrives, and
+# GitHub will request the review automatically from then on.
+#
+# Enforcement note: "require review from Code Owners" is a branch-protection setting,
+# and branch protection is not available on a PRIVATE repository on the GitHub Free
+# plan. Until this repo is on Pro (or public), this file documents ownership and
+# auto-requests review; it does not block a merge. See docs/implementation/03-github-workflow.md §3.
+
+*                                   @OmarSweiti
+
+# The crown jewel. Purity and money rules are decided here, not negotiated in a PR.
+/crates/pos-domain/                 @OmarSweiti
+
+# Forward-only, never edited once committed. A write guard already refuses.
+/crates/pos-db/migrations/          @OmarSweiti
+/apps/server/migrations/            @OmarSweiti
+
+# The compliance surface.
+/docs/implementation/ref/security-compliance.md   @OmarSweiti
+/docs/implementation/ref/fiscal-jofotara.md       @OmarSweiti
+/docs/implementation/ref/tax-jordan.md            @OmarSweiti
+
+# Source documents — inputs, not working files. A write guard refuses edits.
+/docs/plan/                         @OmarSweiti
+
+# The gates themselves. Changing what CI enforces is a change to the law.
+/.github/                           @OmarSweiti
+/.githooks/                         @OmarSweiti
+/.claude/                           @OmarSweiti
+/justfile                           @OmarSweiti
+/scripts/                           @OmarSweiti

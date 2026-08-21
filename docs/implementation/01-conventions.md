@@ -18,7 +18,7 @@ JOD = 3 (1 dinar = 1000 fils). USD/EUR = 2. It is a column and a `Currency` fiel
 3 decimal places, same integer discipline as money. `1 unit = 1000`. Weighed goods (0.347 kg = `347`) and discrete goods (2 = `2000`) share one representation, so nothing branches on "is this weighed" in arithmetic.
 
 **I-4 · Completed sales are immutable.**
-No `UPDATE` on a `Complete` sale, ever. Corrections are new documents referencing the original. This is enforced by review, by a `#[test]` that greps the repositories for `UPDATE sale`, and by the absence of any repository method that could do it.
+No `UPDATE` on a `Complete` sale, ever. Corrections are new documents referencing the original. Enforced in the storage engine by the triggers in `0002_sale_integrity.sql` — which hold against a repository that has a bug in it, and against a hand-typed `sqlite3` session — and in the code by the absence of any repository method that could do it. `crates/pos-db/tests/sale_immutability.rs` holds both. The one deliberate exception is a tender's settlement columns: a semi-integrated card capture confirms after the sale closes, so `tender_state`/`captured_at` stay writable while the amount does not.
 
 **I-5 · Price and name are copied onto the sale line at capture time.**
 Reports and refunds read `sale_line`, never `product`. A refund six months later uses the price the customer paid, automatically, because it was never anywhere else.
@@ -151,9 +151,24 @@ test(fiscal): discount percentage round-trip property        [2.7.6]
 docs(impl): phase 2 fiscal conformance harness               [—]
 ```
 
-`type` ∈ `feat` `fix` `test` `docs` `chore` `refactor` `perf`. `scope` is the crate or app short name (`domain`, `db`, `sync`, `hardware`, `fiscal`, `terminal`, `server`, `backoffice`). One microstep, one commit, wherever possible — a bisect that lands on a microstep tells you exactly what broke.
+`type` ∈ `feat` `fix` `test` `docs` `chore` `refactor` `perf`. `scope` is the crate or app short name — `domain`, `db`, `sync`, `hardware`, `fiscal`, `terminal`, `server`, `backoffice` — plus `repo` for the workspace itself (gates, CI, tooling) and `impl` for the implementation doc set. The list is closed: `.githooks/commit-msg` refuses anything else, and so does the `branch-flow` check on a pull-request title. One microstep, one commit, wherever possible — a bisect that lands on a microstep tells you exactly what broke.
 
-Branch per group (`phase-1/group-3-tax`), squash-merge to `main`. `main` is always green and always sellable-or-earlier; there is no long-lived integration branch.
+**This whole format is a law, not a preference** — [`.githooks/commit-msg`](../../.githooks/commit-msg)
+refuses a subject that breaks it, and CI's `branch-flow` check refuses a pull-request title that
+does, because a squash-merge commits the title. Two more rules live in the same hook: the summary is
+≤ 72 characters before the step tag with no trailing period, and **no agent-attribution trailer ever
+enters this history** — no `Co-Authored-By` naming a machine identity, no "Generated with" line. That
+last one is decided by the trailer's *address*, not its display name, so a human co-author is never
+refused whatever they are called. Seven such trailers had to be rewritten out of the first nineteen
+commits once; that is why it is a gate now and not a habit.
+
+Branch per group (`phase-1/group-3-tax`), **from `development`**. The flow is
+`feature → development → staging → main`: a work PR is **squash-merged** into `development` and
+its *title* becomes the commit; a promotion PR (`development → staging`, `staging → main`) is
+merged with a **merge commit**, because squashing one forks the branches permanently.
+`development` is always green; `staging` is a tagged release candidate; `main` is what a merchant
+is running. The model and its enforcement are
+[`03-github-workflow.md`](03-github-workflow.md).
 
 ---
 
@@ -211,7 +226,7 @@ Full treatment in [`ref/security-compliance.md`](ref/security-compliance.md). Th
 - **Never log:** PAN, track data, CVV, PINs, PIN hashes, DB keys, JoFotara secrets, customer name/phone/email. Enforced by a scrubbing layer *and* a test that feeds known PII through the logger and asserts absence (G-8).
 - **Never store:** anything from a card except the PSP reference, the masked PAN the terminal returns for the receipt, and the scheme.
 - **Permissions are checked in Rust**, in the command handler, via the guard in §6 of the security doc. Hiding a button is UX. The check is security.
-- **The DB key lives in the OS credential store.** Never a file, never an env var in production. `POS_DB_KEY` exists for CI and dev only, and the release build refuses to honour it (microstep 1.8.5).
+- **The DB key lives in the OS credential store.** Never a file, never an env var in production. `POS_DB_KEY` exists for CI and dev only, and the release build refuses to honour it — `pos_db::key::honours_env_key()` is `cfg!(debug_assertions)`, and the policy is a pure function so a debug test can assert what a release build does. The refusal is ignore-and-continue, not an error: falling through to the credential store is the safer outcome, and a stray variable inherited from a shell must never stop a register from opening.
 - **Escalation is recorded distinctly from operation.** The approving manager's id is a different column from the operating cashier's, and a setting can require them to differ (E.52).
 
 ---

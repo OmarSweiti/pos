@@ -1,0 +1,40 @@
+name: Toolchain gap / tech debt
+description: A command that cannot work yet, a missing gate, or a known deferral. Mirrors §17.
+title: "chore: "
+labels: ["type: chore", "meta: toolchain gap"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        §17 of the development workflow is the honest list of what does not work yet.
+        Every row there names what closes it. So does this issue.
+  - type: textarea
+    id: gap
+    attributes:
+      label: The gap
+      placeholder: "`just verify-schema` fails — migration 0006 in ref/schema.md elides its FTS trigger bodies."
+    validations:
+      required: true
+  - type: textarea
+    id: cost
+    attributes:
+      label: What it costs to leave open
+      description: If the answer is "nothing", close this and delete the row instead.
+      placeholder: "verify-schema cannot join `just lint`, so schema drift is caught by hand or not at all."
+    validations:
+      required: true
+  - type: input
+    id: closed-by
+    attributes:
+      label: Closed by
+      description: The microstep, or the concrete piece of work.
+      placeholder: "writing that trigger block, then wiring verify-schema into `just lint`"
+    validations:
+      required: true
+  - type: checkboxes
+    id: gate
+    attributes:
+      label: Does closing this add a CI gate?
+      options:
+        - label: "Yes — and §9 of the development workflow gets the new row"
+        - label: "No"

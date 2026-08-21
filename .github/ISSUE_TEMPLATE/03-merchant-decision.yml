@@ -1,0 +1,45 @@
+name: Merchant decision
+description: A question only the merchant can answer. Never guess one of these in code.
+title: "decision: "
+labels: ["needs: merchant answer", "type: chore"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        These block correctly and cheaply. A guessed merchant decision is a rewrite in Phase 3.
+        The answer belongs in [`ref/merchant-decisions.md`](../../docs/implementation/ref/merchant-decisions.md) —
+        this issue exists to make the wait visible, not to store the answer.
+  - type: textarea
+    id: question
+    attributes:
+      label: The question, as a merchant would be asked it
+      description: No jargon. If it needs an invariant explained, it is the wrong wording.
+      placeholder: "When an item is sold below cost, should the register block it, warn the cashier, or allow it silently?"
+    validations:
+      required: true
+  - type: textarea
+    id: blocks
+    attributes:
+      label: What this blocks
+      description: Microsteps or groups that cannot be finished correctly without the answer.
+      placeholder: "1.4.6 (price override), and the audit row it writes"
+    validations:
+      required: true
+  - type: textarea
+    id: assumption
+    attributes:
+      label: The assumption in the code today
+      description: What is implemented while the answer is outstanding — and what it costs to change later.
+      placeholder: "Warns and requires a supervisor PIN. Changing to silent-allow is a UI change only."
+    validations:
+      required: true
+  - type: dropdown
+    id: cost
+    attributes:
+      label: Cost of being wrong
+      options:
+        - "Low — UI copy or a config default"
+        - "Medium — a code path, no stored data changes"
+        - "High — the schema, a stored document, or a fiscal submission"
+    validations:
+      required: true

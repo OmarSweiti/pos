@@ -3,6 +3,8 @@ name = "pos-db"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
 
 [lints]
 workspace = true
@@ -10,6 +12,7 @@ workspace = true
 [dependencies]
 rusqlite.workspace = true
 keyring.workspace = true
+getrandom.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 

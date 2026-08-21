@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# Refuses a direct push to a protected branch, and any force-push to one.
+#
+# WHY THIS EXISTS: branch protection and rulesets are not available on a PRIVATE
+# repository on the GitHub Free plan — the API answers 403 "Upgrade to GitHub Pro
+# or make this repository public". This hook is the local stand-in. It is weaker
+# on purpose-of-fact: a hook lives on one machine and can be skipped with
+# --no-verify. It is still the difference between "impossible to do by accident"
+# and "easy to do at 23:00".
+#
+# Enable once (also done by `just setup`):   git config core.hooksPath .githooks
+# Deliberate override, when you mean it:     POS_ALLOW_PROTECTED_PUSH=1 git push ...
+set -uo pipefail
+
+protected='main staging development'
+zero='0000000000000000000000000000000000000000'
+refuse=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  branch="${remote_ref#refs/heads/}"
+
+  # No agent attribution reaches origin — checked on EVERY ref, not just the
+  # protected ones. `git push --all` would republish `backup-before-rewrite`
+  # (a plain ref under refs/heads/, carrying all 7 original trailers) to a brand
+  # new remote branch that no branch rule covers. --mirror is not the only vector.
+  # This scan is bounded to commits origin does not already have, so it is cheap.
+  if [ "$local_sha" != "$zero" ]; then
+    # Read the log into a variable first, and count matches rather than asking
+    # `grep -q` whether there was one.
+    #
+    # This used to be `git log ... | grep -qiE ...` directly in the `if`, which
+    # was WRONG under `set -o pipefail` — and wrong in the direction that lets a
+    # trailer through. `grep -q` exits the moment it matches, which closes the
+    # pipe; `git log` then dies of SIGPIPE with status 141; pipefail reports the
+    # pipeline as 141, and the `if` reads that as "no match found". The guard
+    # then said nothing and returned 0 on a branch that genuinely carried an
+    # agent trailer. Whether it fired at all depended on whether git finished
+    # writing before grep stopped reading — a race, which is why it passed for
+    # weeks and then failed once the fixture changed size.
+    #
+    # `grep -c` reads its input to the end, so nothing gets SIGPIPE'd, and the
+    # count is the answer rather than a side effect of process scheduling.
+    attributed_log=$(git log "$local_sha" --not --remotes=origin --format='%B' 2>/dev/null || true)
+    attributed_hits=$(printf '%s\n' "$attributed_log" \
+      | grep -ciE '^[[:space:]]*Co-authored-by:.*<[^>]*(anthropic\.com|copilot@|\[bot\]@|\[bot\]>)' || true)
+    if [ "${attributed_hits:-0}" -gt 0 ]; then
+      echo "pre-push: REFUSED — '$branch' carries agent-attribution trailers in commits"
+      echo "          that origin does not have. Publishing them undoes the rewrite that"
+      echo "          removed them (user instruction, 2026-08-20)."
+      echo
+      echo "          If this is 'backup-before-rewrite', it is a LOCAL safety net and is"
+      echo "          not meant to be pushed at all. Push explicit refspecs, never --all."
+      echo "          Offending commits:"
+      git log "$local_sha" --not --remotes=origin --format='            %h %s' 2>/dev/null | head -8
+      refuse=1
+      continue
+    fi
+  fi
+
+  case " $protected " in *" $branch "*) ;; *) continue ;; esac
+
+  if [ "${POS_ALLOW_PROTECTED_PUSH:-0}" = "1" ]; then
+    echo "pre-push: POS_ALLOW_PROTECTED_PUSH=1 — allowing a direct push to '$branch'."
+    continue
+  fi
+
+  if [ "$local_sha" = "$zero" ]; then
+    echo "pre-push: REFUSED — deleting '$branch'. That branch is the trunk of the flow."
+    refuse=1
+    continue
+  fi
+
+  if [ "$remote_sha" != "$zero" ] && ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+    echo "pre-push: REFUSED — this is a FORCE-push to '$branch'. It would discard published commits."
+    echo "          If you genuinely mean it, say so out loud:"
+    echo "            POS_ALLOW_PROTECTED_PUSH=1 git push --force-with-lease origin $branch"
+    refuse=1
+    continue
+  fi
+
+  echo "pre-push: REFUSED — '$branch' takes changes through a pull request, not a direct push."
+  case "$branch" in
+    development) echo "          Branch from development, then: gh pr create --base development" ;;
+    staging)     echo "          Promote with a PR: development → staging (merge commit, not squash)" ;;
+    main)        echo "          Promote with a PR: staging → main (merge commit, not squash)" ;;
+  esac
+  refuse=1
+done
+
+if [ "$refuse" -ne 0 ]; then
+  echo
+  echo "  The flow: feature → development → staging → main"
+  echo "  docs/implementation/03-github-workflow.md §2"
+  exit 1
+fi
+exit 0

@@ -24,7 +24,7 @@ hasn't shipped yet."
 ## 2 · Write the SQL
 
 `crates/pos-db/migrations/NNNN_short_name.sql`. Check the intended shape in
-`ref/schema.md` first — migrations 0002–0011 are already specified there, and
+`ref/schema.md` first — migrations 0002–0012 are already specified there, and
 deviating from the doc without updating it turns the reference into a liability.
 
 Naming is not optional (§2):

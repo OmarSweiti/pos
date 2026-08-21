@@ -1,6 +1,6 @@
+import { formatMinor, JOD } from "@pos/money";
 import { invoke } from "@tauri-apps/api/core";
 import { directionFor, toggleLabel } from "./lib/direction";
-import { formatMinor } from "./lib/money";
 import { useCart } from "./store/cart";
 import { useLocale } from "./store/locale";
 
@@ -71,7 +71,7 @@ export default function App() {
           {splits.map((s, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: tender position *is* its identity
             <li key={i}>
-              tender {i + 1}: {formatMinor(s)}
+              tender {i + 1}: {formatMinor(s, JOD)}
             </li>
           ))}
         </ul>

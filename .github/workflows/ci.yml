@@ -1,8 +1,18 @@
 name: ci
 on:
   push:
-    branches: [main]
+    branches: [development, staging, main]
   pull_request:
+    branches: [development, staging, main]
+
+# A superseded run is wasted money. This is a PRIVATE repository on the GitHub Free
+# plan, so Actions minutes are metered — 2,000/month, and macOS bills at 10x — which
+# makes "cancel the run nobody is waiting for any more" a budget decision, not a tidy
+# one. Never cancel on the release branches: a half-cancelled promotion build tells
+# you nothing about whether staging was green.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/staging' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -38,9 +48,21 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config
 
-      # Reads rust-toolchain.toml — no floating `stable`.
-      - uses: dtolnay/rust-toolchain@stable
+      # rust-toolchain.toml is the single source of the pin, read here and handed
+      # to the action. `@stable` would install stable and then let rustup silently
+      # override it from the file — the right toolchain by accident, after paying
+      # to download the wrong one.
+      - name: Read the pinned toolchain
+        id: pin
+        run: |
+          set -uo pipefail
+          channel=$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml | head -1)
+          [ -n "$channel" ] || { echo "::error::no channel in rust-toolchain.toml"; exit 1; }
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "pinned toolchain: $channel"
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ steps.pin.outputs.channel }}
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
@@ -55,6 +77,26 @@ jobs:
       - name: Domain crate must stay acyclic
         run: ./scripts/check-domain-acyclic.py
 
+      # The schema reference is 888 lines of DDL that nothing compiles, and the
+      # shipped migrations are audited against conventions §2 in the same pass.
+      - name: Schema reference and shipped migrations conform
+        run: ./scripts/verify-schema.py
+
+  # The write guards are the enforcement this repository has instead of branch
+  # protection, which the Free plan refuses. CLAUDE.md: "a guard nobody has seen
+  # fail is a guard nobody should trust" — so CI watches them fail, on every
+  # change, rather than trusting that somebody ran `just guards` locally.
+  guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Write guards still refuse what they must
+        run: ./.claude/hooks/test-protect-immutable.sh
+      - name: Git hooks still refuse what they must
+        run: ./.githooks/test-hooks.sh
+      - name: The schema auditor's own checks still fire
+        run: ./scripts/verify-schema.py --self-test
+
   web:
     runs-on: ubuntu-latest
     steps:
@@ -67,8 +109,70 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm biome ci --error-on-warnings .
       - run: pnpm -r --if-present test
-      - run: pnpm -r --if-present build
+      - run: pnpm -r --if-present build     # this is where `tsc` runs
+
+      # `--if-present` makes a package with no test script indistinguishable from
+      # one that passed. Name the packages that ran, so a silent gap is visible in
+      # the log instead of looking like coverage.
+      - name: Report which packages actually run tests
+        run: ./scripts/report-test-coverage.sh
 
       # The implementation docs are only worth their cross-references.
       - name: Documentation links resolve
         run: ./scripts/check-doc-links.sh
+
+  # Dependabot proposes version bumps monthly; it is not a vulnerability gate and
+  # says nothing about a crate that grew an advisory today. This is the gate. A
+  # money system that holds an encrypted database and will touch payment data does
+  # not merge an unreviewed advisory.
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust advisories, licences, and duplicate/banned crates
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          # Scope comes from `[graph] all-features` in deny.toml, not a flag:
+          # `cargo deny check --all-features` is not a valid invocation.
+          command: check
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: npm advisories
+        run: pnpm audit --audit-level high
+
+  # The register ships on three operating systems, but a full matrix on every
+  # feature PR is not affordable on metered Free-plan minutes (macOS bills at 10x).
+  # So the matrix runs where a break is expensive rather than merely annoying: on
+  # the promotion PRs into staging and main, and on those branches themselves.
+  # Without this, `release.yml` is the FIRST multi-platform build and a
+  # Windows-only break is discovered at tag time.
+  cross-platform:
+    if: >-
+      github.base_ref == 'staging' || github.base_ref == 'main' ||
+      github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the pinned toolchain
+        id: pin
+        shell: bash
+        run: |
+          set -uo pipefail
+          channel=$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml | head -1)
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.pin.outputs.channel }}
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
+      # The crates that must behave identically on all three: SQLCipher links
+      # OpenSSL differently per platform, and `keyring` is a different credential
+      # store on each one.
+      - run: cargo nextest run -p pos-domain -p pos-db -p pos-sync -p pos-hardware
