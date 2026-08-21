@@ -258,6 +258,14 @@ expect_commit 1 "a private key"            "server.pem"
 expect_commit 1 "local tool permissions"   ".claude/settings.local.json"   "{}"
 expect_commit 1 "a generated Tauri schema" "apps/terminal/src-tauri/gen/schemas/acl.json" "{}"
 expect_commit 1 "a build artefact"         "target/debug/thing"
+# Registry credentials. Each is a file a tool writes for you, in the repository
+# root, without asking — and a token in history is a rotation, not a revert.
+expect_commit 1 "an npm auth token"        ".npmrc"                   "//registry.npmjs.org/:_authToken=x"
+expect_commit 1 "a netrc"                  ".netrc"                   "machine github.com login x"
+expect_commit 1 "stored git credentials"   ".git-credentials"         "https://u:p@github.com"
+expect_commit 1 "a crates.io token"        ".cargo/credentials.toml"  "[registry]"
+expect_commit 1 "a docker registry auth"   ".docker/config.json"      "{}"
+expect_commit 0 "an npmrc EXAMPLE"         ".npmrc.example"           "registry=https://registry.npmjs.org/"
 expect_commit 0 "ordinary source"          "crates/pos-domain/src/tax.rs"  "fn main() {}"
 
 echo

@@ -17,6 +17,10 @@ while IFS= read -r f; do
       echo "pre-commit: REFUSED — $f. A database in git is fixture data pretending to be source."; refuse=1 ;;
     *.pem|*.key|*.p12|*.pfx|id_rsa|id_ed25519|*.jks|*.keystore)
       echo "pre-commit: REFUSED — $f. That is, or contains, a key."; refuse=1 ;;
+    .npmrc|*/.npmrc|.netrc|_netrc|.git-credentials|*/.cargo/credentials|*/.cargo/credentials.toml|.cargo/credentials|.cargo/credentials.toml|*/.docker/config.json|.docker/config.json)
+      echo "pre-commit: REFUSED — $f holds registry credentials. A token in history is"
+      echo "            a rotation, not a revert. Non-secret registry config belongs in"
+      echo "            pnpm-workspace.yaml or a committed .npmrc.example."; refuse=1 ;;
     .claude/settings.local.json)
       echo "pre-commit: REFUSED — $f is per-machine, and it grants tool permissions."; refuse=1 ;;
     apps/terminal/src-tauri/gen/schemas/*)

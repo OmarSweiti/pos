@@ -40,7 +40,13 @@
       "Read(./**/.env.*.local)",
       "Read(./**/.env.development)",
       "Read(./**/.env.production)",
-      "Read(./**/.env.staging)"
+      "Read(./**/.env.staging)",
+      "Read(./**/.npmrc)",
+      "Read(./**/.netrc)",
+      "Read(./**/_netrc)",
+      "Read(./**/.git-credentials)",
+      "Read(./**/credentials.toml)",
+      "Read(./**/.docker/config.json)"
     ]
   },
   "hooks": {
