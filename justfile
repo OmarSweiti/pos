@@ -76,6 +76,11 @@ db-local-reset:
 docs-links:
     ./scripts/check-doc-links.sh
 
+# Conventions §10: RTL is the default, so every layout uses CSS logical
+# properties. biome's recommended preset does not know Tailwind or CSS sides.
+logical-css:
+    ./scripts/check-logical-css.sh
+
 # pos-domain's module graph must stay acyclic (ref/domain-api.md §15)
 acyclic:
     ./scripts/check-domain-acyclic.py
@@ -101,6 +106,7 @@ lint:
     cargo clippy --workspace --all-targets -- -D warnings
     ./scripts/check-domain-acyclic.py
     ./scripts/verify-schema.py
+    ./scripts/check-logical-css.sh
     pnpm biome ci --error-on-warnings .
     ./scripts/check-doc-links.sh
 
@@ -113,6 +119,7 @@ guards:
     ./.claude/hooks/test-protect-immutable.sh
     ./.githooks/test-hooks.sh
     ./scripts/verify-schema.py --self-test
+    ./scripts/check-logical-css.sh --self-test
 
 # `lint` is biome (style) and `test` is vitest, so a TypeScript type error passes
 # both and fails CI's `web` job instead. Mirrors that job's build step.
