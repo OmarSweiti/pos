@@ -202,6 +202,15 @@ pr title='' body='':
     else
       gh pr create --base development --fill-first
     fi
+
+    # `gh pr checks --watch` fails outright with "no checks reported" when it runs
+    # before GitHub has registered the workflows — which, straight after creating
+    # the PR, is most of the time. It looked like the PR had failed when the PR was
+    # fine, so wait for the checks to exist before watching them.
+    for _ in $(seq 30); do
+      if [ -n "$(gh pr checks --json name --jq '.[].name' 2>/dev/null)" ]; then break; fi
+      sleep 2
+    done
     gh pr checks --watch
 
 # development → staging, as a release candidate. Merge with a MERGE COMMIT.
