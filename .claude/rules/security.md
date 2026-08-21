@@ -13,6 +13,7 @@ One-page version: `docs/implementation/01-conventions.md` §12.
   is the security.
 - **Never claim a compliance validation that has not been completed** — not "PCI compliant",
   not "SAQ done", not "JoFotara certified" — in code, comments, docs, UI copy, or a commit
-  message. Read `ref/security-compliance.md` §3 first; the answer is probably "not yet".
+  message. Read `docs/implementation/ref/security-compliance.md` §3 first; the answer is
+  probably "not yet".
 - **Never commit a secret.** If one is already in the tree, say so and stop. Do not rewrite
   history unasked.

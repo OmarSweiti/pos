@@ -183,7 +183,7 @@ Rules:
 1. `crates/pos-db/migrations/NNNN_name.sql`, appended to the `MIGRATIONS` array in order. **Never edit a committed migration.** Not to fix a typo. Not "it hasn't shipped yet."
 2. Every migration is idempotent under the runner (the runner guarantees each runs once; the SQL must not assume more).
 3. A migration that changes the shape of existing data ships with a data migration in the same file and a test that seeds the old shape, migrates, and asserts the new one.
-4. Postgres mirrors SQLite in `apps/server/migrations/` via sqlx, same number, same name, same semantics. Divergence is a sync bug waiting.
+4. Postgres mirrors SQLite in `apps/server/migrations/` via sqlx, **same semantics**. The numbers cannot match — sqlx names files `<timestamp>_<name>.sql` — so the mapping is *declared*, not inferred: every mirror opens with `-- Mirrors SQLite NNNN_name.sql` or `-- Server-only: <why>`, and `./scripts/verify-pg-migrations.py` checks it both ways and applies the mirror to a real PostgreSQL server. The name may differ where the server's half of the work differs. A register-local entity gets no mirror at all — record it in `REGISTER_LOCAL` in that script rather than committing an empty file. Undeclared divergence is a sync bug waiting.
 5. The app **refuses to start on a half-migrated database** (E.58) and says so — it does not guess.
 
 ---

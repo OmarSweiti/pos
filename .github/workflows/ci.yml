@@ -46,7 +46,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
-            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config \
+            postgresql-client
 
       # rust-toolchain.toml is the single source of the pin, read here and handed
       # to the action. `@stable` would install stable and then let rustup silently
@@ -77,10 +78,17 @@ jobs:
       - name: Domain crate must stay acyclic
         run: ./scripts/check-domain-acyclic.py
 
-      # The schema reference is 888 lines of DDL that nothing compiles, and the
-      # shipped migrations are audited against conventions §2 in the same pass.
+      # ref/schema.md is DDL that nothing compiles, and the shipped migrations are
+      # audited against conventions §2 in the same pass.
       - name: Schema reference and shipped migrations conform
         run: ./scripts/verify-schema.py
+
+      # The register's migrations are executed against real SQLite by the step
+      # above. Until this step existed, nothing executed the server's against real
+      # Postgres — the mirror was reviewed and never run. The Postgres service on
+      # this job is the server; the script creates its own scratch database.
+      - name: Postgres mirror is declared and applies to real PostgreSQL
+        run: ./scripts/verify-pg-migrations.py --verbose
 
   # The write guards are the enforcement this repository has instead of branch
   # protection, which the Free plan refuses. CLAUDE.md: "a guard nobody has seen
@@ -92,10 +100,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Write guards still refuse what they must
         run: ./.claude/hooks/test-protect-immutable.sh
+      - name: The documentation-link guard still reports a broken link
+        run: ./.claude/hooks/test-docs-links.sh
       - name: Git hooks still refuse what they must
         run: ./.githooks/test-hooks.sh
+      - name: The CI backstop still refuses an edited plan or migration
+        run: ./scripts/check-protected-paths.sh --self-test
       - name: The schema auditor's own checks still fire
         run: ./scripts/verify-schema.py --self-test
+      - name: The Postgres mapping audit's own checks still fire
+        run: ./scripts/verify-pg-migrations.py --self-test
 
   web:
     runs-on: ubuntu-latest

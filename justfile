@@ -85,8 +85,19 @@ acyclic:
 verify-schema:
     ./scripts/verify-schema.py
 
+# The Postgres mirror: every file declares which SQLite migration it mirrors, and
+# every migration applies to a real server. Uses $DATABASE_URL if set, else a
+# throwaway Docker container, else audits the mapping and says it skipped.
+verify-pg:
+    ./scripts/verify-pg-migrations.py
+
 # Advisories, licences and banned/duplicate crates. Same gate CI runs.
 #   cargo install cargo-deny --locked
+#
+# Deliberately NOT part of `pre-push`: both halves reach the network and depend on
+# the state of the advisory databases, so this gate can fail on a push that
+# changed nothing. CI's `supply-chain` job runs it on every PR, which is where a
+# time-varying check belongs. Run it by hand before a release.
 audit:
     cargo deny check
     pnpm audit --audit-level high
@@ -101,6 +112,7 @@ lint:
     cargo clippy --workspace --all-targets -- -D warnings
     ./scripts/check-domain-acyclic.py
     ./scripts/verify-schema.py
+    ./scripts/verify-pg-migrations.py --mapping-only
     pnpm biome ci --error-on-warnings .
     ./scripts/check-doc-links.sh
 
@@ -111,8 +123,11 @@ fmt:
 # The write guards are not advisory. Prove they still refuse (CLAUDE.md).
 guards:
     ./.claude/hooks/test-protect-immutable.sh
+    ./.claude/hooks/test-docs-links.sh
     ./.githooks/test-hooks.sh
+    ./scripts/check-protected-paths.sh --self-test
     ./scripts/verify-schema.py --self-test
+    ./scripts/verify-pg-migrations.py --self-test
 
 # `lint` is biome (style) and `test` is vitest, so a TypeScript type error passes
 # both and fails CI's `web` job instead. Mirrors that job's build step.
