@@ -235,6 +235,7 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just acyclic` | `pos-domain`'s module graph has no cycles |
 | `just docs-links` | no broken relative `.md` link under `docs/` |
 | `just verify-schema` | executes every SQL block in `ref/schema.md` against real SQLite |
+| `just logical-css` | no physical CSS side in `apps/**` — §10 is RTL by default, so a physical side is a layout bug in Arabic |
 | `just guards` | the write guards **and** the git hooks still refuse what they must |
 | `just build-web` | `pnpm -r --if-present build` — **the only place `tsc` runs** |
 | `just pre-push` | `lint` + `test` + `build-web` + `guards` |

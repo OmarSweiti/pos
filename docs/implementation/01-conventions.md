@@ -192,7 +192,7 @@ Rules:
 
 Arabic is not a translation of this product. It is the product; English is the toggle.
 
-- **Direction:** the app is RTL by default. `<html dir="rtl" lang="ar">`; the English toggle flips `dir`/`lang` only. Every layout uses **CSS logical properties** — `margin-inline-start`, not `margin-left`; `inset-inline-end`, not `right`. Tailwind's `ps-*`/`pe-*`/`ms-*`/`me-*`/`start-*`/`end-*` throughout; `pl-*`/`left-*` is a lint failure.
+- **Direction:** the app is RTL by default. `<html dir="rtl" lang="ar">`; the English toggle flips `dir`/`lang` only. Every layout uses **CSS logical properties** — `margin-inline-start`, not `margin-left`; `inset-inline-end`, not `right`. Tailwind's `ps-*`/`pe-*`/`ms-*`/`me-*`/`start-*`/`end-*` throughout; `pl-*`/`left-*` is a lint failure — `./scripts/check-logical-css.sh`, in `just lint` and CI's `web` job. Biome's recommended preset knows nothing about Tailwind utilities or CSS sides, so until that script existed this rule was written down and unenforced. A case that really is physical carries `physical-ok: <reason>` on the line.
 - **Numerals:** Western Arabic digits (0–9) everywhere. That is Jordanian retail practice; Eastern Arabic-Indic digits on a receipt confuse more than they serve.
 - **Catalog:** a typed message catalog, keys as §2, `ar` and `en` files kept in lockstep by a test that fails when a key exists in one and not the other. The catalog is the single source for UI strings; a string literal in a component is a lint failure.
 - **Money and dates render through one function.** `formatMoney(minor, currency, locale)` and `formatDate(iso, tz, locale)` — never `toLocaleString` scattered inline, because display precision (2 vs 3 decimals, B.5) is a store setting.
