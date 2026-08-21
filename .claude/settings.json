@@ -7,6 +7,8 @@
       "Bash(just fmt)",
       "Bash(just acyclic)",
       "Bash(just docs-links)",
+      "Bash(just verify-schema)",
+      "Bash(just guards)",
       "Bash(cargo fmt:*)",
       "Bash(cargo clippy:*)",
       "Bash(cargo check:*)",
@@ -16,10 +18,13 @@
       "Bash(pnpm biome ci:*)",
       "Bash(pnpm biome check:*)",
       "Bash(pnpm -r --if-present test)",
-      "Bash(sqlite3 :memory::*)",
       "Bash(./scripts/check-doc-links.sh)",
       "Bash(./scripts/check-domain-acyclic.py)",
+      "Bash(./scripts/verify-schema.py:*)",
+      "Bash(./scripts/verify-pg-migrations.py:*)",
       "Bash(./.claude/hooks/test-protect-immutable.sh)",
+      "Bash(./.claude/hooks/test-docs-links.sh)",
+      "Bash(./.githooks/test-hooks.sh)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
@@ -31,22 +36,37 @@
       "Bash(git rev-parse:*)"
     ],
     "deny": [
+      "Edit(./docs/plan/**)",
+      "Write(./docs/plan/**)",
       "Read(./.env)",
       "Read(./**/.env)",
-      "Read(./**/*.sqlite)",
-      "Read(./**/*.sqlite3)",
-      "Read(./**/*.db)",
       "Read(./**/.env.local)",
       "Read(./**/.env.*.local)",
       "Read(./**/.env.development)",
       "Read(./**/.env.production)",
-      "Read(./**/.env.staging)"
+      "Read(./**/.env.staging)",
+      "Read(./**/.env.test)",
+      "Read(./**/*.sqlite)",
+      "Read(./**/*.sqlite3)",
+      "Read(./**/*.db)",
+      "Read(./**/*.db-wal)",
+      "Read(./**/*.db-shm)",
+      "Read(./**/*.sqlite-wal)",
+      "Read(./**/*.sqlite-shm)",
+      "Read(./**/*.pem)",
+      "Read(./**/*.key)",
+      "Read(./**/*.p12)",
+      "Read(./**/*.pfx)",
+      "Read(./**/*.jks)",
+      "Read(./**/*.keystore)",
+      "Read(./**/id_rsa)",
+      "Read(./**/id_ed25519)"
     ]
   },
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|Monitor",
         "hooks": [
           {
             "type": "command",
