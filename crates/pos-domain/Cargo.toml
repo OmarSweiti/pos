@@ -17,3 +17,8 @@ rust_decimal.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+# Tests only. `Currency` hand-writes Serialize/Deserialize so the exponent stays
+# off the wire, and that cannot be tested without a concrete format. Ships
+# nothing: purity (I-8) governs what reaches a register, and a dev-dependency
+# never does. See ref/domain-api.md's dependency allowlist.
+serde_json.workspace = true

@@ -4,13 +4,18 @@ The crown jewel. Pure, no I/O, shared by register and server so the two can neve
 
 This document is the **target shape**, assembled across Phases 1–4. Each item is annotated with the microstep that creates it. Signatures here are normative: if a phase file shows something different, this file wins.
 
-**Purity is enforced mechanically.** `pos-domain/Cargo.toml` may depend only on `serde`, `thiserror`, `uuid`, `rust_decimal`, and (dev) `proptest`, `criterion`, `trybuild`. Adding anything capable of I/O is a design review, not a commit.
+**Purity is enforced mechanically.** `pos-domain/Cargo.toml` may depend only on `serde`, `thiserror`, `uuid`, `rust_decimal`, and (dev) `proptest`, `criterion`, `trybuild`, `serde_json`. Adding anything capable of I/O is a design review, not a commit.
 
-> `trybuild` is a dev-dependency and ships nothing, which is why it is allowed: purity governs what
-> reaches a register, and a `[dev-dependencies]` entry never does. It is here because 1.1.8's claim —
-> that two id types cannot be interchanged — is only provable by code that **fails** to compile, and
-> `cargo nextest` does not run doctests, so a ` ```compile_fail ` block would be invisible to both
-> `just test` and CI. `trybuild` runs as an ordinary integration test.
+> `trybuild` and `serde_json` are dev-dependencies and ship nothing, which is why they are allowed:
+> purity governs what reaches a register, and a `[dev-dependencies]` entry never does.
+>
+> `trybuild` is here because 1.1.8's claim — that two id types cannot be interchanged — is only
+> provable by code that **fails** to compile, and `cargo nextest` does not run doctests, so a
+> ` ```compile_fail ` block would be invisible to both `just test` and CI. `trybuild` runs as an
+> ordinary integration test.
+>
+> `serde_json` is here because `Currency` hand-writes `Serialize`/`Deserialize` to keep the
+> minor-unit exponent off the wire (§1.1), and an encoding cannot be tested without an encoder.
 
 ```
 crates/pos-domain/src/
