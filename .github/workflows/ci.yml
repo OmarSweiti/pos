@@ -39,7 +39,7 @@ jobs:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/pos
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Tauri's Linux system deps (the src-tauri crate is a workspace member)
       - name: Install system dependencies
@@ -97,7 +97,7 @@ jobs:
   guards:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Write guards still refuse what they must
         run: ./.claude/hooks/test-protect-immutable.sh
       - name: The documentation-link guard still reports a broken link
@@ -114,9 +114,9 @@ jobs:
   web:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4          # reads "packageManager" from package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6          # reads "packageManager" from package.json
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -142,7 +142,7 @@ jobs:
   supply-chain:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Rust advisories, licences, and duplicate/banned crates
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
@@ -150,8 +150,8 @@ jobs:
           # `cargo deny check --all-features` is not a valid invocation.
           command: check
 
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - name: npm advisories
@@ -173,7 +173,7 @@ jobs:
         platform: [macos-latest, windows-latest]
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Read the pinned toolchain
         id: pin
         shell: bash
