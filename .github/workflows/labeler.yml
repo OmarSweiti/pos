@@ -1,7 +1,10 @@
 name: labeler
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened]
+    # `edited` is here because the PR title decides the `type:` label below, and a
+    # title is editable after opening. branch-flow already re-validates on edit;
+    # the label has to be able to follow it.
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
@@ -21,3 +24,44 @@ jobs:
         with:
           configuration-path: .github/labeler.yml
           sync-labels: true
+
+      # `area:` and `risk:` are path-derived above, where a glob genuinely is the
+      # right evidence. `type:` is not: it is the first word of the PR title, and
+      # deriving it from `docs/**` labelled nearly every PR `type: docs`, because
+      # §4.13 requires the contradicted docs to be fixed in the same commit.
+      #
+      # The checkout below pins `ref` to the BASE commit, so the script that runs
+      # is the one already on the base branch and never the PR's version of it.
+      # That is what keeps the write token safe under pull_request_target.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: The type label comes from the PR title
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TITLE: ${{ github.event.pull_request.title }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          want=$(./scripts/pr-type-label.sh "$TITLE" || true)
+          echo "title: $TITLE"
+          echo "earns: ${want:-<nothing — free-text title, by design>}"
+
+          # Remove any type: label that is not the one the title earns, so an
+          # edited title cannot leave a stale one behind. Read line by line:
+          # these label names contain a space.
+          gh pr view "$NUMBER" --json labels --jq '.labels[].name' \
+            | grep '^type: ' \
+            | while IFS= read -r existing; do
+                if [ "$existing" != "$want" ]; then
+                  echo "removing stale $existing"
+                  gh pr edit "$NUMBER" --remove-label "$existing" || true
+                fi
+              done
+
+          if [ -n "$want" ]; then
+            gh pr edit "$NUMBER" --add-label "$want"
+          fi

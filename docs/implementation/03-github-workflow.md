@@ -163,18 +163,28 @@ The `Done when` field is the one that earns its keep. "The tax engine works" is 
 
 ### Labels are a query language
 
-Six families, applied by path automatically where possible
-([`.github/labeler.yml`](../../.github/labeler.yml)):
+Six families. `area:` and `risk:` are applied **by path**
+([`.github/labeler.yml`](../../.github/labeler.yml)); `type:` is applied **from the PR title**
+([`scripts/pr-type-label.sh`](../../scripts/pr-type-label.sh)).
 
 | Family | Values | Answers |
 |---|---|---|
-| `type:` | mirrors the commit types | what kind of change |
+| `type:` | mirrors the commit types | what kind of change — read from the title, not the paths |
 | `area:` | mirrors the commit scopes | which crate or app |
 | `phase:` | `0`–`5` | which exit gate it belongs to |
 | `priority:` | `P0` `P1` `P2` | P0 = wrong money, lost sale, corrupted data, compliance breach |
 | `risk:` | `money path` `migration` `security` `compliance` `immutable` | **how it must be reviewed** |
 | `needs:` | `merchant answer` `decision` `hardware` | why it is not moving |
 | `meta:` | `toolchain gap` `dependencies` `flake` `spike` `accepted risk` | bookkeeping |
+
+**Why `type:` is not path-derived.** It was, from a glob on `docs/**`, and in this repository
+that is nearly every PR — §4.13 *requires* the docs a change contradicted to be fixed in the same
+commit. So the label was applied almost always and meant almost nothing: PR #9 was a
+`chore(repo):` and PR #15 a `fix(domain):`, and both were labelled `type: docs`. The type is the
+first word of the title, from a closed list that `commit-msg` and the `branch-flow` check already
+enforce — so it was sitting there to be read rather than guessed. `area:` and `risk:` stay
+path-derived, where a glob genuinely is the better evidence: touching
+`crates/pos-domain/src/money*` **is** the money path, whatever the title says.
 
 The `risk:` family is the one that changes behaviour rather than describing it. `risk: money path`
 means the PR needs a property test, not an example test. `risk: migration` means a Postgres
@@ -193,6 +203,16 @@ gh issue list --label "meta: flake"                     # should always be empty
 
 Milestones are the six phase gates, and nothing else. A milestone's burndown is the honest answer
 to "how far is Phase 1", which a phase file cannot give you because it does not know what is done.
+
+**`just pr` sets it, from the branch name.** A `phase-<n>/...` branch earns the milestone whose
+title starts `Phase <n> `, looked up from GitHub so the six titles live only in
+[`gh-bootstrap.sh`](../../scripts/gh-bootstrap.sh) and cannot drift into the justfile. This is not
+a nicety: nothing was setting milestones, so all six sat at **0 issues** while eleven PRs shipped,
+and the burndown said 0% of Phase 1 with microstep 1.1.1 done.
+
+A branch naming no phase — `chore/`, `docs/`, `refactor/` — earns none, and that is correct rather
+than a gap: a tooling PR is not something a phase gate waits on. For the exception, a `fix/` that
+genuinely blocks a gate, pass it: `just pr '<title>' '' 'Phase 1 — sellable MVP'`.
 
 ---
 

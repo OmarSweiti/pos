@@ -29,8 +29,15 @@
           - "rust-toolchain.toml"
           - "pnpm-workspace.yaml"
           - "infra/**"
-"type: docs":
-  - changed-files: [{ any-glob-to-any-file: "docs/**" }]
+# NOTE: no `type:` rules here on purpose. The type is the first word of the PR
+# title, not a property of the files touched — `docs/**` matches nearly every PR
+# in this repository because §4.13 requires the contradicted docs to be fixed in
+# the same commit, so a path-derived `type: docs` was applied almost always and
+# meant almost nothing. scripts/pr-type-label.sh reads it from the title instead.
+# `area:` and `risk:` stay below, where a glob genuinely is the right evidence.
+
+"area: impl":
+  - changed-files: [{ any-glob-to-any-file: "docs/implementation/**" }]
 
 # The three that change how a PR is reviewed, not merely where it lands.
 "risk: migration":

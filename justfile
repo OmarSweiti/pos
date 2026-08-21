@@ -142,6 +142,7 @@ guards:
     ./scripts/verify-pg-migrations.py --self-test
     ./scripts/check-logical-css.sh --self-test
     ./scripts/check-prop-test-names.py --self-test
+    ./scripts/pr-type-label.sh --self-test
 
 # `lint` is biome (style) and `test` is vitest, so a TypeScript type error passes
 # both and fails CI's `web` job instead. Mirrors that job's build step.
@@ -192,20 +193,31 @@ branch name:
 #   just pr                                          # one commit: fill from it
 #   just pr 'feat(domain): tax engine   [1.3.4]'     # several: say it once
 #   just pr 'chore(repo): harden the guards   [—]' notes/pr-body.md
+#   just pr '…' '' 'Phase 2 — money-grade'           # override the milestone
 #
 # With a title and no body file, the body is the list of microstep subjects, which
 # is where 03-github-workflow.md §5 says they belong.
+#
+# THE MILESTONE is derived from the branch name, because nothing else was setting
+# it and six phase-gate milestones sat permanently at 0 issues while eleven PRs
+# shipped. `phase-<n>/...` earns the milestone whose title starts `Phase <n> `,
+# looked up from GitHub so the titles live only in gh-bootstrap.sh and cannot
+# drift into this file. A branch with no phase in its name earns none, and that is
+# correct rather than a gap: §5 says milestones are the six phase gates and nothing
+# else, and a `chore/` PR is not something a gate waits on. Pass the third
+# argument for the exception — a `fix/` that does block a gate.
 #
 # just substitutes {{title}} as text, so the quoting below is load-bearing: with
 # single quotes, "the guard's bypasses" ends the string early and the recipe dies
 # on an unterminated quote. Double quotes survive an apostrophe, which is the case
 # that actually turns up in a commit subject. Do not put a double quote, a `$`, or
 # a backtick in a title — the first breaks it and the others are your own shell.
-pr title='' body='':
+pr title='' body='' milestone='':
     #!/usr/bin/env bash
     set -euo pipefail
     title="{{title}}"
     body="{{body}}"
+    milestone="{{milestone}}"
 
     if [ -n "$title" ]; then
       msg=$(mktemp)
@@ -218,18 +230,40 @@ pr title='' body='':
       rm -f "$msg"
     fi
 
+    # Derive the milestone before the push, so a lookup failure is reported while
+    # nothing has happened yet.
+    branch=$(git branch --show-current)
+    if [ -z "$milestone" ]; then
+      case "$branch" in
+        phase-[0-5]/*)
+          phase=${branch#phase-}; phase=${phase%%/*}
+          milestone=$(gh api "repos/{owner}/{repo}/milestones?state=all" \
+            --jq ".[] | select(.title|startswith(\"Phase $phase \")) | .title" \
+            2>/dev/null | head -1 || true)
+          if [ -z "$milestone" ]; then
+            echo "pr: no milestone found for phase $phase — run just gh-bootstrap. Continuing without one."
+          fi ;;
+        *)
+          echo "pr: $branch names no phase, so no milestone (03-github-workflow.md §5)." ;;
+      esac
+    fi
+    [ -n "$milestone" ] && echo "pr: milestone -> $milestone"
+
     just pre-push
     git fetch --quiet origin development
     git push -u origin HEAD
 
+    ms=()
+    [ -n "$milestone" ] && ms=(--milestone "$milestone")
+
     if [ -n "$body" ]; then
-      gh pr create --base development --title "$title" --body-file "$body"
+      gh pr create --base development --title "$title" --body-file "$body" "${ms[@]+"${ms[@]}"}"
     elif [ -n "$title" ]; then
       base=$(git merge-base origin/development HEAD)
       gh pr create --base development --title "$title" \
-        --body "$(git log --reverse --format='- %s' "$base"..HEAD)"
+        --body "$(git log --reverse --format='- %s' "$base"..HEAD)" "${ms[@]+"${ms[@]}"}"
     else
-      gh pr create --base development --fill-first
+      gh pr create --base development --fill-first "${ms[@]+"${ms[@]}"}"
     fi
 
     # `gh pr checks --watch` fails outright with "no checks reported" when it runs
