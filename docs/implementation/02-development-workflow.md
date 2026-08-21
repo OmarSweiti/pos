@@ -242,7 +242,7 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just build-web` | `pnpm -r --if-present build` — **the only place `tsc` runs** |
 | `just pre-push` | `lint` + `test` + `build-web` + `guards` |
 | `just branch <name>` | fresh `development`, then a branch off it — **needs a clean tree** (§4.2) |
-| `just pr [title] [body-file]` | gates → push → PR into `development` → watch CI. Pass the title on a branch with more than one commit (§4.12) |
+| `just pr [title] [body-file] [milestone]` | gates → push → PR into `development` → watch CI. Pass the title on a branch with more than one commit (§4.12); the milestone is derived from a `phase-<n>/` branch name |
 | `just flow` | what is on `development` but not `staging`, and on `staging` but not `main` |
 | `just promote-staging` | PR: `development` → `staging` (a release candidate) |
 | `just promote-main` | PR: `staging` → `main` (production) |

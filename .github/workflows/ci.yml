@@ -120,6 +120,8 @@ jobs:
         run: ./scripts/check-logical-css.sh --self-test
       - name: The property-test-name check's own checks still fire
         run: ./scripts/check-prop-test-names.py --self-test
+      - name: The PR type-label mapping still matches conventions §8
+        run: ./scripts/pr-type-label.sh --self-test
 
   web:
     runs-on: ubuntu-latest
