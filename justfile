@@ -163,10 +163,69 @@ branch name:
     git switch -c {{name}}
 
 # Open the PR for the branch you are on. Always into development.
-pr:
+# Gates, push, open the PR into development, watch CI.
+#
+# `--fill-first` takes the FIRST commit's message as the PR title, and a squash
+# merge commits PR_TITLE (gh-bootstrap.sh sets squash_merge_commit_title). So on a
+# branch carrying several microsteps, filling from the first commit lands a commit
+# on `development` that describes one microstep and stands for all of them. Pass
+# the title yourself there.
+#
+# The title is checked by .githooks/commit-msg — the same hook that checks a commit
+# subject — because that is exactly what it becomes. Better to be told before the
+# push than by the branch-flow check afterwards.
+#
+#   just pr                                          # one commit: fill from it
+#   just pr 'feat(domain): tax engine   [1.3.4]'     # several: say it once
+#   just pr 'chore(repo): harden the guards   [—]' notes/pr-body.md
+#
+# With a title and no body file, the body is the list of microstep subjects, which
+# is where 03-github-workflow.md §5 says they belong.
+#
+# just substitutes {{title}} as text, so the quoting below is load-bearing: with
+# single quotes, "the guard's bypasses" ends the string early and the recipe dies
+# on an unterminated quote. Double quotes survive an apostrophe, which is the case
+# that actually turns up in a commit subject. Do not put a double quote, a `$`, or
+# a backtick in a title — the first breaks it and the others are your own shell.
+pr title='' body='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    title="{{title}}"
+    body="{{body}}"
+
+    if [ -n "$title" ]; then
+      msg=$(mktemp)
+      printf '%s\n' "$title" > "$msg"
+      if ! .githooks/commit-msg "$msg"; then
+        rm -f "$msg"
+        echo "pr: REFUSED — that title is not a legal squash commit subject (conventions §8)."
+        exit 1
+      fi
+      rm -f "$msg"
+    fi
+
     just pre-push
+    git fetch --quiet origin development
     git push -u origin HEAD
-    gh pr create --base development --fill-first
+
+    if [ -n "$body" ]; then
+      gh pr create --base development --title "$title" --body-file "$body"
+    elif [ -n "$title" ]; then
+      base=$(git merge-base origin/development HEAD)
+      gh pr create --base development --title "$title" \
+        --body "$(git log --reverse --format='- %s' "$base"..HEAD)"
+    else
+      gh pr create --base development --fill-first
+    fi
+
+    # `gh pr checks --watch` fails outright with "no checks reported" when it runs
+    # before GitHub has registered the workflows — which, straight after creating
+    # the PR, is most of the time. It looked like the PR had failed when the PR was
+    # fine, so wait for the checks to exist before watching them.
+    for _ in $(seq 30); do
+      if [ -n "$(gh pr checks --json name --jq '.[].name' 2>/dev/null)" ]; then break; fi
+      sleep 2
+    done
     gh pr checks --watch
 
 # development → staging, as a release candidate. Merge with a MERGE COMMIT.
