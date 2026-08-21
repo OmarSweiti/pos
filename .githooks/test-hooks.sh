@@ -158,7 +158,6 @@ expect_push() {
 }
 
 head_sha=$(git rev-parse HEAD)
-prev_sha=$(git rev-parse HEAD~1 2>/dev/null || echo "$head_sha")
 zero=0000000000000000000000000000000000000000
 
 echo "pre-push — the protected branches take pull requests, not pushes"
@@ -166,18 +165,66 @@ expect_push 1 "direct push to main"        "refs/heads/main $head_sha refs/heads
 expect_push 1 "direct push to staging"     "refs/heads/staging $head_sha refs/heads/staging $head_sha"
 expect_push 1 "direct push to development" "refs/heads/development $head_sha refs/heads/development $head_sha"
 expect_push 1 "deleting main"              "refs/heads/main $zero refs/heads/main $head_sha"
-if [ "$prev_sha" != "$head_sha" ]; then
-  expect_push 1 "force-push to main"       "refs/heads/main $prev_sha refs/heads/main $head_sha"
-fi
-# `git push --all` would republish backup-before-rewrite — a plain ref under
-# refs/heads/ carrying all 7 original trailers — as a new remote branch that no
-# branch rule covers. Tested against the real ref, not a fixture.
-if git rev-parse --verify -q backup-before-rewrite >/dev/null; then
+
+# The force-push and attribution cases need a history of a particular SHAPE, and
+# they used to read it out of THIS repository. That made them depend on how the
+# repository happened to be cloned, and it broke exactly where it matters:
+# `actions/checkout` fetches depth 1, so `git rev-parse HEAD~1` has no parent
+# object to resolve. Worse, rev-parse prints the unresolved string `HEAD~1` on
+# STDOUT before failing, so `$(... || echo "$head_sha")` APPENDED rather than
+# replaced, and the hook was handed two malformed refspec lines. It ignored them,
+# correctly — and the test read that as the hook having failed to refuse.
+#
+# So the fixture is built rather than borrowed: a throwaway repository with a
+# history of a known shape, and the hook run inside it. Nothing below depends on
+# the depth of the checkout, the current branch, or whether a local-only backup
+# ref happens to exist. That also means neither case can silently skip in CI,
+# and a guard test that skipped is not a guard test that passed.
+fixture=$(mktemp -d)
+(
+  cd "$fixture" || exit 1
+  # Counters restart here: this is a subshell, so its increments cannot reach
+  # the parent's. They are carried over through the tally file below, and
+  # starting from the parent's values would count every earlier test twice.
+  pass=0; fail=0
+
+  git init -q .
+  git config user.email t@example.com
+  git config user.name "Test"
+  git config commit.gpgsign false
+  git commit -q --allow-empty -m "feat(domain): first   [1.1.1]"
+  git commit -q --allow-empty -m "feat(domain): second   [1.1.2]"
+  trunk=$(git rev-parse HEAD)
+  first=$(git rev-parse HEAD~1)
+
+  echo "pre-push — a force-push to a protected branch discards published commits"
+  # Pushing the FIRST commit over a remote that already has the second: the
+  # remote tip is not an ancestor of what is being pushed, which is what a
+  # force-push is.
+  expect_push 1 "force-push to main" "refs/heads/main $first refs/heads/main $trunk"
+
+  # `git push --all` would republish a backup ref — a plain ref under
+  # refs/heads/ carrying the original trailers — as a brand new remote branch
+  # that no branch rule covers. --mirror is not the only vector.
+  git checkout -q -b backup-before-rewrite
+  git commit -q --allow-empty -m "feat(domain): third   [1.1.3]
+
+Co-Authored-By: Some Agent <noreply@anthropic.com>"
+  attributed=$(git rev-parse HEAD)
+
   echo "pre-push — attribution cannot reach origin on ANY ref"
-  backup_sha=$(git rev-parse backup-before-rewrite)
-  expect_push 1 "pushing the pre-rewrite backup branch" \
-    "refs/heads/backup-before-rewrite $backup_sha refs/heads/backup-before-rewrite $zero"
+  expect_push 1 "pushing a ref that carries an agent trailer" \
+    "refs/heads/backup-before-rewrite $attributed refs/heads/backup-before-rewrite $zero"
+
+  printf '%s %s\n' "$pass" "$fail" > "$fixture/.tally"
+)
+if [ -r "$fixture/.tally" ]; then
+  read -r sub_pass sub_fail < "$fixture/.tally"
+  pass=$((pass + sub_pass)); fail=$((fail + sub_fail))
+else
+  bad "the pre-push fixture repository could not be built"
 fi
+rm -rf "$fixture"
 
 echo "pre-push — everything else is none of its business"
 expect_push 0 "a feature branch"           "refs/heads/x $head_sha refs/heads/phase-1/group-3-tax $head_sha"
