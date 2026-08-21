@@ -236,6 +236,7 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just docs-links` | no broken relative `.md` link under `docs/` |
 | `just verify-schema` | executes every shipped migration and every SQL block in `ref/schema.md` against real SQLite |
 | `just verify-pg` | the Postgres mirror's declared mapping, and the SQL against a real PostgreSQL server |
+| `just logical-css` | no physical CSS side in `apps/**` — §10 is RTL by default, so a physical side is a layout bug in Arabic |
 | `just guards` | the write guards **and** the git hooks still refuse what they must |
 | `just build-web` | `pnpm -r --if-present build` — **the only place `tsc` runs** |
 | `just pre-push` | `lint` + `test` + `build-web` + `guards` |

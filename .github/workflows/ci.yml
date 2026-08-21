@@ -110,6 +110,8 @@ jobs:
         run: ./scripts/verify-schema.py --self-test
       - name: The Postgres mapping audit's own checks still fire
         run: ./scripts/verify-pg-migrations.py --self-test
+      - name: The logical-CSS check's own checks still fire
+        run: ./scripts/check-logical-css.sh --self-test
 
   web:
     runs-on: ubuntu-latest
@@ -122,6 +124,13 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm biome ci --error-on-warnings .
+
+      # Conventions §10: RTL is the default direction, so a physical CSS side is a
+      # layout bug in Arabic that reviewing the English build cannot catch. biome's
+      # recommended preset knows nothing about Tailwind utilities or CSS sides.
+      - name: CSS logical properties only
+        run: ./scripts/check-logical-css.sh
+
       - run: pnpm -r --if-present test
       - run: pnpm -r --if-present build     # this is where `tsc` runs
 

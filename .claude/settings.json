@@ -60,7 +60,13 @@
       "Read(./**/*.jks)",
       "Read(./**/*.keystore)",
       "Read(./**/id_rsa)",
-      "Read(./**/id_ed25519)"
+      "Read(./**/id_ed25519)",
+      "Read(./**/.npmrc)",
+      "Read(./**/.netrc)",
+      "Read(./**/_netrc)",
+      "Read(./**/.git-credentials)",
+      "Read(./**/credentials.toml)",
+      "Read(./**/.docker/config.json)"
     ]
   },
   "hooks": {
