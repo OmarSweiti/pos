@@ -112,21 +112,21 @@ A guard nobody has seen fail is a guard nobody should trust.
 
 The shell arm of `protect-immutable.py` is defence in depth, not a proof: it follows `cd`,
 covers redirects, output flags, copy destinations, PowerShell verbs, and literal protected
-paths passed to interpreters. Arbitrary code can still construct a path dynamically. On
-macOS/Linux/WSL2, `.claude/settings.json` adds an OS sandbox `denyWrite` for `docs/plan`, secret
-read boundaries, credential scrubbing, fail-closed sandbox startup, no unsandboxed retry, and no
-preapproved command-egress domain. Project reads are not broadly re-allowed over those denies;
-the tracked `.env.example` remains usable policy input while arbitrary `.env.<suffix>` files are
-denied by both the sandbox and Read hook. New domains remain prompt-mediated
-unless a user/managed strict allowlist is configured.
-The staged Git hook and trusted-workflow PR check remain separate backstops.
+paths passed to interpreters. Arbitrary code can still construct a path dynamically.
+`.claude/settings.json` intentionally disables Claude's OS sandbox so permitted package-manager,
+Git/SSH, GitHub, and other networked shell commands can use the host normally. The normal manual
+permission flow, exact project `permissions.deny` list, and repository hooks remain. Those
+Read/Edit denies govern Claude tools, not subprocesses: a permitted shell command has ambient host
+filesystem, network, environment, and credential access. Do not describe this posture as OS
+containment or credential scrubbing. The staged Git hook and trusted-workflow PR check remain
+separate backstops.
 
 Claude invokes every active hook through the same shell-free Node launcher and includes actual
-PowerShell/Monitor payload tests. Native Windows hook dispatch was not executed here, and the
-official Claude OS sandbox still does not cover native Windows, so do not present that platform
-as proven. Fail-open internal parser errors use a visible structured warning; the PreToolUse
-launcher fails closed if Python cannot start, and ConfigChange validation fails closed when
-project or local settings try to weaken the reviewed contract.
+PowerShell/Monitor payload tests. Native Windows hook dispatch was not executed here; the OS
+sandbox is deliberately disabled on every platform, so do not present the hook tests as an OS
+enforcement boundary. Fail-open internal parser errors use a visible structured warning; the
+PreToolUse launcher fails closed if Python cannot start, and ConfigChange validation fails closed
+when project or local settings try to weaken the reviewed contract.
 
 Codex loads this project's config, rules, and hooks only for a trusted repository,
 and hook definitions require their own review. On first use, open `/hooks`, inspect

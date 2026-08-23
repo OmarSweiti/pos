@@ -955,18 +955,18 @@ see. With one developer, the substitutes are not optional — they are the whole
    `.claude/hooks/` refuses what must not happen. After touching either, run `just guards` — a
    guard nobody has seen fail is a guard nobody should trust.
 
-On supported macOS/Linux/WSL2 hosts, the checked-in Claude configuration also enables its OS
-sandbox, keeps the default permission mode manual, disables bypass-permissions mode and automatic
-Bash approval, fails closed if the sandbox cannot start, explicitly keeps hooks enabled, removes
-common credential variables from subprocesses, and pre-approves no network domain. Sensitive
-project/home reads are denied, including arbitrary ignored `.env.<suffix>` files; only the
-repository's exact tracked environment example remains readable. New hosts may still prompt
-because a strict network allowlist cannot be imposed from project scope. Pre-tool launcher and
+The checked-in Claude configuration intentionally disables its OS sandbox so permitted
+package-manager, Git/SSH, GitHub, and other networked shell commands can use the host normally. It
+keeps the default permission mode manual, disables bypass-permissions mode, explicitly keeps hooks
+enabled, and retains the exact project Read/Edit denies. Disabling the sandbox does not approve
+every command: the normal Claude permission flow still applies. It does mean a permitted shell
+subprocess has ambient host filesystem, network, environment, and credential access; the Read
+denies constrain Claude tools and are not OS containment. Pre-tool launcher and
 settings-validation failures fail closed; post-tool documentation diagnostics remain visible but
-cannot undo a completed write. Native
-Windows has no Claude OS sandbox; the portable launcher and real `PowerShell`/`Monitor` routing
-are contract-tested. Git hooks and CI provide cross-platform backstops and signals; on this Free
-plan a red CI result still cannot block the repository administrator from merging.
+cannot undo a completed write. The portable launcher and real `PowerShell`/`Monitor` routing are
+contract-tested, but native Windows process dispatch was not exercised. Git hooks and CI provide
+cross-platform backstops and signals; on this Free plan a red CI result still cannot block the
+repository administrator from merging.
 
 When a second developer arrives, the reviewer's job in this codebase, in priority order:
 
@@ -1476,7 +1476,7 @@ it.
 | **Branch protection does not exist.** This repo is private on the current GitHub Free plan, where protection and rulesets both return 403. `.githooks/pre-push` and server-side checks provide safety and evidence, but `--no-verify` and the administrator merge button remain possible | a plan/repository visibility change outside this setup; no paid-plan control is claimed here |
 | A clone that has not run `just setup` has **no** protection, because the hooks live in `core.hooksPath` | nothing — it is inherent to hook-based enforcement. It is why §12 of `03-github-workflow.md` leads with `just setup` |
 | GitHub-native secret scanning and push protection are unavailable for this private repository | independent Gitleaks scanning is installed locally and in CI; native GitHub coverage remains unavailable |
-| Claude's OS sandbox is unavailable on native Windows, and native PowerShell process dispatch was not exercised here | the checked-in launcher and real `PowerShell` routing have portable contract tests; Git hooks and CI add backstops/signals, but CI cannot block an administrator merge on this plan |
+| Claude's OS sandbox is intentionally disabled on every host, so permitted shell subprocesses have ambient filesystem, network, environment, and credential access; native PowerShell process dispatch was not exercised here | accepted development-policy tradeoff; manual permissions, exact tool-level denies, hooks, Git hooks, and CI remain controls rather than OS containment. Re-enable an audited sandbox policy if host isolation becomes required |
 | `staging` means "a tagged candidate", not "a running system" — there is no hosted environment for `apps/server` | a deployment target, when there is something to deploy |
 | Ordinary commits are not signed | release tags already require verified signing; decide whether to require ordinary commit signing before external contributors arrive |
 

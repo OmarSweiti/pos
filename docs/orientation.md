@@ -157,26 +157,22 @@ different, so the adapter files are not expected to be byte-identical.
 ### Claude Code: `.claude/`
 
 [`../.claude/settings.json`](../.claude/settings.json) is checked-in project
-policy. On supported macOS/Linux/WSL2 hosts it:
+policy. On every host it:
 
-- enables Claude's OS sandbox;
-- keeps the default permission mode manual;
-- explicitly keeps project hooks enabled;
-- disables bypass-permissions mode, sandboxed Bash auto-approval, and automatic
-  unsandboxed retry, and refuses closed if the OS sandbox cannot start;
-- limits writes to the project and denies writes to `docs/plan`;
-- denies explicit project secret/database/key patterns and sensitive home
-  credential locations. Claude resolves overlapping entries by the more-specific
-  path; this policy still avoids a broad project `allowRead` so the least-privilege
-  boundary stays obvious. The tracked `.env.example` template remains readable
-  while arbitrary `.env.<suffix>` live-secret names do not;
-- removes common API, package-registry, database, cloud, GitHub, and Tauri
-  signing variables from sandboxed subprocesses;
-- pre-approves no network domain and denies metadata endpoints.
+- intentionally disables Claude's OS sandbox so permitted package-manager,
+  Git/SSH, GitHub, and other networked shell commands can use the host normally;
+- keeps the default permission mode manual and the reviewed command allowlist;
+  disabling the sandbox does not automatically approve every Bash command;
+- explicitly keeps project hooks enabled and disables bypass-permissions mode;
+- retains the exact project Read/Edit denies for `docs/plan`, explicit project
+  secret/database/key patterns, and sensitive home credential locations when
+  Claude uses those tools.
 
-An ordinary new network host can still produce a user prompt. Project settings
-cannot impose Claude's effective strict network allowlist; the documentation
-therefore does not claim a hard network deny.
+The Read/Edit denies are tool-level policy, not OS containment. A permitted shell
+subprocess has ambient host filesystem, network, environment, and credential
+access, including access used by SSH and GitHub credential helpers. This project
+policy therefore does not claim subprocess credential scrubbing, metadata-endpoint
+denial, or a strict command-egress boundary.
 
 The hooks use the current exec-form configuration: Node invokes
 `hooks/run-python-hook.mjs`, which resolves the repository and launches the
@@ -200,7 +196,7 @@ message rather than failing silently. The ConfigChange settings validator is the
 exception: it fails closed. It can reject a weakening for the current session;
 it does not erase the attempted disk edit or replace CLI/startup/managed policy.
 
-Claude's OS sandbox is not available on native Windows. The portable launcher
+The OS sandbox is deliberately disabled on every platform. The portable launcher
 and genuine PowerShell-shaped tool routing are contract-tested, but native
 Windows process dispatch was not exercised here. Git hooks and CI provide
 cross-platform backstops and signals; a red CI result cannot block the repository
@@ -220,15 +216,18 @@ Codex to `CLAUDE.md`, conventions, the applicable Claude rules, and the project
 skills; this prevents a second copy of the engineering law.
 
 [`../.codex/config.toml`](../.codex/config.toml) keeps repository work in a
-workspace-write sandbox, disables network access inside that sandbox, requires
-approval for escalation, filters credential-shaped environment variables, and
-explicitly keeps hooks enabled. User preferences such as model or UI remain in
-the user's Codex configuration rather than the repository.
+workspace-write sandbox, enables network access inside that write boundary,
+requires approval for escalation and reviewed mutating operations, filters
+credential-shaped environment variables, and explicitly keeps hooks enabled.
+Ordinary dependency, Git, GitHub, and documentation reads can stay inside the
+sandbox. User preferences such as model or UI remain in the user's Codex
+configuration rather than the repository.
 
 [`../.codex/rules/safety.rules`](../.codex/rules/safety.rules) prompts for
-history-changing Git, pushes, GitHub mutations, publishing, and destructive
-database operations. `sqlx migrate revert` is forbidden because this repository
-is forward-only.
+history-changing Git, pushes, mutating GitHub commands, publishing, and
+destructive database operations while read-only GitHub inspection remains
+frictionless. `sqlx migrate revert` is forbidden because this repository is
+forward-only.
 
 [`../.codex/hooks.json`](../.codex/hooks.json) adds immutable-path checks before
 shell or patch operations and a docs-link check after patches. A trusted Codex
@@ -530,7 +529,7 @@ for the complete branch and hotfix commands.
 | Layer | What it contributes | Limit |
 |---|---|---|
 | compiler/lints/tests | domain, money, schema, frontend, and behavior checks | only the behavior actually encoded is proved |
-| Claude/Codex sandbox and hooks | safer agent execution and immediate immutable/docs feedback | client support and lexical parsing limits apply |
+| agent permissions, the Codex sandbox, and Claude/Codex hooks | safer agent execution and immediate immutable/docs feedback | Claude shell subprocesses have ambient host access; client support and lexical parsing limits apply |
 | Git hooks | staged policy, content scanning, message/history policy, branch-push safety | local and intentionally bypassable |
 | GitHub workflows | trusted-base policy, CI, security analysis, releases, logged evidence | red checks cannot block this repository's administrator without protection |
 | GitHub live settings | read-only default token posture, full-SHA policy after post-merge activation, immutable published releases | private-Free plan omits branch protection, active CODEOWNERS, and native secret scanning |

@@ -139,9 +139,15 @@ def validate_config(config: dict[str, object], errors: list[str]) -> None:
         errors,
     )
     if isinstance(sandbox, dict):
+        # Pinned to the reviewed value rather than to "off". Reading the world —
+        # `cargo fetch`, `pnpm install`, `gh pr view`, `git fetch` — is allowed
+        # inside the sandbox; the mutating commands stay `prompt` in
+        # .codex/rules/safety.rules, which is where the boundary actually lives.
+        # Asserting True still catches a silent change in either direction.
         require(
-            sandbox.get("network_access") is False,
-            "sandbox_workspace_write.network_access must be false",
+            sandbox.get("network_access") is True,
+            "sandbox_workspace_write.network_access must be true (reviewed: reads "
+            "are free, mutations stay approval-gated in safety.rules)",
             errors,
         )
         require(

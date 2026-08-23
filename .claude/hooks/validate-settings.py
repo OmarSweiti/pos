@@ -63,38 +63,6 @@ APPROVED_PERMISSION_ALLOWS = {
     "Bash(git branch --show-current)",
     "Bash(git rev-parse:*)",
 }
-REQUIRED_ENV_DENIES = {
-    "ANTHROPIC_API_KEY",
-    "OPENAI_API_KEY",
-    "GITHUB_TOKEN",
-    "GH_TOKEN",
-    "NPM_TOKEN",
-    "CARGO_REGISTRY_TOKEN",
-    "DATABASE_URL",
-    "POS_DB_KEY",
-    "TAURI_SIGNING_PRIVATE_KEY",
-    "TAURI_SIGNING_PRIVATE_KEY_PASSWORD",
-    "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY",
-    "AWS_SESSION_TOKEN",
-}
-REQUIRED_READ_ROOTS = {
-    "./apps/server/.env.example",
-    "~/.cargo/bin",
-    "~/.cargo/git",
-    "~/.cargo/registry",
-    "~/.rustup",
-    "~/.nvm",
-    "~/.pyenv",
-    "~/.local/share/pnpm",
-    "~/.cache/pnpm",
-    "~/Library/pnpm",
-}
-REQUIRED_NETWORK_DENIES = {
-    "169.254.169.254",
-    "100.100.100.200",
-    "metadata.google.internal",
-}
 REQUIRED_PERMISSION_DENIES = {
     "Edit(/docs/plan/**)",
     "Read(//**/.env)",
@@ -143,57 +111,6 @@ REQUIRED_PERMISSION_DENIES = {
     "Read(~/Library/Keychains/**)",
     "Read(~/Library/Application Support/1Password/**)",
     "Read(~/Library/Application Support/Bitwarden/**)",
-}
-REQUIRED_SANDBOX_READ_DENIES = {
-    "./**/.env",
-    "./**/.env.*",
-    "./**/.env.local",
-    "./**/.env.development",
-    "./**/.env.development.local",
-    "./**/.env.test",
-    "./**/.env.test.local",
-    "./**/.env.staging",
-    "./**/.env.production",
-    "./**/.env.production.local",
-    "./**/*.sqlite",
-    "./**/*.sqlite3",
-    "./**/*.db",
-    "./**/*.db-wal",
-    "./**/*.db-shm",
-    "./**/*.sqlite-wal",
-    "./**/*.sqlite-shm",
-    "./**/*.pem",
-    "./**/*.key",
-    "./**/*.p12",
-    "./**/*.pfx",
-    "./**/*.jks",
-    "./**/*.keystore",
-    "./**/id_rsa",
-    "./**/id_ed25519",
-    "./**/.npmrc",
-    "./**/.netrc",
-    "./**/_netrc",
-    "./**/.git-credentials",
-    "./**/credentials",
-    "./**/credentials.toml",
-    "./**/.docker/config.json",
-    "~/.cargo/credentials",
-    "~/.cargo/credentials.toml",
-    "~/.ssh",
-    "~/.gnupg",
-    "~/.aws",
-    "~/.azure",
-    "~/.kube",
-    "~/.config/gh",
-    "~/.config/gcloud",
-    "~/.config/op",
-    "~/.local/share/keyrings",
-    "~/.claude",
-    "~/.claude.json",
-    "~/.codex",
-    "~/Library/Keychains",
-    "~/Library/Application Support/1Password",
-    "~/Library/Application Support/Bitwarden",
 }
 SKILL_CONTRACTS = {
     "add-migration": (
@@ -302,77 +219,18 @@ def project_errors(settings: dict[str, Any]) -> list[str]:
     ):
         errors.append("file path permissions must use Read/Edit, not unsupported tool names")
 
-    if nested(settings, "sandbox", "enabled") is not True:
-        errors.append("sandbox.enabled must remain true")
-    if nested(settings, "sandbox", "failIfUnavailable") is not True:
-        errors.append("sandbox.failIfUnavailable must remain true so setup failures refuse closed")
-    if nested(settings, "sandbox", "autoAllowBashIfSandboxed") is not False:
-        errors.append("sandbox.autoAllowBashIfSandboxed must remain false")
-    if nested(settings, "sandbox", "allowUnsandboxedCommands") is not False:
-        errors.append("sandbox.allowUnsandboxedCommands must remain false")
-    allow_read = nested(settings, "sandbox", "filesystem", "allowRead")
+    reviewed_sandbox = {
+        "enabled": False,
+        "filesystem": {"denyWrite": ["./docs/plan"]},
+    }
     if (
-        not isinstance(allow_read, list)
-        or not all(isinstance(path, str) for path in allow_read)
-        or set(allow_read) != REQUIRED_READ_ROOTS
+        settings.get("sandbox") != reviewed_sandbox
+        or nested(settings, "sandbox", "enabled") is not False
     ):
-        errors.append("sandbox allowRead must remain limited to reviewed toolchain and template paths")
-    if nested(settings, "sandbox", "filesystem", "allowWrite"):
-        errors.append("sandbox.filesystem.allowWrite must not widen the project write root")
-    deny_read = nested(settings, "sandbox", "filesystem", "denyRead")
-    if (
-        not isinstance(deny_read, list)
-        or not all(isinstance(path, str) for path in deny_read)
-        or not REQUIRED_SANDBOX_READ_DENIES.issubset(set(deny_read))
-    ):
-        errors.append("sandbox.filesystem.denyRead must protect home and secret paths")
-    deny_write = nested(settings, "sandbox", "filesystem", "denyWrite")
-    if not isinstance(deny_write, list) or "./docs/plan" not in deny_write:
-        errors.append("sandbox.filesystem.denyWrite must protect docs/plan")
-    if nested(settings, "sandbox", "filesystem", "disabled") is True:
-        errors.append("sandbox filesystem isolation cannot be disabled")
-    excluded = nested(settings, "sandbox", "excludedCommands")
-    if isinstance(excluded, list) and excluded:
-        errors.append("sandbox.excludedCommands must stay empty")
-    if nested(settings, "sandbox", "network", "allowAllUnixSockets") is True:
-        errors.append("sandbox network must not allow all Unix sockets")
-    if nested(settings, "sandbox", "network", "allowUnixSockets"):
-        errors.append("sandbox network must not add Unix socket access")
-    if nested(settings, "sandbox", "network", "allowLocalBinding") is True:
-        errors.append("sandbox network must not enable local binding")
-    if nested(settings, "sandbox", "network", "allowMachLookup"):
-        errors.append("sandbox network must not add Mach/XPC service access")
-    if nested(settings, "sandbox", "enableWeakerNetworkIsolation") is True:
-        errors.append("sandbox network isolation must not be weakened")
-    if nested(settings, "sandbox", "enableWeakerNestedSandbox") is True:
-        errors.append("sandbox nesting isolation must not be weakened")
-
-    allowed_domains = nested(settings, "sandbox", "network", "allowedDomains")
-    if allowed_domains != []:
-        errors.append("sandbox command network allowlist must remain explicitly empty")
-    denied_domains = nested(settings, "sandbox", "network", "deniedDomains")
-    if (
-        not isinstance(denied_domains, list)
-        or not all(isinstance(domain, str) for domain in denied_domains)
-        or not REQUIRED_NETWORK_DENIES.issubset(set(denied_domains))
-    ):
-        errors.append("sandbox network must deny cloud metadata endpoints")
-
-    env_entries = nested(settings, "sandbox", "credentials", "envVars")
-    valid_env_entries = (
-        isinstance(env_entries, list)
-        and len(env_entries) == len(REQUIRED_ENV_DENIES)
-        and all(
-            isinstance(entry, dict)
-            and set(entry) == {"name", "mode"}
-            and isinstance(entry.get("name"), str)
-            and entry.get("mode") == "deny"
-            for entry in env_entries
+        errors.append(
+            "sandbox must remain intentionally disabled with only the dormant "
+            "docs/plan denyWrite default"
         )
-        and {entry["name"] for entry in env_entries} == REQUIRED_ENV_DENIES
-    )
-    if not valid_env_entries:
-        errors.append("sandbox credential envVars must be exactly the reviewed deny entries")
 
     hook_map = settings.get("hooks")
     if not isinstance(hook_map, dict) or set(hook_map) != set(HOOKS):
@@ -392,11 +250,8 @@ def project_errors(settings: dict[str, Any]) -> list[str]:
 
 def local_errors(settings: dict[str, Any]) -> list[str]:
     errors: list[str] = []
-    # Array settings merge across scopes. Local permissions.deny/ask,
-    # filesystem.denyRead/denyWrite, and network.deniedDomains therefore only
-    # add restrictions. Credential `deny` also wins over `mask`, while mask
-    # entries are ignored at project/local scope. The allow-direction arrays
-    # below are the surfaces that can widen access and must remain empty.
+    # Permission arrays merge across scopes. Local deny/ask rules only add
+    # friction, while allow rules can widen access and must remain empty.
     permissions_allow = nested(settings, "permissions", "allow")
     if isinstance(permissions_allow, list) and permissions_allow:
         errors.append("local settings cannot add auto-approved tool or command rules")
@@ -409,37 +264,8 @@ def local_errors(settings: dict[str, Any]) -> list[str]:
     bypass = nested(settings, "permissions", "disableBypassPermissionsMode")
     if bypass not in (None, "disable"):
         errors.append("local settings cannot re-enable bypassPermissions")
-    if nested(settings, "sandbox", "enabled") is False:
-        errors.append("local settings cannot disable the sandbox")
-    if nested(settings, "sandbox", "failIfUnavailable") is False:
-        errors.append("local settings cannot make sandbox startup fail open")
-    if nested(settings, "sandbox", "allowUnsandboxedCommands") is True:
-        errors.append("local settings cannot enable unsandboxed command retries")
-    if nested(settings, "sandbox", "autoAllowBashIfSandboxed") is True:
-        errors.append("local settings cannot auto-approve all sandboxed commands")
-    if nested(settings, "sandbox", "filesystem", "disabled") is True:
-        errors.append("local settings cannot disable filesystem isolation")
-    excluded = nested(settings, "sandbox", "excludedCommands")
-    if isinstance(excluded, list) and excluded:
-        errors.append("local settings cannot exclude commands from the sandbox")
-    if nested(settings, "sandbox", "filesystem", "allowRead"):
-        errors.append("local settings cannot widen sandbox read access")
-    if nested(settings, "sandbox", "filesystem", "allowWrite"):
-        errors.append("local settings cannot widen sandbox write access")
-    if nested(settings, "sandbox", "network", "allowAllUnixSockets") is True:
-        errors.append("local settings cannot allow all Unix sockets")
-    if nested(settings, "sandbox", "network", "allowUnixSockets"):
-        errors.append("local settings cannot add Unix socket access")
-    if nested(settings, "sandbox", "network", "allowedDomains"):
-        errors.append("local settings cannot pre-approve command network domains")
-    if nested(settings, "sandbox", "network", "allowLocalBinding") is True:
-        errors.append("local settings cannot enable local network binding")
-    if nested(settings, "sandbox", "network", "allowMachLookup"):
-        errors.append("local settings cannot add Mach/XPC service access")
-    if nested(settings, "sandbox", "enableWeakerNetworkIsolation") is True:
-        errors.append("local settings cannot weaken network isolation")
-    if nested(settings, "sandbox", "enableWeakerNestedSandbox") is True:
-        errors.append("local settings cannot weaken nested sandboxing")
+    if nested(settings, "sandbox", "enabled") is not None:
+        errors.append("local settings cannot override the reviewed disabled sandbox mode")
     if settings.get("disableAllHooks") is True or settings.get("hooks"):
         errors.append("local settings cannot disable or override repository hooks")
     if settings.get("attribution"):
