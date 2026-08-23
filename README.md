@@ -37,31 +37,55 @@ packages/money/        the minor-unit rule, shared by both front ends
 ## Getting started
 
 Requires [Rust](https://rustup.rs) (the pinned toolchain installs itself from
-`rust-toolchain.toml`), [pnpm](https://pnpm.io), [just](https://just.systems),
+`rust-toolchain.toml`),
+[`cargo-nextest`](https://nexte.st/docs/installation/pre-built-binaries/),
+[Python 3.11+](https://www.python.org/downloads/),
+[Node.js 22](https://nodejs.org/) (pinned by `.nvmrc` and `package.json`),
+[pnpm](https://pnpm.io),
+[just](https://just.systems),
+[`gitleaks`](https://github.com/gitleaks/gitleaks) for content-based secret
+scanning, Ruby with its bundled Psych YAML parser for workflow-policy checks,
 and Docker for the development database. Tauri also needs
 [its platform prerequisites](https://tauri.app/start/prerequisites/).
+The optional time-varying `just audit` gate additionally requires
+[`cargo-deny`](https://embarkstudios.github.io/cargo-deny/).
+On Windows, install Python's standard `py` launcher and Git Bash; the committed
+hooks use the portable launcher in `scripts/run-python.sh`.
 
 ```bash
-just setup          # install dependencies AND enable the git hooks — not optional
+just setup          # install hooks, check tools, then install locked dependencies
 just db-up          # development Postgres
 just dev-terminal   # run the register
 ```
 
-`just setup` is not optional. Branch protection is unavailable on this plan, so
-the hooks in `.githooks/` are the enforcement; a clone that skipped it can push
-straight to `main`. `just --list` shows everything else.
+`just setup` is not optional. It installs the local hooks before any networked
+dependency step, so a failed install does not leave the clone silently
+unprotected. Branch protection is unavailable on this plan; the hooks are a
+bypassable local safety net, while CI provides the server-side evidence. A clone
+that skipped setup can still push straight to `main`. `just --list` shows
+everything else.
 
 ## Quality gates
 
 ```bash
-just lint     # fmt · clippy -D warnings · acyclic · schema · biome · doc-links
-just test     # cargo nextest --workspace · pnpm -r test
+just lint     # fmt · clippy · domain purity · schema/mapping · RTL · biome · docs
+just test     # cargo nextest --locked --workspace · pnpm -r test
 just audit    # cargo-deny advisories/licences · pnpm audit
 just guards   # prove the write guards still refuse what they must
-just pre-push # all of the above, in the order CI runs them
+just secrets  # content-scan all reachable Git history with Gitleaks
+just pre-push # lint · test · web build · guards · secret history scan
 ```
 
-CI runs exactly these, so a green `just pre-push` predicts a green build.
+CI repeats the deterministic gates, scans the proposed commit range for secrets,
+and runs the time-varying supply-chain audit separately. A green `just pre-push`
+therefore predicts the build gates; run `just audit` before a release as well.
+
+Release automation requires a verified signed tag at the exact validated branch
+tip, builds every platform with separated signing/publishing permissions, and
+adds checksums plus an SBOM to a draft. Published releases are immutable. The
+first external release is intentionally blocked until the updater-signing
+repository secrets, committed updater public configuration, and OS signing
+material are configured; see [`SECURITY.md`](SECURITY.md).
 
 ## The invariants
 
@@ -86,6 +110,7 @@ device clock; and `pos-domain` performs no I/O of any kind.
 | [`docs/implementation/`](docs/implementation/) | **what to type**, in what order, and how you know it worked |
 | [`docs/implementation/02-development-workflow.md`](docs/implementation/02-development-workflow.md) | the daily loop, command by command |
 | [`docs/implementation/03-github-workflow.md`](docs/implementation/03-github-workflow.md) | branches, issues, PRs, release channels |
+| [`docs/orientation.md`](docs/orientation.md) | what each repository directory and guard does |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | how to propose a change |
 | [`SECURITY.md`](SECURITY.md) | reporting a vulnerability, and the security posture |
 
