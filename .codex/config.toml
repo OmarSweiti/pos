@@ -12,13 +12,32 @@ approval_policy = "on-request"
 approvals_reviewer = "user"
 
 # Normal implementation work may update this repository, but not the rest of
-# the machine. Networked commands leave the sandbox and therefore require the
-# approval policy above.
+# the machine.
 sandbox_mode = "workspace-write"
 allow_login_shell = false
 
 [sandbox_workspace_write]
-network_access = false
+# Network is ON inside the sandbox, deliberately.
+#
+# With it off, every ordinary networked command had to leave the sandbox and wait
+# for a person: `cargo fetch`, `pnpm install`, `gh pr view`, `gh pr checks`,
+# `git fetch`, `curl` against a documentation page. None of those change anything
+# — they are how the agent reads the world — and gating them made the approval
+# prompt so frequent that it stopped carrying information.
+#
+# What still requires approval is unchanged, and that is the point: the mutating
+# operations are listed in .codex/rules/safety.rules and remain `prompt` —
+# `git push`, `git commit`, `gh pr create|merge`, `git reset|clean`, `just pr`,
+# `cargo publish`. Reading is free; writing is visible.
+#
+# The write boundary is untouched: `sandbox_mode = "workspace-write"` with no
+# `writable_roots` still confines writes to this repository, so a networked
+# command cannot reach the rest of the machine.
+#
+# The narrower option, if this proves too broad: the schema supports a
+# `[network.domains]` table with per-domain allow/deny, which would pin egress to
+# GitHub and the package registries instead of allowing all hosts.
+network_access = true
 
 # Do not pass variables whose names look like credentials (for example,
 # *_KEY, *_SECRET, or *_TOKEN) to shell commands by default. Extend the
