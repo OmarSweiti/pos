@@ -526,10 +526,10 @@ jobs:
           remote_tag=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$remote_object")
           remote_target_type=$(printf '%s' "$remote_tag" | jq -r '.object.type')
           remote_target=$(printf '%s' "$remote_tag" | jq -r '.object.sha')
-          [ "$remote_target_type" = "commit" ] && [ "$remote_target" = "$GITHUB_SHA" ] || {
+          if [ "$remote_target_type" != "commit" ] || [ "$remote_target" != "$GITHUB_SHA" ]; then
             echo "::error::$GITHUB_REF_NAME no longer points directly to the workflow commit."
             exit 1
-          }
+          fi
 
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             is_draft=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)
@@ -561,15 +561,15 @@ jobs:
           post_ref=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME")
           post_type=$(printf '%s' "$post_ref" | jq -r '.object.type')
           post_object=$(printf '%s' "$post_ref" | jq -r '.object.sha')
-          [ "$post_type" = "tag" ] && [ "$post_object" = "$EXPECTED_TAG_OBJECT" ] || {
+          if [ "$post_type" != "tag" ] || [ "$post_object" != "$EXPECTED_TAG_OBJECT" ]; then
             echo "::error::$GITHUB_REF_NAME moved while its draft was being mutated. The draft must not be published."
             exit 1
-          }
+          fi
           post_tag=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$post_object")
           post_target_type=$(printf '%s' "$post_tag" | jq -r '.object.type')
           post_target=$(printf '%s' "$post_tag" | jq -r '.object.sha')
-          [ "$post_target_type" = "commit" ] && [ "$post_target" = "$GITHUB_SHA" ] || {
+          if [ "$post_target_type" != "commit" ] || [ "$post_target" != "$GITHUB_SHA" ]; then
             echo "::error::$GITHUB_REF_NAME no longer points directly to the workflow commit. The draft must not be published."
             exit 1
-          }
+          fi
           echo "draft assets uploaded for unchanged tag object $post_object and commit $post_target"
