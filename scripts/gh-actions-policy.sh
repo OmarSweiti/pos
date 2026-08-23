@@ -186,7 +186,7 @@ RUBY
 
 self_test() {
   local tmp pass=0 fail=0
-  tmp=$(mktemp -d)
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pos-gh-actions-policy.XXXXXX")
   trap 'rm -rf "$tmp"' RETURN
 
   run_case() { # run_case <expected> <label> <uses-value>

@@ -23,7 +23,7 @@ SELF=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
 
 self_test() {
   local pass=0 fail=0 tmp
-  tmp=$(mktemp -d)
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pos-check-protected-paths.XXXXXX")
   trap 'rm -rf "$tmp"' RETURN
 
   git -C "$tmp" init -q
@@ -136,7 +136,7 @@ head_commit=$(git rev-parse --verify --end-of-options "$HEAD^{commit}") || {
 # NUL delimiters are equally load-bearing: Git permits tabs and newlines in a
 # filename. Default quoted/line-oriented output can turn `docs/plan/<newline>`
 # into a string that no longer begins with the protected prefix.
-changed_file=$(mktemp) || {
+changed_file=$(mktemp "${TMPDIR:-/tmp}/pos-check-protected-paths.XXXXXX") || {
   echo "::error::protected paths: cannot create a temporary path list" >&2
   exit 2
 }

@@ -60,7 +60,7 @@ scan() {                    # scan <root-dir>  -> prints violations, returns cou
 
 self_test() {
   local tmp pass=0 fail=0
-  tmp=$(mktemp -d)
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pos-check-logical-css.XXXXXX")
   trap 'rm -rf "$tmp"' RETURN
   mkdir -p "$tmp/src"
 
