@@ -49,16 +49,16 @@ the same path dynamically, and a patch file can name a target the command line
 does not. No command-string parser can prove the behavior of arbitrary code, so
 the other layers remain mandatory:
 
-  * `.claude/settings.json` denies writes under docs/plan at both the built-in
-    Edit permission layer and the OS sandbox boundary on supported platforms.
-  * `.githooks/pre-commit` refuses a staged change *or deletion* of a committed
-    migration.
+  * `.claude/settings.json` denies built-in Edit operations under docs/plan; it
+    does not constrain permitted shell subprocesses.
+  * `.githooks/pre-commit` refuses a staged change *or deletion* of source-plan
+    material or a committed migration.
   * CI's `guards` job re-runs this file's own test suite on every change.
 
 Internal parser errors fail open with a visible warning so a malformed command
 cannot brick every edit in the repository. The exec launcher itself fails closed
-when Python cannot start, while the permission and sandbox layers remain the
-non-parser backstops.
+when Python cannot start. With the OS sandbox intentionally disabled, Git and CI
+are post-write backstops rather than worktree containment.
 
 Negative-tested by ./test-protect-immutable.sh — run it after any change here.
 A guard nobody has seen fail is a guard nobody should trust.

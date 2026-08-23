@@ -81,17 +81,19 @@ Run the focused checks first, followed by the canonical repository gates:
 ./scripts/verify-schema.py --verbose
 just verify-schema
 ./scripts/verify-pg-migrations.py --mapping-only
-just verify-pg
+env -u DATABASE_URL just verify-pg
 just lint
 just test
 ```
 
-On supported hosts, the Claude sandbox removes inherited `$DATABASE_URL`; the
-project policy also adds no Docker-socket exception. A human may run an explicit
+Do not trust an inherited `$DATABASE_URL` in a Claude shell: the OS sandbox is
+disabled, so the variable may be ambient. Default to mapping-only coverage and
+run the engine check with `DATABASE_URL` explicitly absent so the verifier uses
+its throwaway Docker path when available. A human may authorize an explicit
 environment-backed pass only after confirming it points to a disposable
 development server: the verifier creates a uniquely named scratch database and
-removes it in a `finally` cleanup. If no safe engine path is available, report
-the PostgreSQL pass as skipped rather than claiming validation.
+removes it in a `finally` cleanup. If neither safe path is available, report the
+PostgreSQL pass as skipped rather than claiming validation.
 
 Run `just guards` when the change touches either verifier, `REGISTER_LOCAL`, a
 hook, or another guard. In the handoff, summarize runtime registration order,

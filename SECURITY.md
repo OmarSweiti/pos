@@ -76,15 +76,16 @@ not a blanket machine-verification claim while the authenticated IPC surface is 
 built. Hiding a button is UX, never authorization; each command must gain its Rust check and
 contract coverage with the feature.
 
-Claude Code is also constrained by the checked-in sandbox and project policy on supported
-macOS/Linux/WSL2 hosts: project writes are scoped, sensitive environment variables are removed
-from sandboxed subprocesses, metadata endpoints are denied, and bypass-permissions mode is
-disabled. Sandbox startup, the PreToolUse interpreter launcher, and unsandboxed fallback fail
-closed; arbitrary `.env.<suffix>` files plus other sensitive project and home paths are denied
-without a broader `allowRead` overriding them. This is defence in depth for an
-engineering tool, not an application security boundary.
-Native Windows does not provide Claude's OS sandbox. Git hooks and CI add cross-platform
-backstops and visible signals there, but CI cannot block an administrator merge on this plan.
+Claude Code intentionally runs without its OS sandbox so permitted package-manager, Git/SSH,
+GitHub, and other networked shell commands can use the host normally. The checked-in policy keeps
+the normal manual permission flow, disables bypass-permissions mode, retains the exact project
+Read/Edit denies, and keeps the PreToolUse and ConfigChange launchers fail closed. Those denies
+govern Claude tools, not subprocesses: a permitted shell command has ambient host filesystem,
+network, environment, and credential access. The repository does not claim subprocess credential
+scrubbing, metadata-endpoint denial, or OS containment under this policy. This is an explicit
+developer-convenience tradeoff, not an application-security or secret-exfiltration boundary.
+Git hooks and CI remain cross-platform backstops and visible signals, but CI cannot block an
+administrator merge on this plan.
 
 ## Known gaps, stated plainly
 

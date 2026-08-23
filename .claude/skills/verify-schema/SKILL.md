@@ -43,10 +43,11 @@ database, then audits naming, types, and foreign keys.
    Mapping proves declaration coverage, not semantic equivalence. Review relevant
    type conversions, constraints, triggers, indexes, grants, reference data, and
    server-only/register-local exceptions before making a parity claim. Run
-   `just verify-pg` only when an engine pass is in scope and its target is safe.
-   On supported hosts, the Claude sandbox removes inherited `$DATABASE_URL`; the
-   project policy also adds no Docker-socket exception. A human may run an
-   explicit environment-backed pass after confirming it is a disposable
+   `env -u DATABASE_URL just verify-pg` only when an engine pass is in scope and its target is safe.
+   Do not trust an inherited `$DATABASE_URL` in a Claude shell: the OS sandbox is
+   disabled, so the variable may be ambient. Keeping it explicitly absent defaults
+   the verifier to its throwaway Docker path when available. A human may authorize
+   an explicit environment-backed pass after confirming it is a disposable
    development server—the verifier creates a uniquely named scratch database and
    removes it in a `finally` cleanup. Confirm ordinary server migrations use
    SQLx's default transaction boundary; only a case-sensitive, byte-zero

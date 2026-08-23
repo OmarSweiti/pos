@@ -172,8 +172,8 @@ expect 0 "write verb and path in DIFFERENT segments"  "$(bash_ "$(printf 'git ad
 expect 0 "committed migration named in a commit msg"  "$(bash_ 'git commit -m "verifier applies 0001_init.sql first"')"
 expect 0 "a plan path inside a quoted commit message" "$(bash_ 'git commit -m "rm docs/plan was refused, correctly"')"
 # A dynamically assembled interpreter path is not provable from the command
-# line. The OS denyWrite boundary protects docs/plan on supported platforms;
-# Git and CI remain the cross-platform backstops.
+# line. With the OS sandbox deliberately disabled, Git and CI remain post-write
+# backstops; this test documents a parser limit, not safe execution.
 expect 0 "dynamic interpreter path is outside parser proof" "$(bash_ "python3 -c \"p='docs/'+'plan/new.md'; open(p,'w')\"")"
 expect 0 "unrelated tool"                          '{"tool_name":"Grep","cwd":"'"$ROOT"'","tool_input":{"pattern":"x"}}'
 

@@ -86,50 +86,29 @@ class SettingsContract(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("reviewed command set", result.stderr)
 
-    def test_sandbox_cannot_be_disabled(self) -> None:
+    def test_sandbox_cannot_be_reenabled(self) -> None:
         changed = copy.deepcopy(SETTINGS)
-        changed["sandbox"]["enabled"] = False
+        changed["sandbox"]["enabled"] = True
         temporary, root = self.fixture(changed)
         with temporary:
             result = validate(root)
         self.assertEqual(result.returncode, 2)
-        self.assertIn("sandbox.enabled", result.stderr)
+        self.assertIn("intentionally disabled", result.stderr)
 
-    def test_sandbox_startup_failure_must_refuse_closed(self) -> None:
+    def test_sandbox_enabled_rejects_integer_false(self) -> None:
         changed = copy.deepcopy(SETTINGS)
-        changed["sandbox"]["failIfUnavailable"] = False
+        changed["sandbox"]["enabled"] = 0
         temporary, root = self.fixture(changed)
         with temporary:
             result = validate(root)
         self.assertEqual(result.returncode, 2)
-        self.assertIn("failIfUnavailable", result.stderr)
-
-    def test_project_root_is_not_added_to_allow_read(self) -> None:
-        changed = copy.deepcopy(SETTINGS)
-        changed["sandbox"]["filesystem"]["allowRead"].append(".")
-        temporary, root = self.fixture(changed)
-        with temporary:
-            result = validate(root)
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("reviewed toolchain and template paths", result.stderr)
+        self.assertIn("intentionally disabled", result.stderr)
 
     def test_tracked_env_examples_remain_readable_policy_inputs(self) -> None:
         permission_denies = SETTINGS["permissions"]["deny"]
-        sandbox_denies = SETTINGS["sandbox"]["filesystem"]["denyRead"]
-        sandbox_allows = SETTINGS["sandbox"]["filesystem"]["allowRead"]
         self.assertNotIn("Read(//**/.env.*)", permission_denies)
-        self.assertIn("./**/.env.*", sandbox_denies)
-        self.assertIn("./apps/server/.env.example", sandbox_allows)
+        self.assertIn("Read(//**/.env)", permission_denies)
         self.assertTrue((ROOT / "apps" / "server" / ".env.example").is_file())
-
-    def test_arbitrary_env_suffix_sandbox_deny_is_required(self) -> None:
-        changed = copy.deepcopy(SETTINGS)
-        changed["sandbox"]["filesystem"]["denyRead"].remove("./**/.env.*")
-        temporary, root = self.fixture(changed)
-        with temporary:
-            result = validate(root)
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("protect home and secret paths", result.stderr)
 
     def test_pretool_launcher_and_read_matcher_remain_fail_closed(self) -> None:
         changed = copy.deepcopy(SETTINGS)
@@ -163,23 +142,14 @@ class SettingsContract(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("working directories", result.stderr)
 
-    def test_project_cannot_widen_sandbox_write_root(self) -> None:
+    def test_project_sandbox_shape_is_exact(self) -> None:
         changed = copy.deepcopy(SETTINGS)
         changed["sandbox"]["filesystem"]["allowWrite"] = ["~/"]
         temporary, root = self.fixture(changed)
         with temporary:
             result = validate(root)
         self.assertEqual(result.returncode, 2)
-        self.assertIn("write root", result.stderr)
-
-    def test_unsandboxed_escape_hatch_cannot_be_enabled(self) -> None:
-        changed = copy.deepcopy(SETTINGS)
-        changed["sandbox"]["allowUnsandboxedCommands"] = True
-        temporary, root = self.fixture(changed)
-        with temporary:
-            result = validate(root)
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("allowUnsandboxedCommands", result.stderr)
+        self.assertIn("only the dormant", result.stderr)
 
     def test_bypass_permissions_cannot_be_reenabled(self) -> None:
         changed = copy.deepcopy(SETTINGS)
@@ -198,15 +168,6 @@ class SettingsContract(unittest.TestCase):
             result = validate(root)
         self.assertEqual(result.returncode, 2)
         self.assertIn("defaultMode", result.stderr)
-
-    def test_command_network_allowlist_must_stay_explicitly_empty(self) -> None:
-        changed = copy.deepcopy(SETTINGS)
-        del changed["sandbox"]["network"]["allowedDomains"]
-        temporary, root = self.fixture(changed)
-        with temporary:
-            result = validate(root)
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("allowlist", result.stderr)
 
     def test_powershell_cannot_be_dropped_from_pretool_matcher(self) -> None:
         changed = copy.deepcopy(SETTINGS)
@@ -230,7 +191,7 @@ class SettingsContract(unittest.TestCase):
 
     def test_exec_launcher_preserves_configchange_block(self) -> None:
         changed = copy.deepcopy(SETTINGS)
-        changed["sandbox"]["enabled"] = False
+        changed["sandbox"]["enabled"] = True
         temporary, root = self.fixture(changed)
         with temporary:
             payload = {
@@ -247,7 +208,7 @@ class SettingsContract(unittest.TestCase):
                 check=False,
             )
         self.assertEqual(result.returncode, 2)
-        self.assertIn("sandbox.enabled", result.stderr)
+        self.assertIn("intentionally disabled", result.stderr)
 
     def test_configchange_launcher_fails_closed_without_python(self) -> None:
         node = shutil.which("node")
@@ -285,38 +246,14 @@ class SettingsContract(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("ConfigChange", result.stderr)
 
-    def test_missing_credential_deny_is_rejected(self) -> None:
-        changed = copy.deepcopy(SETTINGS)
-        changed["sandbox"]["credentials"]["envVars"] = [
-            item
-            for item in changed["sandbox"]["credentials"]["envVars"]
-            if item["name"] != "DATABASE_URL"
-        ]
-        temporary, root = self.fixture(changed)
-        with temporary:
-            result = validate(root)
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("credential envVars", result.stderr)
-
-    def test_conflicting_credential_entry_is_rejected(self) -> None:
-        changed = copy.deepcopy(SETTINGS)
-        changed["sandbox"]["credentials"]["envVars"].append(
-            {"name": "DATABASE_URL", "mode": "mask"}
-        )
-        temporary, root = self.fixture(changed)
-        with temporary:
-            result = validate(root)
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("credential envVars", result.stderr)
-
     def test_missing_sensitive_file_deny_is_rejected(self) -> None:
         changed = copy.deepcopy(SETTINGS)
-        changed["sandbox"]["filesystem"]["denyRead"].remove("./**/.env")
+        changed["permissions"]["deny"].remove("Read(~/.ssh/**)")
         temporary, root = self.fixture(changed)
         with temporary:
             result = validate(root)
         self.assertEqual(result.returncode, 2)
-        self.assertIn("protect home and secret paths", result.stderr)
+        self.assertIn("protected-path and secret denies", result.stderr)
 
     def test_malformed_project_settings_are_blocked(self) -> None:
         temporary, root = self.fixture()
@@ -337,65 +274,17 @@ class SettingsContract(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("BLOCKED", result.stderr)
 
-    def test_local_settings_cannot_weaken_sandbox(self) -> None:
+    def test_local_settings_cannot_override_disabled_sandbox_mode(self) -> None:
         temporary, root = self.fixture()
         with temporary:
             local = root / ".claude" / "settings.local.json"
             local.write_text(
-                json.dumps({"sandbox": {"filesystem": {"disabled": True}}}),
+                json.dumps({"sandbox": {"enabled": True}}),
                 encoding="utf-8",
             )
             result = validate(root, "local_settings", local)
         self.assertEqual(result.returncode, 2)
-        self.assertIn("filesystem isolation", result.stderr)
-
-    def test_local_settings_cannot_make_sandbox_startup_fail_open(self) -> None:
-        temporary, root = self.fixture()
-        with temporary:
-            local = root / ".claude" / "settings.local.json"
-            local.write_text(
-                json.dumps({"sandbox": {"failIfUnavailable": False}}),
-                encoding="utf-8",
-            )
-            result = validate(root, "local_settings", local)
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("fail open", result.stderr)
-
-    def test_local_settings_cannot_add_mach_lookup_access(self) -> None:
-        temporary, root = self.fixture()
-        with temporary:
-            local = root / ".claude" / "settings.local.json"
-            local.write_text(
-                json.dumps({"sandbox": {"network": {"allowMachLookup": ["com.apple.securityd"]}}}),
-                encoding="utf-8",
-            )
-            result = validate(root, "local_settings", local)
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("Mach/XPC", result.stderr)
-
-    def test_local_settings_cannot_autoapprove_sandboxed_commands(self) -> None:
-        temporary, root = self.fixture()
-        with temporary:
-            local = root / ".claude" / "settings.local.json"
-            local.write_text(
-                json.dumps({"sandbox": {"autoAllowBashIfSandboxed": True}}),
-                encoding="utf-8",
-            )
-            result = validate(root, "local_settings", local)
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("auto-approve", result.stderr)
-
-    def test_local_settings_cannot_reopen_home_directory(self) -> None:
-        temporary, root = self.fixture()
-        with temporary:
-            local = root / ".claude" / "settings.local.json"
-            local.write_text(
-                json.dumps({"sandbox": {"filesystem": {"allowRead": ["~/"]}}}),
-                encoding="utf-8",
-            )
-            result = validate(root, "local_settings", local)
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("widen sandbox read access", result.stderr)
+        self.assertIn("reviewed disabled sandbox mode", result.stderr)
 
     def test_local_settings_cannot_add_autoapproved_commands(self) -> None:
         temporary, root = self.fixture()
@@ -455,7 +344,7 @@ class SettingsContract(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("only the reviewed", result.stderr)
 
-    def test_local_deny_arrays_only_tighten_and_are_allowed(self) -> None:
+    def test_local_permission_denies_and_prompts_are_allowed(self) -> None:
         temporary, root = self.fixture()
         with temporary:
             local = root / ".claude" / "settings.local.json"
@@ -464,16 +353,6 @@ class SettingsContract(unittest.TestCase):
                     "permissions": {
                         "ask": ["Bash(git push *)"],
                         "deny": ["Read(~/another-secret)"],
-                    },
-                    "sandbox": {
-                        "filesystem": {
-                            "denyRead": ["~/another-secret"],
-                            "denyWrite": ["~/protected"],
-                        },
-                        "network": {"deniedDomains": ["example.invalid"]},
-                        "credentials": {
-                            "envVars": [{"name": "EXTRA_TOKEN", "mode": "deny"}],
-                        },
                     },
                 }),
                 encoding="utf-8",

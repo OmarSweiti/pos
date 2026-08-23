@@ -91,9 +91,9 @@ def validate(path: Path) -> list[str]:
 
 
 def normalized_body(name: str, body: str) -> str:
-    """Remove only the intentional Claude/Codex sandbox wording difference."""
+    """Remove only the intentional client-specific database-target guidance."""
     starts = (
-        "On supported hosts, the Claude sandbox",
+        "Do not trust an inherited `$DATABASE_URL` in a Claude shell",
         "Repository policy removes inherited `$DATABASE_URL`",
     )
     start = next((body.find(marker) for marker in starts if marker in body), -1)
@@ -109,7 +109,8 @@ def normalized_body(name: str, body: str) -> str:
     end = body.find(end_marker, start)
     if end < 0:
         raise ValueError("client-specific database execution boundary is unterminated")
-    return body[:start] + "<CLIENT-SPECIFIC DATABASE BOUNDARY>" + body[end:]
+    normalized = body[:start] + "<CLIENT-SPECIFIC DATABASE BOUNDARY>" + body[end:]
+    return normalized.replace("env -u DATABASE_URL just verify-pg", "just verify-pg")
 
 
 def missing_contracts(name: str, body: str) -> list[str]:
