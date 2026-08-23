@@ -1,79 +1,12 @@
 #!/usr/bin/env bash
-# The "never committed" list from development-workflow §8, checked against what is
-# actually staged. .gitignore already covers these; this catches the `git add -f`
-# and the path .gitignore did not anticipate.
-set -uo pipefail
+# Inspect the staged index—the content Git will commit—not the working tree.
+set -euo pipefail
 
-# Two lists, because the two checks below ask different questions. The
-# never-committed list cares about content *arriving*, so ACMR is right. The
-# committed-migration check cares about the file changing at all — and a
-# deletion is the widest possible change to a forward-only migration, which
-# ACMR never showed. That gap meant `git rm` walked past both this hook and the
-# Claude write guard.
-staged=$(git diff --cached --name-only --diff-filter=ACMR)
-touched=$(git diff --cached --name-status --diff-filter=ACMRD)
-[ -z "$staged" ] && [ -z "$touched" ] && exit 0
-refuse=0
+repo_root=$(git rev-parse --show-toplevel) || {
+  echo "pre-commit: ERROR — cannot locate the repository root; refusing closed." >&2
+  exit 2
+}
+policy_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 
-while IFS= read -r f; do
-  [ -z "$f" ] && continue
-  case "$f" in
-    .env|.env.*|*/.env|*/.env.*)
-      echo "pre-commit: REFUSED — $f. An env file is where a key hides."; refuse=1 ;;
-    *.db|*.sqlite|*.sqlite3|*-wal|*-shm)
-      echo "pre-commit: REFUSED — $f. A database in git is fixture data pretending to be source."; refuse=1 ;;
-    *.pem|*.key|*.p12|*.pfx|id_rsa|id_ed25519|*.jks|*.keystore)
-      echo "pre-commit: REFUSED — $f. That is, or contains, a key."; refuse=1 ;;
-    .npmrc|*/.npmrc|.netrc|_netrc|.git-credentials|*/.cargo/credentials|*/.cargo/credentials.toml|.cargo/credentials|.cargo/credentials.toml|*/.docker/config.json|.docker/config.json)
-      echo "pre-commit: REFUSED — $f holds registry credentials. A token in history is"
-      echo "            a rotation, not a revert. Non-secret registry config belongs in"
-      echo "            pnpm-workspace.yaml or a committed .npmrc.example."; refuse=1 ;;
-    .claude/settings.local.json)
-      echo "pre-commit: REFUSED — $f is per-machine, and it grants tool permissions."; refuse=1 ;;
-    apps/terminal/src-tauri/gen/schemas/*)
-      echo "pre-commit: REFUSED — $f is generated at build time."; refuse=1 ;;
-    target/*|dist/*|node_modules/*|*/target/*|*/dist/*|*/node_modules/*)
-      echo "pre-commit: REFUSED — $f is a build artefact."; refuse=1 ;;
-  esac
-
-  # A file this large in a source tree is almost always a mistake, and it is
-  # permanent once pushed.
-  if [ -f "$f" ]; then
-    size=$(wc -c < "$f" | tr -d ' ')
-    if [ "$size" -gt 2000000 ]; then
-      echo "pre-commit: REFUSED — $f is $((size / 1000)) kB. git keeps that forever."
-      echo "            If it is genuinely source, commit it alone with an explanation."
-      refuse=1
-    fi
-  fi
-done <<< "$staged"
-
-# The five permanent exceptions include editing a committed migration. The Claude
-# write guard refuses this too; a guard on one path only is not a guard.
-#
-# A rename reports `R100 <old> <new>`, so reading the first path catches moving a
-# committed migration as well as editing or deleting one.
-while IFS=$'\t' read -r status f _rest; do
-  [ -z "${f:-}" ] && continue
-  case "$f" in
-    crates/pos-db/migrations/*|apps/server/migrations/*) ;;
-    *) continue ;;
-  esac
-  git ls-tree -r --name-only HEAD 2>/dev/null | grep -qxF "$f" || continue
-  if [ "$status" = "D" ]; then
-    echo "pre-commit: REFUSED — $f is a COMMITTED migration and this DELETES it."
-    echo "            Forward-only means the file stays. Databases in the field have"
-    echo "            applied it; a later migration undoes its effect, a deletion cannot."
-  else
-    echo "pre-commit: REFUSED — $f is a COMMITTED migration. Forward-only: write the next one."
-  fi
-  refuse=1
-done < <(printf '%s\n' "$touched")
-
-if [ "$refuse" -ne 0 ]; then
-  echo
-  echo "  Nothing was committed. Unstage the file, or override deliberately:"
-  echo "    git commit --no-verify   # and say in the body why"
-  exit 1
-fi
-exit 0
+"$policy_root/scripts/run-python.sh" "$policy_root/scripts/check-staged-policy.py"
+"$policy_root/scripts/scan-secrets.sh" --staged "$repo_root"

@@ -1,0 +1,8 @@
+title = "POS repository secret-scanning policy"
+
+# Keep Gitleaks' maintained provider rules instead of copying a snapshot that
+# silently ages. Repository exceptions, if ever needed, must be narrow reviewed
+# allowlists here; inline `gitleaks:allow` suppressions are disabled by the
+# wrapper so a secret cannot approve itself in the same change.
+[extend]
+useDefault = true

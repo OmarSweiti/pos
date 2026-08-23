@@ -1,98 +1,27 @@
 #!/usr/bin/env bash
-# conventions §8 / development-workflow §4.11, enforced at the moment it is cheap
-# to fix. A rejected message costs ten seconds; a history that cannot be read as a
-# plan costs an afternoon, every time somebody bisects.
-#
-#   <type>(<scope>): <summary>            [<step>]
-set -uo pipefail
+# Enforce the shared change-title grammar and repository attribution policy.
+set -euo pipefail
 
-msg_file="$1"
-
-# No agent attribution in this repository's history — user instruction, 2026-08-20.
-# A trailer here makes GitHub render a bot avatar beside the commit, and 7 of them
-# had to be filter-branch'd out of the first 19 commits once already. This check
-# runs BEFORE the merge/revert passthrough below, deliberately: the rule is
-# absolute, and a merge commit is just as public as any other.
-#
-# Note what is NOT blocked: a genuine human co-author, including one whose name
-# happens to be Claude, Botha or Anthropov. Only machine identities are refused,
-# and that is decided by the address.
-# Discriminate on the ADDRESS, not the display name. Every agent trailer carries a
-# machine address (noreply@anthropic.com, copilot@github.com, a *[bot]@ account);
-# a human carries a human one. Matching the name instead would refuse
-# `Co-Authored-By: Claude Dubois <claude.dubois@example.fr>` — Claude is a common
-# French given name, and a guard that lies about who it blocks gets discovered by
-# the one contributor it affects.
-#
-# The second pattern is a narrow backstop for a MODEL identity paired with a
-# human-looking address ("Claude Opus 5", "Claude Code"). It is anchored to the
-# model words, so a person named Claude still passes.
-# The address list is an ENUMERATION, and an enumeration always lags: a coding
-# agent whose domain is not listed here passes. Add new ones as they appear —
-# that is the maintenance cost of not over-blocking. There is no clean generic
-# signal, because the obvious one is wrong: `users.noreply.github.com` is what
-# GitHub hands real humans who keep their address private, so refusing
-# `noreply@` would block contributors, which is the mistake this pattern exists
-# to avoid. `[bot]` is the one reliable machine marker and needs no domain.
-#
-# Matching anywhere after the colon rather than inside <angle brackets>, so a
-# malformed bracket-less trailer cannot slip past. No human display name
-# contains "anthropic.com" or "[bot]".
-if grep -qiE '^[[:space:]]*Co-authored-by:.*(\[bot\]|anthropic\.com|copilot@|cursor\.com|cognition\.ai|openai\.com|codeium|windsurf|tabnine|sourcegraph\.com|replit\.com|devin@|aider@)' "$msg_file" \
-   || grep -qiE '^[[:space:]]*Co-authored-by:.*claude[[:space:]]+(opus|sonnet|haiku|code|[0-9])' "$msg_file" \
-   || grep -qiE '^[[:space:]]*(🤖[[:space:]]*)?Generated with .*(Claude|Anthropic)' "$msg_file"; then
-  echo "commit-msg: REFUSED — no agent attribution in this repository's history."
-  echo
-  echo "  Remove the trailer. This is a standing user instruction (2026-08-20):"
-  echo "  the trailer renders a bot avatar on GitHub, and seven of them already"
-  echo "  had to be rewritten out of this history once."
-  echo
-  echo "  A real human co-author is fine, whatever their name — this matches the"
-  echo "  machine ADDRESS (anthropic.com, copilot@, a [bot] account), not the name."
-  exit 1
-fi
-
-# First non-comment, non-empty line.
-subject=$(grep -vE '^\s*#' "$msg_file" | grep -vE '^\s*$' | head -1)
-
-# Git's own machinery, and rebase helpers, write their own subjects.
-case "$subject" in
-  Merge\ *|Revert\ *|fixup!*|squash!*|amend!*|"Initial commit")
-    exit 0 ;;
-esac
-
-types='feat|fix|test|docs|chore|refactor|perf'
-scopes='domain|db|sync|hardware|fiscal|terminal|server|backoffice|repo|impl'
-
-die() {
-  echo "commit-msg: REFUSED — $1"
-  echo
-  echo "  <type>(<scope>): <summary>            [<step>]"
-  echo
-  echo "  type  ∈ $types"
-  echo "  scope ∈ $scopes"
-  echo "  step  = the microstep number, a range, or — for work with no step"
-  echo
-  echo '  feat(domain): tax engine, inclusive + exclusive extraction   [1.3.4]'
-  echo '  fix(db): sale_line qty to milli-units                        [1.1.7]'
-  echo '  docs(impl): phase 2 fiscal conformance harness              [—]'
-  echo
-  echo "  got: $subject"
-  echo "  conventions §8 · development-workflow §4.11"
-  exit 1
+msg_file="${1:-}"
+[ -n "$msg_file" ] && [ -r "$msg_file" ] || {
+  echo "commit-msg: ERROR — Git did not provide a readable message file; refusing closed." >&2
+  exit 2
 }
 
-printf '%s' "$subject" | grep -qE "^($types)\(($scopes)\): .+" \
-  || die "the type(scope) prefix is missing or not in the list."
+git rev-parse --show-toplevel >/dev/null || {
+  echo "commit-msg: ERROR — cannot locate the repository root; refusing closed." >&2
+  exit 2
+}
+policy_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 
-printf '%s' "$subject" | grep -qE '\[[^][:space:]][^]]*\]\s*$' \
-  || die "the trailing [<step>] tag is missing. Use [—] when there is no microstep."
+"$policy_root/scripts/run-python.sh" \
+  "$policy_root/scripts/check-automation-attribution.py" --message-file "$msg_file"
 
-summary=$(printf '%s' "$subject" | sed -E 's/[[:space:]]*\[[^]]*\][[:space:]]*$//')
-[ "${#summary}" -le 72 ] \
-  || die "the summary is ${#summary} characters before the step tag; the limit is 72."
-
-case "$summary" in
-  *.) die "no trailing period in a commit summary." ;;
+# Git's own machinery and rebase helpers generate these subjects. Attribution
+# was checked first, so a merge/revert cannot smuggle a machine trailer through.
+subject=$(sed -e 's/\r$//' "$msg_file" | sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' | sed -n '1p')
+case "$subject" in
+  Merge\ *|Revert\ *|fixup!*|squash!*|amend!*|"Initial commit") exit 0 ;;
 esac
-exit 0
+
+"$policy_root/scripts/validate-change-title.sh" "$subject"
