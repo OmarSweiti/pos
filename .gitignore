@@ -7,6 +7,10 @@ node_modules/
 dist/
 *.local
 
+# Python policy/test bytecode
+__pycache__/
+*.py[cod]
+
 # Env & secrets
 .env
 .env.*

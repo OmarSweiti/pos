@@ -5,7 +5,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
 broken=0
-for f in $(find docs -name '*.md'); do
+while IFS= read -r -d '' f; do
   d=$(dirname "$f")
   # link targets ending in .md, anchors stripped; `*` skips globs used in prose
   targets=$(grep -oE '\]\([^)*[:space:]]+\.md(#[^)]*)?\)' "$f" 2>/dev/null \
@@ -16,7 +16,7 @@ for f in $(find docs -name '*.md'); do
       broken=1
     fi
   done
-done
+done < <(find docs -name '*.md' -print0)
 
 if [ "$broken" -ne 0 ]; then
   echo "documentation link check FAILED"
