@@ -1,0 +1,90 @@
+name: security
+
+on:
+  push:
+    branches: [development, staging, main]
+    paths:
+      - ".github/**"
+      - "scripts/check-branch-workflow-policy.rb"
+      - "scripts/gh-actions-policy.sh"
+      - "scripts/install-gitleaks-ci.sh"
+      - "scripts/scan-secrets.sh"
+      - ".gitleaks.toml"
+  pull_request:
+    branches: [development, staging, main]
+    paths:
+      - ".github/**"
+      - "scripts/check-branch-workflow-policy.rb"
+      - "scripts/gh-actions-policy.sh"
+      - "scripts/install-gitleaks-ci.sh"
+      - "scripts/scan-secrets.sh"
+      - ".gitleaks.toml"
+  schedule:
+    # Weekly even when the repository is quiet: advisories do not wait for a PR.
+    - cron: "23 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
+
+jobs:
+  workflow-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate workflow syntax and embedded shell
+        uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2
+        with:
+          version: 1.7.12
+          cache: false
+          pyflakes: false
+          shellcheck: true
+
+      - name: Audit GitHub Actions security without paid code-scanning storage
+        uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
+        with:
+          inputs: .github
+          collect: all
+          version: 1.29.0
+          persona: regular
+          online-audits: true
+          advanced-security: false
+          annotations: true
+
+  scheduled-advisories:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the pinned content scanner
+        run: ./scripts/install-gitleaks-ci.sh
+      - name: Scan the complete repository history for secrets
+        run: ./scripts/scan-secrets.sh --history
+
+      - name: Rust advisories, licences, and duplicate or banned crates
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          command: check
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: npm advisories
+        run: pnpm audit --audit-level high
