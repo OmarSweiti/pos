@@ -44,9 +44,9 @@ database, then audits naming, types, and foreign keys.
    type conversions, constraints, triggers, indexes, grants, reference data, and
    server-only/register-local exceptions before making a parity claim. Run
    `just verify-pg` only when an engine pass is in scope and its target is safe.
-   On supported hosts, the Claude sandbox removes inherited `$DATABASE_URL`; the
-   project policy also adds no Docker-socket exception. A human may run an
-   explicit environment-backed pass after confirming it is a disposable
+   Repository policy removes inherited `$DATABASE_URL` from Codex commands, so
+   Codex uses the throwaway Docker path or reports mapping-only coverage. A human
+   may run an explicit environment-backed pass after confirming it is a disposable
    development server—the verifier creates a uniquely named scratch database and
    removes it in a `finally` cleanup. Confirm ordinary server migrations use
    SQLx's default transaction boundary; only a case-sensitive, byte-zero

@@ -86,12 +86,12 @@ just lint
 just test
 ```
 
-On supported hosts, the Claude sandbox removes inherited `$DATABASE_URL`; the
-project policy also adds no Docker-socket exception. A human may run an explicit
-environment-backed pass only after confirming it points to a disposable
+Repository policy removes inherited `$DATABASE_URL` from Codex shell commands,
+so use the verifier's throwaway Docker path when available. A human may run an
+explicit environment-backed pass only after confirming it points to a disposable
 development server: the verifier creates a uniquely named scratch database and
-removes it in a `finally` cleanup. If no safe engine path is available, report
-the PostgreSQL pass as skipped rather than claiming validation.
+removes it in a `finally` cleanup. If neither safe path is available, report the
+engine pass as skipped rather than claiming PostgreSQL validation.
 
 Run `just guards` when the change touches either verifier, `REGISTER_LOCAL`, a
 hook, or another guard. In the handoff, summarize runtime registration order,
