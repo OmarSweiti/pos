@@ -5,7 +5,7 @@
 # needs tests is a judgement call, and a gate that fires on every new scaffold
 # gets disabled. Making the gap visible is the point.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 tested=() untested=()
 while IFS= read -r pkg; do

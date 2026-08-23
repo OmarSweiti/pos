@@ -2,6 +2,9 @@
   "name": "pos",
   "private": true,
   "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev:terminal": "pnpm --filter terminal tauri dev",
     "dev:backoffice": "pnpm --filter backoffice dev",

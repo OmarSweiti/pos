@@ -7,6 +7,7 @@ updates:
   - package-ecosystem: cargo
     directory: "/"
     schedule: { interval: monthly }
+    cooldown: { default-days: 7 }
     open-pull-requests-limit: 5
     target-branch: development
     commit-message:
@@ -26,6 +27,7 @@ updates:
   - package-ecosystem: npm
     directory: "/"
     schedule: { interval: monthly }
+    cooldown: { default-days: 7 }
     open-pull-requests-limit: 5
     target-branch: development
     commit-message:
@@ -42,6 +44,7 @@ updates:
   - package-ecosystem: github-actions
     directory: "/"
     schedule: { interval: monthly }
+    cooldown: { default-days: 7 }
     target-branch: development
     commit-message:
       prefix: "chore(repo)"
@@ -49,3 +52,15 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+
+  # Docker Compose is its own supported ecosystem; the generic `docker`
+  # ecosystem does not discover image references in compose files.
+  - package-ecosystem: docker-compose
+    directory: "/infra"
+    schedule: { interval: monthly }
+    cooldown: { default-days: 7 }
+    open-pull-requests-limit: 3
+    target-branch: development
+    commit-message:
+      prefix: "chore(repo)"
+    labels: ["type: chore", "area: repo", "meta: dependencies"]

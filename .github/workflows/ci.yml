@@ -5,14 +5,19 @@ on:
   pull_request:
     branches: [development, staging, main]
 
+permissions:
+  contents: read
+
 # A superseded run is wasted money. This is a PRIVATE repository on the GitHub Free
 # plan, so Actions minutes are metered — 2,000/month, and macOS bills at 10x — which
 # makes "cancel the run nobody is waiting for any more" a budget decision, not a tidy
 # one. Never cancel on the release branches: a half-cancelled promotion build tells
 # you nothing about whether staging was green.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/staging' }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: >-
+    ${{ github.base_ref != 'main' && github.base_ref != 'staging' &&
+        github.ref != 'refs/heads/main' && github.ref != 'refs/heads/staging' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,12 +25,13 @@ env:
 jobs:
   rust:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
 
     # Present from day one: the first server test should not also be a CI
     # debugging session (phase-0-closeout.md 0.2.1).
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -39,7 +45,9 @@ jobs:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/pos
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # Tauri's Linux system deps (the src-tauri crate is a workspace member)
       - name: Install system dependencies
@@ -61,16 +69,20 @@ jobs:
           [ -n "$channel" ] || { echo "::error::no channel in rust-toolchain.toml"; exit 1; }
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
           echo "pinned toolchain: $channel"
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: ${{ steps.pin.outputs.channel }}
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@nextest
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Install the pinned cargo-nextest release
+        uses: taiki-e/install-action@6cd13508893c0e7eab5f273c2575d3859bd7229a # v2.86.6
+        with:
+          tool: nextest@0.9.143
+          fallback: none
 
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo nextest run --workspace
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo nextest run --locked --workspace
 
       # pos-domain's module graph is acyclic by design (ref/domain-api.md §15).
       # NOT cargo-modules --acyclic: its graph is item-level, so any constructor
@@ -78,9 +90,12 @@ jobs:
       - name: Domain crate must stay acyclic
         run: ./scripts/check-domain-acyclic.py
 
+      - name: Domain crate must stay free of clocks and runtime randomness
+        run: ./scripts/check-domain-purity.py
+
       # ref/domain-api.md names every property test with a prop_ prefix, and
-      # microstep 1.1.5 verifies them with a filter. A dropped prefix makes that
-      # filter match nothing and report success on zero tests.
+      # microstep 1.1.5 verifies them with a filter. A dropped prefix can omit one
+      # property while the remaining filtered tests still pass.
       - name: Property tests are named prop_<invariant>
         run: ./scripts/check-prop-test-names.py
 
@@ -96,20 +111,78 @@ jobs:
       - name: Postgres mirror is declared and applies to real PostgreSQL
         run: ./scripts/verify-pg-migrations.py --verbose
 
-  # The write guards are the enforcement this repository has instead of branch
-  # protection, which the Free plan refuses. CLAUDE.md: "a guard nobody has seen
-  # fail is a guard nobody should trust" — so CI watches them fail, on every
-  # change, rather than trusting that somebody ran `just guards` locally.
+  # Without branch protection, these server-side guard results are a visible,
+  # logged backstop rather than a merge control. CLAUDE.md: "a guard nobody has
+  # seen fail is a guard nobody should trust" — so CI watches them fail on every
+  # change; local hooks remain bypassable safety nets as well.
   guards:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the pinned just release
+        uses: taiki-e/install-action@6cd13508893c0e7eab5f273c2575d3859bd7229a # v2.86.6
+        with:
+          tool: just@1.58.0
+          fallback: none
       - name: Write guards still refuse what they must
         run: ./.claude/hooks/test-protect-immutable.sh
       - name: The documentation-link guard still reports a broken link
         run: ./.claude/hooks/test-docs-links.sh
+      - name: Claude project settings retain their secure contract
+        run: python3 ./.claude/hooks/test-settings.py
+      - name: Codex hooks still block protected writes and report broken links
+        run: ./.codex/hooks/test-hooks.sh
+      - name: Codex project policy remains restrictive
+        run: python3 ./.codex/test-policy.py
+      - name: Codex skills retain valid discovery metadata
+        run: python3 ./.agents/test-skills.py
+      - name: Install the pinned content scanner from trusted policy
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            installer="$RUNNER_TEMP/install-gitleaks-ci.sh"
+            if git cat-file -e "${BASE_SHA}:scripts/install-gitleaks-ci.sh"; then
+              git show "${BASE_SHA}:scripts/install-gitleaks-ci.sh" > "$installer"
+            else
+              echo "::warning::bootstrap: trusted base lacks the new Gitleaks installer; using the reviewed candidate copy once."
+              cp ./scripts/install-gitleaks-ci.sh "$installer"
+            fi
+            chmod 0700 "$installer"
+            "$installer"
+          else
+            ./scripts/install-gitleaks-ci.sh
+          fi
       - name: Git hooks still refuse what they must
         run: ./.githooks/test-hooks.sh
+      - name: Secret scanning still detects content, not only filenames
+        run: ./scripts/scan-secrets.sh --self-test
+      - name: Commit and squash-title grammar still rejects malformed subjects
+        run: ./scripts/validate-change-title.sh --self-test
+      - name: Branch names and promotion topology still reject malformed routes
+        run: ./scripts/validate-branch-flow.sh --self-test
+      - name: PR readiness waits for the complete cross-workflow check set
+        run: bash ./scripts/watch-pr-checks.sh --self-test
+      - name: Just recipe arguments remain data rather than shell source
+        run: ./scripts/check-justfile-policy.py
+      - name: Automation attribution policy still rejects machine trailers
+        run: ./scripts/check-automation-attribution.py --self-test
+      - name: The PR workflow retains its trusted-workflow execution boundary
+        run: |
+          ruby ./scripts/check-branch-workflow-policy.rb --candidate-root .
+          ruby ./scripts/check-branch-workflow-policy.rb --self-test
+      - name: GitHub Actions policy preflight still rejects mutable or unknown actions
+        run: |
+          ./scripts/gh-actions-policy.sh --check
+          ./scripts/gh-actions-policy.sh --self-test
+      - name: GitHub setup scripts fail closed on API and parsing errors
+        run: bash ./scripts/test-gh-setup.sh
       - name: The CI backstop still refuses an edited plan or migration
         run: ./scripts/check-protected-paths.sh --self-test
       - name: The schema auditor's own checks still fire
@@ -120,15 +193,21 @@ jobs:
         run: ./scripts/check-logical-css.sh --self-test
       - name: The property-test-name check's own checks still fire
         run: ./scripts/check-prop-test-names.py --self-test
+      - name: The domain-purity check's own checks still fire
+        run: ./scripts/check-domain-purity.py --self-test
       - name: The PR type-label mapping still matches conventions §8
         run: ./scripts/pr-type-label.sh --self-test
 
   web:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6          # reads "packageManager" from package.json
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        # Reads "packageManager" from package.json.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: pnpm
@@ -160,17 +239,90 @@ jobs:
   # not merge an unreviewed advisory.
   supply-chain:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install the pinned content scanner from trusted policy
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            installer="$RUNNER_TEMP/install-gitleaks-ci.sh"
+            if git cat-file -e "${BASE_SHA}:scripts/install-gitleaks-ci.sh"; then
+              git show "${BASE_SHA}:scripts/install-gitleaks-ci.sh" > "$installer"
+            else
+              echo "::warning::bootstrap: trusted base lacks the new Gitleaks installer; using the reviewed candidate copy once."
+              cp ./scripts/install-gitleaks-ci.sh "$installer"
+            fi
+            chmod 0700 "$installer"
+            "$installer"
+          else
+            ./scripts/install-gitleaks-ci.sh
+          fi
+      - name: Repository content contains no known secret
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            policy="$RUNNER_TEMP/secret-policy"
+            mkdir -p "$policy/scripts"
+            if git cat-file -e "${BASE_SHA}:scripts/scan-secrets.sh"; then
+              git show "${BASE_SHA}:scripts/scan-secrets.sh" > "$policy/scripts/scan-secrets.sh"
+            else
+              echo "::warning::bootstrap: trusted base lacks the new secret-scan wrapper; using the reviewed candidate copy once."
+              cp ./scripts/scan-secrets.sh "$policy/scripts/scan-secrets.sh"
+            fi
+            if git cat-file -e "${BASE_SHA}:.gitleaks.toml"; then
+              git show "${BASE_SHA}:.gitleaks.toml" > "$policy/.gitleaks.toml"
+            else
+              echo "::warning::bootstrap: trusted base lacks the new Gitleaks policy; using the reviewed candidate copy once."
+              cp ./.gitleaks.toml "$policy/.gitleaks.toml"
+            fi
+            chmod 0700 "$policy/scripts/scan-secrets.sh"
+            "$policy/scripts/scan-secrets.sh" --range "$BASE_SHA" "$HEAD_SHA" "$GITHUB_WORKSPACE"
+          else
+            ./scripts/scan-secrets.sh --history
+          fi
+      - name: Checked-out reachable history contains no assistant-attribution trailers
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          verifier=./scripts/check-automation-attribution.py
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            verifier="$RUNNER_TEMP/check-automation-attribution.py"
+            if git cat-file -e "${BASE_SHA}:scripts/check-automation-attribution.py"; then
+              git show "${BASE_SHA}:scripts/check-automation-attribution.py" > "$verifier"
+            else
+              echo "::warning::bootstrap: trusted base lacks the new attribution policy; using the reviewed candidate copy once."
+              cp ./scripts/check-automation-attribution.py "$verifier"
+            fi
+            chmod 0700 "$verifier"
+          fi
+          commits="$RUNNER_TEMP/reachable-commits.txt"
+          git rev-list HEAD > "$commits"
+          while IFS= read -r commit; do
+            [ -n "$commit" ] || continue
+            "$verifier" --git-commit "$commit"
+          done < "$commits"
       - name: Rust advisories, licences, and duplicate/banned crates
-        uses: EmbarkStudios/cargo-deny-action@v2
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           # Scope comes from `[graph] all-features` in deny.toml, not a flag:
           # `cargo deny check --all-features` is not a valid invocation.
           command: check
 
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - name: npm advisories
@@ -189,10 +341,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, windows-latest]
+        platform: [ubuntu-22.04, macos-latest, windows-latest]
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Linux packaging dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config
       - name: Read the pinned toolchain
         id: pin
         shell: bash
@@ -200,12 +361,26 @@ jobs:
           set -uo pipefail
           channel=$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml | head -1)
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: ${{ steps.pin.outputs.channel }}
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@nextest
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Install the pinned cargo-nextest release
+        uses: taiki-e/install-action@6cd13508893c0e7eab5f273c2575d3859bd7229a # v2.86.6
+        with:
+          tool: nextest@0.9.143
+          fallback: none
       # The crates that must behave identically on all three: SQLCipher links
       # OpenSSL differently per platform, and `keyring` is a different credential
       # store on each one.
-      - run: cargo nextest run -p pos-domain -p pos-db -p pos-sync -p pos-hardware
+      - run: cargo nextest run --locked -p pos-domain -p pos-db -p pos-sync -p pos-hardware
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Compile and bundle the real desktop application before tag time; unit
+      # tests alone do not exercise platform-specific Tauri packaging.
+      - name: Build the Tauri application on the target operating system
+        run: pnpm --filter terminal tauri build

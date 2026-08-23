@@ -1,5 +1,5 @@
 name: labeler
-on:
+on: # zizmor: ignore[dangerous-triggers] write-only metadata; PR code is never checked out or executed
   pull_request_target:
     # `edited` is here because the PR title decides the `type:` label below, and a
     # title is editable after opening. branch-flow already re-validates on edit;
@@ -17,10 +17,11 @@ concurrency:
 jobs:
   label:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       # pull_request_target runs with a write token, so it must never check out
       # or execute the PR's code. actions/labeler only reads the file list.
-      - uses: actions/labeler@v7
+      - uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7
         with:
           configuration-path: .github/labeler.yml
           sync-labels: true
@@ -30,13 +31,35 @@ jobs:
       # deriving it from `docs/**` labelled nearly every PR `type: docs`, because
       # §4.13 requires the contradicted docs to be fixed in the same commit.
       #
-      # The checkout below pins `ref` to the BASE commit, so the script that runs
-      # is the one already on the base branch and never the PR's version of it.
-      # That is what keeps the write token safe under pull_request_target.
-      - uses: actions/checkout@v4
+      # The checkout below pins `ref` to the exact commit that supplied this
+      # trusted workflow definition. Promotion bases can lag development, while
+      # the PR's version is untrusted; neither is allowed to supply executable
+      # code to this write-token pull_request_target job.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.workflow_sha }}
           persist-credentials: false
+
+      # Dependabot has no supported suffix setting for PR titles. Normalize its
+      # title through the same trusted validator as humans instead of weakening
+      # the repository convention with a bot exception.
+      - name: Normalize a Dependabot title to the repository convention
+        if: github.event.pull_request.user.login == 'dependabot[bot]'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TITLE: ${{ github.event.pull_request.title }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if ./scripts/validate-change-title.sh "$TITLE" >/dev/null 2>&1; then
+            echo "Dependabot title already conforms"
+            exit 0
+          fi
+          normalized="$TITLE   [—]"
+          ./scripts/validate-change-title.sh "$normalized"
+          gh pr edit "$NUMBER" --title "$normalized"
+          echo "normalized title: $normalized"
 
       - name: The type label comes from the PR title
         env:
@@ -45,22 +68,23 @@ jobs:
           TITLE: ${{ github.event.pull_request.title }}
           NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          set -uo pipefail
-          want=$(./scripts/pr-type-label.sh "$TITLE" || true)
+          set -euo pipefail
+          want=$(./scripts/pr-type-label.sh "$TITLE")
           echo "title: $TITLE"
           echo "earns: ${want:-<nothing — free-text title, by design>}"
 
           # Remove any type: label that is not the one the title earns, so an
           # edited title cannot leave a stale one behind. Read line by line:
           # these label names contain a space.
-          gh pr view "$NUMBER" --json labels --jq '.labels[].name' \
-            | grep '^type: ' \
-            | while IFS= read -r existing; do
-                if [ "$existing" != "$want" ]; then
-                  echo "removing stale $existing"
-                  gh pr edit "$NUMBER" --remove-label "$existing" || true
-                fi
-              done
+          existing_labels=$(gh pr view "$NUMBER" --json labels \
+            --jq '.labels[].name | select(startswith("type: "))')
+          while IFS= read -r existing; do
+            [ -z "$existing" ] && continue
+            if [ "$existing" != "$want" ]; then
+              echo "removing stale $existing"
+              gh pr edit "$NUMBER" --remove-label "$existing"
+            fi
+          done <<< "$existing_labels"
 
           if [ -n "$want" ]; then
             gh pr edit "$NUMBER" --add-label "$want"

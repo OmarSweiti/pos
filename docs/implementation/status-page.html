@@ -261,7 +261,7 @@
   /* ── gate ─────────────────────────────────────────────────── */
   .gate { display: grid; gap: .3rem; }
   .gate-row {
-    display: grid; grid-template-columns: 2.2rem 1fr auto; gap: .85rem; align-items: center;
+    display: grid; grid-template-columns: 4.5rem 1fr auto; gap: .85rem; align-items: center;
     padding: .6rem .8rem; border: 1px solid var(--rule); border-radius: 5px;
     background: var(--surface); font-size: .92rem;
   }
@@ -331,7 +331,7 @@
     <h1>Jordan POS Build Plan</h1>
     <p class="lede">A verdict on the business master plan, the four compliance claims that turned out to be wrong, and the phased build order from a bare scaffold to a product someone else can sell.</p>
     <div class="meta">
-      <span>Verified 20 Aug 2026</span>
+      <span>Repository posture 22 Aug 2026 · compliance sources 20 Aug 2026</span>
       <span>Tauri 2 · Rust · React</span>
       <span>JOD · Arabic-first · offline-first</span>
     </div>
@@ -423,7 +423,7 @@
         <div class="phase-body">
           <div class="phase-top"><h3>Close-out</h3><span class="pill pass">Complete</span><span class="effort">1–2 days</span></div>
           <p class="could">Nothing. It compiles and it ships.</p>
-          <p class="adds">Workspace hygiene, CI, panic lints, product identity, two negative-tested guards.</p>
+          <p class="adds">Workspace hygiene, CI, panic lints, product identity, and negative-tested repository guards.</p>
         </div>
       </div>
 
@@ -477,24 +477,25 @@
   </section>
 
   <section>
-    <div class="rule-head"><h2>Phase 0, executed</h2><span class="label">Status</span></div>
-    <p>Six of seven exit-gate checks pass locally. The seventh needs a GitHub repository, which is yours to create.</p>
+    <div class="rule-head"><h2>Repository foundation</h2><span class="label">Live posture</span></div>
+    <p>The GitHub repository exists and <code>development</code> is its default branch. The old Phase-0
+      checklist is retained only as dated evidence; current commands and limitations live in the
+      development and GitHub workflow documents.</p>
     <div class="gate">
-      <div class="gate-row ok"><span class="n">1</span><span><code>just lint</code> — fmt, clippy <code>-D warnings</code>, module-acyclic, biome, doc-links</span><span class="pill pass">Pass</span></div>
-      <div class="gate-row ok"><span class="n">2</span><span><code>just test</code> — 6 Rust tests, 2 Vitest tests</span><span class="pill pass">Pass</span></div>
-      <div class="gate-row ok"><span class="n">3</span><span>Postgres healthy, migration applied</span><span class="pill pass">Pass</span></div>
-      <div class="gate-row ok"><span class="n">4</span><span><code>/health</code> and <code>/health/db</code> both ok</span><span class="pill pass">Pass</span></div>
-      <div class="gate-row ok"><span class="n">5</span><span>Terminal builds — frontend and Rust</span><span class="pill pass">Pass</span></div>
-      <div class="gate-row ok"><span class="n">6</span><span>Back office builds</span><span class="pill pass">Pass</span></div>
-      <div class="gate-row block"><span class="n">7</span><span>CI green on a remote</span><span class="pill">Needs a repo</span></div>
+      <div class="gate-row ok"><span class="n">Local</span><span><code>just setup</code>, <code>just lint</code>, <code>just test</code>, and <code>just pre-push</code> are the maintained entry points; recipe contents are the source of truth</span><span class="pill pass">Configured</span></div>
+      <div class="gate-row ok"><span class="n">CI</span><span>Locked Rust/web/schema/guard checks, Gitleaks, static workflow analysis, advisory scans, and promotion-only cross-platform Tauri builds are defined</span><span class="pill pass">Configured</span></div>
+      <div class="gate-row ok"><span class="n">Flow</span><span><code>development → staging → main</code>, with exact PR-head and post-merge workflow-SHA evidence required by the human procedure</span><span class="pill pass">Documented</span></div>
+      <div class="gate-row block"><span class="n">Free</span><span>Branch protection/rulesets, required reviews, CODEOWNERS enforcement, and native secret-scanning enforcement are unavailable; CI cannot block an administrator merge</span><span class="pill">Unavailable</span></div>
+      <div class="gate-row block"><span class="n">Actions</span><span>Workflow dependencies are full-SHA pinned in this change; the live SHA-only Actions setting remains unchanged until the hardened files merge and the post-merge preflight succeeds</span><span class="pill">Pending merge</span></div>
+      <div class="gate-row block"><span class="n">Release</span><span>Published-release immutability is enabled, but releases intentionally fail until verified tag signing, repository updater secrets, updater public configuration, and platform signing are configured</span><span class="pill">Blocked safely</span></div>
     </div>
-    <p class="gate-note">Three things reality corrected during execution, each recorded in the phase file:</p>
+    <p class="gate-note">Phase-0 lessons remain useful historical context, but they are not live gate evidence:</p>
     <ul style="display:grid; gap:.6rem; padding-inline-start:1.1rem; font-size:.93rem;">
       <li>Enabling the panic lints immediately found <b>three <code>unwrap()</code> calls on <code>Mutex::lock()</code> in production code</b>. Replaced with poison-recovering locks, not silenced with an allow. The lint earned its place on day one.</li>
       <li>The specified cycle guard, <code>cargo modules --acyclic</code>, <b>cannot work</b> — its graph is item-level, so any constructor returning <code>Self</code> reads as a cycle. Replaced with a module-graph checker that enforces the rule as written.</li>
       <li><code>just dev-server</code> never loaded <code>apps/server/.env</code>, so <code>/health/db</code> only ever returned ok if you exported <code>DATABASE_URL</code> by hand. Fixed at the source.</li>
     </ul>
-    <blockquote>Both new guards were <b>negative-tested</b> — each was shown failing on a deliberately introduced fault before being trusted. A guard nobody has seen fail is a guard nobody should trust.</blockquote>
+    <blockquote>Repository guards are maintained with negative tests: a guard nobody has seen fail is a guard nobody should trust.</blockquote>
   </section>
 
   <section class="bleed">
@@ -536,21 +537,21 @@
 
   <section>
     <div class="rule-head"><h2>The document set</h2><span class="label">Reference</span></div>
-    <p>Twenty-one files, roughly 395 KB, under <code>docs/implementation/</code>. Microsteps are numbered <code>phase.group.step</code> and the numbers are stable — they are commit-message references.</p>
+    <p>The maintained plan lives under <code>docs/implementation/</code>. Microsteps are numbered <code>phase.group.step</code> and the numbers are stable — they are commit-message references.</p>
     <div class="docset">
       <div class="doc"><span class="path">00-master-plan.md</span><span class="what">The spine: verdict, corrections, phase map, risk register</span></div>
       <div class="doc"><span class="path">01-conventions.md</span><span class="what">The engineering law — nine invariants, naming, errors, definition of done</span></div>
-      <div class="doc"><span class="path">phase-0 … phase-5</span><span class="what">Six phase files, each opening with its exit statement and closing with a runnable gate</span></div>
+      <div class="doc"><span class="path">phase-0 … phase-5</span><span class="what">Phase plans with objective gates; Phase 0 is retained as a historical close-out record</span></div>
       <div class="doc"><span class="path">ref/plan-validation.md</span><span class="what">The audit, the four corrections, every source</span></div>
       <div class="doc"><span class="path">ref/domain-api.md</span><span class="what">Every <code>pos-domain</code> type and signature</span></div>
-      <div class="doc"><span class="path">ref/schema.md</span><span class="what">Migrations 0002 → 0011, SQLite and Postgres</span></div>
+      <div class="doc"><span class="path">ref/schema.md</span><span class="what">Executable schema reference aligned with the runtime-registered SQLite and PostgreSQL migration chains</span></div>
       <div class="doc"><span class="path">ref/tax-jordan.md</span><span class="what">GST as an engine — categories, rates-as-data, rounding, the filing report</span></div>
       <div class="doc"><span class="path">ref/fiscal-jofotara.md</span><span class="what">The highest-risk component in the product</span></div>
       <div class="doc"><span class="path">ref/ipc-contract.md</span><span class="what">Every Tauri command, its capability, its audit</span></div>
       <div class="doc"><span class="path">ref/sync-protocol.md</span><span class="what">Ownership classes, chaos convergence, the accepted risks stated plainly</span></div>
       <div class="doc"><span class="path">ref/hardware-and-receipts.md</span><span class="what">Traits, the Arabic raster pipeline, the hardware-lab checklist</span></div>
       <div class="doc"><span class="path">ref/ui-spec.md</span><span class="what">Screen by screen, RTL mechanics, the keyboard map</span></div>
-      <div class="doc"><span class="path">ref/test-catalog.md</span><span class="what">All 72 edge cases mapped to named tests</span></div>
+      <div class="doc"><span class="path">ref/test-catalog.md</span><span class="what">Edge cases mapped to named tests, accepted risks, deferrals, or explicit scope decisions</span></div>
       <div class="doc"><span class="path">ref/security-compliance.md</span><span class="what">PDPL, PCI, the audit chain, permissions, secrets</span></div>
       <div class="doc"><span class="path">ref/merchant-decisions.md</span><span class="what">The questionnaire to fill in with the merchant, with defaults</span></div>
     </div>
@@ -561,12 +562,12 @@
     <p>The plan's own falsifiability rule, applied to itself: an edge case with no row is a gap, not an absence.</p>
     <div class="table-scroll">
       <table>
-        <thead><tr><th>Status</th><th>Count</th><th>Meaning</th></tr></thead>
+        <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
         <tbody>
-          <tr><td>Tested</td><td class="n">63</td><td>A named test, in a named file, at a named phase</td></tr>
-          <tr><td>Accepted risk</td><td class="n">4</td><td>Bounded, mitigated, and disclosed to the merchant rather than hidden</td></tr>
-          <tr><td>Deferred</td><td class="n">3</td><td>With a named architectural hook that keeps adding it cheap</td></tr>
-          <tr><td>Out of v1 scope</td><td class="n">2</td><td>With a written rationale</td></tr>
+          <tr><td>Tested</td><td>A named test, in a named file, at a named phase</td></tr>
+          <tr><td>Accepted risk</td><td>Bounded, mitigated, and disclosed to the merchant rather than hidden</td></tr>
+          <tr><td>Deferred</td><td>With a named architectural hook that keeps adding it cheap</td></tr>
+          <tr><td>Out of v1 scope</td><td>With a written rationale</td></tr>
         </tbody>
       </table>
     </div>

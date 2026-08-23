@@ -1,71 +1,68 @@
 ---
 name: verify-schema
-description: Execute every SQL block in docs/implementation/ref/schema.md against real SQLite and audit the result against conventions §2 — float types, unit suffixes, timestamp types, dangling foreign keys. Use before writing a migration, after editing schema.md, or when asked whether the schema reference is still true.
+description: Audit and diagnose the POS schema, migration registration, and verifier coverage without implementing a schema change. Use for standalone schema audits, verifier failures, or questions about whether the schema reference matches runtime; implementation belongs in add-migration.
 ---
 
-# Verify the schema reference
+# Verify the schema
 
-`docs/implementation/ref/schema.md` is a thousand-odd lines of DDL that nothing
-compiles. Prose SQL rots silently: a column referenced in one migration and never
-created in another reads perfectly and fails at runtime.
+Use the repository verifier rather than ad hoc `sqlite3` commands. It requires
+exact ordered parity between Rust's `MIGRATIONS` array and the SQL files on disk,
+applies that runtime chain with the application's per-file transaction and
+`user_version` update, applies the plan-of-record SQL in a separate in-memory
+database, then audits naming, types, and foreign keys.
 
-## Run it
+## Workflow
 
-```bash
-./scripts/verify-schema.py              # the check
-./scripts/verify-schema.py --verbose    # name each block as it applies
-./scripts/verify-schema.py --self-test  # prove the checks still fire
-```
+1. Read `.claude/rules/sql-migrations.md`, then run the normal verifier before
+   loading large schema sections:
 
-It runs **two passes** against separate in-memory databases:
+   ```bash
+   ./scripts/verify-schema.py --verbose
+   just verify-schema
+   ```
 
-1. **Shipped.** Every migration in `crates/pos-db/migrations/`, in the order the
-   `PRAGMA user_version` runner applies them, audited on its own. This is what a
-   register runs today, so a failure here is the stronger signal — and it is
-   reported with a `[shipped migrations]` prefix.
-2. **Plan of record.** The same migrations, then every ` ```sql ` block in
-   `schema.md` in document order — so migration 0004's `ALTER TABLE` is checked
-   against the table 0002 actually created.
+2. Read the verifier's runtime-registration result. It rejects omissions,
+   duplicates, nonexistent entries, numbering gaps, and array/directory order
+   drift before applying the exact compiled chain. Manually inspect the array
+   only when diagnosing one of those failures or reviewing verifier coverage.
+3. Diagnose failures at their source, then read the referenced failing headings
+   in `docs/implementation/ref/schema.md`. Distinguish invalid SQL from convention
+   failures, dangling foreign keys, and non-blocking naming notes. Do not edit a
+   committed migration to repair a failure; add a forward migration when a fix
+   is authorized.
+4. If the request asks whether the schema reference is still true, manually
+   compare the relevant documented objects and constraints with the registered
+   runtime migrations. A clean verifier exit does not prove documentation/runtime
+   parity.
+5. Audit PostgreSQL in layers:
 
-The first pass exists because of gap G-12: layering the doc's *future* migrations
-on top hid a defect in a shipped one, because a migration that does not exist yet
-had already "fixed" it.
+   ```bash
+   ./scripts/verify-pg-migrations.py --mapping-only
+   ```
 
-Because the pass reads the directory rather than git, a migration you have just
-written but not committed is included — which makes this the check to run on a new
-migration, ahead of `just lint`.
+   Mapping proves declaration coverage, not semantic equivalence. Review relevant
+   type conversions, constraints, triggers, indexes, grants, reference data, and
+   server-only/register-local exceptions before making a parity claim. Run
+   `just verify-pg` only when an engine pass is in scope and its target is safe.
+   On supported hosts, the Claude sandbox removes inherited `$DATABASE_URL`; the
+   project policy also adds no Docker-socket exception. A human may run an
+   explicit environment-backed pass after confirming it is a disposable
+   development server—the verifier creates a uniquely named scratch database and
+   removes it in a `finally` cleanup. Confirm ordinary server migrations use
+   SQLx's default transaction boundary; only a case-sensitive, byte-zero
+   `-- no-transaction` marker may opt out, with explicit partial-failure recovery.
+6. If either verifier or its policy tables changed, prove negative cases and run
+   the repository guard suite:
 
-## Reading the output
+   ```bash
+   ./scripts/verify-schema.py --self-test
+   ./scripts/verify-pg-migrations.py --self-test
+   just guards
+   ```
 
-**`FAIL block '<heading>' does not execute`** — the DDL in that section is not
-valid SQLite. Read the section, fix the doc. If the block deliberately elides a
-body (`BEGIN … END`), that is not a formatting choice — it means nobody has
-written that SQL yet, and whoever implements the microstep will have to invent it.
-Say so rather than quietly ignoring it.
-
-**`FAIL <table>.<column>` is a provable convention violation** — a float type, a
-money column with no `_minor`, a quantity with no `_milli`, a rate with no `_ppm`,
-a `*_at` that is not TEXT, a flag that is not INTEGER, or a foreign key naming a
-table or column that no migration creates.
-
-**`note <table>.<column>`** is a judgment call, never a failure — flag columns
-spelled without `is_`/`has_`. Report them; do not "fix" `schema.md` on your own
-initiative, because renaming a column in the plan of record is a design decision.
-
-## Before you trust a change to the script
-
-`--self-test` runs the audit against a deliberately bad fixture and asserts every
-check fires, plus that the clean table produces no findings. Run it after any edit
-to `scripts/verify-schema.py`. A guard nobody has seen fail is a guard nobody
-should trust.
-
-## What it does not do
-
-It does not touch the Postgres mirror — `./scripts/verify-pg-migrations.py` does
-that, and it both checks the declared SQLite↔Postgres mapping and applies the
-mirror to a real PostgreSQL server.
-
-It also does not *compare* `schema.md` against the shipped migrations. Each is
-audited against conventions §2 independently, so a doc that describes a table the
-migrations never created passes both passes. Drift between the doc and what
-shipped is still a human read.
+Report the commands, exit status, material notes, and any coverage that was
+skipped. Separate these conclusions explicitly: SQL execution, convention/FK
+audit, runtime registration/order, documentation parity, PostgreSQL mapping,
+PostgreSQL execution, and cross-engine semantic parity. A clean exit with zero
+relevant inputs is not meaningful evidence; confirm the expected migration and
+schema blocks were actually evaluated.

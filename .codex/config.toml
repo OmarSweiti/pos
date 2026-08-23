@@ -1,0 +1,38 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+
+# Repository-scoped Codex policy.
+#
+# Keep user preferences (model, reasoning effort, UI, providers, and telemetry)
+# in ~/.codex/config.toml. This file contains only shared safety boundaries for
+# this trusted project.
+
+# A person must approve commands that need to leave the sandbox or match a
+# `prompt` rule in .codex/rules/.
+approval_policy = "on-request"
+approvals_reviewer = "user"
+
+# Normal implementation work may update this repository, but not the rest of
+# the machine. Networked commands leave the sandbox and therefore require the
+# approval policy above.
+sandbox_mode = "workspace-write"
+allow_login_shell = false
+
+[sandbox_workspace_write]
+network_access = false
+
+# Do not pass variables whose names look like credentials (for example,
+# *_KEY, *_SECRET, or *_TOKEN) to shell commands by default. Extend the
+# built-in name check to password/credential variables and DATABASE_URL, which
+# commonly embeds a database username and password.
+[shell_environment_policy]
+ignore_default_excludes = false
+
+[shell_environment_policy.filters]
+"*PASSWORD*" = "exclude"
+"*CREDENTIAL*" = "exclude"
+"DATABASE_URL" = "exclude"
+
+# Hooks are part of this repository's safety boundary. Set the canonical flag
+# explicitly so a user-level preference cannot silently turn them off.
+[features]
+hooks = true

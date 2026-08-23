@@ -1,0 +1,227 @@
+# Repository execpolicy for commands that request execution outside the sandbox.
+#
+# Deliberately contains no `allow` rules: trusting this repository must never
+# grant silent unsandboxed execution. `prompt` preserves legitimate workflows
+# while keeping consequential state changes visible to a person. The sole
+# `forbidden` rule repeats the project's forward-only migration invariant at the
+# escalation boundary. The Codex PreToolUse hook enforces argv variants before
+# shell execution; exact-prefix execpolicy is not treated as a universal parser.
+
+# Creating or rewriting Git history is durable and must be explicitly approved.
+prefix_rule(
+    pattern = ["git", ["commit", "merge", "rebase", "cherry-pick", "tag"]],
+    decision = "prompt",
+    justification = "This command creates or rewrites Git history; confirm the intended branch and resulting history first.",
+    match = [
+        "git commit -m feat(domain): add tax calculation [1.3.4]",
+        "git merge --no-ff staging",
+        "git rebase development",
+        "git cherry-pick abc1234",
+        "git tag -a v0.2.0 -m Phase 1",
+    ],
+    not_match = [
+        "git status --short",
+        "git diff --cached",
+        "git log --oneline",
+    ],
+)
+
+# These commands can discard or obscure uncommitted work. They remain available
+# for an explicitly approved recovery operation.
+prefix_rule(
+    pattern = ["git", ["reset", "clean", "restore"]],
+    decision = "prompt",
+    justification = "This command can discard local work; inspect git status and diff, and confirm the exact targets first.",
+    match = [
+        "git reset --hard HEAD",
+        "git clean -fd",
+        "git restore src/lib.rs",
+    ],
+    not_match = [
+        "git status",
+        "git switch development",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "branch", "-D"],
+    decision = "prompt",
+    justification = "Force-deleting a branch can discard unmerged work; confirm the branch and recovery path first.",
+    match = ["git branch -D phase-1/group-3-tax"],
+    not_match = [
+        "git branch --show-current",
+        "git branch -d merged-feature",
+    ],
+)
+
+prefix_rule(
+    pattern = ["git", "stash", ["drop", "clear"]],
+    decision = "prompt",
+    justification = "Deleting stash entries can discard unrecovered work; inspect the stash list first.",
+    match = [
+        "git stash drop stash@{0}",
+        "git stash clear",
+    ],
+    not_match = [
+        "git stash list",
+        "git stash show stash@{0}",
+    ],
+)
+
+# Every push is an external write. The committed pre-push hook remains the
+# authoritative branch-flow guard; this rule ensures the push itself is visible.
+prefix_rule(
+    pattern = ["git", "push"],
+    decision = "prompt",
+    justification = "Pushing changes remote repository state; confirm the remote, refspec, and completed quality gates.",
+    match = [
+        "git push -u origin HEAD",
+        "git push origin staging --follow-tags",
+        "git push --force-with-lease origin feature/example",
+    ],
+    not_match = [
+        "git fetch origin",
+        "git remote -v",
+    ],
+)
+
+# GitHub mutations are intentionally narrower than `gh` as a whole so read-only
+# inspection (`gh pr view`, `gh pr checks`, `gh release view`) stays frictionless.
+prefix_rule(
+    pattern = ["gh", "pr", ["create", "merge", "close", "reopen", "ready", "edit"]],
+    decision = "prompt",
+    justification = "This command changes pull-request state; confirm the repository, base branch, and CI result.",
+    match = [
+        "gh pr create --base development --fill-first",
+        "gh pr merge --squash --delete-branch",
+        "gh pr edit 42 --add-label ready",
+    ],
+    not_match = [
+        "gh pr view 42",
+        "gh pr checks 42 --watch",
+        "gh pr list",
+    ],
+)
+
+prefix_rule(
+    pattern = ["gh", "release", ["create", "edit", "delete", "upload"]],
+    decision = "prompt",
+    justification = "This command changes published release state; confirm the tag, channel, and artifacts.",
+    match = [
+        "gh release create v0.2.0 --draft",
+        "gh release upload v0.2.0 dist/app.tar.gz",
+        "gh release delete v0.2.0",
+    ],
+    not_match = [
+        "gh release view v0.2.0",
+        "gh release list",
+    ],
+)
+
+prefix_rule(
+    pattern = ["gh", "workflow", ["run", "enable", "disable"]],
+    decision = "prompt",
+    justification = "This command starts or changes GitHub Actions; confirm the workflow, ref, and inputs.",
+    match = [
+        "gh workflow run release.yml --ref main",
+        "gh workflow disable release.yml",
+    ],
+    not_match = [
+        "gh workflow view release.yml",
+        "gh workflow list",
+    ],
+)
+
+prefix_rule(
+    pattern = ["gh", "repo", ["archive", "delete", "edit", "rename"]],
+    decision = "prompt",
+    justification = "This command changes repository-wide settings or existence; confirm the exact repository and intended recovery path.",
+    match = [
+        "gh repo edit --enable-issues=false",
+        "gh repo delete owner/pos --yes",
+    ],
+    not_match = [
+        "gh repo view owner/pos",
+        "gh repo clone owner/pos",
+    ],
+)
+
+# These project recipes wrap remote or destructive operations. Matching the
+# wrapper matters because Codex cannot always decompose a shell recipe safely.
+prefix_rule(
+    pattern = ["just", ["pr", "promote-staging", "promote-main", "gh-bootstrap", "gh-actions-policy", "gh-protect", "gh-project"]],
+    decision = "prompt",
+    justification = "This recipe changes Git or GitHub state; review its arguments and target branch before running it.",
+    match = [
+        "just pr",
+        "just promote-staging",
+        "just gh-bootstrap",
+        "just gh-actions-policy",
+    ],
+    not_match = [
+        "just gh-bootstrap-dry",
+        "just gh-actions-policy-check",
+        "just gh-actions-policy-dry",
+        "just flow",
+        "just lint",
+    ],
+)
+
+prefix_rule(
+    pattern = ["just", ["migrate", "db-reset", "db-local-reset"]],
+    decision = "prompt",
+    justification = "This recipe changes or deletes database state; confirm the target environment and backup expectations.",
+    match = [
+        "just migrate",
+        "just db-reset",
+        "just db-local-reset",
+    ],
+    not_match = [
+        "just verify-schema",
+        "just verify-pg",
+    ],
+)
+
+# This repository's migrations are forward-only. A correction is always a new
+# migration, never a reversal of an applied migration.
+prefix_rule(
+    pattern = ["sqlx", "migrate", "revert"],
+    decision = "forbidden",
+    justification = "Migrations are forward-only in this repository; create the next corrective migration instead.",
+    match = [
+        "sqlx migrate revert",
+        "sqlx migrate revert --database-url postgres://localhost/pos",
+    ],
+    not_match = [
+        "sqlx migrate run",
+        "sqlx migrate info",
+    ],
+)
+
+prefix_rule(
+    pattern = ["sqlx", "database", "drop"],
+    decision = "prompt",
+    justification = "Dropping a database destroys data; confirm the database URL and an appropriate recovery or reset plan.",
+    match = ["sqlx database drop --database-url postgres://localhost/pos"],
+    not_match = [
+        "sqlx database create",
+        "sqlx migrate info",
+    ],
+)
+
+# Publishing is an external, versioned action even when the package is private.
+prefix_rule(
+    pattern = [["cargo", "pnpm", "npm"], "publish"],
+    decision = "prompt",
+    justification = "Publishing creates externally visible package state; confirm the package, version, registry, and release process.",
+    match = [
+        "cargo publish -p pos-domain",
+        "pnpm publish --access restricted",
+        "npm publish",
+    ],
+    not_match = [
+        "cargo test --workspace",
+        "pnpm -r test",
+        "npm pack",
+    ],
+)

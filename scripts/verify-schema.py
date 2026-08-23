@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Execute every SQL block in ref/schema.md against real SQLite, then audit it.
+"""Verify the runtime migration chain and executable schema reference in SQLite.
 
 The schema reference is a thousand-odd lines of DDL that nothing compiles. Prose
 SQL rots: a column referenced in one migration and never created in another reads
 fine and fails at runtime. This applies the whole set to an in-memory database, in
-order,
-and then asserts the naming and type rules from 01-conventions.md §2 against the
+order, and then asserts the naming and type rules from 01-conventions.md §2 against the
 *result* — PRAGMA table_info, not a regex over the text.
 
 Checks, in order of how much money each one saves:
 
-  1. Every block executes.  Syntax, unknown tables, unknown columns.
+  1. The Rust ``MIGRATIONS`` array exactly matches every migration on disk, once,
+     in filename order; then every registered migration and documentation block
+     executes. Syntax, unknown tables, unknown columns.
   2. No REAL / FLOAT / DOUBLE / NUMERIC / DECIMAL column, anywhere (I-1: no float
      touches money in SQL).
   3. Money columns end `_minor`, quantities `_milli`, rates `_ppm` (§2). Names are
@@ -31,17 +32,246 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import stat
 import sys
+import tempfile
+from collections import Counter
 from pathlib import Path
+
+from rust_lexer import RustLexError, RustToken, rust_tokens
 
 ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_DOC = ROOT / "docs" / "implementation" / "ref" / "schema.md"
 MIGRATIONS_DIR = ROOT / "crates" / "pos-db" / "migrations"
+MIGRATIONS_RS = ROOT / "crates" / "pos-db" / "src" / "lib.rs"
+
+MIGRATION_NAME = re.compile(r"^(\d{4})_[a-z0-9_]+\.sql$")
 
 
-def shipped_migrations() -> list[Path]:
-    """Every committed SQLite migration, in the order the runner applies them."""
+def root_migrations_declarations(tokens: list[RustToken]) -> list[int]:
+    """Offsets of crate-level ``const MIGRATIONS`` declarations only."""
+    openings = {"(": ")", "[": "]", "{": "}"}
+    closings = {value: key for key, value in openings.items()}
+    stack: list[str] = []
+    declarations: list[int] = []
+
+    for index, token in enumerate(tokens):
+        if (
+            not stack
+            and token.kind == "ident"
+            and token.value == "const"
+            and not token.raw
+        ):
+            if (
+                index + 1 < len(tokens)
+                and tokens[index + 1].kind == "ident"
+                and tokens[index + 1].value == "MIGRATIONS"
+            ):
+                declarations.append(index)
+
+        if token.kind != "punct":
+            continue
+        if token.value in openings:
+            stack.append(token.value)
+        elif token.value in closings:
+            if not stack or stack[-1] != closings[token.value]:
+                raise RustLexError(
+                    f"unbalanced Rust delimiter {token.value!r} at byte {token.offset}"
+                )
+            stack.pop()
+
+    if stack:
+        raise RustLexError(f"unclosed Rust delimiter {stack[-1]!r}")
+    return declarations
+
+
+def parse_migrations_declaration(source: str) -> list[str]:
+    """Extract the one strict crate-level ``MIGRATIONS`` array."""
+    tokens = rust_tokens(source)
+    declarations = root_migrations_declarations(tokens)
+    if len(declarations) != 1:
+        raise RustLexError(
+            "expected exactly one crate-level const MIGRATIONS declaration; "
+            f"found {len(declarations)}"
+        )
+
+    index = declarations[0]
+    header = (
+        ("ident", "const"),
+        ("ident", "MIGRATIONS"),
+        ("punct", ":"),
+        ("punct", "&"),
+        ("punct", "["),
+        ("punct", "&"),
+        ("ident", "str"),
+        ("punct", "]"),
+        ("punct", "="),
+        ("punct", "&"),
+        ("punct", "["),
+    )
+    actual = tuple(
+        (token.kind, token.value) for token in tokens[index : index + len(header)]
+    )
+    if actual != header or tokens[index].raw or tokens[index + 6].raw:
+        raise RustLexError(
+            "MIGRATIONS must have the exact reviewed type and array form "
+            "const MIGRATIONS: &[&str] = &[...]"
+        )
+
+    cursor = index + len(header)
+    registered: list[str] = []
+    while cursor < len(tokens):
+        token = tokens[cursor]
+        if token.kind == "punct" and token.value == "]":
+            cursor += 1
+            break
+
+        expected = (
+            ("ident", "include_str"),
+            ("punct", "!"),
+            ("punct", "("),
+        )
+        actual_entry = tuple(
+            (item.kind, item.value) for item in tokens[cursor : cursor + len(expected)]
+        )
+        if actual_entry != expected:
+            raise RustLexError(
+                "MIGRATIONS entries must be include_str!(\"../migrations/NNNN_name.sql\")"
+            )
+        cursor += len(expected)
+        if cursor >= len(tokens) or tokens[cursor].kind != "string":
+            raise RustLexError("include_str! in MIGRATIONS must contain one string literal")
+        path = tokens[cursor].value
+        cursor += 1
+        if "\\" in path:
+            raise RustLexError("migration include paths may not use string escapes")
+        match = re.fullmatch(r"\.\./migrations/(\d{4}_[a-z0-9_]+\.sql)", path)
+        if match is None:
+            raise RustLexError(
+                "MIGRATIONS contains an include_str! path outside "
+                "../migrations/NNNN_name.sql"
+            )
+        registered.append(match.group(1))
+        if (
+            cursor >= len(tokens)
+            or tokens[cursor].kind != "punct"
+            or tokens[cursor].value != ")"
+        ):
+            raise RustLexError("include_str! in MIGRATIONS has unexpected arguments")
+        cursor += 1
+        if cursor < len(tokens) and tokens[cursor].kind == "punct" and tokens[cursor].value == ",":
+            cursor += 1
+        elif not (
+            cursor < len(tokens)
+            and tokens[cursor].kind == "punct"
+            and tokens[cursor].value == "]"
+        ):
+            raise RustLexError("MIGRATIONS entries must be comma-separated")
+    else:
+        raise RustLexError("MIGRATIONS array has no closing bracket")
+
+    if (
+        cursor >= len(tokens)
+        or tokens[cursor].kind != "punct"
+        or tokens[cursor].value != ";"
+    ):
+        raise RustLexError("MIGRATIONS declaration must end with a semicolon")
+    return registered
+
+
+def disk_migrations() -> list[Path]:
+    """Every SQLite migration file present on disk, sorted by filename."""
     return sorted(MIGRATIONS_DIR.glob("*.sql"))
+
+
+def audit_migration_file_types(paths: list[Path], report: Report) -> bool:
+    """Reject indirection: runtime migration bytes must be regular files."""
+    clean = True
+    for path in paths:
+        try:
+            if path.is_symlink():
+                report.fail(
+                    f"{display_path(path)} is not a regular migration file; "
+                    "symbolic links and other indirection are forbidden"
+                )
+                clean = False
+                continue
+            mode = path.lstat().st_mode
+        except OSError as exc:
+            report.fail(f"cannot inspect migration {display_path(path)}: {exc}")
+            clean = False
+            continue
+        if not stat.S_ISREG(mode):
+            report.fail(
+                f"{display_path(path)} is not a regular migration file; "
+                "symbolic links and other indirection are forbidden"
+            )
+            clean = False
+    return clean
+
+
+def audit_runtime_registration(
+    source: str, disk_names: list[str], report: Report
+) -> list[str]:
+    """Return the Rust runner's ordered names and report any directory drift."""
+    try:
+        registered = parse_migrations_declaration(source)
+    except RustLexError as exc:
+        report.fail(
+            f"{MIGRATIONS_RS.relative_to(ROOT)} has no unambiguous runtime "
+            f"MIGRATIONS array: {exc}"
+        )
+        registered = []
+    if not registered:
+        report.fail("MIGRATIONS registers no SQLite migrations")
+
+    duplicates = sorted(name for name, count in Counter(registered).items() if count > 1)
+    if duplicates:
+        report.fail(f"MIGRATIONS registers duplicate file(s): {', '.join(duplicates)}")
+
+    disk_set = set(disk_names)
+    registered_set = set(registered)
+    omitted = sorted(disk_set - registered_set)
+    nonexistent = sorted(registered_set - disk_set)
+    if omitted:
+        report.fail(f"migration file(s) omitted from MIGRATIONS: {', '.join(omitted)}")
+    if nonexistent:
+        report.fail(
+            "MIGRATIONS references file(s) absent from the migration directory: "
+            + ", ".join(nonexistent)
+        )
+    if not duplicates and registered_set == disk_set and registered != disk_names:
+        report.fail(
+            "MIGRATIONS order differs from filename order: " + " -> ".join(registered)
+        )
+
+    numbers = [
+        int(match.group(1))
+        for name in disk_names
+        if (match := MIGRATION_NAME.match(name))
+    ]
+    malformed = [name for name in disk_names if MIGRATION_NAME.match(name) is None]
+    if malformed:
+        report.fail(
+            "migration filename(s) do not match NNNN_lower_snake.sql: "
+            + ", ".join(malformed)
+        )
+    if numbers and numbers != list(range(1, len(numbers) + 1)):
+        report.fail(
+            "SQLite migration numbers must be contiguous from 0001: "
+            + ", ".join(f"{number:04d}" for number in numbers)
+        )
+    return registered
+
+
+def runtime_migrations(report: Report) -> list[Path]:
+    """The exact ordered migration chain compiled into the application."""
+    source = MIGRATIONS_RS.read_text(encoding="utf-8")
+    disk = disk_migrations()
+    names = audit_runtime_registration(source, [path.name for path in disk], report)
+    if not audit_migration_file_types(disk, report):
+        return []
+    return [MIGRATIONS_DIR / name for name in names if (MIGRATIONS_DIR / name).is_file()]
 
 FENCE = re.compile(r"^```sql\s*$")
 FENCE_END = re.compile(r"^```\s*$")
@@ -77,6 +307,14 @@ class Report:
         self.notes.append(msg)
 
 
+def display_path(path: Path) -> str:
+    """Use a stable repository-relative label, including for temp fixtures."""
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
 def blocks(doc: str) -> list[tuple[str, str]]:
     """(section-heading, sql) for each ```sql fence, in document order."""
     out: list[tuple[str, str]] = []
@@ -98,27 +336,62 @@ def blocks(doc: str) -> list[tuple[str, str]]:
     return out
 
 
-def apply_migrations(conn: sqlite3.Connection, report: Report, verbose: bool) -> int:
-    """Apply the shipped migrations, in runner order, to `conn`."""
+def apply_migrations(
+    conn: sqlite3.Connection,
+    report: Report,
+    verbose: bool,
+    migrations: list[Path],
+) -> int:
+    """Apply exactly the migrations registered by the Rust runner.
+
+    Each file runs in the same transaction as its ``user_version`` update, just
+    like ``pos_db::migrate``.  A bare ``executescript`` is not equivalent: it
+    accepts statements such as ``VACUUM`` that the application rejects inside
+    its per-migration transaction.
+    """
     applied = 0
-    for path in shipped_migrations():
+    for version, path in enumerate(migrations, start=1):
+        current = conn.execute("PRAGMA user_version").fetchone()[0]
+        if current != version - 1:
+            report.fail(
+                f"before {display_path(path)}, user_version is {current}; "
+                f"the runtime runner expects {version - 1}"
+            )
+            return applied
         try:
-            conn.executescript(path.read_text(encoding="utf-8"))
+            sql = path.read_text(encoding="utf-8")
+            conn.executescript(
+                f"BEGIN;\n{sql}\nPRAGMA user_version = {version};\nCOMMIT;"
+            )
+            recorded = conn.execute("PRAGMA user_version").fetchone()[0]
+            if recorded != version:
+                report.fail(
+                    f"{display_path(path)} committed without recording "
+                    f"user_version {version} (found {recorded})"
+                )
+                return applied
             applied += 1
             if verbose:
                 print(f"  applied  {path.name}")
-        except sqlite3.Error as exc:
-            report.fail(f"{path.relative_to(ROOT)} does not execute: {exc}")
+        except (OSError, UnicodeError, sqlite3.Error) as exc:
+            if conn.in_transaction:
+                conn.rollback()
+            report.fail(f"{display_path(path)} does not execute: {exc}")
             return applied
     return applied
 
 
-def apply_all(conn: sqlite3.Connection, report: Report, verbose: bool) -> int:
+def apply_all(
+    conn: sqlite3.Connection,
+    report: Report,
+    verbose: bool,
+    migrations: list[Path],
+) -> int:
     # Count only the failures THIS pass produces: the caller has already
     # recorded any from the shipped-migrations pass, and inheriting those would
     # skip the document entirely.
     before = len(report.failures)
-    applied = apply_migrations(conn, report, verbose)
+    applied = apply_migrations(conn, report, verbose, migrations)
     if len(report.failures) > before:
         return applied
 
@@ -259,6 +532,191 @@ def self_test() -> int:
     print(f"  {'ok  ' if caught else 'FAIL'}  detects a foreign key to a table that is never created")
     ok &= caught
 
+    with tempfile.TemporaryDirectory(prefix="pos-schema-selftest-") as fixture_dir:
+        fixture_root = Path(fixture_dir)
+
+        valid_path = fixture_root / "0001_valid.sql"
+        valid_path.write_text("CREATE TABLE valid(id INTEGER PRIMARY KEY);\n", encoding="utf-8")
+        valid_conn = sqlite3.connect(":memory:")
+        valid_report = Report()
+        valid_count = apply_migrations(valid_conn, valid_report, False, [valid_path])
+        valid_version = valid_conn.execute("PRAGMA user_version").fetchone()[0]
+        valid_ok = valid_count == 1 and valid_version == 1 and not valid_report.failures
+        print(
+            f"  {'ok  ' if valid_ok else 'FAIL'}  records user_version in the migration transaction"
+        )
+        ok &= valid_ok
+        valid_conn.close()
+
+        vacuum_path = fixture_root / "0001_vacuum.sql"
+        vacuum_path.write_text("VACUUM;\n", encoding="utf-8")
+        vacuum_conn = sqlite3.connect(":memory:")
+        vacuum_report = Report()
+        vacuum_count = apply_migrations(vacuum_conn, vacuum_report, False, [vacuum_path])
+        vacuum_version = vacuum_conn.execute("PRAGMA user_version").fetchone()[0]
+        vacuum_ok = (
+            vacuum_count == 0
+            and vacuum_version == 0
+            and bool(vacuum_report.failures)
+            and not vacuum_conn.in_transaction
+        )
+        print(
+            f"  {'ok  ' if vacuum_ok else 'FAIL'}  rejects SQL the runtime transaction cannot execute"
+        )
+        ok &= vacuum_ok
+        vacuum_conn.close()
+
+        rollback_path = fixture_root / "0001_rollback.sql"
+        rollback_path.write_text(
+            "CREATE TABLE must_roll_back(id INTEGER);\nSELECT * FROM absent_table;\n",
+            encoding="utf-8",
+        )
+        rollback_conn = sqlite3.connect(":memory:")
+        rollback_report = Report()
+        rollback_count = apply_migrations(
+            rollback_conn, rollback_report, False, [rollback_path]
+        )
+        table_survived = rollback_conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='must_roll_back'"
+        ).fetchone()
+        rollback_version = rollback_conn.execute("PRAGMA user_version").fetchone()[0]
+        rollback_ok = (
+            rollback_count == 0
+            and rollback_version == 0
+            and table_survived is None
+            and bool(rollback_report.failures)
+            and not rollback_conn.in_transaction
+        )
+        print(
+            f"  {'ok  ' if rollback_ok else 'FAIL'}  rolls back a partially failing migration"
+        )
+        ok &= rollback_ok
+        rollback_conn.close()
+
+        target_path = fixture_root / "mutable_target.sql"
+        target_path.write_text("SELECT 1;\n", encoding="utf-8")
+        symlink_path = fixture_root / "0001_symlink.sql"
+        try:
+            symlink_path.symlink_to(target_path)
+            type_paths: list[Path] = [symlink_path]
+        except OSError:
+            class SyntheticSymlink:
+                def is_symlink(self) -> bool:
+                    return True
+
+                def relative_to(self, _root: Path) -> Path:
+                    raise ValueError
+
+                def __str__(self) -> str:
+                    return "0001_symlink.sql"
+
+            type_paths = [SyntheticSymlink()]  # type: ignore[list-item]
+        symlink_report = Report()
+        symlink_clean = audit_migration_file_types(type_paths, symlink_report)
+        symlink_ok = not symlink_clean and any(
+            "symbolic links and other indirection are forbidden" in failure
+            for failure in symlink_report.failures
+        )
+        print(
+            f"  {'ok  ' if symlink_ok else 'FAIL'}  rejects a migration symlink to mutable bytes"
+        )
+        ok &= symlink_ok
+
+    def registration_source(names: list[str]) -> str:
+        entries = "\n".join(
+            f'    include_str!("../migrations/{name}"),' for name in names
+        )
+        return f"const MIGRATIONS: &[&str] = &[\n{entries}\n];\n"
+
+    registration_cases = [
+        (
+            "accepts exact runtime registration order",
+            registration_source(["0001_init.sql", "0002_more.sql"]),
+            ["0001_init.sql", "0002_more.sql"],
+            False,
+        ),
+        (
+            "recognizes raw-spelled runtime identifiers",
+            registration_source(["0001_init.sql", "0002_more.sql"])
+            .replace("MIGRATIONS", "r#MIGRATIONS")
+            .replace("include_str", "r#include_str"),
+            ["0001_init.sql", "0002_more.sql"],
+            False,
+        ),
+        (
+            "detects a migration omitted from the runtime array",
+            registration_source(["0001_init.sql"]),
+            ["0001_init.sql", "0002_more.sql"],
+            True,
+        ),
+        (
+            "detects a runtime entry whose file is absent",
+            registration_source(["0001_init.sql", "0002_ghost.sql"]),
+            ["0001_init.sql"],
+            True,
+        ),
+        (
+            "detects runtime reordering",
+            registration_source(["0002_more.sql", "0001_init.sql"]),
+            ["0001_init.sql", "0002_more.sql"],
+            True,
+        ),
+        (
+            "detects duplicate runtime registration",
+            registration_source(["0001_init.sql", "0001_init.sql"]),
+            ["0001_init.sql"],
+            True,
+        ),
+        (
+            "detects a migration-number gap",
+            registration_source(["0001_init.sql", "0003_more.sql"]),
+            ["0001_init.sql", "0003_more.sql"],
+            True,
+        ),
+        (
+            "detects an inline runtime migration the verifier cannot execute",
+            registration_source(["0001_init.sql"]).replace(
+                "\n];", '\n    "CREATE TABLE hidden(id INTEGER);",\n];'
+            ),
+            ["0001_init.sql"],
+            True,
+        ),
+        (
+            "ignores a block-commented fake migration array",
+            "/*\n"
+            + registration_source(["0001_init.sql", "0002_more.sql"])
+            + "*/\n"
+            + registration_source(["0001_init.sql"]),
+            ["0001_init.sql", "0002_more.sql"],
+            True,
+        ),
+        (
+            "ignores a migration array written inside a raw string",
+            'const BAIT: &str = r#"\n'
+            + registration_source(["0001_init.sql", "0002_more.sql"])
+            + '"#;\n'
+            + registration_source(["0001_init.sql"]),
+            ["0001_init.sql", "0002_more.sql"],
+            True,
+        ),
+        (
+            "ignores a migration array inside a macro definition",
+            "macro_rules! bait { () => {\n"
+            + registration_source(["0001_init.sql", "0002_more.sql"])
+            + "} }\n"
+            + registration_source(["0001_init.sql"]),
+            ["0001_init.sql", "0002_more.sql"],
+            True,
+        ),
+    ]
+    for label, source, names, want_failure in registration_cases:
+        registration_report = Report()
+        audit_runtime_registration(source, names, registration_report)
+        got_failure = bool(registration_report.failures)
+        passed = got_failure == want_failure
+        print(f"  {'ok  ' if passed else 'FAIL'}  {label}")
+        ok &= passed
+
     print("\nself-test PASSED" if ok else "\nself-test FAILED")
     return 0 if ok else 1
 
@@ -301,11 +759,20 @@ def main() -> int:
     if not SCHEMA_DOC.is_file():
         print(f"cannot find {SCHEMA_DOC}", file=sys.stderr)
         return 2
-    if not shipped_migrations():
+    if not disk_migrations():
         print(f"no migrations in {MIGRATIONS_DIR}", file=sys.stderr)
         return 2
 
     report = Report()
+    try:
+        migrations = runtime_migrations(report)
+    except OSError as exc:
+        print(f"could not read the runtime migration chain: {exc}", file=sys.stderr)
+        return 2
+    if not migrations:
+        for failure in report.failures:
+            print(f"FAIL {failure}", file=sys.stderr)
+        return 1
 
     # ── Pass 1: the schema that actually ships, audited on its own ──────────
     #
@@ -322,7 +789,7 @@ def main() -> int:
     shipped = sqlite3.connect(":memory:")
     shipped.execute("PRAGMA foreign_keys=ON")
     ship_report = Report()
-    n_shipped = apply_migrations(shipped, ship_report, verbose)
+    n_shipped = apply_migrations(shipped, ship_report, verbose, migrations)
     ship_tables, ship_columns = audit_columns(shipped, ship_report)
     audit_foreign_keys(shipped, ship_report)
     print(f"shipped: {n_shipped} migration(s), {ship_tables} tables, {ship_columns} columns")
@@ -335,7 +802,7 @@ def main() -> int:
     conn = sqlite3.connect(":memory:")
     conn.execute("PRAGMA foreign_keys=ON")
 
-    applied = apply_all(conn, report, verbose)
+    applied = apply_all(conn, report, verbose, migrations)
     tables, columns = audit_columns(conn, report)
 
     fks = audit_foreign_keys(conn, report)

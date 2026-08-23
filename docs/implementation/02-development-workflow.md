@@ -24,7 +24,7 @@ PR"; that one takes it from there.
 | **[6 · Definition of done — the checklists](#6--definition-of-done--the-checklists)** | microstep · group · phase, as copy-paste lists |
 | **[7 · Review, when you are the only reviewer](#7--review-when-you-are-the-only-reviewer)** | what replaces a second pair of eyes, and the reviewer checklist for this codebase |
 | **[8 · Git discipline](#8--git-discipline)** | the four branches, commits, squash vs merge commit, and what is never committed |
-| **[9 · CI, and reproducing it locally](#9--ci-and-reproducing-it-locally)** | the four jobs, and why a green machine can still fail CI |
+| **[9 · CI, and reproducing it locally](#9--ci-and-reproducing-it-locally)** | the workflow jobs, and why a green machine can still fail CI |
 | **[10 · Debugging and observability](#10--debugging-and-observability)** | backtraces, log filters, proptest regressions, and where a wrong number actually comes from |
 | **[11 · Performance — measured, not asserted](#11--performance--measured-not-asserted)** | the four budgets and the rules for measuring them |
 | **[12 · Security in the daily loop](#12--security-in-the-daily-loop)** | the never-list applied to a diff |
@@ -70,10 +70,11 @@ expensive no matter how early it is:
 5. **A float in a money path.** `clippy::float_arithmetic` is denied workspace-wide; do not
    `#[allow]` it to get past a compile error. Fix the arithmetic.
 
-**On squashing migrations.** Tempting while pre-pilot, and still the wrong default: the runner is a
-counter, the write guard assumes append-only, and keeping `0002…0011` costs nothing. If a numbering
-mistake genuinely forces it, it is a **standalone commit that does nothing else** — renumber, reset
-the `MIGRATIONS` array, and every developer runs `just db-local-reset`. Never bundled with a feature.
+**On squashing or renumbering migrations.** Do not. Once a migration is present in `HEAD`, it is
+append-only even before a pilot: the runner, repository guards, and other clones all depend on that
+history. If a numbering or schema mistake reaches `HEAD`, correct it with the next forward-only
+migration and register that file in `MIGRATIONS`; never renumber the existing files or reset the
+runtime array to rewrite history.
 
 **When this licence expires:** the first day a register you do not own holds a sale you did not
 create. Record that date here when it happens. After it, "we can just reset the database" stops
@@ -96,28 +97,35 @@ a minimum unless marked.
 | `cargo-nextest` | 0.9.143 | `cargo nextest --version` | `just test`, test filtering |
 | `just` | 1.58.0 | `just --version` | every recipe in this file |
 | `pnpm` | 11.22.0 | `pnpm --version` | the workspace; version is pinned by `packageManager` |
-| `node` | 26.4.0 | `node --version` | CI uses 22 — see §17 |
+| `node` | 22.x required (`nvm use`; this machine must switch from 26) | `node --version` | hooks, workspace, and CI; pinned by `.nvmrc` and `package.json` |
 | `docker` | 29.7.2 | `docker compose version` | the dev Postgres |
 | `sqlx-cli` | 0.9.0 | `sqlx --version` | server migrations |
 | `sqlite3` | 3.51.0 | `sqlite3 --version` | migration dry-runs, `just verify-schema` |
 | `python3` | 3.14.7 | `python3 --version` | `scripts/*.py`, the write guards |
+| `ruby` + Psych | 4.0.5 / 5.3.1 | `ruby -rpsych -e 'puts Psych::VERSION'` | semantic GitHub Actions policy parsing |
 | `gh` | 2.97.0 | `gh --version` | PRs from the terminal |
+| `gitleaks` | 8.30.1 | `gitleaks version` | fail-closed staged and CI secret scanning |
+| `cargo-deny` | 0.20.2 | `cargo deny --version` | advisories, licences, registries |
 | C toolchain | Xcode CLT | `cc --version` | `rusqlite`, `openssl-src` |
 
 Not installed yet, and the microstep that needs each — install when you get there, not now:
 
 | Tool | Install | First needed |
 |---|---|---|
-| `cargo-deny` | `cargo binstall cargo-deny` | §14 dependency review; Phase 5 hardening |
 | `sqlcipher` CLI | `brew install sqlcipher` | §5.7 — inspecting the encrypted register DB by hand |
 | `criterion` (dep) | workspace `[dev-dependencies]` | 1.4.9 / 1.2.7 benchmarks |
 | Playwright | `pnpm add -D @playwright/test` | 1.9.4 scan-latency trace |
 | `ts-rs` (dep) | workspace dependency | conventions §13 — generated TS types |
 
+Gitleaks is a setup prerequisite, not an optional later tool: pre-commit refuses
+closed when it is missing. Install a current v8 release using the platform instructions in
+[the upstream Gitleaks README](https://github.com/gitleaks/gitleaks#installing), then run
+`just setup` again.
+
 ### 1.2 First run, and after every pull
 
 ```bash
-just setup                 # pnpm install + cargo fetch
+just setup                 # hooks + identity + policy-tool checks, then locked installs
 just db-up                 # dev Postgres, detached
 just migrate               # apply apps/server/migrations
 ```
@@ -138,14 +146,16 @@ export POS_DB_KEY=dev-only-not-a-secret
 
 ### 1.3 Prove the bring-up worked
 
-Five commands. If all five pass you have a working machine and any later failure is your change.
+Run the repository gates rather than relying on remembered test counts. If they pass, you have a
+working machine and a recorded baseline for diagnosing a later failure.
 
 ```bash
 just check                                        # workspace compiles
-just lint                                         # fmt + clippy -D warnings + biome + docs links + acyclic + schema
-just test                                         # 21 Rust tests + 18 Vitest tests today
+just lint                                         # code, architecture, purity, schema, RTL, web and docs checks
+just test                                         # every Rust and declared workspace web test
 just audit                                        # cargo-deny advisories/licences + pnpm audit
-just guards                                       # 24 write-guard + 37 git-hook + 9 schema-auditor assertions
+just guards                                       # every negative guard and policy self-test
+just secrets                                      # content-scan all reachable Git history
 curl -s localhost:8080/health/db                  # after `just dev-server` in another shell
 ```
 
@@ -188,18 +198,19 @@ pnpm --filter terminal exec tsc --noEmit            # types only, no bundle
 
 ```bash
 just fmt                # rewrite: cargo fmt + biome format
-just lint               # the six checks CI runs
-just test               # cargo nextest --workspace + pnpm -r test
+just lint               # formatting, Clippy, architecture, schema, RTL, web and docs checks
+just test               # cargo nextest --locked --workspace + pnpm -r test
 just audit              # advisories and licences — needs `cargo install cargo-deny --locked`
 just acyclic            # pos-domain module graph
 just docs-links         # every relative .md link under docs/ resolves
-just verify-schema      # ref/schema.md as SQLite, plus the shipped migrations
+just verify-schema      # exact runtime-array/disk parity, then runtime + reference SQLite
+just secrets            # Gitleaks over all reachable Git history
 ```
 
 ### 2.3 Full loop
 
 ```bash
-just pre-push           # lint + test + build-web + guards, in that order
+just pre-push           # lint + test + build-web + guards + secret history scan
 pnpm --filter terminal tauri build     # a real packaged app; slow, do it per group not per commit
 ```
 
@@ -219,9 +230,10 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | Command | What it does |
 |---|---|
 | `just` | list every recipe |
-| `just setup` | `pnpm install` + `cargo fetch` + `just hooks` |
-| `just hooks` | point git at `.githooks` — **the branch protection this plan does not sell** |
-| `just check` | `cargo check --workspace --all-targets` |
+| `just setup` | install hooks and identity first, require Gitleaks and Ruby/Psych, then frozen pnpm install + locked Cargo fetch |
+| `just hooks` | point Git at `.githooks` — a local, bypassable safety net, not branch protection |
+| `just gitleaks-check` | fail clearly unless the content scanner required by pre-commit is installed |
+| `just check` | `cargo check --locked --workspace --all-targets` |
 | `just dev-terminal` | the register, Tauri dev, HMR on the React side |
 | `just dev-backoffice` | the admin app, Vite dev server |
 | `just dev-server` | Axum on `127.0.0.1:8080` |
@@ -230,19 +242,21 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just db-local-reset` | delete this machine's register database |
 | `just migrate` | `sqlx migrate run` against `DATABASE_URL` |
 | `just fmt` | rewrite formatting, Rust and TS |
-| `just lint` | fmt-check · clippy `-D warnings` · acyclic · biome · doc-links |
-| `just test` | `cargo nextest run --workspace` · `pnpm -r --if-present test` |
+| `just lint` | fmt-check · Clippy · acyclic/domain-pure · SQLite/PG mapping · logical CSS/property names · Biome · doc-links |
+| `just test` | `cargo nextest run --locked --workspace` · `pnpm -r --if-present test` |
 | `just acyclic` | `pos-domain`'s module graph has no cycles |
+| `just domain-purity` | `pos-domain` has no runtime RNG/UUID-generation capability or direct clock/random calls |
 | `just docs-links` | no broken relative `.md` link under `docs/` |
-| `just verify-schema` | executes every shipped migration and every SQL block in `ref/schema.md` against real SQLite |
+| `just verify-schema` | requires exact Rust `MIGRATIONS`/disk parity, then executes the runtime chain and every SQL block in `ref/schema.md` against real SQLite |
 | `just verify-pg` | the Postgres mirror's declared mapping, and the SQL against a real PostgreSQL server |
 | `just prop-names` | property tests are `prop_<invariant>` — the prefix microstep 1.1.5's verify filter depends on |
 | `just logical-css` | no physical CSS side in `apps/**` — §10 is RTL by default, so a physical side is a layout bug in Arabic |
+| `just secrets` | Gitleaks over every commit reachable from the local repository, with findings redacted |
 | `just guards` | the write guards **and** the git hooks still refuse what they must |
 | `just build-web` | `pnpm -r --if-present build` — **the only place `tsc` runs** |
-| `just pre-push` | `lint` + `test` + `build-web` + `guards` |
+| `just pre-push` | `lint` + `test` + `build-web` + `guards` + full-history secret scan |
 | `just branch <name>` | fresh `development`, then a branch off it — **needs a clean tree** (§4.2) |
-| `just pr [title] [body-file] [milestone]` | gates → push → PR into `development` → watch CI. Pass the title on a branch with more than one commit (§4.12); the milestone is derived from a `phase-<n>/` branch name |
+| `just pr [title] [body-file] [milestone]` | gates → push → PR into `development` → watch CI. Pass the title on a branch with more than one commit (§4.12); the milestone is derived from a `phase-<0-5>/` branch name |
 | `just flow` | what is on `development` but not `staging`, and on `staging` but not `main` |
 | `just promote-staging` | PR: `development` → `staging` (a release candidate) |
 | `just promote-main` | PR: `staging` → `main` (production) |
@@ -252,6 +266,12 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 
 Not yet recipes, and the microstep that creates each: `just seed` (1.12.1) · `cargo bench`
 benchmarks (1.4.9, 1.2.7, 1.12.3) · the TS type generation gate (conventions §13).
+
+`just verify-pg` never applies migrations to the database named in a connection URL. When a
+development server is supplied, it creates a unique scratch database for that run and drops it in
+`finally`; otherwise it uses a uniquely named throwaway Docker container. The Compose service, CI
+service, and verifier all use the same full Postgres image digest. Without either engine path it
+reports a mapping-only skip explicitly rather than calling the engine pass successful.
 
 ---
 
@@ -320,9 +340,12 @@ git merge-base --is-ancestor HEAD origin/development && echo "already integrated
   git log --oneline origin/development..HEAD          # these would come along
 ```
 
-Naming: `phase-<n>/group-<m>-<slug>`. Fixes that are not part of a group:
-`fix/<slug>`, `chore/<slug>`, `docs/<slug>`. The `branch-flow` check refuses a name outside the
-scheme, and `.githooks/pre-push` refuses a direct push to any of the three long-lived branches.
+Naming: `phase-<0-5>/group-<m>-<slug>`; the six maintained gates are Phase 0 through Phase 5.
+Fixes that are not part of a group:
+`fix/<slug>`, `chore/<slug>`, `docs/<slug>`; a version-preparation PR uses
+`chore/release-vX.Y.Z`.
+The `branch-flow` check refuses a name outside the scheme, and `.githooks/pre-push` refuses a
+direct push to any of the three long-lived branches.
 
 **Branch from `development`, never from `main`.** The flow is
 `feature → development → staging → main`: `development` is the integration surface and the default
@@ -373,8 +396,8 @@ Use the `add-migration` skill — it does the whole sequence correctly. By hand 
 ```bash
 ls crates/pos-db/migrations/                                   # next number, no gaps
 # author crates/pos-db/migrations/000N_short_name.sql from ref/schema.md
-just verify-schema                                             # applies the WHOLE chain, yours included
 # append the include_str! entry to MIGRATIONS in crates/pos-db/src/lib.rs
+just verify-schema                                             # proves exact parity, then applies the RUNTIME chain
 # mirror it in apps/server/migrations/ — same semantics, with a header comment
 # saying "Mirrors SQLite 000N_short_name.sql"; the numbers cannot match
 just verify-pg                                                 # the mirror, on a real server
@@ -388,6 +411,8 @@ table went unchecked — and it accepts a `REFERENCES ghost(id)` in silence.
 Non-negotiables, from conventions §9 and `.claude/rules/sql-migrations.md`:
 
 - Forward-only. No down migrations. The rollback story is restore-from-encrypted-backup.
+- The Rust `MIGRATIONS` array and the directory have exact, duplicate-free, ordered parity. A file
+  on disk that runtime omits is a failed verification, not a shipped migration.
 - Naming carries the units: `*_minor` · `*_milli` · `*_ppm` · `*_at` · `*_date` · `is_*` ·
   `<table>_id BLOB(16)` · enums as `TEXT` + `CHECK (x IN (…))`.
 - A shape change ships its data migration **in the same file**, plus a test that seeds the old
@@ -413,7 +438,8 @@ Commands are the only channel from UI to core ([`ref/ipc-contract.md`](ref/ipc-c
 From conventions §10 and [`ref/ui-spec.md`](ref/ui-spec.md):
 
 - RTL is the default, not a mode. Logical properties only — `ps-*`/`pe-*`/`ms-*`/`me-*`/
-  `start-*`/`end-*`. `pl-4` is a lint failure once 1.11.2 lands.
+  `start-*`/`end-*`. `pl-4` is refused by `just logical-css` unless the line carries the narrow,
+  reviewed physical-layout exception documented in conventions §10.
 - No string literals in components. Keys go in the typed catalog, `ar` and `en` in lockstep — a
   test fails when a key exists in one and not the other.
 - Money and dates render through `formatMoney` / `formatDate`. Never an inline `toLocaleString`:
@@ -509,7 +535,11 @@ git commit -F .git/COMMIT_DRAFT
 ```
 
 **Before the push, check whose commits these are.** `just setup` sets the identity per clone, but a
-fresh clone that skipped it inherits whatever the machine's global config says:
+fresh clone that skipped it inherits whatever the machine's global config says. Coding assistants
+remain tools and receive no co-author/generated-by trailer. The history validator has one narrow
+compatibility exception: an exact Dependabot author name/email may retain the exact Dependabot
+trailer. Git author metadata is locally configurable, so this string match preserves existing bot
+history but is not cryptographic proof of GitHub App identity:
 
 ```bash
 git log development..HEAD --format='%an <%ae>' | sort -u              # expect one line
@@ -520,7 +550,21 @@ git log development..HEAD --format='%B' | grep -iE '^co-authored-by|generated wi
 
 ```bash
 just pr 'feat(domain): tax engine, inclusive + exclusive extraction   [1.3.4]'
-gh pr merge --squash --delete-branch    # only when green
+work_pr=$(gh pr view --json url --jq .url)
+IFS=$'\t' read -r work_base work_head < <(
+  gh pr view "$work_pr" --json baseRefOid,headRefOid \
+    --jq '[.baseRefOid, .headRefOid] | @tsv'
+)
+bash ./scripts/watch-pr-checks.sh "$work_pr"
+IFS=$'\t' read -r current_base current_head < <(
+  gh pr view "$work_pr" --json baseRefOid,headRefOid \
+    --jq '[.baseRefOid, .headRefOid] | @tsv'
+)
+if [ "$current_base" != "$work_base" ] || [ "$current_head" != "$work_head" ]; then
+  echo "PR base/head changed; discard the evidence and re-run the watcher" >&2
+  exit 1
+fi
+gh pr merge "$work_pr" --match-head-commit "$work_head" --squash --delete-branch
 ```
 
 Longhand, when you want to see it:
@@ -528,10 +572,29 @@ Longhand, when you want to see it:
 ```bash
 just pre-push
 git push -u origin phase-1/group-3-tax
-gh pr create --base development --title '<conventions §8 subject>' --body-file notes/pr.md
-gh pr checks --watch                    # rust · web · guards · protected-paths · topology
-gh pr merge --squash --delete-branch    # only when green
+work_pr=$(gh pr create --base development --title '<conventions §8 subject>' --body-file notes/pr.md)
+IFS=$'\t' read -r work_base work_head < <(
+  gh pr view "$work_pr" --json baseRefOid,headRefOid \
+    --jq '[.baseRefOid, .headRefOid] | @tsv'
+)
+bash ./scripts/watch-pr-checks.sh "$work_pr"       # exact route/path-derived workflow set
+IFS=$'\t' read -r current_base current_head < <(
+  gh pr view "$work_pr" --json baseRefOid,headRefOid \
+    --jq '[.baseRefOid, .headRefOid] | @tsv'
+)
+if [ "$current_base" != "$work_base" ] || [ "$current_head" != "$work_head" ]; then
+  echo "PR base/head changed; discard the evidence and re-run the watcher" >&2
+  exit 1
+fi
+gh pr merge "$work_pr" --match-head-commit "$work_head" --squash --delete-branch
 ```
+
+The before/after base and head readings are load-bearing. A mismatch invalidates the check
+evidence and requires another watcher run. `--match-head-commit` locks only the head atomically;
+there is no equivalent atomic target-base lock on the current plan/API. Serialize maintainer
+merges—or temporarily freeze the target branch—during that final window. The immediate base
+recheck narrows but cannot eliminate the residual race; §3 in
+[`03-github-workflow.md`](03-github-workflow.md) is the authoritative runbook.
 
 **The PR title becomes the commit.** A squash-merge discards your commit subjects and commits the
 PR *title*, so the title obeys conventions §8 — and the `branch-flow` check enforces exactly that.
@@ -867,7 +930,7 @@ Copy these. "Mostly done" is a status that hides work; each list is all-or-nothi
 [ ] `just pre-push` clean
 [ ] the §5.9 smoke passed on a fresh database
 [ ] the PR description says what, why now, invariants touched, verification, catalog rows
-[ ] CI green on both jobs
+[ ] every applicable CI, policy, supply-chain, and security check is green
 [ ] squash-merged; branch deleted
 ```
 
@@ -891,6 +954,19 @@ see. With one developer, the substitutes are not optional — they are the whole
 5. **The gates in `.claude/`.** `.claude/rules/` loads standards for the paths you are editing;
    `.claude/hooks/` refuses what must not happen. After touching either, run `just guards` — a
    guard nobody has seen fail is a guard nobody should trust.
+
+On supported macOS/Linux/WSL2 hosts, the checked-in Claude configuration also enables its OS
+sandbox, keeps the default permission mode manual, disables bypass-permissions mode and automatic
+Bash approval, fails closed if the sandbox cannot start, explicitly keeps hooks enabled, removes
+common credential variables from subprocesses, and pre-approves no network domain. Sensitive
+project/home reads are denied, including arbitrary ignored `.env.<suffix>` files; only the
+repository's exact tracked environment example remains readable. New hosts may still prompt
+because a strict network allowlist cannot be imposed from project scope. Pre-tool launcher and
+settings-validation failures fail closed; post-tool documentation diagnostics remain visible but
+cannot undo a completed write. Native
+Windows has no Claude OS sandbox; the portable launcher and real `PowerShell`/`Monitor` routing
+are contract-tested. Git hooks and CI provide cross-platform backstops and signals; on this Free
+plan a red CI result still cannot block the repository administrator from merging.
 
 When a second developer arrives, the reviewer's job in this codebase, in priority order:
 
@@ -922,7 +998,7 @@ The flow, in one line: **`feature → development → staging → main`**. The f
 
 | Thing | Rule |
 |---|---|
-| Branch | `phase-<n>/group-<m>-<slug>`; `fix/`, `chore/`, `docs/`, `refactor/`, `perf/`, `test/` otherwise. `hotfix/` is the only one that branches from `main` |
+| Branch | `phase-<0-5>/group-<m>-<slug>`; `fix/`, `chore/`, `docs/`, `refactor/`, `perf/`, or `test/` otherwise. `hotfix/` is the only one that branches from `main` |
 | Base | **`development`**, always — `just branch <name>` gets it right for you |
 | Lifetime | days, not weeks — a group is a branch, and a long branch is a merge conflict accruing interest |
 | Commit | one microstep, conventional prefix, `[<step>]` tag, imperative summary. `.githooks/commit-msg` refuses anything else |
@@ -934,13 +1010,15 @@ The flow, in one line: **`feature → development → staging → main`**. The f
 | `development` | always green. Never merge red — a red `development` means the next person cannot tell whether they broke it |
 | `staging` | a candidate that will actually be installed. Tagged `v<x>.<y>.<z>-rc.<n>` |
 | `main` | what a merchant is running. Tagged `v<x>.<y>.<z>`. Nothing lands here except a promotion or a hotfix |
-| Tags | only a tag triggers a release build, and a tag is immutable — a bad build is a new patch, never a moved tag |
+| Tags | only a tag triggers a release build. Signed tags are append-only: `.githooks/pre-push` refuses moving/deleting any existing tag, and a bad build gets a new patch tag. GitHub locks the associated tag and assets only after the draft is published with immutable releases enabled |
 | Direct pushes | refused by `.githooks/pre-push` on all three long-lived branches. Run `just setup` on every machine or you have no protection at all |
 
-Never committed: `.env` files · `*.db`, `*.sqlite`, `*-wal`, `*-shm` · `target/`, `dist/`,
-`node_modules/` · `apps/terminal/src-tauri/gen/schemas` · `.claude/settings.local.json` · anything
-that is or contains a key. [`.gitignore`](../../.gitignore) already covers these; the point is to
-notice when a `git add -A` wants to add one anyway.
+Never committed: `.env` files · database files and SQLite sidecars · private keys and credential
+stores such as nested `id_rsa`, `.netrc`, registry credentials, or Docker config · `target/`,
+`dist/`, `node_modules/` · `apps/terminal/src-tauri/gen/schemas` ·
+`.claude/settings.local.json` · anything that contains a credential. The staged-path policy is
+NUL-safe, measures the staged blob rather than the working copy, and fails closed if Git cannot
+answer. Gitleaks separately inspects the content, so an ordinary filename is not a bypass.
 
 ```bash
 git status --short              # before every commit; look for what you did not expect
@@ -948,40 +1026,40 @@ git diff --cached --stat        # size sanity: a 40-file diff for one microstep 
 git log --oneline -10           # is the history still readable as a plan?
 ```
 
-Two untracked files sit at the repository root right now — `pos-business-functional-master-plan.md`
-and its `(1)` duplicate. They are copies of what already lives in
-[`../plan/business-functional-master-plan.md`](../plan/business-functional-master-plan.md). Delete
-them; a second copy of a source document is a second version of the truth.
-
----
-
 ## 9 · CI, and reproducing it locally
 
 CI runs on every push to `development`, `staging` and `main`, and on every PR into them:
 
 | Workflow | Job | Steps | Local equivalent |
 |---|---|---|---|
-| [`ci.yml`](../../.github/workflows/ci.yml) | `rust` | fmt-check · clippy `-D warnings` · nextest · acyclic, with a Postgres service | `just lint && just test` |
-| [`ci.yml`](../../.github/workflows/ci.yml) | `web` | biome ci · `pnpm -r test` · `pnpm -r build` · doc-links | `just lint && just test` + `pnpm -r build` |
-| [`branch-flow.yml`](../../.github/workflows/branch-flow.yml) | `topology` | the PR base is legal for its head branch; the PR title is a legal squash commit | `just guards` covers the same rules locally |
-| [`labeler.yml`](../../.github/workflows/labeler.yml) | `label` | `area:` and `risk:` labels from the changed paths | — |
-| [`release.yml`](../../.github/workflows/release.yml) | `guard` | the tag sits on the right branch and matches the version in the tree | — |
+| [`ci.yml`](../../.github/workflows/ci.yml) | `rust` | locked fmt/Clippy/tests · domain structure/purity · property names · exact runtime SQLite · real scratch PostgreSQL | `just lint && just test && just verify-pg` |
+| [`ci.yml`](../../.github/workflows/ci.yml) | `guards` | Claude/Codex/Git/protected-path/schema/title/attribution/secret/workflow policy negative suites | `just guards` |
+| [`ci.yml`](../../.github/workflows/ci.yml) | `web` | Biome · logical CSS · tests · build/types · coverage notice · docs links | `just lint && just test && just build-web` |
+| [`ci.yml`](../../.github/workflows/ci.yml) | `supply-chain` | trusted-range Gitleaks · Rust/npm advisories, licences, bans and sources | `just secrets && just audit` |
+| [`ci.yml`](../../.github/workflows/ci.yml) | `cross-platform` | core tests and real Tauri package build on Linux/macOS/Windows for promotions and the protected release branches | run the platform build on each supported OS |
+| [`branch-flow.yml`](../../.github/workflows/branch-flow.yml) | `protected-paths`, `topology` | exact-workflow-revision policy · verified data-only PR head · legal head/base/repository · title and attribution | relevant `just guards` self-tests |
+| [`labeler.yml`](../../.github/workflows/labeler.yml) | `label` | path-derived area/risk plus title-derived type, executing only trusted base code | — |
+| [`security.yml`](../../.github/workflows/security.yml) | workflow analysis, scheduled advisories | actionlint · zizmor · weekly full-history secret and dependency scan | policy self-tests plus `just secrets && just audit` |
+| [`release.yml`](../../.github/workflows/release.yml) | guard, platform signing, publisher, metadata | verified signed exact-tip tag · exact-SHA CI · least-privilege publishing · SBOM/checksums | the release checklist in §15 |
 
 `ci` cancels a superseded run on a work branch, but never on `staging` or `main`: a half-cancelled
 promotion build tells you nothing about whether the candidate was green. Minutes are a real budget
 on this plan — [`03-github-workflow.md`](03-github-workflow.md) §8.
 
-`just pre-push` is designed to predict both. When CI fails and your machine did not:
+`just pre-push` predicts the deterministic code and policy jobs. It deliberately cannot reproduce
+GitHub event topology, workflow static analysis, the time-varying advisory databases, or a build on
+an operating system other than the one you are using. When CI fails and your machine did not:
 
 | Symptom | Almost always |
 |---|---|
-| clippy fails only in CI | a warning gated behind a feature or `--all-targets`; run `cargo clippy --workspace --all-targets -- -D warnings` |
+| clippy fails only in CI | a warning gated behind a feature or `--all-targets`; run `cargo clippy --locked --workspace --all-targets -- -D warnings` |
 | a test fails only in CI | order or time dependence — CI runs tests in parallel in a different order. Conventions §5: no wall clock, no ambient randomness, no filesystem ordering |
 | `pnpm install` fails only in CI | the lockfile was not committed, or a package needs a build script allowed in `pnpm-workspace.yaml` (`allowBuilds`) |
 | biome passes locally, fails in CI | `biome ci --error-on-warnings` is stricter than `biome check`; `just lint` uses the CI form |
 | doc-links fails | a renamed or deleted `.md`; `just docs-links` names the file and the target |
 | a build fails on Linux only | a Tauri system dependency; the workflow's `apt-get` list is the reference |
 | `supply-chain` fails and nothing local did | expected: `just pre-push` deliberately omits `just audit`, because both halves reach the network and read advisory databases that change hourly. Run `just audit` to see it |
+| secret range scanning fails | the proposed commit range contains a detector match even if the final worktree is clean; do not print it, rotate a real credential first, then handle history separately |
 | the Postgres mirror fails only in CI | `just verify-pg` skips the engine pass with no `$DATABASE_URL` and no Docker. `just db-up` first, or read the skip line — it is not a pass |
 
 **Flake policy: there isn't one.** A flaky test in a money system is worse than no test, because it
@@ -990,7 +1068,7 @@ it and open the microstep that replaces it. Never re-run CI to get green.
 
 ```bash
 gh run list --limit 5
-gh run watch
+gh run watch <run-id> --exit-status          # choose the run whose head SHA/ref you inspected
 gh run view --log-failed
 ```
 
@@ -1065,13 +1143,17 @@ version is conventions §12; the never-list is `.claude/rules/security.md`. What
 keyboard, every day:
 
 ```bash
-git diff --cached | grep -inE 'password|secret|token|api[_-]?key|BEGIN .*PRIVATE KEY|POS_DB_KEY='
+./scripts/scan-secrets.sh --staged  # the exact content gate used by pre-commit
+just secrets                        # all reachable history; also part of just pre-push
 /security-review                    # before any PR that touches money, auth, logging, or IPC
 ```
 
-- **Never log** PAN, track data, CVV, PIN or PIN hash, DB key, JoFotara secret, or customer
-  name/phone/email — not via `tracing`, not in an `IpcError.detail`, not in a test fixture that
-  prints.
+- **Never log** a value under any canonical sensitive field name: `pin`, `pin_hash`, `pan`,
+  `card_number`, `cvv`, `track`, `phone`, `email`, `customer_name`, `buyer_name`, `secret_key`,
+  `client_id`, `db_key`, `token`, `password`, or `entitlement` — not via `tracing`,
+  `IpcError.detail`, crash reporting, or a test fixture that prints. Fiscal credentials and
+  signing material remain sensitive under any provider-specific name; the authoritative list is
+  [`ref/security-compliance.md`](ref/security-compliance.md) §5.
 - **Never store** anything from a card beyond the PSP reference, the masked PAN the terminal returns
   for the receipt, and the scheme.
 - **The DB key lives in the OS credential store.** `POS_DB_KEY` is dev and CI only, and the release
@@ -1085,12 +1167,11 @@ git diff --cached | grep -inE 'password|secret|token|api[_-]?key|BEGIN .*PRIVATE
 If a secret is already committed: say so, stop, and do not rewrite history unasked. Rotating the
 secret comes first; the history is a second, separate decision.
 
-**Not security, but enforced in the same place.** No agent attribution goes into this repository's
-history: `.githooks/commit-msg` refuses a `Co-Authored-By:` trailer naming claude, anthropic,
-copilot or a bot, and a "Generated with Claude" line — and it does so *before* the merge and revert
-passthrough, so a merge commit cannot smuggle one in either. A genuine human co-author still passes.
-The trailer is what makes a tool's avatar appear beside a commit in the GitHub UI, which is not what
-a merchant-facing repository should claim about its authorship.
+**Not security, but enforced in the same policy layer.** Coding assistants are tools, not
+co-authors: `commit-msg`, `pre-push`, and CI reject their `Co-Authored-By` and generated-by lines.
+A genuine human co-author passes. An exact Dependabot author name/email may retain its exact
+GitHub-generated trailer as a narrow compatibility exception. Because Git author metadata is
+locally configurable, the policy does not describe that match as authenticated provenance.
 
 ---
 
@@ -1129,10 +1210,10 @@ git commit -m "chore(repo): rust 1.98.0                                     [—
 The pin exists so a Rust release cannot turn a green build red on a day you are shipping. Same
 discipline for `packageManager` in `package.json` and the Node version in CI.
 
-**Dependency review** — not yet wired, and worth doing before the first external pilot:
+**Dependency review** is wired locally and in CI. It is deliberately not in `just pre-push`
+because advisory databases change independently of the proposed code:
 
 ```bash
-cargo binstall cargo-deny && cargo deny init
 cargo deny check                # advisories, licences, bans, duplicate versions
 pnpm audit
 ```
@@ -1183,41 +1264,167 @@ a `v*` tag builds macOS (universal), Linux (on the oldest supported glibc), and 
 | `v0.2.0-rc.1` | `staging` | a **pre-release** draft — the pilot channel |
 | `v0.2.0` | `main` | a **production** draft release |
 
-A `guard` job refuses the build *before* the three-platform matrix starts if the tag is on the
-wrong branch, or disagrees with the version in `Cargo.toml` or `tauri.conf.json`. That check is the
-only rule in this project that genuinely cannot be bypassed, because it gates the artefact rather
-than the merge button.
+The `guard` job refuses before the three-platform matrix unless all of these are true: the tag has
+the exact `vX.Y.Z`, `vX.Y.Z-rc.N`, or `vX.Y.Z-beta.N` grammar; it is a signed annotated tag whose
+signature GitHub reports as verified; it resolves to the current `main`/`staging` tip for its
+channel; all maintained version files agree; and `ci.yml` completed successfully for that exact
+SHA on that branch. Platform build/sign jobs have a read-only repository token and the signing
+material they need; a separate minimal publisher has the write token and no signing secrets.
+After every platform succeeds, it attaches an SPDX JSON SBOM and SHA-256 manifest covering the
+application assets and SBOM to the still-draft release.
 
 ```bash
+# Define `exact_push_run` from 03-github-workflow.md §2 in this Bash session first.
+set -euo pipefail
+release_repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+
+verify_release_tag() { # verify_release_tag <tag> <expected-tag-object> <expected-commit>
+  local tag=$1 expected_object=$2 expected_commit=$3 ref_json tag_json
+  ref_json=$(gh api "repos/$release_repo/git/ref/tags/$tag")
+  [ "$(printf '%s' "$ref_json" | jq -r '.object.type')" = "tag" ]
+  [ "$(printf '%s' "$ref_json" | jq -r '.object.sha')" = "$expected_object" ]
+  tag_json=$(gh api "repos/$release_repo/git/tags/$expected_object")
+  [ "$(printf '%s' "$tag_json" | jq -r '.object.type')" = "commit" ]
+  [ "$(printf '%s' "$tag_json" | jq -r '.object.sha')" = "$expected_commit" ]
+  [ "$(gh release view "$tag" --json isDraft --jq .isDraft)" = "true" ]
+}
+
+# ── version, through the normal development PR path ──
+just branch chore/release-v0.2.0
+# update Cargo.toml, apps/terminal/src-tauri/tauri.conf.json, apps/terminal/package.json
+git commit -m "chore(repo): set version 0.2.0                              [—]"
+just pre-push
+git push -u origin HEAD
+version_pr=$(gh pr create --base development \
+  --title "chore(repo): set version 0.2.0   [—]" \
+  --body "Synchronize every release-version source before promotion.")
+IFS=$'\t' read -r version_base version_head < <(
+  gh pr view "$version_pr" --json baseRefOid,headRefOid \
+    --jq '[.baseRefOid, .headRefOid] | @tsv'
+)
+bash ./scripts/watch-pr-checks.sh "$version_pr"
+IFS=$'\t' read -r current_base current_head < <(
+  gh pr view "$version_pr" --json baseRefOid,headRefOid \
+    --jq '[.baseRefOid, .headRefOid] | @tsv'
+)
+if [ "$current_base" != "$version_base" ] || [ "$current_head" != "$version_head" ]; then
+  echo "PR base/head changed; discard the evidence and re-run the watcher" >&2
+  exit 1
+fi
+gh pr merge "$version_pr" --match-head-commit "$version_head" --squash --delete-branch
+
+git switch development && git pull --ff-only
+development_sha=$(git rev-parse HEAD)
+development_ci=$(exact_push_run ci.yml development "$development_sha")
+gh run watch "$development_ci" --exit-status
+
 # ── candidate, from staging ──
-just promote-staging                            # PR: development → staging
-gh pr merge --merge                             # MERGE COMMIT, never squash
+staging_pr=$(gh pr create --base staging --head development \
+  --title "promote development to staging" \
+  --body-file .github/PULL_REQUEST_TEMPLATE/promotion.md)
+IFS=$'\t' read -r staging_base staging_head < <(
+  gh pr view "$staging_pr" --json baseRefOid,headRefOid \
+    --jq '[.baseRefOid, .headRefOid] | @tsv'
+)
+# Fill notes/promotion-staging.md from the template with both SHAs and exact evidence.
+gh pr edit "$staging_pr" --body-file notes/promotion-staging.md
+bash ./scripts/watch-pr-checks.sh "$staging_pr"
+IFS=$'\t' read -r current_base current_head < <(
+  gh pr view "$staging_pr" --json baseRefOid,headRefOid \
+    --jq '[.baseRefOid, .headRefOid] | @tsv'
+)
+if [ "$current_base" != "$staging_base" ] || [ "$current_head" != "$staging_head" ]; then
+  echo "PR base/head changed; discard the evidence and re-run the watcher" >&2
+  exit 1
+fi
+gh pr merge "$staging_pr" --match-head-commit "$staging_head" --merge  # MERGE COMMIT, never squash
 git switch staging && git pull --ff-only
-# bump the version in Cargo.toml [workspace.package] and apps/terminal/src-tauri/tauri.conf.json
-git commit -m "chore(repo): version 0.2.0                                   [—]"
-git tag -a v0.2.0-rc.1 -m "Phase 1 groups 1-4"
-git push origin staging --follow-tags
-gh run watch                                    # guard, then three platform builds
+staging_sha=$(git rev-parse HEAD)
+staging_ci=$(exact_push_run ci.yml staging "$staging_sha")
+gh run watch "$staging_ci" --exit-status
+rc_tag=v0.2.0-rc.1
+git tag -s "$rc_tag" -m "Phase 1 groups 1-4"    # signed annotated tag is required
+rc_tag_object=$(git rev-parse "${rc_tag}^{tag}") # retain the exact object the build must use
+git push origin "refs/tags/$rc_tag"
+rc_release=$(exact_push_run release.yml "$rc_tag" "$staging_sha")
+gh run watch "$rc_release" --exit-status
+gh release view "$rc_tag"                       # inspect every asset and the checksum manifest
+# Only after all external-release prerequisites below are satisfied:
+verify_release_tag "$rc_tag" "$rc_tag_object" "$staging_sha"
+gh release edit "$rc_tag" --draft=false --prerelease
 
 # ── production, from main, after the candidate has actually been used ──
-just promote-main                               # PR: staging → main
-gh pr merge --merge
+main_pr=$(gh pr create --base main --head staging \
+  --title "promote staging to main" \
+  --body-file .github/PULL_REQUEST_TEMPLATE/promotion.md)
+IFS=$'\t' read -r main_base main_head < <(
+  gh pr view "$main_pr" --json baseRefOid,headRefOid \
+    --jq '[.baseRefOid, .headRefOid] | @tsv'
+)
+# Fill notes/promotion-main.md from the template with both SHAs and exact evidence.
+gh pr edit "$main_pr" --body-file notes/promotion-main.md
+bash ./scripts/watch-pr-checks.sh "$main_pr"
+IFS=$'\t' read -r current_base current_head < <(
+  gh pr view "$main_pr" --json baseRefOid,headRefOid \
+    --jq '[.baseRefOid, .headRefOid] | @tsv'
+)
+if [ "$current_base" != "$main_base" ] || [ "$current_head" != "$main_head" ]; then
+  echo "PR base/head changed; discard the evidence and re-run the watcher" >&2
+  exit 1
+fi
+gh pr merge "$main_pr" --match-head-commit "$main_head" --merge
 git switch main && git pull --ff-only
-git tag -a v0.2.0 -m "Phase 1"
-git push origin main --follow-tags
-gh release view v0.2.0                          # draft: check artefacts before publishing
+main_sha=$(git rev-parse HEAD)
+main_ci=$(exact_push_run ci.yml main "$main_sha")
+gh run watch "$main_ci" --exit-status
+final_tag=v0.2.0
+git tag -s "$final_tag" -m "Phase 1"           # lightweight tags are refused
+final_tag_object=$(git rev-parse "${final_tag}^{tag}")
+git push origin "refs/tags/$final_tag"
+final_release=$(exact_push_run release.yml "$final_tag" "$main_sha")
+gh run watch "$final_release" --exit-status
+gh release view "$final_tag"                    # draft: inspect every artifact before publishing
+# This exact-object/commit check is the final command before publication.
+verify_release_tag "$final_tag" "$final_tag_object" "$main_sha"
+gh release edit "$final_tag" --draft=false --prerelease=false
 ```
+
+The explicit PR and run identifiers compensate for the current plan's missing merge enforcement.
+Immediately before each merge, confirm the checked head SHA is unchanged and pass it to
+`--match-head-commit` so the merge is atomic with that expectation. After each merge, watch the
+`ci.yml` push run selected by both branch and exact SHA. Never use a bare `gh run watch` in a
+promotion or release sequence.
+
+A draft release and its tag are not atomically bound by GitHub. The workflow checks the exact
+annotated tag object and target commit before and after mutating draft assets, but neither check
+locks the ref. Retain the locally created tag-object SHA and run `verify_release_tag` immediately
+before the human publication command. A final instruction-sized race is unavoidable; publishing
+the verified draft closes that window because the repository's immutable-release setting then
+locks the tag and assets. A failed release workflow or failed publication recheck means **do not
+publish that draft**.
+
+If any release job fails, choose GitHub's **Re-run all jobs**, or run
+`gh run rerun "$release_run_id"` without `--failed` or `--job`. Every workflow artifact name
+includes `github.run_attempt`, and the publisher deliberately accepts only the three platform
+sets and SBOM from one attempt. A partial rerun therefore fails closed instead of mixing new
+publisher output with older build artifacts.
+
+Promotion CI builds the real Tauri application on Linux, macOS, and Windows before tag time, so the
+release workflow is not the first platform-specific packaging run.
 
 What is **not** ready, and must be before anything reaches a machine you do not own:
 
-- **Updater signing keys** — `pnpm --filter terminal tauri signer generate`, then
-  `TAURI_SIGNING_PRIVATE_KEY` + password as repository secrets (microstep 0.3.2).
+- **Verified tag signing and updater keys** — configure a signing identity; run
+  `pnpm --filter terminal tauri signer generate`; store `TAURI_SIGNING_PRIVATE_KEY` and its
+  password as repository Actions secrets; and commit the updater public configuration
+  (microstep 0.3.2).
 - **OS code signing** — Windows Authenticode certificate, Apple Developer ID plus notarisation
   (milestone 5.5.1). Until then an installer will warn, loudly, on every machine.
 - **A tested restore path.** Do not ship a version whose backup you have not restored from (§5.10).
 
 Version discipline: `0.x` while pre-pilot; the minor number moves with a phase gate, the patch with
-a fix. A tag is immutable — a bad build is a new patch, never a moved tag.
+a fix. A bad build is a new patch, never a moved tag. The workflow refuses unsigned annotated and
+lightweight tags. GitHub release immutability is enabled for published releases.
 
 ---
 
@@ -1257,22 +1464,21 @@ it.
 
 | Gap | Closed by |
 |---|---|
-| `cargo nextest run -E 'test(prop_)'` matches **zero** tests. `money::tests::split_preserves_total` predates the `prop_` naming rule, and nextest exits non-zero on "no tests to run" | 1.1.5 renames the money property suite |
 | `just seed` does not exist; there is no fixture, so every manual test is ad-hoc | 1.12.1 |
 | `cargo bench` has nothing to run; no budget is enforced anywhere | 1.4.9, 1.2.7, 1.12.3 |
 | `pos-db` is not wired into the terminal yet, so `just db-local-reset` currently has nothing to delete | 1.8.x persistence |
 | TS types are hand-written in `packages/api-types`; no `ts-rs` generation, no CI drift gate | conventions §13, with the first real IPC surface |
-| No RTL lint — `pl-4` still passes `just lint` | 1.11.2 |
 | No i18n catalog lockstep test, and no message catalog to test | 1.11.1 |
 | No PII-scrubber test on the logger (G-8) | 1.6.x |
 | No E2E harness; the scan-latency budget has no measurement | 1.9.4 (Playwright) |
-| CI pins Node 22; this machine runs 26. A version skew can hide a failure in either direction | pick one and pin it in both places |
 | Test coverage is not measured. Deliberate — property tests over invariants are the coverage story here — but `cargo llvm-cov` is worth running once per phase to find modules with **no** test at all | per-phase, by hand |
 | No installer signing of any kind | 0.3.2 (updater), 5.5.1 (OS) |
-| **Branch protection does not exist.** This repo is private on the GitHub Free plan, where protection and rulesets are both 403. `.githooks/pre-push` and the `branch-flow` check are advisory — `--no-verify` and the merge button both still work | GitHub Pro, $4/month, then `just gh-protect` (already written and tested against the 403) |
+| **Branch protection does not exist.** This repo is private on the current GitHub Free plan, where protection and rulesets both return 403. `.githooks/pre-push` and server-side checks provide safety and evidence, but `--no-verify` and the administrator merge button remain possible | a plan/repository visibility change outside this setup; no paid-plan control is claimed here |
 | A clone that has not run `just setup` has **no** protection, because the hooks live in `core.hooksPath` | nothing — it is inherent to hook-based enforcement. It is why §12 of `03-github-workflow.md` leads with `just setup` |
+| GitHub-native secret scanning and push protection are unavailable for this private repository | independent Gitleaks scanning is installed locally and in CI; native GitHub coverage remains unavailable |
+| Claude's OS sandbox is unavailable on native Windows, and native PowerShell process dispatch was not exercised here | the checked-in launcher and real `PowerShell` routing have portable contract tests; Git hooks and CI add backstops/signals, but CI cannot block an administrator merge on this plan |
 | `staging` means "a tagged candidate", not "a running system" — there is no hosted environment for `apps/server` | a deployment target, when there is something to deploy |
-| No signed commits | before the first external pilot |
+| Ordinary commits are not signed | release tags already require verified signing; decide whether to require ordinary commit signing before external contributors arrive |
 
 ---
 
@@ -1304,5 +1510,5 @@ One screen. These are the things that get forgotten, in the order they get forgo
 
 ---
 
-*Companion to [`01-conventions.md`](01-conventions.md). Written against the repository as it stood on
-20 August 2026 — when a command, a gate, or a gap in §17 changes, this file changes with it.*
+*Companion to [`01-conventions.md`](01-conventions.md). Maintained with the repository: when a
+command, gate, platform limit, or gap in §17 changes, this file changes with it.*

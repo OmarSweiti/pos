@@ -4,24 +4,42 @@
 #
 #   ./scripts/gh-bootstrap.sh            # apply
 #   ./scripts/gh-bootstrap.sh --dry-run  # print what it would do
-set -uo pipefail
+#   ./scripts/test-gh-setup.sh            # mocked failure-path regression suite
+set -euo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
-DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
-REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner) || {
-  echo "gh is not authenticated. Run: gh auth login"; exit 1; }
+case "$#:${1:-}" in
+  0:) DRY=0 ;;
+  1:--dry-run) DRY=1 ;;
+  *)
+    echo "usage: $0 [--dry-run]" >&2
+    exit 2
+    ;;
+esac
+PYTHON="./scripts/run-python.sh"
+
+die() {
+  printf 'gh-bootstrap: %s\n' "$*" >&2
+  exit 1
+}
+
+if ! REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner); then
+  die "could not identify the repository; check 'gh auth status' and network access"
+fi
+[ -n "$REPO" ] && [ "$REPO" != "null" ] \
+  || die "GitHub returned an empty repository identifier"
 echo "repository: $REPO"; [ "$DRY" -eq 1 ] && echo "(dry run — nothing will change)"
 echo
-
-run() { if [ "$DRY" -eq 1 ]; then echo "  would: $*"; else "$@" >/dev/null 2>&1; fi }
 
 # ── labels ────────────────────────────────────────────────────────────────
 # A label set is a query language. These exist so that "every open money-path
 # bug" and "everything blocked on the merchant" are one click, not a memory test.
 label() {  # label <name> <colour> <description>
   if [ "$DRY" -eq 1 ]; then echo "  would label: $1"; return; fi
-  gh label create "$1" --color "$2" --description "$3" --force >/dev/null 2>&1 \
-    && printf '  %s\n' "$1" || printf '  FAILED %s\n' "$1"
+  if ! gh label create "$1" --color "$2" --description "$3" --force >/dev/null; then
+    die "failed to create or update label '$1'"
+  fi
+  printf '  %s\n' "$1"
 }
 
 echo "labels — type (mirrors the commit types in conventions §8)"
@@ -82,14 +100,36 @@ echo
 echo "milestones"
 milestone() {  # milestone <title> <description>
   if [ "$DRY" -eq 1 ]; then echo "  would milestone: $1"; return; fi
-  existing=$(gh api "repos/$REPO/milestones?state=all" --jq \
-             ".[] | select(.title==\"$1\") | .number" 2>/dev/null | head -1)
+  local pages existing
+  if ! pages=$(gh api --paginate --slurp \
+      "repos/$REPO/milestones?state=all&per_page=100"); then
+    die "failed to list milestones; refusing to create a possible duplicate"
+  fi
+  if ! existing=$(printf '%s' "$pages" | "$PYTHON" -c '
+import json
+import sys
+
+title = sys.argv[1]
+pages = json.load(sys.stdin)
+matches = [str(item["number"]) for page in pages for item in page if item.get("title") == title]
+if len(matches) > 1:
+    raise SystemExit(f"duplicate milestones named {title!r}; resolve them before rerunning")
+print(matches[0] if matches else "")
+' "$1"); then
+    die "could not interpret the milestone list; no milestone was changed"
+  fi
   if [ -n "$existing" ]; then
-    gh api -X PATCH "repos/$REPO/milestones/$existing" -f description="$2" >/dev/null 2>&1 \
-      && printf '  updated %s\n' "$1"
+    if ! gh api -X PATCH "repos/$REPO/milestones/$existing" \
+        -f description="$2" >/dev/null; then
+      die "failed to update milestone '$1'"
+    fi
+    printf '  updated %s\n' "$1"
   else
-    gh api -X POST "repos/$REPO/milestones" -f title="$1" -f description="$2" >/dev/null 2>&1 \
-      && printf '  created %s\n' "$1"
+    if ! gh api -X POST "repos/$REPO/milestones" \
+        -f title="$1" -f description="$2" >/dev/null; then
+      die "failed to create milestone '$1'"
+    fi
+    printf '  created %s\n' "$1"
   fi
 }
 milestone "Phase 0 — close-out"      "Finish what is started; make the repository a foundation. 1–2 days."
@@ -108,20 +148,22 @@ milestone "Phase 5 — harden & launch" "Certification, signing, launch. 6–10 
 echo
 echo "merge behaviour"
 if [ "$DRY" -eq 1 ]; then
-  echo "  would: squash ✓  merge-commit ✓  rebase ✗  delete-branch-on-merge ✓  auto-merge ✓"
+  echo "  would: squash ✓  merge-commit ✓  rebase ✗  delete-branch-on-merge ✓"
 else
-  gh api -X PATCH "repos/$REPO" \
-    -F allow_squash_merge=true \
-    -F allow_merge_commit=true \
-    -F allow_rebase_merge=false \
-    -F delete_branch_on_merge=true \
-    -F allow_update_branch=true \
-    -f squash_merge_commit_title=PR_TITLE \
-    -f squash_merge_commit_message=PR_BODY \
-    -f merge_commit_title=PR_TITLE \
-    -f merge_commit_message=PR_BODY \
-    >/dev/null 2>&1 && echo "  squash ✓  merge-commit ✓  rebase ✗  delete-branch ✓" \
-                    || echo "  FAILED — check the token has 'repo' scope"
+  if ! gh api -X PATCH "repos/$REPO" \
+      -F allow_squash_merge=true \
+      -F allow_merge_commit=true \
+      -F allow_rebase_merge=false \
+      -F delete_branch_on_merge=true \
+      -F allow_update_branch=true \
+      -f squash_merge_commit_title=PR_TITLE \
+      -f squash_merge_commit_message=PR_BODY \
+      -f merge_commit_title=PR_TITLE \
+      -f merge_commit_message=PR_BODY \
+      >/dev/null; then
+    die "failed to configure merge behaviour; check the token has 'repo' scope"
+  fi
+  echo "  squash ✓  merge-commit ✓  rebase ✗  delete-branch ✓"
   # allow_auto_merge is deliberately NOT set. The API accepts the field, returns
   # 200, and leaves it false: auto-merge needs required status checks to gate on,
   # and those need branch protection, which this plan does not sell.
@@ -129,30 +171,42 @@ fi
 
 # ── Dependabot ────────────────────────────────────────────────────────────
 # Alerts and automatic security updates ARE free on a private repository.
-# Secret scanning is NOT — it needs Advanced Security and answers 422 here, so
-# the only stand-in is .githooks/pre-commit, which is local and bypassable. That
-# gap is stated in SECURITY.md rather than papered over.
+# Native secret scanning is NOT — it needs Advanced Security and answers 422
+# here. Independent Gitleaks checks now cover staged changes, pushes, CI, and a
+# weekly full-history scan; SECURITY.md records that they are not the native
+# product and do not create a paid-plan guarantee.
 echo
 echo "Dependabot"
 if [ "$DRY" -eq 1 ]; then
   echo "  would enable: alerts, automatic security updates"
 else
-  gh api -X PUT "repos/$REPO/vulnerability-alerts"     >/dev/null 2>&1 && echo "  alerts ✓"
-  gh api -X PUT "repos/$REPO/automated-security-fixes" >/dev/null 2>&1 && echo "  automatic security updates ✓"
+  if ! gh api -X PUT "repos/$REPO/vulnerability-alerts" >/dev/null; then
+    die "failed to enable Dependabot vulnerability alerts"
+  fi
+  echo "  alerts ✓"
+  if ! gh api -X PUT "repos/$REPO/automated-security-fixes" >/dev/null; then
+    die "failed to enable Dependabot automatic security updates"
+  fi
+  echo "  automatic security updates ✓"
 fi
 
 # ── default branch ────────────────────────────────────────────────────────
 echo
 echo "default branch"
-current=$(gh api "repos/$REPO" --jq .default_branch)
+if ! current=$(gh api "repos/$REPO" --jq .default_branch); then
+  die "failed to read the current default branch"
+fi
+[ -n "$current" ] && [ "$current" != "null" ] \
+  || die "GitHub returned an empty default branch"
 if [ "$current" = "development" ]; then
   echo "  already development"
 elif [ "$DRY" -eq 1 ]; then
   echo "  would move the default branch from $current to development"
 else
-  gh api -X PATCH "repos/$REPO" -f default_branch=development >/dev/null 2>&1 \
-    && echo "  moved from $current to development" \
-    || echo "  FAILED — does the development branch exist on origin?"
+  if ! gh api -X PATCH "repos/$REPO" -f default_branch=development >/dev/null; then
+    die "failed to move the default branch; does 'development' exist on origin?"
+  fi
+  echo "  moved from $current to development"
 fi
 
 echo

@@ -4,7 +4,12 @@ The crown jewel. Pure, no I/O, shared by register and server so the two can neve
 
 This document is the **target shape**, assembled across Phases 1–4. Each item is annotated with the microstep that creates it. Signatures here are normative: if a phase file shows something different, this file wins.
 
-**Purity is enforced mechanically.** `pos-domain/Cargo.toml` may depend only on `serde`, `thiserror`, `uuid`, `rust_decimal`, and (dev) `proptest`, `criterion`. Adding anything capable of I/O is a design review, not a commit.
+**Purity is enforced mechanically.** `pos-domain/Cargo.toml` may depend only on `serde`,
+`thiserror`, `uuid`, `rust_decimal`, and (dev) `proptest`, `criterion`. `uuid` is an
+identity/serialization type here: its default and version-generation features stay disabled,
+and generated IDs are injected by the shell. Adding anything capable of I/O, clock access, or
+randomness is a design review, not a commit. `scripts/check-domain-purity.py` audits the resolved
+normal dependency features and direct call sites.
 
 ```
 crates/pos-domain/src/

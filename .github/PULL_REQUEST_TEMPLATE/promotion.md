@@ -2,12 +2,15 @@
 
 <!-- development → staging (release candidate), or staging → main (production). -->
 
-**From → to:** `development` → `staging`
-**Intended tag:** `v0.2.0-rc.1`
+**From → to:** `<source branch>` → `<destination branch>`
+**Pull request:** `<URL or #number>`
+**Reviewed base SHA:** `<full 40-character destination-tip SHA>`
+**Reviewed head SHA:** `<full 40-character SHA>`
+**Intended tag:** `<vX.Y.Z-rc.N, vX.Y.Z, or n/a>`
 
 ## What is in this promotion
 
-<!-- The groups that landed since the last promotion. `git log --oneline staging..development` -->
+<!-- The groups that landed since the last promotion. Use: git log --oneline <destination>..<source> -->
 
 ## What is deliberately NOT in it
 
@@ -15,7 +18,11 @@
 
 ## Evidence
 
-- [ ] CI green on the head branch — `gh run list --branch development --limit 1`
+- [ ] `gh pr view <PR> --json headRefName,baseRefName,baseRefOid,headRefOid` matches the
+      source, destination, and both full reviewed SHAs above
+- [ ] `bash ./scripts/watch-pr-checks.sh <PR>` exited successfully for that exact PR snapshot
+- [ ] immediately before merge, re-read `baseRefOid` and `headRefOid`; both still equal the
+      reviewed SHAs above, otherwise discard this evidence and re-run the watcher
 - [ ] the ten-minute smoke, on a fresh database — §5.9
 - [ ] the drills that apply to this change — §5.10
 - [ ] the Arabic + RTL pass on every screen this touched — §5.3
@@ -28,9 +35,13 @@
 
 ## Rollback
 
-<!-- The exact way back. A tag is immutable: a bad build is a new patch, never a moved tag. -->
+<!-- The exact way back. Tags are append-only by policy: a bad build is a new patch, never a moved tag. Published releases lock their associated tag and assets. -->
 
 ---
 
-**Merge with a merge commit, never a squash.** Squashing a promotion PR forks `staging` from
-`development` permanently and every later promotion shows the same commits again.
+**Merge with a merge commit, never a squash.** Squashing replaces the source commits with a new
+commit on the destination, breaks the shared ancestry this flow depends on, and makes later
+promotions propose the same commits again. Pass the reviewed head through `--match-head-commit`.
+That option atomically locks only the head; the current plan/API has no atomic target-base lock.
+Serialize maintainer merges—or temporarily freeze the destination branch—during the final
+base/head recheck and merge window. The recheck narrows but cannot eliminate that residual race.

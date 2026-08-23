@@ -1,121 +1,99 @@
 ---
 name: add-migration
-description: Add a database migration correctly — next number, conventions §2 naming, validated against real SQLite, registered in the MIGRATIONS array, mirrored on Postgres, with a data-migration test when the shape changes. Use whenever a schema change is needed on SQLite or Postgres.
+description: Add a forward-only POS database migration with correct runtime registration, engine-specific scope, behavioral coverage, and verification. Use when implementing a schema change; do not use merely to inspect or explain the current schema.
 ---
 
 # Add a migration
 
-Law: `docs/implementation/01-conventions.md` §9.
-Target shapes: `docs/implementation/ref/schema.md`.
-**Forward-only, append-only.** A committed migration is never edited — a
-`PreToolUse` hook enforces it, and if you hit that denial the answer is a new file,
-never an argument with the hook.
+Preserve the repository's append-only migration history and keep the register and
+server schemas semantically aligned.
 
-## 1 · Confirm you are adding, not editing
+## Establish scope before editing
 
-```bash
-ls crates/pos-db/migrations/            # the next number is max + 1, zero-padded to 4
-git ls-tree -r --name-only HEAD | grep migrations/
-```
+1. Read `docs/implementation/01-conventions.md` section 9 and
+   `.claude/rules/sql-migrations.md` in full. Locate the active microstep and read
+   its `Files`, `Tests`, and `Done when` requirements plus the relevant sections
+   of `docs/implementation/ref/schema.md`; do not load the entire schema reference
+   when a focused section is sufficient.
+2. Use `git ls-tree -r --name-only HEAD` to establish which migration files are
+   committed. A file listed in `HEAD` is immutable, including its path and name.
+3. Inspect both `crates/pos-db/migrations/` and `apps/server/migrations/`; derive
+   the next names from the current tree rather than from agent documentation.
+4. Classify the change before creating files:
+   - **SQLite-led and synchronized:** add the register migration and a PostgreSQL
+     mirror with equivalent behavior.
+   - **Register-local:** add SQLite only and record the reason in `REGISTER_LOCAL`
+     in `scripts/verify-pg-migrations.py`.
+   - **Server-only:** add PostgreSQL only with a `-- Server-only: <reason>` header.
+     Do not invent a register migration merely to make the mapping symmetrical.
+5. If the tree, active microstep, and schema reference disagree about numbering,
+   scope, tests, or shape, preserve committed history and report the conflict.
+   Do not silently choose whichever document is easiest to satisfy.
 
-Anything in that second list is frozen. If the fix belongs to a committed
-migration, it becomes the next one instead — including a typo, including "it
-hasn't shipped yet."
+## Required result
 
-## 2 · Write the SQL
+- For a SQLite-led or register-local change, add a new
+  `crates/pos-db/migrations/NNNN_short_name.sql`; never edit, delete, rename, or
+  replace a committed migration. A server-only change creates no SQLite file.
+- Create migration entries as repository-owned regular SQL files. Do not use a
+  symlink, gitlink, device, or other filesystem indirection in either migration
+  tree.
+- Follow the repository's unit/type naming rules. Money is `*_minor`, quantities
+  are `*_milli`, rates are `*_ppm`, and IDs use the documented representation.
+  SQLite timestamps are UTC text `*_at`; PostgreSQL uses the mapped native types
+  documented for the server. Never introduce floating-point money.
+- For a SQLite migration, append the file to `MIGRATIONS` in
+  `crates/pos-db/src/lib.rs` in the same change. Array position is the runtime
+  version; do not insert or reorder entries. The schema verifier requires exact,
+  ordered parity between that array and every migration file on disk.
+- For a SQLite-led change, add the PostgreSQL migration with the same semantics
+  and its mapping header. For a register-local change, update `REGISTER_LOCAL`
+  with the reason and add no PostgreSQL file. For a server-only change, add only
+  the PostgreSQL migration with its `-- Server-only: <reason>` header.
+- Name every PostgreSQL migration `<14-digit UTC timestamp>_<lower_snake>.sql`.
+  The sqlx version prefix must be a valid calendar timestamp, unique in the
+  directory, and later than every existing version; never reuse a timestamp.
+- Keep each PostgreSQL migration transactional. Use SQLx's case-sensitive,
+  byte-zero `-- no-transaction` marker only when PostgreSQL forbids the required
+  statement inside a transaction, and add an explicit partial-failure recovery
+  test or procedure.
+- Add every behavioral test required by the active microstep. When existing rows
+  change shape or meaning, put the data transition in the migration and add a
+  regression test that seeds the old shape, migrates, and asserts the result.
+- Before rebuilding a table, inventory its indexes, triggers, views, foreign
+  keys, and constraints, then recreate and test every dependent object that must
+  survive the rebuild.
+- Keep `docs/implementation/ref/schema.md` aligned with the implemented shape.
+  If the requested design differs from that reference, update the reference in
+  the same authorized change or report the unresolved design conflict.
+- Treat a declared mapping and successful SQL execution as necessary but not
+  sufficient evidence of cross-engine equivalence. Review representation and
+  behavior differences explicitly (`BLOB`/UUID, integer widths and booleans,
+  text timestamps/`TIMESTAMPTZ`, JSON, triggers, indexes, grants, and reference
+  data/version behavior where applicable).
+- Preserve completed-sale immutability and fact/outbox transaction atomicity.
 
-`crates/pos-db/migrations/NNNN_short_name.sql`. Check the intended shape in
-`docs/implementation/ref/schema.md` first — migrations 0002–0012 are already
-specified there, and deviating from the doc without updating it turns the
-reference into a liability.
+## Verify
 
-Naming is not optional (§2):
-
-| Kind | Suffix | Example |
-|---|---|---|
-| money | `*_minor` | `total_minor` |
-| quantity | `*_milli` | `qty_milli` (1 unit = 1000) |
-| rate | `*_ppm` | `rate_ppm` — 16% = `160_000` |
-| timestamp | `*_at`, ISO-8601 UTC TEXT | `completed_at` |
-| calendar day | `*_date`, store-local | `business_date` |
-| flag | `is_*` / `has_*`, INTEGER 0/1 | `is_active` |
-| foreign key | `<table>_id`, BLOB(16) | `sale_id` |
-| enum | TEXT + `CHECK (x IN (…))` | `status TEXT CHECK (…)` |
-
-No `REAL`/`FLOAT`/`NUMERIC` column, ever (I-1). No path that `UPDATE`s a completed
-sale (I-4) — not in DDL, not in a trigger.
-
-## 3 · Run the whole chain through real SQLite before committing
+Run the focused checks first, followed by the canonical repository gates:
 
 ```bash
 ./scripts/verify-schema.py --verbose
+just verify-schema
+./scripts/verify-pg-migrations.py --mapping-only
+just verify-pg
+just lint
+just test
 ```
 
-This applies **every** file in `crates/pos-db/migrations/` — including the one you
-just wrote, because the pass reads the directory rather than git — in the order the
-`PRAGMA user_version` runner applies them. That matters when yours `ALTER`s an
-earlier migration's table: SQLite will not tell you a column is missing until it
-runs, and a hand-written `sqlite3 :memory: ".read …"` applies only the files you
-remembered to name. It also catches what plain `.read` cannot — a
-`REFERENCES ghost(id)` to a table nothing creates, which raw SQLite accepts in
-silence — and audits every new column against the naming table above.
+On supported hosts, the Claude sandbox removes inherited `$DATABASE_URL`; the
+project policy also adds no Docker-socket exception. A human may run an explicit
+environment-backed pass only after confirming it points to a disposable
+development server: the verifier creates a uniquely named scratch database and
+removes it in a `finally` cleanup. If no safe engine path is available, report
+the PostgreSQL pass as skipped rather than claiming validation.
 
-## 4 · Register it
-
-Append to `MIGRATIONS` in `crates/pos-db/src/lib.rs`, **in order, same commit**:
-
-```rust
-const MIGRATIONS: &[&str] = &[
-    include_str!("../migrations/0001_init.sql"),
-    include_str!("../migrations/NNNN_short_name.sql"),
-];
-```
-
-The runner is a `PRAGMA user_version` counter — position in this array *is* the
-version. Inserting rather than appending silently re-numbers every later migration.
-
-## 5 · Mirror it on Postgres
-
-`apps/server/migrations/`, same **semantics** (§9 rule 4). sqlx names files with a
-timestamp, so the numbers cannot match and the mapping is *declared* rather than
-inferred. Open the new file with one of these, and `verify-pg-migrations.py` will
-check it:
-
-```sql
--- Mirrors SQLite NNNN_short_name.sql (conventions §9 rule 4).
--- Server-only: <why nothing on the register corresponds>.
-```
-
-The name may differ too when the server's half of the work is different — see
-`20260820120000_change_sequence.sql`, which mirrors `0002_sale_integrity.sql`.
-
-If the entity is register-local and never syncs, do not write an empty mirror: add
-it to `REGISTER_LOCAL` in `scripts/verify-pg-migrations.py` with the reason.
-
-Then check it against a real server:
-
-```bash
-./scripts/verify-pg-migrations.py --verbose
-```
-
-It uses `$DATABASE_URL` when one is set and a throwaway Docker container otherwise.
-With neither it audits the mapping, says it skipped the engine pass, and leaves the
-real check to CI — which is not the same as passing.
-
-## 6 · Test it, if the shape changed
-
-A migration that changes existing data ships with the data migration **in the same
-file** plus a test that seeds the old shape, migrates, and asserts the new one
-(§9 rule 3). `crates/pos-db/tests/`. The `sale_line.qty` → `qty_milli` fix (G-12,
-`docs/implementation/ref/schema.md`) is the worked example: existing rows are unit counts and must be
-multiplied by 1000, so a migration without a data step corrupts every historical
-sale by a factor of a thousand.
-
-## 7 · Close it out
-
-```bash
-just lint && just test    # lint runs verify-schema.py and the mapping audit
-just verify-pg            # the mirror against a real PostgreSQL server
-```
-
-Commit with the microstep number: `feat(db): stock ledger tables   [1.10.1]`.
+Run `just guards` when the change touches either verifier, `REGISTER_LOCAL`, a
+hook, or another guard. In the handoff, summarize runtime registration order,
+engine scope, the declared mapping or exception, behavioral/data-transition
+coverage, cross-engine review, and every skipped check.

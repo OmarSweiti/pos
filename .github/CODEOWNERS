@@ -1,12 +1,10 @@
-# Every path has an owner, so nothing merges unreviewed by someone who knows it.
-# One developer today: every line resolves to the same person. That is not pointless —
-# it is the file that stops being a formality the day a second developer arrives, and
-# GitHub will request the review automatically from then on.
+# Every path records its intended owner. One developer today means every line
+# resolves to the same person; the mapping is ready for the day a second
+# developer arrives, but it is documentation rather than live enforcement today.
 #
-# Enforcement note: "require review from Code Owners" is a branch-protection setting,
-# and branch protection is not available on a PRIVATE repository on the GitHub Free
-# plan. Until this repo is on Pro (or public), this file documents ownership and
-# auto-requests review; it does not block a merge. See docs/implementation/03-github-workflow.md §3.
+# GitHub does not activate CODEOWNERS for this private personal Free repository,
+# so neither automatic review requests nor required-owner review is active. Do
+# not mistake this map for a merge control. See docs/implementation/03-github-workflow.md §3.
 
 *                                   @OmarSweiti
 
@@ -29,5 +27,8 @@
 /.github/                           @OmarSweiti
 /.githooks/                         @OmarSweiti
 /.claude/                           @OmarSweiti
+/.codex/                            @OmarSweiti
+/.agents/                           @OmarSweiti
+/AGENTS.md                          @OmarSweiti
 /justfile                           @OmarSweiti
 /scripts/                           @OmarSweiti
