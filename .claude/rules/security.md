@@ -3,8 +3,13 @@
 Full treatment: `docs/implementation/ref/security-compliance.md`.
 One-page version: `docs/implementation/01-conventions.md` §12.
 
-- **Never log** PAN, track data, CVV, PINs, PIN hashes, DB keys, JoFotara secrets, or customer
-  name/phone/email — not via `tracing`, not in an `IpcError.detail`, not in a test fixture that prints.
+- **Never log** a value under any canonical sensitive field name: `pin`, `pin_hash`, `pan`,
+  `card_number`, `cvv`, `track`, `phone`, `email`, `customer_name`, `buyer_name`, `secret_key`,
+  `client_id`, `db_key`, `token`, `password`, or `entitlement`. JoFotara/fiscal secrets and
+  signing material are covered even when a provider gives them another name. This applies at
+  every nesting depth and includes `tracing`, `IpcError.detail`, Sentry/crash reports, and test
+  fixtures that print. The canonical list lives in
+  `docs/implementation/ref/security-compliance.md` §5; update this rule with that source.
 - **Never store** anything from a card except the PSP reference, the masked PAN the terminal
   returns for the receipt, and the scheme.
 - **The DB key lives in the OS credential store.** Never a file, never an env var in a release

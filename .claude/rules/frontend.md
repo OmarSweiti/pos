@@ -1,5 +1,5 @@
 ---
-paths: ["apps/terminal/src/**", "apps/backoffice/src/**"]
+paths: ["apps/terminal/src/**", "apps/terminal/index.html", "apps/backoffice/src/**", "apps/backoffice/index.html", "packages/money/**", "packages/ui/**", "packages/api-types/**"]
 ---
 
 # The front end is Arabic first, and money is still `i64`
