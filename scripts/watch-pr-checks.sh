@@ -104,6 +104,33 @@ display_check() {
   printf '%s / %s' "$workflow" "$name"
 }
 
+changed_path_records() {
+  ruby -rjson -e '
+    pages = JSON.parse($stdin.read)
+    abort "changed-path response is not an array of pages" unless
+      pages.is_a?(Array) && pages.all? { |page| page.is_a?(Array) }
+
+    files = pages.flatten
+    abort "changed-path response contains a non-object" unless
+      files.all? { |file| file.is_a?(Hash) }
+
+    puts ["COUNT", files.length].join("\t")
+    files.each do |file|
+      filename = file["filename"]
+      abort "changed-path response contains an invalid filename" unless
+        filename.is_a?(String) && !filename.empty?
+      puts ["PATH", filename].join("\t")
+    end
+    files.each do |file|
+      previous = file["previous_filename"]
+      next if previous.nil?
+      abort "changed-path response contains an invalid previous filename" unless
+        previous.is_a?(String) && !previous.empty?
+      puts ["PATH", previous].join("\t")
+    end
+  '
+}
+
 assert_has_check() {
   local description=$1 rows=$2 check=$3
   SELF_TESTS=$((SELF_TESTS + 1))
@@ -259,7 +286,7 @@ RUBY
 }
 
 self_test() {
-  local core security ordinary staging_to_development development_to_staging
+  local core security ordinary staging_to_development development_to_staging changed_records
   local staging_to_main hotfix_to_main all_core wrong_workflow path tab derived_core
   tab=$'\t'
   SELF_TESTS=0
@@ -309,6 +336,13 @@ self_test() {
     row_state_accepted successful SUCCESS && printf 'success-'
     row_state_accepted successful SKIPPED || printf 'only'
   })"
+
+  changed_records=$(
+    printf '%s' \
+      '[[{"filename":".github/workflows/new.yml","previous_filename":".github/workflows/old.yml"},{"filename":"src/lib.rs","previous_filename":null}],[{"filename":"README.md"}]]' \
+      | changed_path_records
+  )
+  assert_equal_value 'paginated changed paths are filtered after gh slurps raw pages' $'COUNT\t3\nPATH\t.github/workflows/new.yml\nPATH\tsrc/lib.rs\nPATH\tREADME.md\nPATH\t.github/workflows/old.yml' "$changed_records"
 
   security=$(expected_checks development feature/policy '.github/workflows/ci.yml')
   assert_has_check '.github changes require workflow analysis' "$security" $'security\tworkflow-analysis'
@@ -449,7 +483,7 @@ main() {
     return 2
   fi
   local command_name
-  for command_name in gh git; do
+  for command_name in gh git ruby; do
     command -v "$command_name" >/dev/null 2>&1 || {
       echo "$command_name is required" >&2
       return 1
@@ -458,7 +492,7 @@ main() {
 
   local pr=$1 snapshot number base_ref base_sha head_ref head_sha changed_count state pr_url metadata_fingerprint
   local repository
-  local changed_output record value api_count expected actual missing _attempt final_rows
+  local changed_pages changed_output record value api_count expected actual missing _attempt final_rows
   local -a changed_paths=()
 
   snapshot=$(pr_snapshot "$pr") || {
@@ -514,12 +548,15 @@ main() {
   # Include previous_filename so a rename out of a watched path cannot hide the
   # workflow that the old path triggered. Compare REST and GraphQL counts to
   # fail closed if GitHub's files endpoint truncates its 3,000-file result set.
-  changed_output=$(gh api --paginate --slurp \
-    "repos/$repository/pulls/$number/files?per_page=100" \
-    --jq '(["COUNT", ([.[][]] | length | tostring)] | @tsv), (.[][] | ["PATH", .filename] | @tsv), (.[][] | select(.previous_filename != null) | ["PATH", .previous_filename] | @tsv)') || {
+  changed_pages=$(gh api --paginate --slurp \
+    "repos/$repository/pulls/$number/files?per_page=100") || {
       echo "unable to enumerate every changed path for $pr_url" >&2
       return 1
     }
+  changed_output=$(printf '%s\n' "$changed_pages" | changed_path_records) || {
+    echo "GitHub returned malformed changed-path data for $pr_url" >&2
+    return 1
+  }
 
   api_count=''
   while IFS=$'\t' read -r record value; do
