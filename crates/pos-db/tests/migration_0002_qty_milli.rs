@@ -11,6 +11,10 @@
 use rusqlite::{Connection, params};
 use uuid::Uuid;
 
+fn id(value: u128) -> Uuid {
+    Uuid::from_u128(value)
+}
+
 /// Build a database at schema version 1 — 0001 applied, by hand, exactly as a
 /// register that has been selling since before 0002 would have it.
 fn database_at_v1(path: &std::path::Path) -> (Uuid, Uuid) {
@@ -20,7 +24,7 @@ fn database_at_v1(path: &std::path::Path) -> (Uuid, Uuid) {
         .unwrap();
     conn.pragma_update(None, "user_version", 1i64).unwrap();
 
-    let (product, sale) = (Uuid::now_v7(), Uuid::now_v7());
+    let (product, sale) = (id(1), id(2));
     conn.execute(
         "INSERT INTO product (id, sku, name, price_minor, currency) VALUES (?1,'SKU-1','Rice',990,'JOD')",
         params![product.as_bytes().as_slice()],
@@ -30,7 +34,7 @@ fn database_at_v1(path: &std::path::Path) -> (Uuid, Uuid) {
         "INSERT INTO sale (id, receipt_number, register_id, status, subtotal_minor,
                            tax_minor, total_minor, currency, business_date, completed_at)
          VALUES (?1,'000001',?2,'completed',2970,0,2970,'JOD','2026-08-01','2026-08-01T09:00:00.000Z')",
-        params![sale.as_bytes().as_slice(), Uuid::now_v7().as_bytes().as_slice()],
+        params![sale.as_bytes().as_slice(), id(3).as_bytes().as_slice()],
     )
     .unwrap();
     // Three bags of rice, in the old representation: a plain unit count.
@@ -38,7 +42,7 @@ fn database_at_v1(path: &std::path::Path) -> (Uuid, Uuid) {
         "INSERT INTO sale_line (id, sale_id, product_id, qty, unit_price_minor, total_minor)
          VALUES (?1,?2,?3,3,990,2970)",
         params![
-            Uuid::now_v7().as_bytes().as_slice(),
+            id(4).as_bytes().as_slice(),
             sale.as_bytes().as_slice(),
             product.as_bytes().as_slice()
         ],
