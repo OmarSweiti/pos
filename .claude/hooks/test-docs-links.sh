@@ -55,7 +55,10 @@ shell_payload() {    # shell_payload <tool> <cwd> <command>
 }
 
 # A fixture repository whose only documentation link is deliberately dangling.
-FIXTURE=$(mktemp -d)
+FIXTURE=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-docs-links.XXXXXX") || {
+  echo "test-docs-links: cannot create a temp directory" >&2
+  exit 2
+}
 trap 'rm -rf "$FIXTURE"' EXIT
 mkdir -p "$FIXTURE/scripts" "$FIXTURE/docs"
 cp "$REAL_ROOT/scripts/check-doc-links.sh" "$FIXTURE/scripts/"
@@ -64,7 +67,10 @@ printf 'See [the other one](nowhere.md).\n' > "$FIXTURE/docs/broken.md"
 
 # A second fixture, identical but with the link resolving, to prove the hook is
 # reading the link checker's verdict rather than just the path pattern.
-WHOLE=$(mktemp -d)
+WHOLE=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-docs-links.XXXXXX") || {
+  echo "test-docs-links: cannot create a temp directory" >&2
+  exit 2
+}
 trap 'rm -rf "$FIXTURE" "$WHOLE"' EXIT
 mkdir -p "$WHOLE/scripts" "$WHOLE/docs"
 cp "$REAL_ROOT/scripts/check-doc-links.sh" "$WHOLE/scripts/"
@@ -72,8 +78,14 @@ git -C "$WHOLE" init -q
 printf 'See [the other one](there.md).\n' > "$WHOLE/docs/ok.md"
 printf 'Here.\n' > "$WHOLE/docs/there.md"
 
-NON_REPO=$(mktemp -d)
-NO_DOCS=$(mktemp -d)
+NON_REPO=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-docs-links.XXXXXX") || {
+  echo "test-docs-links: cannot create a temp directory" >&2
+  exit 2
+}
+NO_DOCS=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-docs-links.XXXXXX") || {
+  echo "test-docs-links: cannot create a temp directory" >&2
+  exit 2
+}
 git -C "$NO_DOCS" init -q
 trap 'rm -rf "$FIXTURE" "$WHOLE" "$NON_REPO" "$NO_DOCS"' EXIT
 

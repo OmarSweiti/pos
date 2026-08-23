@@ -84,7 +84,10 @@ expect 2 "Grep cannot disguise .env with wildcards" "$(grep_ '.' '**/.e?v*')"
 expect 2 "Glob cannot disguise .env with braces"    "$(glob_ '.' '**/{.env,.env.prod}')"
 expect 0 "A normal Rust discovery glob remains usable" "$(glob_ '.' '**/*.rs')"
 
-SECRET_FIXTURE=$(mktemp -d)
+SECRET_FIXTURE=$(mktemp -d "${TMPDIR:-/tmp}/pos-protect-immutable.XXXXXX") || {
+  echo "test-protect-immutable: cannot create a temp directory" >&2
+  exit 2
+}
 mkdir -p "$SECRET_FIXTURE/apps/server"
 git -C "$SECRET_FIXTURE" init -q
 printf 'SECRET=not-read\n' > "$SECRET_FIXTURE/apps/server/.env.prod"
@@ -176,8 +179,14 @@ expect 0 "unrelated tool"                          '{"tool_name":"Grep","cwd":"'
 
 echo "protect-immutable.py — fail-open errors stay visible"
 expect_warning "malformed payload emits systemMessage" 'not json at all'
-NON_REPO=$(mktemp -d)
-EMPTY_REPO=$(mktemp -d)
+NON_REPO=$(mktemp -d "${TMPDIR:-/tmp}/pos-protect-immutable.XXXXXX") || {
+  echo "test-protect-immutable: cannot create a temp directory" >&2
+  exit 2
+}
+EMPTY_REPO=$(mktemp -d "${TMPDIR:-/tmp}/pos-protect-immutable.XXXXXX") || {
+  echo "test-protect-immutable: cannot create a temp directory" >&2
+  exit 2
+}
 trap 'rm -rf "$NON_REPO" "$EMPTY_REPO"' EXIT
 git -C "$EMPTY_REPO" init -q
 EMPTY_REPO=$(cd "$EMPTY_REPO" && pwd -P)
