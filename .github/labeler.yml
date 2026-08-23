@@ -2,19 +2,41 @@
 # Labels you have to remember to add are labels nobody adds.
 
 "area: domain":
-  - changed-files: [{ any-glob-to-any-file: "crates/pos-domain/**" }]
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/pos-domain/**"
+          - "packages/money/**"
 "area: db":
   - changed-files: [{ any-glob-to-any-file: "crates/pos-db/**" }]
 "area: sync":
   - changed-files: [{ any-glob-to-any-file: "crates/pos-sync/**" }]
 "area: hardware":
   - changed-files: [{ any-glob-to-any-file: "crates/pos-hardware/**" }]
+"area: fiscal":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/fiscal/**"
+          - "**/jofotara/**"
+          - "**/*fiscal*"
+          - "docs/implementation/ref/fiscal-jofotara.md"
+          - "docs/implementation/ref/tax-jordan.md"
 "area: terminal":
-  - changed-files: [{ any-glob-to-any-file: "apps/terminal/**" }]
+  - changed-files:
+      - any-glob-to-any-file:
+          - "apps/terminal/**"
+          - "packages/ui/**"
+          - "packages/api-types/**"
 "area: server":
-  - changed-files: [{ any-glob-to-any-file: "apps/server/**" }]
+  - changed-files:
+      - any-glob-to-any-file:
+          - "apps/server/**"
+          - "packages/api-types/**"
 "area: backoffice":
-  - changed-files: [{ any-glob-to-any-file: "apps/backoffice/**" }]
+  - changed-files:
+      - any-glob-to-any-file:
+          - "apps/backoffice/**"
+          - "packages/ui/**"
+          - "packages/api-types/**"
 "area: repo":
   - changed-files:
       - any-glob-to-any-file:
@@ -23,8 +45,21 @@
           - ".github/**"
           - ".githooks/**"
           - ".claude/**"
+          - ".codex/**"
+          - ".agents/**"
+          - ".gitattributes"
+          - ".gitignore"
+          - ".gitleaks.toml"
+          - "AGENTS.md"
+          - "CLAUDE.md"
           - "Cargo.toml"
+          - "Cargo.lock"
+          - "README.md"
+          - "SECURITY.md"
+          - "deny.toml"
           - "package.json"
+          - ".nvmrc"
+          - "pnpm-lock.yaml"
           - "biome.json"
           - "rust-toolchain.toml"
           - "pnpm-workspace.yaml"
@@ -39,12 +74,15 @@
 "area: impl":
   - changed-files: [{ any-glob-to-any-file: "docs/implementation/**" }]
 
-# The three that change how a PR is reviewed, not merely where it lands.
+# These change how a PR is reviewed, not merely where it lands.
 "risk: migration":
   - changed-files:
       - any-glob-to-any-file:
           - "crates/pos-db/migrations/**"
           - "apps/server/migrations/**"
+          - "scripts/verify-schema.py"
+          - "scripts/verify-pg-migrations.py"
+          - "scripts/rust_lexer.py"
 "risk: money path":
   - changed-files:
       - any-glob-to-any-file:
@@ -52,10 +90,66 @@
           - "crates/pos-domain/src/tax*"
           - "crates/pos-domain/src/cart*"
           - "crates/pos-domain/src/discount*"
+          - "packages/money/**"
+          - "docs/implementation/ref/tax-jordan.md"
 "risk: security":
   - changed-files:
       - any-glob-to-any-file:
           - "**/auth*"
+          - "**/auth/**"
+          - "**/authorization/**"
+          - "**/permissions/**"
           - "**/crypto*"
           - "**/secret*"
+          - "**/credentials/**"
+          - ".github/workflows/**"
+          - ".github/actions/**"
+          - ".github/dependabot.yml"
+          - ".github/labeler.yml"
+          - ".githooks/**"
+          - ".claude/hooks/**"
+          - ".claude/settings.json"
+          - ".claude/rules/security.md"
+          - ".codex/hooks/**"
+          - ".codex/config.toml"
+          - ".codex/rules/**"
+          - ".nvmrc"
+          - ".gitleaks.toml"
+          - "scripts/check-protected-paths.sh"
+          - "scripts/check-automation-attribution.py"
+          - "scripts/check-staged-policy.py"
+          - "scripts/check-branch-workflow-policy.rb"
+          - "scripts/gh-actions-policy.sh"
+          - "scripts/gh-bootstrap.sh"
+          - "scripts/gh-project.sh"
+          - "scripts/install-gitleaks-ci.sh"
+          - "scripts/check-justfile-policy.py"
+          - "scripts/run-python.sh"
+          - "scripts/scan-secrets.sh"
+          - "scripts/test-gh-setup.sh"
+          - "scripts/validate-branch-flow.sh"
+          - "scripts/validate-change-title.sh"
+          - "scripts/watch-pr-checks.sh"
+          - "scripts/rust_lexer.py"
+          - "SECURITY.md"
+          - "apps/*/index.html"
+          - "apps/terminal/src-tauri/capabilities/**"
+          - "apps/terminal/src-tauri/tauri.conf.json"
           - "docs/implementation/ref/security-compliance.md"
+"risk: compliance":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/compliance/**"
+          - "**/jofotara/**"
+          - "docs/implementation/ref/security-compliance.md"
+          - "docs/implementation/ref/fiscal-jofotara.md"
+          - "docs/implementation/ref/tax-jordan.md"
+"risk: immutable":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/sale/**"
+          - "**/sales/**"
+          - "**/sale*.rs"
+          - "**/sale*.ts"
+          - "**/sale*.tsx"
+          - "crates/pos-db/tests/sale_immutability.rs"
