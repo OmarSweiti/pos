@@ -6,14 +6,18 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 HOOKS="$PWD/.githooks"
 PYTHON_RUNNER="$PWD/scripts/run-python.sh"
-pass=0; fail=0
+pass=0; fail=0; skipped=0
 ok()   { printf '  ok      %s\n' "$1"; pass=$((pass+1)); }
 bad()  { printf '  FAILED  %s\n' "$1"; fail=$((fail+1)); }
+# Not a third verdict on the hook — a statement that this environment refused to
+# build the fixture, so the hook was never asked. Counted separately so it can
+# never be mistaken for a pass.
+skip() { printf '  skipped %s\n' "$1"; skipped=$((skipped+1)); }
 
 # expect_msg <expected-exit> <label> <subject>
 expect_msg() {
   local want="$1" label="$2" subject="$3" f
-  f=$(mktemp); printf '%s\n' "$subject" > "$f"
+  f=$(mktemp "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX"); printf '%s\n' "$subject" > "$f"
   "$HOOKS/commit-msg" "$f" >/dev/null 2>&1
   local got=$?
   rm -f "$f"
@@ -48,7 +52,7 @@ expect_msg 1 "a summary over 72 characters" \
 # expect_body <expected-exit> <label> <full multi-line message>
 expect_body() {
   local want="$1" label="$2" body="$3" f got
-  f=$(mktemp); printf '%s\n' "$body" > "$f"
+  f=$(mktemp "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX"); printf '%s\n' "$body" > "$f"
   "$HOOKS/commit-msg" "$f" >/dev/null 2>&1
   got=$?
   rm -f "$f"
@@ -199,13 +203,13 @@ expect_push 1 "deleting main"              "refs/heads/main $zero refs/heads/mai
 # the depth of the checkout, the current branch, or whether a local-only backup
 # ref happens to exist. That also means neither case can silently skip in CI,
 # and a guard test that skipped is not a guard test that passed.
-fixture=$(mktemp -d)
+fixture=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX")
 (
   cd "$fixture" || exit 1
   # Counters restart here: this is a subshell, so its increments cannot reach
   # the parent's. They are carried over through the tally file below, and
   # starting from the parent's values would count every earlier test twice.
-  pass=0; fail=0
+  pass=0; fail=0; skipped=0
 
   git init -q .
   git config user.email t@example.com
@@ -269,11 +273,12 @@ Co-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.c
   expect_push 1 "a spoofed Dependabot author does not earn the exception" \
     "refs/heads/spoof $spoofed_bot refs/heads/spoof $zero" "" upstream
 
-  printf '%s %s\n' "$pass" "$fail" > "$fixture/.tally"
+  printf '%s %s %s\n' "$pass" "$fail" "$skipped" > "$fixture/.tally"
 )
 if [ -r "$fixture/.tally" ]; then
-  read -r sub_pass sub_fail < "$fixture/.tally"
+  read -r sub_pass sub_fail sub_skipped < "$fixture/.tally"
   pass=$((pass + sub_pass)); fail=$((fail + sub_fail))
+  skipped=$((skipped + ${sub_skipped:-0}))
 else
   bad "the pre-push fixture repository could not be built"
 fi
@@ -298,19 +303,35 @@ expect_push 1 "a malformed ref update fails closed" \
 expect_commit() {
   local want="$1" label="$2" path="$3" content="${4:-x}"
   local tmp got
-  tmp=$(mktemp -d)
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX")
   (
     cd "$tmp" || exit 1
     git init -q .
     git config user.email t@t; git config user.name t
     mkdir -p "$(dirname "$path")" 2>/dev/null
-    printf '%s' "$content" > "$path"
+    printf '%s' "$content" > "$path" 2>/dev/null
+    # An agent sandbox denies reading secret-shaped paths (.env, *.pem, .npmrc,
+    # id_rsa) ANYWHERE, including inside a throwaway fixture. git then cannot
+    # stat the file, nothing stages, pre-commit has nothing to refuse, and
+    # reporting "the hook failed" would blame the hook for the sandbox. Exit 99
+    # says "fixture unavailable" instead.
+    #
+    # Deliberately narrow: the ONLY trigger is being unable to read back the file
+    # we just wrote. A fixture that does exist always goes through the hook, so a
+    # real policy regression still fails here.
+    [ -r "$path" ] || exit 99
     git add -f "$path" 2>/dev/null
     "$HOOKS/pre-commit" >/dev/null 2>&1
   )
   got=$?
-  rm -rf "$tmp"
-  [ "$got" -eq "$want" ] && ok "$label" || bad "$label (wanted exit $want, got $got)"
+  rm -rf "$tmp" 2>/dev/null
+  if [ "$got" -eq 99 ]; then
+    skip "$label (fixture unavailable: this environment denies that path)"
+  elif [ "$got" -eq "$want" ]; then
+    ok "$label"
+  else
+    bad "$label (wanted exit $want, got $got)"
+  fi
 }
 
 echo "pre-commit — the never-committed list"
@@ -360,7 +381,7 @@ expect_commit 1 "case-varied source-plan material is still read-only" "DOCS/PLAN
 # about to create.
 expect_index_state() {
   local want="$1" label="$2" action="$3" tmp got
-  tmp=$(mktemp -d)
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX")
   (
     cd "$tmp" || exit 1
     git init -q .
@@ -385,7 +406,7 @@ expect_index_state 1 "an inline gitleaks allow comment cannot approve its own se
 
 expect_precommit_failure() {
   local want="$1" label="$2" mode="$3" tmp bin got
-  tmp=$(mktemp -d)
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX")
   (
     cd "$tmp" || exit 1
     git init -q .
@@ -425,7 +446,7 @@ expect_precommit_failure 2 "a missing Gitleaks installation is an error, never a
 # server mirror is covered by the same cases as the register.
 expect_migration() {
   local want="$1" label="$2" action="$3" got tmp
-  tmp=$(mktemp -d)
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX")
   (
     cd "$tmp" || exit 1
     git init -q .
@@ -469,7 +490,13 @@ expect_migration 0 "deleting an UNCOMMITTED migration" \
 
 echo
 if [ "$fail" -ne 0 ]; then
-  echo "git hooks: $pass passed, $fail FAILED"
+  echo "git hooks: $pass passed, $fail FAILED${skipped:+, $skipped skipped}"
   exit 1
+fi
+if [ "${skipped:-0}" -ne 0 ]; then
+  echo "git hooks: $pass passed, $skipped SKIPPED — this environment denies those"
+  echo "  fixture paths, so those guards were not exercised here. CI runs unsandboxed"
+  echo "  and is authoritative for them. A skipped guard test is not a passing one."
+  exit 0
 fi
 echo "git hooks: $pass passed — every guard still refuses what it must"
