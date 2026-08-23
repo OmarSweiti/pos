@@ -34,9 +34,13 @@ From a card, only three things are kept: the PSP reference, the masked PAN the p
 terminal returns for the receipt, and the card scheme. Never the PAN in full, never track
 data, never a CVV, never a PIN or a PIN hash.
 
-Never logged, anywhere — not through `tracing`, not in an `IpcError.detail`, not in a test
-fixture that prints: any card value, any PIN or PIN hash, the database key, a JoFotara
-credential, or a customer's name, phone, or email.
+Never logged, anywhere — not through `tracing`, `IpcError.detail`, crash reporting, or a test
+fixture that prints — a value under any canonical sensitive field name: `pin`, `pin_hash`, `pan`,
+`card_number`, `cvv`, `track`, `phone`, `email`, `customer_name`, `buyer_name`, `secret_key`,
+`client_id`, `db_key`, `token`, `password`, or `entitlement`. Fiscal credentials and signing
+material remain sensitive under any provider-specific name. The canonical list lives in
+[`docs/implementation/ref/security-compliance.md`](docs/implementation/ref/security-compliance.md)
+§5 and must be updated as one contract.
 
 The register's database key lives in the OS credential store. Never in a file, never in an
 environment variable in a release build. `POS_DB_KEY` exists for development and CI only, and
@@ -49,29 +53,47 @@ the release build must refuse to honour it.
 | No float in a money path | `clippy::float_arithmetic = "deny"`, workspace-wide |
 | No `unwrap` / `expect` outside tests and `main()` | `clippy::unwrap_used`, `expect_used` = deny |
 | A committed migration cannot be edited | `.claude/hooks/protect-immutable.py` · `.githooks/pre-commit` |
-| A key, `.env`, or database file cannot be committed | `.githooks/pre-commit` |
-| Permissions are checked in Rust, in the command handler | code review priority 5 — hiding a button is UX, not security |
+| Sensitive filenames, committed plans, oversized staged blobs, and changes to committed migrations are refused | `.githooks/pre-commit`, using the staged index and failing closed on Git errors |
+| Secret-like content in an ordinary filename is refused | Gitleaks in `pre-commit`, `pre-push`, `just secrets`, and CI |
+| `pos-domain` has no runtime RNG/UUID-generation capability or direct clock/random calls | `scripts/check-domain-purity.py`, in `just lint` and CI |
 | Dependabot alerts, and automatic security updates | GitHub, enabled on this repository |
 | Dependency version bumps, grouped and monthly | [`.github/dependabot.yml`](.github/dependabot.yml) |
 | Advisories, licences, banned crates and registries | [`deny.toml`](deny.toml), via the `supply-chain` CI job and `just audit` |
 
-**Secret scanning is _not_ available on this repository.** GitHub offers it free on public
-repositories only; on a private repository it needs GitHub Advanced Security, and the API answers
-`422 Secret scanning is not available for this repository`. Push protection therefore does not
-exist here either. The only thing standing between a key and the history is
-[`.githooks/pre-commit`](.githooks/pre-commit) — a local hook, which `--no-verify` defeats and a
-fresh clone does not have until `just setup` runs. Treat "do not paste a secret into a file" as a
-human rule, because on this plan it is one.
+GitHub's **native** secret scanning and push protection are _not_ available on this private
+repository's current plan. The repository therefore supplies an independent, content-based
+Gitleaks gate: `pre-commit` scans the staged index, `pre-push` scans reachable history, and CI
+scans the proposed commit range with fully redacted output. The local checks remain bypassable
+with `--no-verify` or in a clone that skipped `just setup`; CI is server-side evidence but cannot
+block an administrator merge while branch protection is unavailable. A finding means rotate the
+credential first, then handle history as a separate, explicitly authorised operation.
 
-`just lint && just test && just guards` runs every gate that can run locally. CI runs the same
-set, so a green local run predicts a green CI run.
+`just pre-push` runs the deterministic local gates plus a full-history secret scan. CI repeats
+those checks and runs the network-dependent supply-chain audit separately.
+
+"Permissions are checked in Rust, in the command handler" remains an architectural requirement,
+not a blanket machine-verification claim while the authenticated IPC surface is still being
+built. Hiding a button is UX, never authorization; each command must gain its Rust check and
+contract coverage with the feature.
+
+Claude Code is also constrained by the checked-in sandbox and project policy on supported
+macOS/Linux/WSL2 hosts: project writes are scoped, sensitive environment variables are removed
+from sandboxed subprocesses, metadata endpoints are denied, and bypass-permissions mode is
+disabled. Sandbox startup, the PreToolUse interpreter launcher, and unsandboxed fallback fail
+closed; arbitrary `.env.<suffix>` files plus other sensitive project and home paths are denied
+without a broader `allowRead` overriding them. This is defence in depth for an
+engineering tool, not an application security boundary.
+Native Windows does not provide Claude's OS sandbox. Git hooks and CI add cross-platform
+backstops and visible signals there, but CI cannot block an administrator merge on this plan.
 
 ## Known gaps, stated plainly
 
 - **No installer signing of any kind.** Updater signing is microstep 0.3.2; OS code signing
   (Windows Authenticode, Apple Developer ID and notarisation) is milestone 5.5.1. Until both
   exist, an installer warns loudly on every machine, and nothing should be distributed to a
-  device the maintainer does not own.
+  device the maintainer does not own. The release workflow deliberately refuses unsigned or
+  unverified tags and missing updater keys, separates signing from publishing, and prepares an
+  SBOM/checksum manifest; those controls do not substitute for absent signing material.
 - **No PII-scrubber test on the logger.** The "no PII in logs" position is currently an
   intention rather than a passing test. Closed by microstep 1.6.8, with the audit work in Phase 1.
 - **JoFotara has no sandbox** (correction C-1), so fiscal submission cannot be tested against

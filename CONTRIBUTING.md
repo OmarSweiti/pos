@@ -17,9 +17,9 @@ Everything here is a pointer. The documents are the authority.
    — branches, issues, pull requests, the project board, releases.
 
 ```bash
-just setup      # deps, and points git at .githooks — do not skip this
+just setup      # hooks, prerequisite checks, and locked deps — do not skip this
 just check      # seconds: would it build?
-just pre-push   # everything CI runs, plus the guards
+just pre-push   # deterministic local gates, guards, build, and secret history
 ```
 
 ## The shape of a change
@@ -64,8 +64,10 @@ Even pre-pilot, when almost everything else is cheap to change
 4. Claiming a compliance validation that has not been completed. See [`SECURITY.md`](SECURITY.md).
 5. A float in a money path. Fix the arithmetic; do not `#[allow]` the lint.
 
-Guards refuse the first four automatically, and clippy denies the fifth. If a guard stops you,
-it is working.
+Guards refuse the first three automatically. The compliance claim is a mandatory human review,
+and the money invariant has several automated checks but still requires design review across
+boundaries. CI additionally supplies real PostgreSQL, event topology, advisory, and platform-build
+evidence that `just pre-push` cannot reproduce locally. If a guard stops you, it is working.
 
 ## Opening an issue
 

@@ -30,7 +30,12 @@ Every quantity change is an append-only event with a kind and a reference docume
 Registers drift; cashiers change the system time. Record device time for humans to read. Never branch on it.
 
 **I-8 · `pos-domain` is pure.**
-No I/O, no SQLite, no Tauri, no network, no `std::time::SystemTime::now()`, no filesystem, no randomness. Time and IDs are *arguments*. This is what makes it property-testable and shareable with the server. `pos-domain/Cargo.toml` has no dependency that can perform I/O, and adding one is a design review.
+No I/O, no SQLite, no Tauri, no network, no `std::time::SystemTime::now()`, no filesystem,
+no randomness. Time and IDs are *arguments*. This is what makes it property-testable and
+shareable with the server. `pos-domain/Cargo.toml` has no dependency that can perform I/O;
+UUID generation features are disabled, and `scripts/check-domain-purity.py` audits the resolved
+normal dependency graph and direct calls. Adding clock, random, or I/O capability is a design
+review.
 
 **I-9 · Every fact write and its outbox row commit in one transaction.**
 A sale that exists without its outbox row is a sale that never syncs. A outbox row without its sale is a phantom. One `BEGIN`, one `COMMIT`.
@@ -153,14 +158,21 @@ docs(impl): phase 2 fiscal conformance harness               [—]
 
 `type` ∈ `feat` `fix` `test` `docs` `chore` `refactor` `perf`. `scope` is the crate or app short name — `domain`, `db`, `sync`, `hardware`, `fiscal`, `terminal`, `server`, `backoffice` — plus `repo` for the workspace itself (gates, CI, tooling) and `impl` for the implementation doc set. The list is closed: `.githooks/commit-msg` refuses anything else, and so does the `branch-flow` check on a pull-request title. One microstep, one commit, wherever possible — a bisect that lands on a microstep tells you exactly what broke.
 
+`step` is exactly one microstep (`1.3.4`), an inclusive microstep range joined by an en dash
+(`1.3.4–1.3.6`), or an em dash (`—`) for repository work outside the implementation plan.
+`scripts/validate-change-title.sh` is the shared parser used by Git and GitHub; do not maintain a
+second regular expression in a workflow.
+
 **This whole format is a law, not a preference** — [`.githooks/commit-msg`](../../.githooks/commit-msg)
 refuses a subject that breaks it, and CI's `branch-flow` check refuses a pull-request title that
 does, because a squash-merge commits the title. Two more rules live in the same hook: the summary is
-≤ 72 characters before the step tag with no trailing period, and **no agent-attribution trailer ever
-enters this history** — no `Co-Authored-By` naming a machine identity, no "Generated with" line. That
-last one is decided by the trailer's *address*, not its display name, so a human co-author is never
-refused whatever they are called. Seven such trailers had to be rewritten out of the first nineteen
-commits once; that is why it is a gate now and not a habit.
+≤ 72 characters before the step tag with no trailing period, and **coding assistants remain tools,
+not co-authors** — no AI `Co-Authored-By` trailer and no generated-by line. There is one narrow
+history-compatibility exception: the exact Dependabot author name/email may retain the exact
+Dependabot trailer, and its title still follows the same grammar with `[—]`. Those strings are
+spoofable Git metadata, not proof of authenticated GitHub App provenance. Human co-authors are never
+refused because of a person's display name. The same attribution policy runs in `commit-msg`,
+`pre-push`, and CI so local commits, pull-request bodies, and GitHub-created squash commits agree.
 
 Branch per group (`phase-1/group-3-tax`), **from `development`**. The flow is
 `feature → development → staging → main`: a work PR is **squash-merged** into `development` and
@@ -180,10 +192,14 @@ The blueprint says migrations should be "tested up *and* down in CI." The shippe
 
 Rules:
 
-1. `crates/pos-db/migrations/NNNN_name.sql`, appended to the `MIGRATIONS` array in order. **Never edit a committed migration.** Not to fix a typo. Not "it hasn't shipped yet."
+1. `crates/pos-db/migrations/NNNN_name.sql`, appended to the `MIGRATIONS` array in order.
+   `./scripts/verify-schema.py` requires exact ordered parity between that runtime array and every
+   migration on disk. **Never edit a committed migration.** Not to fix a typo. Not "it hasn't
+   shipped yet." Every entry in either migration tree must be a repository-owned regular SQL
+   file; symlinks, gitlinks, devices, and other filesystem indirection are forbidden.
 2. Every migration is idempotent under the runner (the runner guarantees each runs once; the SQL must not assume more).
 3. A migration that changes the shape of existing data ships with a data migration in the same file and a test that seeds the old shape, migrates, and asserts the new one.
-4. Postgres mirrors SQLite in `apps/server/migrations/` via sqlx, **same semantics**. The numbers cannot match — sqlx names files `<timestamp>_<name>.sql` — so the mapping is *declared*, not inferred: every mirror opens with `-- Mirrors SQLite NNNN_name.sql` or `-- Server-only: <why>`, and `./scripts/verify-pg-migrations.py` checks it both ways and applies the mirror to a real PostgreSQL server. The name may differ where the server's half of the work differs. A register-local entity gets no mirror at all — record it in `REGISTER_LOCAL` in that script rather than committing an empty file. Undeclared divergence is a sync bug waiting.
+4. Postgres mirrors SQLite in `apps/server/migrations/` via sqlx, **same semantics**. The numbers cannot match — sqlx names files `<14-digit UTC timestamp>_<lower_snake>.sql`, with unique, strictly increasing versions — so the mapping is *declared*, not inferred: every mirror opens with `-- Mirrors SQLite NNNN_name.sql` or `-- Server-only: <why>`, and `./scripts/verify-pg-migrations.py` checks filenames and mapping both ways before applying the mirror to a real PostgreSQL server. SQLx runs a file transactionally unless its bytes begin exactly, case-sensitively, with `-- no-transaction`; that escape is only for statements PostgreSQL forbids inside a transaction and requires an explicit partial-failure recovery test or procedure. The name may differ where the server's half of the work differs. A register-local entity gets no mirror at all — record it in `REGISTER_LOCAL` in that script rather than committing an empty file. Undeclared divergence is a sync bug waiting.
 5. The app **refuses to start on a half-migrated database** (E.58) and says so — it does not guess.
 
 ---
