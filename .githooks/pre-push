@@ -24,7 +24,7 @@ attribution_check="$policy_root/scripts/check-automation-attribution.py"
 protected='main staging development'
 zero='0000000000000000000000000000000000000000'
 refuse=0
-commits_file=$(mktemp) || {
+commits_file=$(mktemp "${TMPDIR:-/tmp}/pos-pre-push.XXXXXX") || {
   echo "pre-push: ERROR — cannot create a temporary file; refusing closed." >&2
   exit 2
 }

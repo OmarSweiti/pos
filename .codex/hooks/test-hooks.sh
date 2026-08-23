@@ -242,8 +242,8 @@ expect "$IMMUTABLE_GUARD" 0 "ignore policy words printed by a nested shell" \
 
 # Fixtures prove the post-write hook reads the edited worktree and the link
 # checker's verdict. No repository file is changed by these cases.
-BROKEN=$(mktemp -d)
-WHOLE=$(mktemp -d)
+BROKEN=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX")
+WHOLE=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX")
 trap 'rm -rf "$BROKEN" "$WHOLE"' EXIT
 mkdir -p "$BROKEN/docs"
 mkdir -p "$WHOLE/docs"

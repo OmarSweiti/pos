@@ -51,7 +51,7 @@ scan_history() {
 
 self_test() {
   local tmp pass=0 fail=0 got token base head
-  tmp=$(mktemp -d)
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pos-scan-secrets.XXXXXX")
   trap 'rm -rf "$tmp"' RETURN
 
   git -C "$tmp" init -q
