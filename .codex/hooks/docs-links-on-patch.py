@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Codex PostToolUse documentation-link guard.
 
-When a successful ``apply_patch`` touches Markdown under ``docs/``, validate
-relative Markdown targets throughout that worktree. The configured Windows path
+When a successful ``apply_patch`` touches any Markdown file, validate relative
+targets throughout that worktree. The configured Windows path
 uses this Python-only implementation without requiring Git Bash; native hook
 dispatch still depends on the Codex client, so Git and CI remain backstops.
 """
@@ -19,7 +19,6 @@ from pathlib import Path
 PATCH_PATH = re.compile(
     r"^\*\*\* (?:(?:Add|Update|Delete) File:|Move to:)\s*(.+?)\s*$"
 )
-MARKDOWN_LINK = re.compile(r"\]\(([^)*:\s]+\.md)(?:#[^)]*)?\)")
 
 
 def fail_open(detail: str) -> int:
@@ -62,7 +61,7 @@ def relative_path(root: Path, cwd: str, raw: str) -> str | None:
         return None
 
 
-def first_docs_markdown(command: str, root: Path, cwd: str) -> str | None:
+def first_markdown(command: str, root: Path, cwd: str) -> str | None:
     for line in command.splitlines():
         match = PATCH_PATH.match(line)
         if not match:
@@ -70,29 +69,47 @@ def first_docs_markdown(command: str, root: Path, cwd: str) -> str | None:
         raw = match.group(1)
         relative = relative_path(root, cwd, raw)
         folded = relative.casefold() if relative else ""
-        if folded.startswith("docs/") and folded.endswith(".md"):
+        if folded.endswith(".md"):
             return raw
     return None
 
 
 def broken_doc_links(root: Path) -> list[tuple[str, str]]:
-    """Return ``(source, target)`` pairs matching the repository checker."""
-    broken: list[tuple[str, str]] = []
-    docs = root / "docs"
-    if not docs.is_dir():
-        return broken
+    """Run the canonical parser against tracked and newly written documents."""
+    checker = Path(__file__).resolve().parents[2] / "scripts" / "check-doc-links.py"
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(checker),
+                "--root",
+                str(root),
+                "--working-tree",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=25,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"canonical link checker could not run: {exc}") from exc
+    if result.returncode == 0:
+        return []
+    if result.returncode != 1:
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(
+            f"canonical link checker was inconclusive: {detail or result.returncode}"
+        )
 
-    for source in sorted(docs.rglob("*.md")):
-        try:
-            content = source.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+    broken: list[tuple[str, str]] = []
+    for line in result.stdout.splitlines():
+        if not line.startswith("BROKEN  "):
             continue
-        for target in sorted(set(MARKDOWN_LINK.findall(content))):
-            # These links are intentionally literal, just like
-            # scripts/check-doc-links.sh: no URL decoding or anchor lookup.
-            if not (source.parent / target).exists():
-                display = source.relative_to(root).as_posix()
-                broken.append((display, target))
+        source, separator, target = line.removeprefix("BROKEN  ").partition("  ->  ")
+        if not separator:
+            raise RuntimeError("canonical checker returned malformed output")
+        broken.append((source, target))
+    if not broken:
+        raise RuntimeError("canonical checker failed without a finding")
     return broken
 
 
@@ -115,7 +132,7 @@ def main() -> int:
     root = repo_root(cwd)
     if root is None:
         return fail_open("the active git worktree could not be resolved")
-    if first_docs_markdown(command, root, cwd) is None:
+    if first_markdown(command, root, cwd) is None:
         return 0
 
     broken = broken_doc_links(root)
