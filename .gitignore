@@ -6,6 +6,9 @@
 node_modules/
 dist/
 *.local
+# A repository-local pnpm content-addressable store. check-branch-workflow-policy.rb
+# already prunes it as a generated tree; Git never should have been offered it.
+.pnpm-store/
 
 # Python policy/test bytecode
 __pycache__/
@@ -27,12 +30,21 @@ _netrc
 .cargo/credentials.toml
 .docker/config.json
 
-# Databases & artifacts
+# Databases & artifacts. SQLite writes its sidecars beside the database under
+# whichever extension the database itself carries, and journal mode decides the
+# suffix — so every (extension, sidecar) pair has to be listed, not just -wal.
 *.sqlite
 *.sqlite3
 *.db
 *.db-wal
 *.db-shm
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
 
 # OS / editor
 .DS_Store
@@ -50,3 +62,6 @@ apps/terminal/src-tauri/gen/schemas
 # CLAUDE.local.md, which ends in .md.
 CLAUDE.local.md
 .claude/worktrees/
+# Claude's own write-tracking state. Was covered only by a machine-local
+# ~/.config/git/ignore, which a fresh clone elsewhere does not have.
+.claude/.cc-writes/

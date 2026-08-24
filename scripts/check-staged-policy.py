@@ -90,7 +90,8 @@ def sensitive_reason(path: str) -> str | None:
     if normalized.casefold().startswith("apps/terminal/src-tauri/gen/schemas/"):
         return "Tauri schemas are generated at build time"
     generated_tree = any(
-        part in {"target", "dist", "node_modules", "__pycache__"} for part in parts
+        part in {"target", "dist", "node_modules", "__pycache__", ".pnpm-store"}
+        for part in parts
     )
     if generated_tree or name.endswith((".pyc", ".pyo")):
         return "build artifacts and dependency trees do not belong in Git"
