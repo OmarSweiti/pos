@@ -47,6 +47,7 @@ STATIC_POLICY_PATHS = %w[
   .github/labeler.yml
   .gitleaks.toml
   deny.toml
+  pnpm-workspace.yaml
   justfile
   scripts/check-automation-attribution.py
   scripts/check-branch-workflow-policy.rb
@@ -58,6 +59,7 @@ STATIC_POLICY_PATHS = %w[
   scripts/check-prop-test-names.py
   scripts/check-protected-paths.sh
   scripts/check-staged-policy.py
+  scripts/check-workspace-lints.py
   scripts/gh-bootstrap.sh
   scripts/gh-project.sh
   scripts/gh-actions-policy.sh

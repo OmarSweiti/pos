@@ -87,6 +87,13 @@ jobs:
       # pos-domain's module graph is acyclic by design (ref/domain-api.md §15).
       # NOT cargo-modules --acyclic: its graph is item-level, so any constructor
       # returning Self reads as a cycle. This checks modules, which is the rule.
+      # `-D warnings` above carries no lint flags of its own: the whole lint
+      # scope is the root [workspace.lints] table, which applies to a member
+      # only if that member opts in. A crate that does not is silently exempt
+      # from the float ban while this job stays green.
+      - name: Workspace lints apply to every member
+        run: ./scripts/check-workspace-lints.py
+
       - name: Domain crate must stay acyclic
         run: ./scripts/check-domain-acyclic.py
 
@@ -169,6 +176,8 @@ jobs:
         run: ./scripts/validate-branch-flow.sh --self-test
       - name: PR readiness waits for the complete cross-workflow check set
         run: bash ./scripts/watch-pr-checks.sh --self-test
+      - name: Workspace lint contract still rejects a member that opts out
+        run: ./scripts/check-workspace-lints.py --self-test
       - name: Just recipe arguments remain data rather than shell source
         run: ./scripts/check-justfile-policy.py
       - name: Automation attribution policy still rejects machine trailers

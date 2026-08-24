@@ -138,6 +138,12 @@ logical-css:
 prop-names:
     {{ python }} ./scripts/check-prop-test-names.py
 
+# Both clippy invocations pass no lint flags of their own, so the workspace lint
+# table is the entire lint scope of every gate — and it is inert in any member
+# that does not opt in with `[lints] workspace = true`.
+workspace-lints:
+    {{ python }} ./scripts/check-workspace-lints.py
+
 # pos-domain's module graph must stay acyclic (ref/domain-api.md §15)
 acyclic:
     {{ python }} ./scripts/check-domain-acyclic.py
@@ -181,6 +187,7 @@ test:
 lint:
     cargo fmt --all --check
     cargo clippy --locked --workspace --all-targets -- -D warnings
+    {{ python }} ./scripts/check-workspace-lints.py
     {{ python }} ./scripts/check-domain-acyclic.py
     {{ python }} ./scripts/check-domain-purity.py
     {{ python }} ./scripts/verify-schema.py
@@ -209,6 +216,7 @@ guards:
     bash ./scripts/check-logical-css.sh --self-test
     {{ python }} ./scripts/check-prop-test-names.py --self-test
     {{ python }} ./scripts/check-domain-purity.py --self-test
+    {{ python }} ./scripts/check-workspace-lints.py --self-test
     {{ python }} ./scripts/check-justfile-policy.py
     bash ./scripts/watch-pr-checks.sh --self-test
     bash ./scripts/validate-branch-flow.sh --self-test
