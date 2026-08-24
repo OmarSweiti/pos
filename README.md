@@ -32,6 +32,8 @@ apps/terminal/         the register (Tauri 2)
 apps/server/           Axum: sync, auth, reporting
 apps/backoffice/       React admin
 packages/money/        the minor-unit rule, shared by both front ends
+packages/ui/           shared React components        (scaffold)
+packages/api-types/    shared request/response types  (scaffold)
 ```
 
 ## Getting started
@@ -46,7 +48,10 @@ which CI reads too; `pnpm` refuses another line because `engineStrict` is on),
 [just](https://just.systems),
 [`gitleaks`](https://github.com/gitleaks/gitleaks) for content-based secret
 scanning, Ruby with its bundled Psych YAML parser for workflow-policy checks,
-and Docker for the development database. Tauri also needs
+and Docker for the development database.
+[`gh`](https://cli.github.com) is needed by `just pr` and `just merge`, and
+[`sqlx-cli`](https://crates.io/crates/sqlx-cli) by `just migrate` and
+`just db-reset`; each recipe says so before it does any work. Tauri also needs
 [its platform prerequisites](https://tauri.app/start/prerequisites/).
 The optional time-varying `just audit` gate additionally requires
 [`cargo-deny`](https://embarkstudios.github.io/cargo-deny/).
@@ -69,7 +74,8 @@ everything else.
 ## Quality gates
 
 ```bash
-just lint     # fmt · clippy · domain purity · schema/mapping · RTL · biome · docs
+just lint     # fmt · clippy · workspace lints · domain purity/acyclicity ·
+              # schema/mapping · RTL · prop names · biome · doc links
 just test     # cargo nextest --locked --workspace · pnpm -r test
 just audit    # cargo-deny advisories/licences · pnpm audit
 just guards   # prove the write guards still refuse what they must

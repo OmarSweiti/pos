@@ -108,21 +108,41 @@ dev-backoffice:
 dev-server:
     cd apps/server; cargo run -p pos-server
 
+# --wait, because the documented next action is `just migrate`: without it the
+# recipe returns while Postgres is still starting and the migration races it.
 db-up:
-    docker compose -f infra/docker-compose.yml up -d
+    docker compose -f infra/docker-compose.yml up -d --wait
 
 db-down:
     docker compose -f infra/docker-compose.yml down
 
 migrate:
-    cd apps/server; sqlx migrate run
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v sqlx >/dev/null 2>&1 || {
+      echo "migrate: sqlx-cli is required — cargo install sqlx-cli --no-default-features --features rustls,postgres" >&2
+      exit 1
+    }
+    cd apps/server && sqlx migrate run
 
 # Development only — see docs/implementation/02-development-workflow.md §0.
 # Drop the dev Postgres *and its volume*, bring it back empty, re-migrate.
 db-reset:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v sqlx >/dev/null 2>&1 || {
+      echo "db-reset: sqlx-cli is required — cargo install sqlx-cli --no-default-features --features rustls,postgres" >&2
+      exit 1
+    }
+    # Bound to the disposable Compose database by name, not by whatever the
+    # environment happens to hold. sqlx reads apps/server/.env through dotenvy,
+    # which does NOT override an already-exported variable — so a shell pointed
+    # at staging would otherwise have this recipe migrate staging, one line after
+    # `down -v`. The value is the database infra/docker-compose.yml defines.
+    url="postgres://postgres:postgres@localhost:5432/pos"
     docker compose -f infra/docker-compose.yml down -v
     docker compose -f infra/docker-compose.yml up -d --wait
-    cd apps/server; sqlx migrate run
+    cd apps/server && DATABASE_URL="$url" sqlx migrate run
 
 # Named for the exact bundle identifier so it cannot reach anything else.
 # Wipe THIS machine's register database — rebuilt, empty, on next launch.
@@ -330,6 +350,19 @@ pr $title='' $body='' $milestone='':
     #!/usr/bin/env bash
     set -euo pipefail
 
+    # Preflight, before the full local gate below rather than after it. Every
+    # path out of this recipe needs gh, and discovering that it is missing or
+    # unauthenticated only at the end of a complete
+    # lint/test/build/guards/secrets run wastes the whole gate.
+    command -v gh >/dev/null 2>&1 || {
+      echo "pr: the GitHub CLI is required — https://cli.github.com" >&2
+      exit 1
+    }
+    gh auth status >/dev/null 2>&1 || {
+      echo "pr: gh is not authenticated — run: gh auth login" >&2
+      exit 1
+    }
+
     if [ -n "$title" ]; then
       msg=$(mktemp)
       printf '%s\n' "$title" > "$msg"
@@ -423,6 +456,48 @@ pr $title='' $body='' $milestone='':
     # the exact workflow-qualified set for this PR route and changed paths.
     created_pr=$(gh pr view --json url --jq .url)
     bash ./scripts/watch-pr-checks.sh "$created_pr"
+
+# Squash-merge a work PR into development — but only once its required checks
+# are actually green.
+#
+# This is the gap that cost this repository a day. `just pr` watches CI when it
+# OPENS a pull request, and nothing watched the moment that matters: #18 was
+# merged with `rust` failing, and `just lint` was red on development from that
+# merge until it was repaired. Branch protection cannot close this on the Free
+# plan, so the merge path has to.
+#
+# The required set is re-derived for THIS PR by the same script `just pr` uses,
+# so a check that has not registered yet cannot be mistaken for a check that
+# passed. Refusal is the whole point: there is deliberately no override flag.
+# A policy PR is *expected* to be red on branch-flow/protected-paths — that red
+# is the manual security review signal described in 03-github-workflow.md §3,
+# and taking it is a decision to make explicitly with `gh pr merge`, having read
+# the diff, not something to wave through with a flag on this recipe.
+merge $pr='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v gh >/dev/null 2>&1 || {
+      echo "merge: the GitHub CLI is required — https://cli.github.com" >&2
+      exit 1
+    }
+    target=$pr
+    if [ -z "$target" ]; then
+      target=$(gh pr view --json url --jq .url) || {
+        echo "merge: no pull request for this branch; pass one: just merge 18" >&2
+        exit 1
+      }
+    fi
+
+    if ! bash ./scripts/watch-pr-checks.sh "$target"; then
+      echo >&2
+      echo "merge: REFUSED — required checks did not all pass for $target." >&2
+      echo "  A policy change is expected to fail branch-flow/protected-paths;" >&2
+      echo "  that red IS the review (03-github-workflow.md §3). Read the diff," >&2
+      echo "  then merge it deliberately with gh pr merge." >&2
+      exit 1
+    fi
+
+    gh pr merge "$target" --squash
 
 # development → staging, as a release candidate. Merge with a MERGE COMMIT.
 promote-staging:
