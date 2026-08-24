@@ -140,7 +140,15 @@ def workspace_members() -> list[tuple[str, Path]]:
     drift the checker exists to catch.
     """
     result = subprocess.run(
-        ["cargo", "metadata", "--no-deps", "--format-version", "1", "--offline"],
+        [
+            "cargo",
+            "metadata",
+            "--locked",
+            "--no-deps",
+            "--format-version",
+            "1",
+            "--offline",
+        ],
         cwd=ROOT,
         capture_output=True,
         text=True,
