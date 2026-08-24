@@ -26,6 +26,8 @@ setup-tools-check:
     @command -v cargo >/dev/null 2>&1 || { echo "Rust/cargo is required: https://rustup.rs" >&2; exit 1; }
     @cargo nextest --version >/dev/null 2>&1 || { echo "cargo-nextest is required: https://nexte.st/docs/installation/pre-built-binaries/" >&2; exit 1; }
     @command -v pnpm >/dev/null 2>&1 || { echo "pnpm is required: https://pnpm.io/installation" >&2; exit 1; }
+    @command -v ruff >/dev/null 2>&1 || { echo "Ruff is required: https://docs.astral.sh/ruff/installation/" >&2; exit 1; }
+    @command -v shellcheck >/dev/null 2>&1 || { echo "ShellCheck is required: https://github.com/koalaman/shellcheck#installing" >&2; exit 1; }
 
 [windows]
 setup-tools-check:
@@ -37,6 +39,8 @@ setup-tools-check:
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { Write-Error "Rust/cargo is required: https://rustup.rs"; exit 1 }
     cargo nextest --version | Out-Null
     if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) { Write-Error "pnpm is required: https://pnpm.io/installation"; exit 1 }
+    if (-not (Get-Command ruff -ErrorAction SilentlyContinue)) { Write-Error "Ruff is required: https://docs.astral.sh/ruff/installation/"; exit 1 }
+    if (-not (Get-Command shellcheck -ErrorAction SilentlyContinue)) { Write-Error "ShellCheck is required: https://github.com/koalaman/shellcheck#installing"; exit 1 }
 
 # Node's pin lives in .nvmrc and nowhere else. CI reads that same file through
 # `node-version-file:`, so a runner and a developer's machine cannot disagree
@@ -111,7 +115,7 @@ dev-server:
 # --wait, because the documented next action is `just migrate`: without it the
 # recipe returns while Postgres is still starting and the migration races it.
 db-up:
-    docker compose -f infra/docker-compose.yml up -d --wait
+    docker compose -f infra/docker-compose.yml up -d --wait --wait-timeout 120
 
 db-down:
     docker compose -f infra/docker-compose.yml down
@@ -141,7 +145,7 @@ db-reset:
     # `down -v`. The value is the database infra/docker-compose.yml defines.
     url="postgres://postgres:postgres@localhost:5432/pos"
     docker compose -f infra/docker-compose.yml down -v
-    docker compose -f infra/docker-compose.yml up -d --wait
+    docker compose -f infra/docker-compose.yml up -d --wait --wait-timeout 120
     cd apps/server && DATABASE_URL="$url" sqlx migrate run
 
 # Named for the exact bundle identifier so it cannot reach anything else.
@@ -157,8 +161,8 @@ db-local-reset:
 
 # Ruff, ShellCheck and ruby -c over the policy code. About eleven thousand lines
 # of it decide whether a migration may be edited or a secret may be committed,
-# and until this recipe existed nothing linted any of it. Reports a missing
-# linter as skipped rather than passing silently; CI installs both pinned.
+# and until this recipe existed nothing linted any of it. Missing linters are a
+# setup error, never a green gate; CI installs both at reviewed pinned versions.
 lint-scripts:
     bash ./scripts/lint-scripts.sh
 
@@ -209,8 +213,9 @@ verify-pg:
 # the state of the advisory databases, so this gate can fail on a push that
 # changed nothing. CI's `supply-chain` job runs it on every PR, which is where a
 # time-varying check belongs. Run it by hand before a release.
-audit:
+audit: node-version-check
     cargo deny check
+    {{ python }} ./scripts/check-js-licenses.py
     pnpm audit --audit-level high
 
 # Scan the complete reachable Git history, not just the current worktree.
@@ -259,6 +264,8 @@ guards:
     {{ python }} ./scripts/check-domain-purity.py --self-test
     {{ python }} ./scripts/check-workspace-lints.py --self-test
     {{ python }} ./scripts/check-node-version.py --self-test
+    {{ python }} ./scripts/check-web-build-coverage.py --self-test
+    {{ python }} ./scripts/check-js-licenses.py --self-test
     {{ python }} ./scripts/check-justfile-policy.py
     bash ./scripts/watch-pr-checks.sh --self-test
     bash ./scripts/validate-branch-flow.sh --self-test
@@ -276,7 +283,8 @@ guards:
 # both and fails CI's `web` job instead. Mirrors that job's build step.
 # The only place `tsc` runs. Part of `pre-push` for exactly that reason.
 build-web: node-version-check
-    pnpm -r --if-present build
+    {{ python }} ./scripts/check-web-build-coverage.py
+    pnpm -r build
 
 # Deterministic local equivalents of the core CI gates. Remote topology,
 # cross-platform packaging, and time-varying advisory checks still run in CI.
@@ -489,7 +497,11 @@ merge $pr='':
       echo "merge: the GitHub CLI is required — https://cli.github.com" >&2
       exit 1
     }
-    target=$pr
+    gh auth status >/dev/null 2>&1 || {
+      echo "merge: gh is not authenticated — run: gh auth login" >&2
+      exit 1
+    }
+    target="$pr"
     if [ -z "$target" ]; then
       target=$(gh pr view --json url --jq .url) || {
         echo "merge: no pull request for this branch; pass one: just merge 18" >&2
@@ -497,16 +509,148 @@ merge $pr='':
       }
     fi
 
-    if ! bash ./scripts/watch-pr-checks.sh "$target"; then
+    repository=$(gh repo view --json nameWithOwner --jq .nameWithOwner) || {
+      echo "merge: unable to resolve the current GitHub repository." >&2
+      exit 1
+    }
+    [[ "$repository" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]] || {
+      echo "merge: GitHub returned an invalid repository name." >&2
+      exit 1
+    }
+
+    # Emit NUL-separated fields so refs and repository names remain data rather
+    # than being reparsed by a shell. Every field and both branch tips must be
+    # present before check evidence can be collected.
+    snapshot_pr() {
+      gh pr view "$1" \
+        --json state,url,baseRefName,baseRefOid,headRefName,headRefOid,headRepository,isDraft,title,body \
+        | ./scripts/run-python.sh -c '
+    import json
+    import re
+    import sys
+
+    data = json.load(sys.stdin)
+    repository = data.get("headRepository")
+    values = [
+        data.get("state"),
+        data.get("url"),
+        data.get("baseRefName"),
+        data.get("baseRefOid"),
+        data.get("headRefName"),
+        data.get("headRefOid"),
+        repository.get("nameWithOwner") if isinstance(repository, dict) else None,
+    ]
+    if not all(isinstance(value, str) and value for value in values):
+        raise SystemExit("GitHub returned an incomplete merge snapshot")
+    draft = data.get("isDraft")
+    title = data.get("title")
+    body = data.get("body")
+    if not isinstance(draft, bool):
+        raise SystemExit("GitHub returned an invalid draft state")
+    if not isinstance(title, str) or not title:
+        raise SystemExit("GitHub returned an invalid PR title")
+    if body is None:
+        body = ""
+    if not isinstance(body, str):
+        raise SystemExit("GitHub returned an invalid PR body")
+    values.extend(["true" if draft else "false", title, body])
+    if not re.fullmatch(r"[0-9a-f]{40}", values[3]):
+        raise SystemExit("GitHub returned an invalid base OID")
+    if not re.fullmatch(r"[0-9a-f]{40}", values[5]):
+        raise SystemExit("GitHub returned an invalid head OID")
+    for value in values:
+        sys.stdout.buffer.write(value.encode("utf-8") + b"\0")
+    '
+    }
+
+    snapshot_file=$(mktemp)
+    trap 'rm -f "$snapshot_file"' EXIT
+    if ! snapshot_pr "$target" > "$snapshot_file"; then
+      echo "merge: unable to read a complete pull-request snapshot." >&2
+      exit 1
+    fi
+    before=()
+    while IFS= read -r -d '' value; do before+=("$value"); done < "$snapshot_file"
+    [ "${#before[@]}" -eq 10 ] || {
+      echo "merge: GitHub returned an ambiguous pull-request snapshot." >&2
+      exit 1
+    }
+    state=${before[0]}
+    pr_url=${before[1]}
+    base_ref=${before[2]}
+    base_oid=${before[3]}
+    head_ref=${before[4]}
+    head_oid=${before[5]}
+    head_repository=${before[6]}
+    is_draft=${before[7]}
+
+    [ "$state" = OPEN ] || {
+      echo "merge: REFUSED — $pr_url is not open." >&2
+      exit 1
+    }
+    [ "$is_draft" = false ] || {
+      echo "merge: REFUSED — $pr_url is still a draft." >&2
+      exit 1
+    }
+    url_prefix="https://github.com/$repository/pull/"
+    case "$pr_url" in
+      "$url_prefix"*) pr_number=${pr_url#"$url_prefix"} ;;
+      *)
+        echo "merge: REFUSED — $pr_url does not belong to $repository." >&2
+        exit 1 ;;
+    esac
+    [[ "$pr_number" =~ ^[0-9]+$ ]] || {
+      echo "merge: REFUSED — GitHub returned a malformed pull-request URL." >&2
+      exit 1
+    }
+    [ "$base_ref" = development ] || {
+      echo "merge: REFUSED — only work PRs into development may be squash-merged here." >&2
+      exit 1
+    }
+    case "$head_ref" in
+      development|staging|main|hotfix/*)
+        echo "merge: REFUSED — promotions, back-merges, and hotfixes require merge commits." >&2
+        exit 1 ;;
+    esac
+    bash ./scripts/validate-branch-flow.sh \
+      "$head_ref" "$base_ref" "$head_repository" "$repository" || {
+      echo "merge: REFUSED — this is not a legal work-branch route." >&2
+      exit 1
+    }
+    printf 'merge: verified work route %s@%s -> %s@%s\n' \
+      "$head_ref" "$head_oid" "$base_ref" "$base_oid"
+
+    if ! bash ./scripts/watch-pr-checks.sh "$pr_url"; then
       echo >&2
-      echo "merge: REFUSED — required checks did not all pass for $target." >&2
+      echo "merge: REFUSED — required checks did not all pass for $pr_url." >&2
       echo "  A policy change is expected to fail branch-flow/protected-paths;" >&2
       echo "  that red IS the review (03-github-workflow.md §3). Read the diff," >&2
       echo "  then merge it deliberately with gh pr merge." >&2
       exit 1
     fi
 
-    gh pr merge "$target" --squash
+    if ! snapshot_pr "$pr_url" > "$snapshot_file"; then
+      echo "merge: REFUSED — unable to re-read the PR after watching checks." >&2
+      exit 1
+    fi
+    after=()
+    while IFS= read -r -d '' value; do after+=("$value"); done < "$snapshot_file"
+    snapshot_unchanged=true
+    if [ "${#after[@]}" -ne 10 ]; then
+      snapshot_unchanged=false
+    else
+      for index in "${!before[@]}"; do
+        [ "${before[$index]}" = "${after[$index]}" ] || snapshot_unchanged=false
+      done
+    fi
+    "$snapshot_unchanged" || {
+      echo "merge: REFUSED — PR metadata, state, or branch tips changed after check evidence was collected." >&2
+      exit 1
+    }
+
+    # GitHub atomically matches the reviewed head. The immediately preceding
+    # snapshot also closes the base-tip race as far as the API permits.
+    gh pr merge "$pr_url" --match-head-commit "$head_oid" --squash --delete-branch
 
 # development → staging, as a release candidate. Merge with a MERGE COMMIT.
 promote-staging:
