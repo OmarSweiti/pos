@@ -1340,7 +1340,9 @@ def self_test() -> int:
                             raise ValueError
 
                         def __str__(self) -> str:
-                            return linked.name
+                            # Constructed and consumed inside this iteration, so
+                            # the late binding B023 warns about cannot occur.
+                            return linked.name  # noqa: B023
 
                     report = Report()
                     audit_migration_file_types(

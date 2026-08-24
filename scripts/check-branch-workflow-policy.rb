@@ -48,6 +48,7 @@ STATIC_POLICY_PATHS = %w[
   .github/labeler.yml
   .gitleaks.toml
   deny.toml
+  ruff.toml
   pnpm-workspace.yaml
   justfile
   scripts/check-automation-attribution.py
@@ -66,6 +67,8 @@ STATIC_POLICY_PATHS = %w[
   scripts/gh-project.sh
   scripts/gh-actions-policy.sh
   scripts/install-gitleaks-ci.sh
+  scripts/install-script-linters-ci.sh
+  scripts/lint-scripts.sh
   scripts/pr-type-label.sh
   scripts/report-test-coverage.sh
   scripts/run-python.sh

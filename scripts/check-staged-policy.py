@@ -8,7 +8,6 @@ import os
 import subprocess
 import sys
 
-
 MAX_BLOB_BYTES = 2_000_000
 SAFE_ENV_TEMPLATE = "apps/server/.env.example"
 REGULAR_BLOB_MODES = frozenset({"100644", "100755"})

@@ -12,6 +12,7 @@ matching the shared guard; git hooks and CI remain the non-agent backstops.
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import re
@@ -219,7 +220,7 @@ def is_sqlx_migration_revert(command: str) -> bool:
         arguments = [token.casefold() for token in tokens[executable_index + 1 :]]
         if any(
             left == "migrate" and right == "revert"
-            for left, right in zip(arguments, arguments[1:])
+            for left, right in itertools.pairwise(arguments)
         ):
             return True
     return False

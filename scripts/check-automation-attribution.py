@@ -16,7 +16,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 MACHINE_TRAILER = re.compile(
     r"^[ \t]*co-authored-by:.*(?:"
     r"\[bot\]|anthropic\.com|openai\.com|copilot@|cursor\.com|cognition\.ai|"

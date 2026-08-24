@@ -168,6 +168,16 @@ jobs:
           else
             ./scripts/install-gitleaks-ci.sh
           fi
+      # Pinned and digest-verified, for the same reason the Gitleaks release
+      # above is: a linter that changes under you turns a green build red on a
+      # day you are shipping.
+      - name: Install the pinned script linters
+        run: ./scripts/install-script-linters-ci.sh
+      - name: Policy scripts lint clean
+        run: ./scripts/lint-scripts.sh
+      - name: Shell discovery still finds the extensionless Git hooks
+        run: ./scripts/lint-scripts.sh --self-test
+
       - name: Git hooks still refuse what they must
         run: ./.githooks/test-hooks.sh
       - name: Secret scanning still detects content, not only filenames

@@ -155,6 +155,13 @@ db-local-reset:
 db-local-reset:
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "$env:APPDATA\com.perfectcoders.pos"
 
+# Ruff, ShellCheck and ruby -c over the policy code. About eleven thousand lines
+# of it decide whether a migration may be edited or a secret may be committed,
+# and until this recipe existed nothing linted any of it. Reports a missing
+# linter as skipped rather than passing silently; CI installs both pinned.
+lint-scripts:
+    bash ./scripts/lint-scripts.sh
+
 # Documentation cross-references must resolve (CI runs this too)
 docs-links:
     bash ./scripts/check-doc-links.sh
@@ -227,6 +234,7 @@ lint: node-version-check
     {{ python }} ./scripts/check-prop-test-names.py
     pnpm biome ci --error-on-warnings .
     bash ./scripts/check-doc-links.sh
+    bash ./scripts/lint-scripts.sh
 
 fmt:
     cargo fmt --all
@@ -238,6 +246,7 @@ guards:
     bash ./.claude/hooks/test-protect-immutable.sh
     bash ./.claude/hooks/test-docs-links.sh
     bash ./scripts/check-doc-links.sh --self-test
+    bash ./scripts/lint-scripts.sh --self-test
     bash ./.codex/hooks/test-hooks.sh
     {{ python }} ./.codex/test-policy.py
     {{ python }} ./.agents/test-skills.py

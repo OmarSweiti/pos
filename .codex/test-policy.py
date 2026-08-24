@@ -14,14 +14,13 @@ Run the CLI's execpolicy checker separately when changing rule semantics:
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
 try:
     import tomllib
 except ImportError:  # pragma: no cover - depends on the host Python
     print("codex-policy: Python 3.11 or newer is required (tomllib is missing)")
-    raise SystemExit(2)
+    raise SystemExit(2) from None
 
 
 CODEX_DIR = Path(__file__).resolve().parent
