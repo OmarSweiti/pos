@@ -16,8 +16,14 @@
 *.css text eol=lf
 *.ts text eol=lf
 *.tsx text eol=lf
+# The policy checker and the shell-free hook launcher. Both are in the trusted
+# policy set, which compares them byte for byte between a PR's base and head —
+# a CRLF checkout would make that comparison fail for a reason nobody changed.
+*.rb text eol=lf
+*.mjs text eol=lf
 
 # Never ask Git to normalize binary release or design assets.
+*.icns binary
 *.ico binary
 *.jpg binary
 *.jpeg binary
