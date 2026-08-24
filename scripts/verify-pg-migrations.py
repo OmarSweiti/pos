@@ -60,9 +60,13 @@ SQLITE_DIR = ROOT / "crates" / "pos-db" / "migrations"
 COMPOSE_FILE = ROOT / "infra" / "docker-compose.yml"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 
+# The single Postgres pin. Dependabot only ever edits infra/docker-compose.yml,
+# so a bump lands here and in .github/workflows/ci.yml by hand, in the same
+# commit — audit_image_pin below is what makes a half-applied bump fail loudly.
+PG_MAJOR = 18
 PG_IMAGE = (
-    "postgres:16-alpine@sha256:"
-    "cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
+    "postgres:18-alpine@sha256:"
+    "d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2"
 )
 
 MIRROR_DECLARATION = re.compile(
@@ -73,7 +77,7 @@ MIRROR_DECLARATION = re.compile(
 SERVER_ONLY_DECLARATION = re.compile(
     r"^server-only\s*[:\-—]\s*\S[^\r\n]*$", re.IGNORECASE
 )
-IMAGE_PIN = re.compile(r"^postgres:16-alpine@sha256:[0-9a-f]{64}$")
+IMAGE_PIN = re.compile(rf"^postgres:{PG_MAJOR}-alpine@sha256:[0-9a-f]{{64}}$")
 PG_MIGRATION_NAME = re.compile(
     r"^(?P<version>\d{14})_(?P<name>[a-z][a-z0-9]*(?:_[a-z0-9]+)*)\.sql$"
 )
@@ -415,17 +419,28 @@ def audit_image_text(report: Report, text: str, surface: str, label: str) -> Non
         report.fail(f"{label} {error}")
     postgres_images = [image for image in images if is_postgres_repository_image(image)]
     if postgres_images != [PG_IMAGE]:
+        # Name the expected pin and every file that carries it. A Postgres bump
+        # touches three files and Dependabot can only edit one, so the reader of
+        # this failure needs the other two by name, not a symbol to go look up.
+        found = ", ".join(postgres_images) if postgres_images else "none"
         report.fail(
             f"{label} must declare exactly one Postgres repository image across "
             "all services, and it must equal PG_IMAGE; comments, strings, "
-            "aliases, dynamic values, and unrelated keys do not count"
+            "aliases, dynamic values, and unrelated keys do not count\n"
+            f"        expected: {PG_IMAGE}\n"
+            f"        found:    {found}\n"
+            "        all three must agree: infra/docker-compose.yml, "
+            ".github/workflows/ci.yml, and PG_IMAGE in "
+            "scripts/verify-pg-migrations.py"
         )
 
 
 def audit_image_pin(report: Report) -> None:
     """Keep every PostgreSQL test surface on one immutable image manifest."""
     if IMAGE_PIN.fullmatch(PG_IMAGE) is None:
-        report.fail("PG_IMAGE must pin postgres:16-alpine to a full sha256 digest")
+        report.fail(
+            f"PG_IMAGE must pin postgres:{PG_MAJOR}-alpine to a full sha256 digest"
+        )
     for path, surface in ((COMPOSE_FILE, "compose"), (CI_WORKFLOW, "ci")):
         try:
             text = path.read_text(encoding="utf-8")
@@ -932,8 +947,23 @@ def self_test() -> int:
 
     pin_cases = (
         ("a complete Postgres image digest passes", PG_IMAGE, False),
-        ("a mutable Postgres tag is rejected", "postgres:16-alpine", True),
-        ("a shortened image digest is rejected", "postgres:16-alpine@sha256:abc", True),
+        (
+            "a mutable Postgres tag is rejected",
+            f"postgres:{PG_MAJOR}-alpine",
+            True,
+        ),
+        (
+            "a shortened image digest is rejected",
+            f"postgres:{PG_MAJOR}-alpine@sha256:abc",
+            True,
+        ),
+        # The pin is exact, not "any Postgres": a correctly-formed digest on a
+        # different major is still an unreviewed bump.
+        (
+            "a complete digest on an unpinned major is rejected",
+            "postgres:16-alpine@sha256:" + "c" * 64,
+            True,
+        ),
     )
     for label, image, want_failure in pin_cases:
         passed = (IMAGE_PIN.fullmatch(image) is None) == want_failure
@@ -1310,7 +1340,9 @@ def self_test() -> int:
                             raise ValueError
 
                         def __str__(self) -> str:
-                            return linked.name
+                            # Constructed and consumed inside this iteration, so
+                            # the late binding B023 warns about cannot occur.
+                            return linked.name  # noqa: B023
 
                     report = Report()
                     audit_migration_file_types(

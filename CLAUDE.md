@@ -62,7 +62,7 @@ Not style preferences. Each one, violated, produces a class of bug that costs mo
 ## Quality gates
 
 ```bash
-just lint       # fmt · clippy · architecture/purity · schema/mapping · CSS · tests names · biome · links
+just lint       # fmt · clippy · workspace lints · architecture/purity · schema/mapping · CSS · test names · biome · links
 just test       # cargo nextest --locked --workspace · pnpm -r test
 just guards     # prove the write guards still refuse
 just verify-pg  # the Postgres mirror, against a real server
@@ -93,7 +93,7 @@ Codex-specific execution policy and hook adapters live under `.codex/`.
 | Guard | Refuses |
 |---|---|
 | `.claude/hooks/protect-immutable.py` | writing, deleting, or moving a **committed migration** or anything in `docs/plan/` through Claude write tools, Bash, PowerShell, or Monitor |
-| `.claude/hooks/docs-links-on-write.py` | leaving a broken cross-reference after Claude changes `docs/**.md`; the `.sh` file is only an inactive POSIX compatibility wrapper |
+| `.claude/hooks/docs-links-on-write.py` | leaving a broken cross-reference after Claude changes **any** tracked `.md` — the five root documents included — whatever the link target's extension; the `.sh` file is only an inactive POSIX compatibility wrapper |
 | `.codex/hooks/` | immutable-path and forward-only SQLx checks for Codex shell, immutable-path checks for `apply_patch`, and documentation-link checks after a docs `apply_patch` |
 | `.githooks/commit-msg` | a title outside `<type>(<scope>): <summary>  [N.N.N\|N.N.N–N.N.N\|—]`, or coding-assistant attribution |
 | `.githooks/pre-commit` | protected/sensitive paths, oversized staged blobs, plan or committed-migration edits, and Gitleaks findings in staged content |
@@ -103,7 +103,8 @@ Codex-specific execution policy and hook adapters live under `.codex/`.
 | `scripts/gh-actions-policy.sh` | mutable or unapproved external Action references before the post-merge full-SHA repository policy is enabled |
 
 All are negative-tested — `just guards` runs every suite
-(`.claude/hooks/test-protect-immutable.sh`, `.claude/hooks/test-docs-links.sh`,
+(`.claude/hooks/test-settings.py`, `.claude/hooks/test-protect-immutable.sh`,
+`.claude/hooks/test-docs-links.sh`,
 `.codex/hooks/test-hooks.sh`, `.codex/test-policy.py`, `.agents/test-skills.py`,
 `.githooks/test-hooks.sh`, `scripts/test-gh-setup.sh`, and the repository
 checkers' `--self-test`s). Run it
@@ -148,6 +149,7 @@ apps/terminal/         the register (Tauri 2): src/ = React, src-tauri/ = Rust s
 apps/server/           Axum: sync, auth, reporting
 apps/backoffice/       React admin
 packages/money/        the minor-unit rule, shared by both front ends
+packages/ui/           shared React components, and packages/api-types/ shared DTOs — both scaffolds
 ```
 
 Migrations are **forward-only** and are **never edited once committed** — deleting or renaming

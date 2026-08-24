@@ -21,8 +21,8 @@ setup:
 setup-tools-check:
     @command -v python3 >/dev/null 2>&1 || { echo "Python 3.11+ is required: https://www.python.org/downloads/" >&2; exit 1; }
     @python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else "Python 3.11+ is required")'
-    @command -v node >/dev/null 2>&1 || { echo "Node.js 22 is required: https://nodejs.org/" >&2; exit 1; }
-    @node -e 'const major=Number(process.versions.node.split(".")[0]); if (major !== 22) { console.error(`Node.js 22 is required; found ${process.versions.node}`); process.exit(1); }'
+    @command -v node >/dev/null 2>&1 || { echo "Node.js is required: https://nodejs.org/" >&2; exit 1; }
+    {{ python }} ./scripts/check-node-version.py
     @command -v cargo >/dev/null 2>&1 || { echo "Rust/cargo is required: https://rustup.rs" >&2; exit 1; }
     @cargo nextest --version >/dev/null 2>&1 || { echo "cargo-nextest is required: https://nexte.st/docs/installation/pre-built-binaries/" >&2; exit 1; }
     @command -v pnpm >/dev/null 2>&1 || { echo "pnpm is required: https://pnpm.io/installation" >&2; exit 1; }
@@ -32,11 +32,22 @@ setup-tools-check:
     if (-not (Get-Command bash -ErrorAction SilentlyContinue)) { Write-Error "Git Bash is required for the committed shell hooks: https://gitforwindows.org/"; exit 1 }
     if (-not (Get-Command py -ErrorAction SilentlyContinue)) { Write-Error "Python 3.11+ with the standard py launcher is required: https://www.python.org/downloads/"; exit 1 }
     py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 'Python 3.11+ is required')"
-    if (-not (Get-Command node -ErrorAction SilentlyContinue)) { Write-Error "Node.js 22 is required: https://nodejs.org/"; exit 1 }
-    node -e "const major=Number(process.versions.node.split('.')[0]); if (major !== 22) { console.error('Node.js 22 is required; found ' + process.versions.node); process.exit(1); }"
+    if (-not (Get-Command node -ErrorAction SilentlyContinue)) { Write-Error "Node.js is required: https://nodejs.org/"; exit 1 }
+    {{ python }} ./scripts/check-node-version.py
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { Write-Error "Rust/cargo is required: https://rustup.rs"; exit 1 }
     cargo nextest --version | Out-Null
     if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) { Write-Error "pnpm is required: https://pnpm.io/installation"; exit 1 }
+
+# Node's pin lives in .nvmrc and nowhere else. CI reads that same file through
+# `node-version-file:`, so a runner and a developer's machine cannot disagree
+# about which Node built the bundle — which is what rust-toolchain.toml already
+# does for Rust, and what nine separate restatements of "22" did not.
+#
+# In `lint`, `test` and `build-web` rather than `setup` alone: the advertised
+# local gate ran Biome, Vitest and tsc without ever checking which Node it was
+# handing them to.
+node-version-check:
+    {{ python }} ./scripts/check-node-version.py
 
 # Branch protection is not available on a private repo on the GitHub Free plan.
 # These hooks are the first local safety net; a machine that has not run this can
@@ -97,21 +108,41 @@ dev-backoffice:
 dev-server:
     cd apps/server; cargo run -p pos-server
 
+# --wait, because the documented next action is `just migrate`: without it the
+# recipe returns while Postgres is still starting and the migration races it.
 db-up:
-    docker compose -f infra/docker-compose.yml up -d
+    docker compose -f infra/docker-compose.yml up -d --wait
 
 db-down:
     docker compose -f infra/docker-compose.yml down
 
 migrate:
-    cd apps/server; sqlx migrate run
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v sqlx >/dev/null 2>&1 || {
+      echo "migrate: sqlx-cli is required — cargo install sqlx-cli --no-default-features --features rustls,postgres" >&2
+      exit 1
+    }
+    cd apps/server && sqlx migrate run
 
 # Development only — see docs/implementation/02-development-workflow.md §0.
 # Drop the dev Postgres *and its volume*, bring it back empty, re-migrate.
 db-reset:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v sqlx >/dev/null 2>&1 || {
+      echo "db-reset: sqlx-cli is required — cargo install sqlx-cli --no-default-features --features rustls,postgres" >&2
+      exit 1
+    }
+    # Bound to the disposable Compose database by name, not by whatever the
+    # environment happens to hold. sqlx reads apps/server/.env through dotenvy,
+    # which does NOT override an already-exported variable — so a shell pointed
+    # at staging would otherwise have this recipe migrate staging, one line after
+    # `down -v`. The value is the database infra/docker-compose.yml defines.
+    url="postgres://postgres:postgres@localhost:5432/pos"
     docker compose -f infra/docker-compose.yml down -v
     docker compose -f infra/docker-compose.yml up -d --wait
-    cd apps/server; sqlx migrate run
+    cd apps/server && DATABASE_URL="$url" sqlx migrate run
 
 # Named for the exact bundle identifier so it cannot reach anything else.
 # Wipe THIS machine's register database — rebuilt, empty, on next launch.
@@ -123,6 +154,13 @@ db-local-reset:
 [windows]
 db-local-reset:
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "$env:APPDATA\com.perfectcoders.pos"
+
+# Ruff, ShellCheck and ruby -c over the policy code. About eleven thousand lines
+# of it decide whether a migration may be edited or a secret may be committed,
+# and until this recipe existed nothing linted any of it. Reports a missing
+# linter as skipped rather than passing silently; CI installs both pinned.
+lint-scripts:
+    bash ./scripts/lint-scripts.sh
 
 # Documentation cross-references must resolve (CI runs this too)
 docs-links:
@@ -137,6 +175,12 @@ logical-css:
 # dropped prefix can omit one property while the remaining filtered tests pass.
 prop-names:
     {{ python }} ./scripts/check-prop-test-names.py
+
+# Both clippy invocations pass no lint flags of their own, so the workspace lint
+# table is the entire lint scope of every gate — and it is inert in any member
+# that does not opt in with `[lints] workspace = true`.
+workspace-lints:
+    {{ python }} ./scripts/check-workspace-lints.py
 
 # pos-domain's module graph must stay acyclic (ref/domain-api.md §15)
 acyclic:
@@ -174,13 +218,14 @@ secrets:
     bash ./scripts/scan-secrets.sh --history
 
 # ── deterministic local quality gates (mirrored by CI) ───────────────────
-test:
+test: node-version-check
     cargo nextest run --locked --workspace
     pnpm -r --if-present test
 
-lint:
+lint: node-version-check
     cargo fmt --all --check
     cargo clippy --locked --workspace --all-targets -- -D warnings
+    {{ python }} ./scripts/check-workspace-lints.py
     {{ python }} ./scripts/check-domain-acyclic.py
     {{ python }} ./scripts/check-domain-purity.py
     {{ python }} ./scripts/verify-schema.py
@@ -189,6 +234,7 @@ lint:
     {{ python }} ./scripts/check-prop-test-names.py
     pnpm biome ci --error-on-warnings .
     bash ./scripts/check-doc-links.sh
+    bash ./scripts/lint-scripts.sh
 
 fmt:
     cargo fmt --all
@@ -199,6 +245,8 @@ guards:
     {{ python }} ./.claude/hooks/test-settings.py
     bash ./.claude/hooks/test-protect-immutable.sh
     bash ./.claude/hooks/test-docs-links.sh
+    bash ./scripts/check-doc-links.sh --self-test
+    bash ./scripts/lint-scripts.sh --self-test
     bash ./.codex/hooks/test-hooks.sh
     {{ python }} ./.codex/test-policy.py
     {{ python }} ./.agents/test-skills.py
@@ -209,6 +257,8 @@ guards:
     bash ./scripts/check-logical-css.sh --self-test
     {{ python }} ./scripts/check-prop-test-names.py --self-test
     {{ python }} ./scripts/check-domain-purity.py --self-test
+    {{ python }} ./scripts/check-workspace-lints.py --self-test
+    {{ python }} ./scripts/check-node-version.py --self-test
     {{ python }} ./scripts/check-justfile-policy.py
     bash ./scripts/watch-pr-checks.sh --self-test
     bash ./scripts/validate-branch-flow.sh --self-test
@@ -225,7 +275,7 @@ guards:
 # `lint` is biome (style) and `test` is vitest, so a TypeScript type error passes
 # both and fails CI's `web` job instead. Mirrors that job's build step.
 # The only place `tsc` runs. Part of `pre-push` for exactly that reason.
-build-web:
+build-web: node-version-check
     pnpm -r --if-present build
 
 # Deterministic local equivalents of the core CI gates. Remote topology,
@@ -308,6 +358,19 @@ branch $name:
 pr $title='' $body='' $milestone='':
     #!/usr/bin/env bash
     set -euo pipefail
+
+    # Preflight, before the full local gate below rather than after it. Every
+    # path out of this recipe needs gh, and discovering that it is missing or
+    # unauthenticated only at the end of a complete
+    # lint/test/build/guards/secrets run wastes the whole gate.
+    command -v gh >/dev/null 2>&1 || {
+      echo "pr: the GitHub CLI is required — https://cli.github.com" >&2
+      exit 1
+    }
+    gh auth status >/dev/null 2>&1 || {
+      echo "pr: gh is not authenticated — run: gh auth login" >&2
+      exit 1
+    }
 
     if [ -n "$title" ]; then
       msg=$(mktemp)
@@ -402,6 +465,48 @@ pr $title='' $body='' $milestone='':
     # the exact workflow-qualified set for this PR route and changed paths.
     created_pr=$(gh pr view --json url --jq .url)
     bash ./scripts/watch-pr-checks.sh "$created_pr"
+
+# Squash-merge a work PR into development — but only once its required checks
+# are actually green.
+#
+# This is the gap that cost this repository a day. `just pr` watches CI when it
+# OPENS a pull request, and nothing watched the moment that matters: #18 was
+# merged with `rust` failing, and `just lint` was red on development from that
+# merge until it was repaired. Branch protection cannot close this on the Free
+# plan, so the merge path has to.
+#
+# The required set is re-derived for THIS PR by the same script `just pr` uses,
+# so a check that has not registered yet cannot be mistaken for a check that
+# passed. Refusal is the whole point: there is deliberately no override flag.
+# A policy PR is *expected* to be red on branch-flow/protected-paths — that red
+# is the manual security review signal described in 03-github-workflow.md §3,
+# and taking it is a decision to make explicitly with `gh pr merge`, having read
+# the diff, not something to wave through with a flag on this recipe.
+merge $pr='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v gh >/dev/null 2>&1 || {
+      echo "merge: the GitHub CLI is required — https://cli.github.com" >&2
+      exit 1
+    }
+    target=$pr
+    if [ -z "$target" ]; then
+      target=$(gh pr view --json url --jq .url) || {
+        echo "merge: no pull request for this branch; pass one: just merge 18" >&2
+        exit 1
+      }
+    fi
+
+    if ! bash ./scripts/watch-pr-checks.sh "$target"; then
+      echo >&2
+      echo "merge: REFUSED — required checks did not all pass for $target." >&2
+      echo "  A policy change is expected to fail branch-flow/protected-paths;" >&2
+      echo "  that red IS the review (03-github-workflow.md §3). Read the diff," >&2
+      echo "  then merge it deliberately with gh pr merge." >&2
+      exit 1
+    fi
+
+    gh pr merge "$target" --squash
 
 # development → staging, as a release candidate. Merge with a MERGE COMMIT.
 promote-staging:

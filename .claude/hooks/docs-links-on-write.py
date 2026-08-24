@@ -16,7 +16,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-MARKDOWN_LINK = re.compile(r"\]\(([^)*\s:]+\.md)(?:#[^)]*)?\)")
+# Any relative target, not just .md — the .md-only pattern this replaces had
+# already let one break through (see ALLOWED_BROKEN). Excluding ":" from the
+# target keeps out http:, mailto: and tel:; excluding "#" keeps out a bare
+# heading anchor, which is a link to this same file.
+MARKDOWN_LINK = re.compile(r"\]\(([^)*\s:#]+)(?:#[^)]*)?\)")
+
+# Mirrors ALLOWED_BROKEN in scripts/check-doc-links.sh, which is canonical and
+# carries the reason: docs/plan/ is immutable, so a wrong link written there
+# cannot be repaired in place.
+ALLOWED_BROKEN = frozenset(
+    {("docs/plan/phase-0-setup-guide.md", "../justfile")}
+)
 SHELL_TOOLS = frozenset({"Bash", "PowerShell", "Monitor"})
 MUTATING_SHELL = re.compile(
     r"(?:^|\s)(?:[12&]?>>?|tee|touch|cp|mv|rm|--output(?:=|\s)|"
@@ -67,38 +78,74 @@ def changed_markdown(payload: dict[str, object]) -> bool:
         raw = None
 
     if isinstance(raw, str):
-        normalized = raw.replace("\\", "/").casefold()
-        return normalized.endswith(".md") and (
-            normalized.startswith("docs/") or "/docs/" in normalized
-        )
+        # Every Markdown file, not only docs/. The five root documents carry the
+        # table that sends a reader into the documentation set; they were
+        # outside this hook and outside the canonical checker alike.
+        return raw.replace("\\", "/").casefold().endswith(".md")
 
     if tool_name in SHELL_TOOLS and isinstance(tool_input, dict):
         command = tool_input.get("command")
         if isinstance(command, str):
             normalized = command.replace("\\", "/")
             return (
-                "docs/" in normalized.casefold()
-                and ".md" in normalized.casefold()
+                ".md" in normalized.casefold()
                 and MUTATING_SHELL.search(command) is not None
             )
     return False
 
 
-def broken_links(root: Path) -> list[tuple[Path, str]]:
-    docs = root / "docs"
-    if not docs.is_dir():
-        return []
+# Generated trees. A walk from the repository root would otherwise descend
+# node_modules/ and target/ on every documentation edit, which is both slow and
+# noise: nothing in them is documentation this repository maintains.
+PRUNED_DIRECTORIES = frozenset(
+    {
+        ".git",
+        "node_modules",
+        "target",
+        "dist",
+        ".pnpm-store",
+        "__pycache__",
+        "worktrees",
+    }
+)
 
+
+def markdown_files(root: Path) -> list[Path]:
+    """Every Markdown file in the working tree, generated trees pruned.
+
+    Deliberately a filesystem walk rather than `git ls-files`, which is what the
+    canonical checker uses. The canonical checker runs in CI against a clean
+    checkout where everything is tracked. This hook runs the moment Claude
+    writes a file, and a brand-new document is untracked at exactly that moment
+    — the case where a broken link is most likely and least likely to be
+    noticed.
+    """
+    found: list[Path] = []
+    for directory, subdirectories, names in os.walk(root):
+        subdirectories[:] = [
+            name for name in subdirectories if name not in PRUNED_DIRECTORIES
+        ]
+        for name in names:
+            if name.casefold().endswith(".md"):
+                found.append(Path(directory) / name)
+    return sorted(found)
+
+
+def broken_links(root: Path) -> list[tuple[Path, str]]:
     broken: list[tuple[Path, str]] = []
-    for document in sorted(docs.rglob("*.md")):
+    for document in markdown_files(root):
         try:
             body = document.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:
             raise DocsHookOperationalError(f"could not read {document}: {exc}") from exc
+        relative = document.relative_to(root)
         for target in sorted(set(MARKDOWN_LINK.findall(body))):
-            candidate = Path(os.path.normpath(document.parent / target))
+            if (relative.as_posix(), target) in ALLOWED_BROKEN:
+                continue
+            base = root if target.startswith("/") else document.parent
+            candidate = Path(os.path.normpath(base / target.lstrip("/")))
             if not candidate.exists():
-                broken.append((document.relative_to(root), target))
+                broken.append((relative, target))
     return broken
 
 

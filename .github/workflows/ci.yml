@@ -31,7 +31,7 @@ jobs:
     # debugging session (phase-0-closeout.md 0.2.1).
     services:
       postgres:
-        image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+        image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -87,6 +87,13 @@ jobs:
       # pos-domain's module graph is acyclic by design (ref/domain-api.md §15).
       # NOT cargo-modules --acyclic: its graph is item-level, so any constructor
       # returning Self reads as a cycle. This checks modules, which is the rule.
+      # `-D warnings` above carries no lint flags of its own: the whole lint
+      # scope is the root [workspace.lints] table, which applies to a member
+      # only if that member opts in. A crate that does not is silently exempt
+      # from the float ban while this job stays green.
+      - name: Workspace lints apply to every member
+        run: ./scripts/check-workspace-lints.py
+
       - name: Domain crate must stay acyclic
         run: ./scripts/check-domain-acyclic.py
 
@@ -132,6 +139,8 @@ jobs:
         run: ./.claude/hooks/test-protect-immutable.sh
       - name: The documentation-link guard still reports a broken link
         run: ./.claude/hooks/test-docs-links.sh
+      - name: The canonical link checker still reports a broken link
+        run: ./scripts/check-doc-links.sh --self-test
       - name: Claude project settings retain their secure contract
         run: python3 ./.claude/hooks/test-settings.py
       - name: Codex hooks still block protected writes and report broken links
@@ -159,6 +168,16 @@ jobs:
           else
             ./scripts/install-gitleaks-ci.sh
           fi
+      # Pinned and digest-verified, for the same reason the Gitleaks release
+      # above is: a linter that changes under you turns a green build red on a
+      # day you are shipping.
+      - name: Install the pinned script linters
+        run: ./scripts/install-script-linters-ci.sh
+      - name: Policy scripts lint clean
+        run: ./scripts/lint-scripts.sh
+      - name: Shell discovery still finds the extensionless Git hooks
+        run: ./scripts/lint-scripts.sh --self-test
+
       - name: Git hooks still refuse what they must
         run: ./.githooks/test-hooks.sh
       - name: Secret scanning still detects content, not only filenames
@@ -169,6 +188,10 @@ jobs:
         run: ./scripts/validate-branch-flow.sh --self-test
       - name: PR readiness waits for the complete cross-workflow check set
         run: bash ./scripts/watch-pr-checks.sh --self-test
+      - name: Workspace lint contract still rejects a member that opts out
+        run: ./scripts/check-workspace-lints.py --self-test
+      - name: Node version check still rejects a runtime off the pinned line
+        run: ./scripts/check-node-version.py --self-test
       - name: Just recipe arguments remain data rather than shell source
         run: ./scripts/check-justfile-policy.py
       - name: Automation attribution policy still rejects machine trailers
@@ -209,7 +232,7 @@ jobs:
         # Reads "packageManager" from package.json.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm biome ci --error-on-warnings .
@@ -323,7 +346,7 @@ jobs:
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with: { node-version: 22, cache: pnpm }
+        with: { node-version-file: .nvmrc, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - name: npm advisories
         run: pnpm audit --audit-level high
@@ -377,7 +400,7 @@ jobs:
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # Compile and bundle the real desktop application before tag time; unit

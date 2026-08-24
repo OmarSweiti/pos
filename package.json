@@ -3,7 +3,7 @@
   "private": true,
   "packageManager": "pnpm@11.22.0",
   "engines": {
-    "node": "22.x"
+    "node": ">=24.15.0 <25"
   },
   "scripts": {
     "dev:terminal": "pnpm --filter terminal tauri dev",

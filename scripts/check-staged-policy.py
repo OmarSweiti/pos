@@ -8,7 +8,6 @@ import os
 import subprocess
 import sys
 
-
 MAX_BLOB_BYTES = 2_000_000
 SAFE_ENV_TEMPLATE = "apps/server/.env.example"
 REGULAR_BLOB_MODES = frozenset({"100644", "100755"})
@@ -90,7 +89,8 @@ def sensitive_reason(path: str) -> str | None:
     if normalized.casefold().startswith("apps/terminal/src-tauri/gen/schemas/"):
         return "Tauri schemas are generated at build time"
     generated_tree = any(
-        part in {"target", "dist", "node_modules", "__pycache__"} for part in parts
+        part in {"target", "dist", "node_modules", "__pycache__", ".pnpm-store"}
+        for part in parts
     )
     if generated_tree or name.endswith((".pyc", ".pyo")):
         return "build artifacts and dependency trees do not belong in Git"

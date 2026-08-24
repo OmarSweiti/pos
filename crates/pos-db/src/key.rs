@@ -50,12 +50,11 @@ pub fn get_or_create() -> Result<String, crate::DbError> {
 }
 
 pub fn get_or_create_with_source() -> Result<(String, KeySource), crate::DbError> {
-    if honours_env_key() {
-        if let Ok(key) = std::env::var("POS_DB_KEY") {
-            if !key.is_empty() {
-                return Ok((key, KeySource::Environment));
-            }
-        }
+    if honours_env_key()
+        && let Ok(key) = std::env::var("POS_DB_KEY")
+        && !key.is_empty()
+    {
+        return Ok((key, KeySource::Environment));
     }
 
     let entry = Entry::new(SERVICE, USER)?;
