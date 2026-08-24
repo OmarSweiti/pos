@@ -206,6 +206,7 @@ guards:
     {{ python }} ./.claude/hooks/test-settings.py
     bash ./.claude/hooks/test-protect-immutable.sh
     bash ./.claude/hooks/test-docs-links.sh
+    bash ./scripts/check-doc-links.sh --self-test
     bash ./.codex/hooks/test-hooks.sh
     {{ python }} ./.codex/test-policy.py
     {{ python }} ./.agents/test-skills.py

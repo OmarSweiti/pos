@@ -139,6 +139,8 @@ jobs:
         run: ./.claude/hooks/test-protect-immutable.sh
       - name: The documentation-link guard still reports a broken link
         run: ./.claude/hooks/test-docs-links.sh
+      - name: The canonical link checker still reports a broken link
+        run: ./scripts/check-doc-links.sh --self-test
       - name: Claude project settings retain their secure contract
         run: python3 ./.claude/hooks/test-settings.py
       - name: Codex hooks still block protected writes and report broken links
