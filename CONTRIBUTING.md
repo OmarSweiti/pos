@@ -37,6 +37,7 @@ promotion forks the branches permanently.
 just branch phase-1/group-3-tax     # branch from a fresh development
 # ... work, one microstep per commit ...
 just pr                             # gates, push, PR into development, watch CI
+just merge                          # recheck the exact tips, then safely squash the work PR
 ```
 
 Commit messages are checked by a hook, not by a reviewer:
@@ -83,7 +84,7 @@ Use a form — blank issues are turned off, because the fields are the parts peo
 ## Reviewing
 
 There is one reviewer, so the substitutes are the whole control: time, a checklist, the
-`/code-review` and `/security-review` tools, CI, and the guards in `.claude/`. The review
+`/review` and `/security-review` tools, CI, and the guards in `.claude/`. The review
 priority order is [workflow §7](docs/implementation/02-development-workflow.md) — it starts with
 "does any money value touch a float, or round more than once?" and it starts there for a reason.
 

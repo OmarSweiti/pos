@@ -16,6 +16,12 @@ The buildable plan for this POS: what to type, in what order, and how you will k
 
 Then work the phase you are in, consulting `ref/` as the microsteps point you there.
 
+**Current implementation frontier (24 August 2026):** Phase 0 is closed; the next product
+microstep is [`1.1.1 — Currency`](phase-1-sellable-mvp.md#111--currency). Repository-hardening
+work may land between numbered product steps, but it does not advance that frontier. Confirm the
+active issue/branch before starting so this dated pointer and the delivery board cannot silently
+diverge.
+
 ---
 
 ## Layout

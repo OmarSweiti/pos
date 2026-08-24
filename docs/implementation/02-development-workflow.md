@@ -88,8 +88,8 @@ being a sentence anyone in this project says.
 
 ### 1.1 What must be on the machine
 
-Verified present on this machine at the time of writing; the version column is what was tested, not
-a minimum unless marked.
+The version column is the repository's tested target, not a minimum unless marked. CI installs
+the entries marked as pins; `just setup` refuses when a required local tool is absent.
 
 | Tool | Here | Check | Needed for |
 |---|---|---|---|
@@ -97,7 +97,7 @@ a minimum unless marked.
 | `cargo-nextest` | 0.9.143 | `cargo nextest --version` | `just test`, test filtering |
 | `just` | 1.58.0 | `just --version` | every recipe in this file |
 | `pnpm` | 11.22.0 | `pnpm --version` | the workspace; version is pinned by `packageManager` |
-| `node` | 22.x required (`nvm use`; this machine must switch from 26) | `node --version` | hooks, workspace, and CI; pinned by `.nvmrc` and `package.json` |
+| `node` | 24.19.0 (pinned) | `node --version` | hooks, workspace, and CI; `.nvmrc` is the single runtime pin |
 | `docker` | 29.7.2 | `docker compose version` | the dev Postgres |
 | `sqlx-cli` | 0.9.0 | `sqlx --version` | server migrations |
 | `sqlite3` | 3.51.0 | `sqlite3 --version` | migration dry-runs, `just verify-schema` |
@@ -105,6 +105,8 @@ a minimum unless marked.
 | `ruby` + Psych | 4.0.5 / 5.3.1 | `ruby -rpsych -e 'puts Psych::VERSION'` | semantic GitHub Actions policy parsing |
 | `gh` | 2.97.0 | `gh --version` | PRs from the terminal |
 | `gitleaks` | 8.30.1 | `gitleaks version` | fail-closed staged and CI secret scanning |
+| `ruff` | 0.16.4 (CI pin) | `ruff --version` | Python policy and guard linting |
+| `shellcheck` | 0.11.0 (CI pin) | `shellcheck --version` | shell policy, hooks, and recipe linting |
 | `cargo-deny` | 0.20.2 | `cargo deny --version` | advisories, licences, registries |
 | C toolchain | Xcode CLT | `cc --version` | `rusqlite`, `openssl-src` |
 
@@ -153,7 +155,7 @@ working machine and a recorded baseline for diagnosing a later failure.
 just check                                        # workspace compiles
 just lint                                         # code, architecture, purity, schema, RTL, web and docs checks
 just test                                         # every Rust and declared workspace web test
-just audit                                        # cargo-deny advisories/licences + pnpm audit
+just audit                                        # Rust advisories/licences + JS licences + npm advisories
 just guards                                       # every negative guard and policy self-test
 just secrets                                      # content-scan all reachable Git history
 curl -s localhost:8080/health/db                  # after `just dev-server` in another shell
@@ -200,9 +202,9 @@ pnpm --filter terminal exec tsc --noEmit            # types only, no bundle
 just fmt                # rewrite: cargo fmt + biome format
 just lint               # formatting, Clippy, architecture, schema, RTL, web and docs checks
 just test               # cargo nextest --locked --workspace + pnpm -r test
-just audit              # advisories and licences — needs `cargo install cargo-deny --locked`
+just audit              # Rust/JS licences and advisories — needs cargo-deny
 just acyclic            # pos-domain module graph
-just docs-links         # every relative .md link under docs/ resolves
+just docs-links         # every local link in every tracked Markdown document resolves
 just verify-schema      # exact runtime-array/disk parity, then runtime + reference SQLite
 just secrets            # Gitleaks over all reachable Git history
 ```
@@ -230,7 +232,7 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | Command | What it does |
 |---|---|
 | `just` | list every recipe |
-| `just setup` | install hooks and identity first, require Gitleaks and Ruby/Psych, then frozen pnpm install + locked Cargo fetch |
+| `just setup` | install hooks and identity first, require Gitleaks, Ruff, ShellCheck and Ruby/Psych, then frozen pnpm install + locked Cargo fetch |
 | `just hooks` | point Git at `.githooks` — a local, bypassable safety net, not branch protection |
 | `just gitleaks-check` | fail clearly unless the content scanner required by pre-commit is installed |
 | `just check` | `cargo check --locked --workspace --all-targets` |
@@ -242,21 +244,26 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just db-local-reset` | delete this machine's register database |
 | `just migrate` | `sqlx migrate run` against `DATABASE_URL` |
 | `just fmt` | rewrite formatting, Rust and TS |
-| `just lint` | fmt-check · Clippy · acyclic/domain-pure · SQLite/PG mapping · logical CSS/property names · Biome · doc-links |
+| `just lint` | fmt-check · Clippy/workspace lint contract · acyclic/domain-pure · SQLite/PG mapping · policy-script lint · logical CSS/property names · Biome · doc-links |
 | `just test` | `cargo nextest run --locked --workspace` · `pnpm -r --if-present test` |
+| `just audit` | Rust advisories/licences/bans/sources · reviewed JavaScript licence expressions · npm advisories |
+| `just node-version-check` | exact runtime, root engine, Node typings, pnpm resolver and every CI setup-node step agree with `.nvmrc` |
+| `just workspace-lints` | every Cargo member inherits the exact workspace lint levels |
+| `just lint-scripts` | fail-closed Ruff, ShellCheck and Ruby syntax checks over policy code |
 | `just acyclic` | `pos-domain`'s module graph has no cycles |
 | `just domain-purity` | `pos-domain` has no runtime RNG/UUID-generation capability or direct clock/random calls |
-| `just docs-links` | no broken relative `.md` link under `docs/` |
+| `just docs-links` | no missing local inline/reference target in any tracked Markdown document; examples in code fences are ignored |
 | `just verify-schema` | requires exact Rust `MIGRATIONS`/disk parity, then executes the runtime chain and every SQL block in `ref/schema.md` against real SQLite |
-| `just verify-pg` | the Postgres mirror's declared mapping, and the SQL against a real PostgreSQL server |
+| `just verify-pg` | exact PG18 image/storage policy, SQL-only mirror mapping, and migration execution against an exact-major scratch PostgreSQL server |
 | `just prop-names` | property tests are `prop_<invariant>` — the prefix microstep 1.1.5's verify filter depends on |
 | `just logical-css` | no physical CSS side in `apps/**` — §10 is RTL by default, so a physical side is a layout bug in Arabic |
 | `just secrets` | Gitleaks over every commit reachable from the local repository, with findings redacted |
 | `just guards` | the write guards **and** the git hooks still refuse what they must |
-| `just build-web` | `pnpm -r --if-present build` — **the only place `tsc` runs** |
+| `just build-web` | require a build script in all five workspace packages, then `pnpm -r build` — **the only place `tsc` runs** |
 | `just pre-push` | `lint` + `test` + `build-web` + `guards` + full-history secret scan |
 | `just branch <name>` | fresh `development`, then a branch off it — **needs a clean tree** (§4.2) |
 | `just pr [title] [body-file] [milestone]` | gates → push → PR into `development` → watch CI. Pass the title on a branch with more than one commit (§4.12); the milestone is derived from a `phase-<0-5>/` branch name |
+| `just merge [pr]` | work PR only: validate route/state, watch exact checks, re-read both tips, atomically match the reviewed head, squash and delete the branch |
 | `just flow` | what is on `development` but not `staging`, and on `staging` but not `main` |
 | `just promote-staging` | PR: `development` → `staging` (a release candidate) |
 | `just promote-main` | PR: `staging` → `main` (production) |
@@ -270,8 +277,16 @@ benchmarks (1.4.9, 1.2.7, 1.12.3) · the TS type generation gate (conventions §
 `just verify-pg` never applies migrations to the database named in a connection URL. When a
 development server is supplied, it creates a unique scratch database for that run and drops it in
 `finally`; otherwise it uses a uniquely named throwaway Docker container. The Compose service, CI
-service, and verifier all use the same full Postgres image digest. Without either engine path it
-reports a mapping-only skip explicitly rather than calling the engine pass successful.
+service, and verifier all use the same full Postgres image digest. Every `psql` call ignores user
+startup files, migration SQL cannot contain executable `psql` meta-commands, and the target must
+report PostgreSQL major 18 before any scratch work begins. Without either engine path it reports a
+mapping-only skip explicitly rather than calling the engine pass successful.
+
+PostgreSQL 18 stores the Compose cluster at `/var/lib/postgresql/18/docker` while the named volume
+mounts its parent, `/var/lib/postgresql`. A volume created with the former
+`/var/lib/postgresql/data` mount is not automatically upgraded or relocated. During the current
+pre-pilot reset licence, remove it deliberately with `just db-reset` if it is disposable; otherwise
+stop and make a real backup/upgrade plan rather than treating a mount change as data migration.
 
 ---
 
@@ -472,7 +487,7 @@ git add -A && git diff --cached          # or: git diff --stat main...HEAD
 Then the reviews you can run:
 
 ```bash
-/code-review        # correctness, reuse, simplification over the diff
+/review             # correctness, reuse, simplification over the diff
 /security-review    # the never-list, over the branch
 ```
 
@@ -947,7 +962,7 @@ see. With one developer, the substitutes are not optional — they are the whole
 
 1. **Time.** Read your own diff after a break, or the next morning. Same eyes, different brain.
 2. **A checklist,** not intuition — §4.8. Intuition is what wrote the bug.
-3. **The tools.** `/code-review` for correctness and simplification, `/security-review` for the
+3. **The tools.** `/review` for correctness and simplification, `/security-review` for the
    never-list. They do not get bored on the four hundredth diff.
 4. **CI.** The reviewer that never has a bad day. If a rule matters, make CI enforce it — a rule
    that lives only in this file is a rule that will be forgotten at 23:00.
@@ -1034,8 +1049,8 @@ CI runs on every push to `development`, `staging` and `main`, and on every PR in
 |---|---|---|---|
 | [`ci.yml`](../../.github/workflows/ci.yml) | `rust` | locked fmt/Clippy/tests · domain structure/purity · property names · exact runtime SQLite · real scratch PostgreSQL | `just lint && just test && just verify-pg` |
 | [`ci.yml`](../../.github/workflows/ci.yml) | `guards` | Claude/Codex/Git/protected-path/schema/title/attribution/secret/workflow policy negative suites | `just guards` |
-| [`ci.yml`](../../.github/workflows/ci.yml) | `web` | Biome · logical CSS · tests · build/types · coverage notice · docs links | `just lint && just test && just build-web` |
-| [`ci.yml`](../../.github/workflows/ci.yml) | `supply-chain` | trusted-range Gitleaks · Rust/npm advisories, licences, bans and sources | `just secrets && just audit` |
+| [`ci.yml`](../../.github/workflows/ci.yml) | `web` | exact Node contract · Biome · logical CSS · tests · fail-closed build/types coverage · test coverage notice · docs links | `just lint && just test && just build-web` |
+| [`ci.yml`](../../.github/workflows/ci.yml) | `supply-chain` | trusted-range Gitleaks · Rust advisories/licences/bans/sources · reviewed JavaScript licences · npm advisories | `just secrets && just audit` |
 | [`ci.yml`](../../.github/workflows/ci.yml) | `cross-platform` | core tests and real Tauri package build on Linux/macOS/Windows for promotions and the protected release branches | run the platform build on each supported OS |
 | [`branch-flow.yml`](../../.github/workflows/branch-flow.yml) | `protected-paths`, `topology` | exact-workflow-revision policy · verified data-only PR head · legal head/base/repository · title and attribution | relevant `just guards` self-tests |
 | [`labeler.yml`](../../.github/workflows/labeler.yml) | `label` | path-derived area/risk plus title-derived type, executing only trusted base code | — |
@@ -1056,7 +1071,7 @@ an operating system other than the one you are using. When CI fails and your mac
 | a test fails only in CI | order or time dependence — CI runs tests in parallel in a different order. Conventions §5: no wall clock, no ambient randomness, no filesystem ordering |
 | `pnpm install` fails only in CI | the lockfile was not committed, or a package needs a build script allowed in `pnpm-workspace.yaml` (`allowBuilds`) |
 | biome passes locally, fails in CI | `biome ci --error-on-warnings` is stricter than `biome check`; `just lint` uses the CI form |
-| doc-links fails | a renamed or deleted `.md`; `just docs-links` names the file and the target |
+| doc-links fails | a renamed/deleted local target, undefined reference label, or case mismatch; `just docs-links` names the document and target |
 | a build fails on Linux only | a Tauri system dependency; the workflow's `apt-get` list is the reference |
 | `supply-chain` fails and nothing local did | expected: `just pre-push` deliberately omits `just audit`, because both halves reach the network and read advisory databases that change hourly. Run `just audit` to see it |
 | secret range scanning fails | the proposed commit range contains a detector match even if the final worktree is clean; do not print it, rotate a real credential first, then handle history separately |
@@ -1202,21 +1217,26 @@ script, pnpm 11 skips it silently and a fresh `--frozen-lockfile` install then f
 **Toolchain bumps** are their own commit, never bundled with a feature:
 
 ```bash
-# edit rust-toolchain.toml, then prove it
+# edit rust-toolchain.toml and Cargo.toml workspace rust-version together, then prove it
 just lint && just test
 git commit -m "chore(repo): rust 1.98.0                                     [—]"
 ```
 
-The pin exists so a Rust release cannot turn a green build red on a day you are shipping. Same
-discipline for `packageManager` in `package.json` and the Node version in CI.
+This unpublished application promises the compiler it tests; it does not advertise a separate,
+untested MSRV. The structural policy requires `rust-version` to equal the pinned toolchain. Apply
+the same discipline to `packageManager` and to the exact Node/Node-types contract anchored in
+`.nvmrc`.
 
 **Dependency review** is wired locally and in CI. It is deliberately not in `just pre-push`
 because advisory databases change independently of the proposed code:
 
 ```bash
-cargo deny check                # advisories, licences, bans, duplicate versions
-pnpm audit
+just audit   # cargo-deny + reviewed JS licence metadata + pnpm audit
 ```
+
+The JavaScript gate consumes `pnpm licenses list --json` and refuses any expression absent from
+`js-license-policy.json`. Metadata acceptance is not a notice bundle: before external distribution,
+inventory each platform artefact and ship every required third-party licence/source notice.
 
 ---
 
@@ -1232,7 +1252,7 @@ layers and they have different rules:
 | `docs/implementation/ref/*.md` | **Normative.** If the code must deviate, fix the reference in the same commit |
 
 ```bash
-just docs-links       # every relative .md link under docs/ resolves. CI runs it too
+just docs-links       # every local inline/reference target in tracked Markdown resolves
 just verify-schema    # ref/schema.md is executable SQLite and obeys conventions §2
 ```
 
@@ -1498,7 +1518,7 @@ One screen. These are the things that get forgotten, in the order they get forgo
 [ ] the keyboard path for the thing you just built with a mouse
 [ ] the reference doc you contradicted
 [ ] the microstep you proved wrong
-[ ] `just docs-links` after renaming anything under docs/
+[ ] `just docs-links` after renaming any document or linked local target
 [ ] `just guards` after touching .claude/hooks or .claude/rules
 [ ] the manual smoke on a FRESH database, not the one you have been poking at
 [ ] the step number in the commit message

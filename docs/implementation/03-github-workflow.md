@@ -77,6 +77,14 @@ fi
 gh pr merge "$work_pr" --match-head-commit "$work_head" --squash --delete-branch
 ```
 
+`just merge [pr]` performs that complete sequence for ordinary work PRs: it
+canonicalises the PR, refuses promotions/hotfixes/closed PRs, validates the
+head/base route, watches the exact required checks, re-reads both tips and PR
+state, and passes the reviewed head to `--match-head-commit`. It deliberately
+cannot merge a promotion or hotfix because those require merge commits. The
+expanded commands above document the safety contract rather than a second path
+that may omit one of those checks.
+
 Promotion, when `development` has a coherent set of groups and the smoke passes. Put the version
 bump through the normal PR path first; never create an unreviewed commit directly on `staging`:
 
