@@ -26,6 +26,7 @@ EXPECTED_JOBS = %w[protected-paths topology promotion-notice].freeze
 EXPECTED_EVENT_TYPES = %w[opened edited reopened synchronize].freeze
 STATIC_POLICY_PATHS = %w[
   .gitattributes
+  .nvmrc
   .agents/test-skills.py
   .claude/hooks/docs-links-on-write.py
   .claude/hooks/docs-links-on-write.sh
@@ -52,6 +53,7 @@ STATIC_POLICY_PATHS = %w[
   scripts/check-automation-attribution.py
   scripts/check-branch-workflow-policy.rb
   scripts/check-doc-links.sh
+  scripts/check-node-version.py
   scripts/check-domain-acyclic.py
   scripts/check-domain-purity.py
   scripts/check-justfile-policy.py

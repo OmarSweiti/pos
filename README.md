@@ -40,7 +40,8 @@ Requires [Rust](https://rustup.rs) (the pinned toolchain installs itself from
 `rust-toolchain.toml`),
 [`cargo-nextest`](https://nexte.st/docs/installation/pre-built-binaries/),
 [Python 3.11+](https://www.python.org/downloads/),
-[Node.js 22](https://nodejs.org/) (pinned by `.nvmrc` and `package.json`),
+[Node.js 24 LTS](https://nodejs.org/) (pinned to an exact release by `.nvmrc`,
+which CI reads too; `pnpm` refuses another line because `engineStrict` is on),
 [pnpm](https://pnpm.io),
 [just](https://just.systems),
 [`gitleaks`](https://github.com/gitleaks/gitleaks) for content-based secret

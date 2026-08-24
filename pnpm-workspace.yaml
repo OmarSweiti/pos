@@ -11,3 +11,8 @@ packages:
 allowBuilds:
   esbuild: true
   "@tailwindcss/oxide": true
+
+# `engines` in package.json is advisory on its own: pnpm prints a warning and
+# installs anyway. This makes the declared Node range binding, so a machine on
+# the wrong line is refused at install rather than discovered at build.
+engineStrict: true

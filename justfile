@@ -21,8 +21,8 @@ setup:
 setup-tools-check:
     @command -v python3 >/dev/null 2>&1 || { echo "Python 3.11+ is required: https://www.python.org/downloads/" >&2; exit 1; }
     @python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else "Python 3.11+ is required")'
-    @command -v node >/dev/null 2>&1 || { echo "Node.js 22 is required: https://nodejs.org/" >&2; exit 1; }
-    @node -e 'const major=Number(process.versions.node.split(".")[0]); if (major !== 22) { console.error(`Node.js 22 is required; found ${process.versions.node}`); process.exit(1); }'
+    @command -v node >/dev/null 2>&1 || { echo "Node.js is required: https://nodejs.org/" >&2; exit 1; }
+    {{ python }} ./scripts/check-node-version.py
     @command -v cargo >/dev/null 2>&1 || { echo "Rust/cargo is required: https://rustup.rs" >&2; exit 1; }
     @cargo nextest --version >/dev/null 2>&1 || { echo "cargo-nextest is required: https://nexte.st/docs/installation/pre-built-binaries/" >&2; exit 1; }
     @command -v pnpm >/dev/null 2>&1 || { echo "pnpm is required: https://pnpm.io/installation" >&2; exit 1; }
@@ -32,11 +32,22 @@ setup-tools-check:
     if (-not (Get-Command bash -ErrorAction SilentlyContinue)) { Write-Error "Git Bash is required for the committed shell hooks: https://gitforwindows.org/"; exit 1 }
     if (-not (Get-Command py -ErrorAction SilentlyContinue)) { Write-Error "Python 3.11+ with the standard py launcher is required: https://www.python.org/downloads/"; exit 1 }
     py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 'Python 3.11+ is required')"
-    if (-not (Get-Command node -ErrorAction SilentlyContinue)) { Write-Error "Node.js 22 is required: https://nodejs.org/"; exit 1 }
-    node -e "const major=Number(process.versions.node.split('.')[0]); if (major !== 22) { console.error('Node.js 22 is required; found ' + process.versions.node); process.exit(1); }"
+    if (-not (Get-Command node -ErrorAction SilentlyContinue)) { Write-Error "Node.js is required: https://nodejs.org/"; exit 1 }
+    {{ python }} ./scripts/check-node-version.py
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { Write-Error "Rust/cargo is required: https://rustup.rs"; exit 1 }
     cargo nextest --version | Out-Null
     if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) { Write-Error "pnpm is required: https://pnpm.io/installation"; exit 1 }
+
+# Node's pin lives in .nvmrc and nowhere else. CI reads that same file through
+# `node-version-file:`, so a runner and a developer's machine cannot disagree
+# about which Node built the bundle — which is what rust-toolchain.toml already
+# does for Rust, and what nine separate restatements of "22" did not.
+#
+# In `lint`, `test` and `build-web` rather than `setup` alone: the advertised
+# local gate ran Biome, Vitest and tsc without ever checking which Node it was
+# handing them to.
+node-version-check:
+    {{ python }} ./scripts/check-node-version.py
 
 # Branch protection is not available on a private repo on the GitHub Free plan.
 # These hooks are the first local safety net; a machine that has not run this can
@@ -180,11 +191,11 @@ secrets:
     bash ./scripts/scan-secrets.sh --history
 
 # ── deterministic local quality gates (mirrored by CI) ───────────────────
-test:
+test: node-version-check
     cargo nextest run --locked --workspace
     pnpm -r --if-present test
 
-lint:
+lint: node-version-check
     cargo fmt --all --check
     cargo clippy --locked --workspace --all-targets -- -D warnings
     {{ python }} ./scripts/check-workspace-lints.py
@@ -218,6 +229,7 @@ guards:
     {{ python }} ./scripts/check-prop-test-names.py --self-test
     {{ python }} ./scripts/check-domain-purity.py --self-test
     {{ python }} ./scripts/check-workspace-lints.py --self-test
+    {{ python }} ./scripts/check-node-version.py --self-test
     {{ python }} ./scripts/check-justfile-policy.py
     bash ./scripts/watch-pr-checks.sh --self-test
     bash ./scripts/validate-branch-flow.sh --self-test
@@ -234,7 +246,7 @@ guards:
 # `lint` is biome (style) and `test` is vitest, so a TypeScript type error passes
 # both and fails CI's `web` job instead. Mirrors that job's build step.
 # The only place `tsc` runs. Part of `pre-push` for exactly that reason.
-build-web:
+build-web: node-version-check
     pnpm -r --if-present build
 
 # Deterministic local equivalents of the core CI gates. Remote topology,

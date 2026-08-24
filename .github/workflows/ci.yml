@@ -180,6 +180,8 @@ jobs:
         run: bash ./scripts/watch-pr-checks.sh --self-test
       - name: Workspace lint contract still rejects a member that opts out
         run: ./scripts/check-workspace-lints.py --self-test
+      - name: Node version check still rejects a runtime off the pinned line
+        run: ./scripts/check-node-version.py --self-test
       - name: Just recipe arguments remain data rather than shell source
         run: ./scripts/check-justfile-policy.py
       - name: Automation attribution policy still rejects machine trailers
@@ -220,7 +222,7 @@ jobs:
         # Reads "packageManager" from package.json.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm biome ci --error-on-warnings .
@@ -334,7 +336,7 @@ jobs:
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with: { node-version: 22, cache: pnpm }
+        with: { node-version-file: .nvmrc, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - name: npm advisories
         run: pnpm audit --audit-level high
@@ -388,7 +390,7 @@ jobs:
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # Compile and bundle the real desktop application before tag time; unit
