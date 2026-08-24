@@ -64,3 +64,9 @@ updates:
     commit-message:
       prefix: "chore(repo)"
     labels: ["type: chore", "area: repo", "meta: dependencies"]
+    ignore:
+      # A PostgreSQL major upgrade also requires a reviewed data-upgrade plan,
+      # PGDATA/mount review, and matching CI/verifier pins. Keep routine patch
+      # and minor refreshes automatic; move majors deliberately.
+      - dependency-name: "postgres"
+        update-types: ["version-update:semver-major"]

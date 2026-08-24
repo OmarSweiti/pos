@@ -6,10 +6,13 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: pos
+      # PostgreSQL 18's official image stores clusters below a major-version
+      # directory so pg_upgrade can mount old and new data side by side.
+      PGDATA: /var/lib/postgresql/18/docker
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d pos"]
       interval: 5s
