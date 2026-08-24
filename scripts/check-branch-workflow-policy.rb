@@ -8,6 +8,7 @@
 # workflow revision would execute.
 
 require "psych"
+require "json"
 require "fileutils"
 require "find"
 require "open3"
@@ -48,21 +49,24 @@ STATIC_POLICY_PATHS = %w[
   .github/labeler.yml
   .gitleaks.toml
   deny.toml
+  js-license-policy.json
   ruff.toml
-  pnpm-workspace.yaml
   justfile
   scripts/check-automation-attribution.py
   scripts/check-branch-workflow-policy.rb
+  scripts/check-doc-links.py
   scripts/check-doc-links.sh
   scripts/check-node-version.py
   scripts/check-domain-acyclic.py
   scripts/check-domain-purity.py
   scripts/check-justfile-policy.py
+  scripts/check-js-licenses.py
   scripts/check-logical-css.sh
   scripts/check-prop-test-names.py
   scripts/check-protected-paths.sh
   scripts/check-staged-policy.py
   scripts/check-workspace-lints.py
+  scripts/check-web-build-coverage.py
   scripts/gh-bootstrap.sh
   scripts/gh-project.sh
   scripts/gh-actions-policy.sh
@@ -80,6 +84,22 @@ STATIC_POLICY_PATHS = %w[
   scripts/verify-pg-migrations.py
   scripts/verify-schema.py
   scripts/watch-pr-checks.sh
+].freeze
+STRUCTURAL_POLICY_PATHS = %w[
+  .nvmrc
+  Cargo.toml
+  apps/backoffice/package.json
+  apps/terminal/package.json
+  biome.json
+  package.json
+  pnpm-workspace.yaml
+  rust-toolchain.toml
+].freeze
+APPROVED_BIOME_EXCLUSIONS = %w[
+  !**/dist
+  !**/src-tauri
+  !**/node_modules
+  !**/public/**/*.svg
 ].freeze
 WORKFLOW_SUFFIXES = %w[.yml .yaml].freeze
 LOCAL_ACTIONS_PATH = ".github/actions"
@@ -562,6 +582,163 @@ def reject_symlink_components(root, relative, context)
   end
 end
 
+def regular_policy_file(root, relative)
+  reject_symlink_components(root, relative, "structural policy path #{relative}")
+  path = File.join(root, relative)
+  raise PolicyViolation, "structural policy file is missing: #{relative}" unless File.file?(path)
+  raise PolicyViolation, "structural policy file must not be a symbolic link: #{relative}" if File.symlink?(path)
+
+  path
+end
+
+def json_policy_file(root, relative)
+  parsed = JSON.parse(File.read(regular_policy_file(root, relative)))
+  unless parsed.is_a?(Hash)
+    raise PolicyViolation, "#{relative} must contain a top-level JSON object"
+  end
+
+  parsed
+rescue JSON::ParserError => error
+  raise PolicyViolation, "#{relative} is invalid JSON: #{error.message}"
+end
+
+def yaml_policy_file(root, relative)
+  path = regular_policy_file(root, relative)
+  document = Psych.parse_file(path)
+  raise PolicyViolation, "#{relative} is empty" unless document&.root
+  walk(document) do |node|
+    if node.is_a?(Psych::Nodes::Alias)
+      raise PolicyViolation, "#{relative} must not use YAML aliases"
+    end
+  end
+  parsed = Psych.safe_load_file(path, aliases: false)
+  unless parsed.is_a?(Hash)
+    raise PolicyViolation, "#{relative} must contain a top-level YAML mapping"
+  end
+
+  parsed
+rescue Psych::Exception => error
+  raise PolicyViolation, "#{relative} is invalid YAML: #{error.message}"
+end
+
+def toml_string(root, relative, section, key)
+  path = regular_policy_file(root, relative)
+  current_section = nil
+  matches = []
+  File.foreach(path).with_index(1) do |line, line_number|
+    if (heading = line.match(/^\s*\[([^\]]+)\]\s*(?:#.*)?$/))
+      current_section = heading[1]
+      next
+    end
+    next unless current_section == section
+    next unless line.match?(/^\s*#{Regexp.escape(key)}\s*=/)
+
+    value = line.match(/^\s*#{Regexp.escape(key)}\s*=\s*"([^"]+)"\s*(?:#.*)?$/)
+    unless value
+      raise PolicyViolation,
+            "#{relative} [#{section}].#{key} must be one plain quoted string (line #{line_number})"
+    end
+    matches << value[1]
+  end
+  unless matches.length == 1
+    raise PolicyViolation,
+          "#{relative} must declare [#{section}].#{key} exactly once; found #{matches.length}"
+  end
+
+  matches.first
+end
+
+def validate_repository_configuration(root)
+  STRUCTURAL_POLICY_PATHS.each { |relative| regular_policy_file(root, relative) }
+
+  node_version = File.read(regular_policy_file(root, ".nvmrc")).strip
+  unless node_version.match?(/\A(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\z/)
+    raise PolicyViolation, ".nvmrc must contain one exact Node semantic version"
+  end
+
+  package = json_policy_file(root, "package.json")
+  package_manager = package["packageManager"]
+  unless package_manager.is_a?(String) &&
+         package_manager.match?(/\Apnpm@(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\z/)
+    raise PolicyViolation, "package.json packageManager must pin one exact pnpm version"
+  end
+  unless package.dig("engines", "node") == node_version
+    raise PolicyViolation, "package.json engines.node must exactly equal .nvmrc (#{node_version})"
+  end
+  unless package.dig("scripts", "lint") == "biome ci --error-on-warnings ."
+    raise PolicyViolation, "package.json scripts.lint must keep Biome fail-closed on warnings"
+  end
+  unless package.dig("scripts", "build:web") == "just build-web"
+    raise PolicyViolation,
+          "package.json scripts.build:web must route through the checked just build-web gate"
+  end
+
+  pnpm = yaml_policy_file(root, "pnpm-workspace.yaml")
+  unless pnpm["nodeVersion"].to_s == node_version
+    raise PolicyViolation, "pnpm-workspace.yaml nodeVersion must exactly equal .nvmrc (#{node_version})"
+  end
+  unless pnpm["engineStrict"] == true
+    raise PolicyViolation, "pnpm-workspace.yaml engineStrict must remain true"
+  end
+  expected_workspace_patterns = ["apps/terminal", "apps/backoffice", "packages/*"]
+  unless pnpm["packages"] == expected_workspace_patterns
+    raise PolicyViolation,
+          "pnpm-workspace.yaml packages must remain #{expected_workspace_patterns.inspect}"
+  end
+  expected_build_allowlist = {
+    "esbuild" => true,
+    "@tailwindcss/oxide" => true
+  }
+  unless pnpm["allowBuilds"] == expected_build_allowlist
+    raise PolicyViolation,
+          "pnpm-workspace.yaml allowBuilds must remain the reviewed #{expected_build_allowlist.inspect}"
+  end
+  types_node = pnpm.dig("overrides", "@types/node")
+  unless types_node.is_a?(String) &&
+         types_node.match?(/\A(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\z/) &&
+         types_node.split(".").first == node_version.split(".").first
+    raise PolicyViolation,
+          "pnpm-workspace.yaml @types/node override must be an exact release on Node #{node_version.split('.').first}"
+  end
+  %w[apps/backoffice/package.json apps/terminal/package.json].each do |relative|
+    manifest = json_policy_file(root, relative)
+    unless manifest.dig("devDependencies", "@types/node") == types_node
+      raise PolicyViolation,
+            "#{relative} devDependencies.@types/node must equal the workspace override #{types_node.inspect}"
+    end
+  end
+
+  biome = json_policy_file(root, "biome.json")
+  unless biome.dig("linter", "enabled") == true &&
+         biome.dig("linter", "rules", "preset") == "recommended"
+    raise PolicyViolation, "biome.json must keep the recommended linter enabled"
+  end
+  includes = biome.dig("files", "includes")
+  unless includes.is_a?(Array) && includes.all? { |entry| entry.is_a?(String) }
+    raise PolicyViolation, "biome.json files.includes must be a string array"
+  end
+  %w[apps/** packages/**].each do |required|
+    unless includes.include?(required)
+      raise PolicyViolation, "biome.json files.includes must cover #{required}"
+    end
+  end
+  unreviewed_exclusions = includes.grep(/\A!/) - APPROVED_BIOME_EXCLUSIONS
+  unless unreviewed_exclusions.empty?
+    raise PolicyViolation,
+          "biome.json contains unreviewed coverage exclusions: #{unreviewed_exclusions.inspect}"
+  end
+
+  rust_version = toml_string(root, "Cargo.toml", "workspace.package", "rust-version")
+  toolchain = toml_string(root, "rust-toolchain.toml", "toolchain", "channel")
+  unless rust_version.match?(/\A(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\z/)
+    raise PolicyViolation, "Cargo workspace rust-version must be one exact stable compiler version"
+  end
+  unless rust_version == toolchain
+    raise PolicyViolation,
+          "Cargo workspace rust-version #{rust_version.inspect} must equal rust-toolchain channel #{toolchain.inspect}"
+  end
+end
+
 def workflow_policy_paths(root)
   relative_directory = ".github/workflows"
   reject_symlink_components(root, relative_directory, "workflow policy directory")
@@ -830,6 +1007,7 @@ def validate_candidate(
     validate_revision_policy(trusted_revision, candidate_revision)
   end
   validate_pinned_policy(trusted_root, candidate_root)
+  validate_repository_configuration(candidate_root)
   reject_symlink_components(
     candidate_root,
     ".github/workflows/branch-flow.yml",
@@ -992,6 +1170,12 @@ def self_test(default_path)
       FileUtils.mkdir_p(File.dirname(destination))
       FileUtils.cp(source, destination, preserve: true)
     end
+    (STRUCTURAL_POLICY_PATHS - policy_paths).each do |relative|
+      source = File.join(trusted_root, relative)
+      destination = File.join(candidate_root, relative)
+      FileUtils.mkdir_p(File.dirname(destination))
+      FileUtils.cp(source, destination, preserve: true)
+    end
 
     if check_candidate(trusted_root, candidate_root, quiet: true)
       puts "  ok    unchanged candidate policy blobs match the trusted workflow revision"
@@ -999,6 +1183,85 @@ def self_test(default_path)
     else
       puts "  FAIL  unchanged candidate policy blobs match the trusted workflow revision"
       failed += 1
+    end
+
+    self_node_version = File.read(File.join(trusted_root, ".nvmrc")).strip
+    self_rust_version = toml_string(
+      trusted_root, "Cargo.toml", "workspace.package", "rust-version"
+    )
+    self_package_manager = json_policy_file(trusted_root, "package.json")["packageManager"]
+    self_node_major = self_node_version.split(".").first
+    self_types_node = yaml_policy_file(
+      trusted_root, "pnpm-workspace.yaml"
+    ).dig("overrides", "@types/node").to_s
+    structural_cases = {
+      "package manager cannot become mutable" => [
+        "package.json", "\"packageManager\": \"#{self_package_manager}\"",
+        '"packageManager": "pnpm@latest"'
+      ],
+      "Node engine cannot drift from .nvmrc" => [
+        "package.json", "\"node\": \"#{self_node_version}\"", '"node": "0.0.0"'
+      ],
+      "the root Biome lint script cannot become fail-open" => [
+        "package.json", '"lint": "biome ci --error-on-warnings ."',
+        '"lint": "biome check . || true"'
+      ],
+      "recursive web builds cannot skip missing scripts" => [
+        "package.json", '"build:web": "just build-web"',
+        '"build:web": "pnpm -r build"'
+      ],
+      "pnpm Node resolution cannot drift from .nvmrc" => [
+        "pnpm-workspace.yaml", "nodeVersion: #{self_node_version}", "nodeVersion: 0.0.0"
+      ],
+      "dependency engine checks cannot become advisory" => [
+        "pnpm-workspace.yaml", "engineStrict: true", "engineStrict: false"
+      ],
+      "workspace coverage cannot omit the terminal app" => [
+        "pnpm-workspace.yaml", "  - apps/terminal\n", ""
+      ],
+      "dependency build scripts cannot gain unreviewed execution" => [
+        "pnpm-workspace.yaml", "  esbuild: true", "  esbuild: false"
+      ],
+      "Node declarations cannot compile against a different major" => [
+        "pnpm-workspace.yaml", "\"@types/node\": #{self_node_major}.",
+        "\"@types/node\": #{self_node_major.to_i + 1}."
+      ],
+      "app Node declarations cannot drift from the workspace override" => [
+        "apps/terminal/package.json", "\"@types/node\": \"#{self_types_node}\"",
+        '"@types/node": "0.0.0"'
+      ],
+      "Biome linting cannot be disabled" => [
+        "biome.json", "\"linter\": {\n    \"enabled\": true",
+        "\"linter\": {\n    \"enabled\": false"
+      ],
+      "Biome cannot exclude an application tree" => [
+        "biome.json", '"apps/**",', '"apps/**",\n      "!apps/**",'
+      ],
+      "Biome cannot hide future code in public directories" => [
+        "biome.json", '"!**/public/**/*.svg"', '"!**/public"'
+      ],
+      "Cargo's compiler contract cannot drift below the tested toolchain" => [
+        "Cargo.toml", "rust-version = \"#{self_rust_version}\"", 'rust-version = "0.0.0"'
+      ]
+    }
+    structural_cases.each do |label, (relative, needle, replacement)|
+      candidate_policy = File.join(candidate_root, relative)
+      original = File.read(candidate_policy)
+      mutated = original.sub(needle, replacement)
+      if mutated == original
+        puts "  FAIL  structural fixture mutation did not apply: #{label}"
+        failed += 1
+        next
+      end
+      File.write(candidate_policy, mutated)
+      if check_candidate(trusted_root, candidate_root, quiet: true)
+        puts "  FAIL  #{label}"
+        failed += 1
+      else
+        puts "  ok    #{label}"
+        passed += 1
+      end
+      File.write(candidate_policy, original)
     end
 
     discoverable_additions = {
