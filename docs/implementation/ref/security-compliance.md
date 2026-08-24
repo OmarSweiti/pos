@@ -190,7 +190,8 @@ It sits in front of **every** sink: stdout, file, and Sentry.
 - The SQLCipher key lives in the OS credential store. `POS_DB_KEY` works in debug and is **refused in release** with a named error (microstep 1.8.5).
 - JoFotara credentials live in the keyring; the database stores only a pointer and a four-character hint for the diagnostics screen.
 - Updater private keys are in GitHub secrets, never the repository. Verified by `git log -p | rg 'PRIVATE KEY'` and a pre-commit hook.
-- `cargo audit`, `cargo deny`, and `pnpm audit` run in CI with a dated allowlist for accepted advisories.
+- Cargo-deny, the reviewed JavaScript licence-metadata gate, and `pnpm audit` run in CI; accepted
+  advisories require a dated, reasoned exception, and distribution still requires a real notice audit.
 
 ---
 

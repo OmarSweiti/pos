@@ -11,8 +11,8 @@ Two passes, deliberately separable:
   1. The MAPPING audit. Needs no database, so it runs in `just lint` and on every
      CI job. sqlx names its files with a timestamp, so a Postgres migration cannot
      carry the same number as the SQLite one it mirrors — which is exactly why the
-     mapping has to be written down instead of inferred from a filename. Every
-     Files must use unique, strictly increasing
+     mapping has to be written down instead of inferred from a filename. Files
+     must use unique, strictly increasing
      ``<14-digit UTC timestamp>_<lower_snake>.sql`` versions. Every file in
      apps/server/migrations/ must also declare, in a comment, either
 
@@ -68,6 +68,10 @@ PG_IMAGE = (
     "postgres:18-alpine@sha256:"
     "d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2"
 )
+PGDATA = f"/var/lib/postgresql/{PG_MAJOR}/docker"
+PG_VOLUME_ROOT = "/var/lib/postgresql"
+PG_VOLUME_SPEC = f"pgdata:{PG_VOLUME_ROOT}"
+SERVER_VERSION_QUERY = "SHOW server_version_num"
 
 MIRROR_DECLARATION = re.compile(
     r"^mirrors\s+sqlite\s+(\d{4}_[a-z0-9_]+\.sql)"
@@ -88,6 +92,8 @@ YAML_BLOCK_KEY = re.compile(
     r"|'(?:[^']|'')*'"
     r"|[A-Za-z0-9_.-]+)[ \t]*:(?:[ \t]*(?P<value>.*))?$"
 )
+YAML_SEQUENCE_ITEM = re.compile(r"^(?P<indent> *)-[ \t]+(?P<value>.*)$")
+DOLLAR_QUOTE = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")
 
 # Postgres migrations that predate this audit. They are committed, so they cannot
 # be edited to carry the declaration the rule now requires (conventions §9) — the
@@ -435,6 +441,132 @@ def audit_image_text(report: Report, text: str, surface: str, label: str) -> Non
         )
 
 
+def compose_pg18_layout_errors(text: str) -> list[str]:
+    """Audit the version-aware data layout required by PostgreSQL 18 images.
+
+    PostgreSQL 18 moved the image's default cluster below
+    ``/var/lib/postgresql/<major>/docker`` and recommends mounting the parent
+    ``/var/lib/postgresql`` directory. This strict, small YAML lexer keeps the
+    policy dependency-free and ensures a matching-looking scalar elsewhere in
+    the file cannot satisfy the check.
+    """
+    parents: list[tuple[int, str]] = []
+    service_count = 0
+    environment_count = 0
+    service_volumes_count = 0
+    named_volume_count = 0
+    pgdata_values: list[str | None] = []
+    service_volumes: list[str | None] = []
+    errors: list[str] = []
+
+    for line_number, source_line in enumerate(text.splitlines(), start=1):
+        line = strip_yaml_comment(source_line)
+        if not line.strip():
+            continue
+
+        indent = len(line) - len(line.lstrip(" "))
+        while parents and indent <= parents[-1][0]:
+            parents.pop()
+        parent_path = tuple(parent_key for _, parent_key in parents)
+
+        sequence = YAML_SEQUENCE_ITEM.fullmatch(line)
+        if sequence is not None:
+            if parent_path == ("services", "postgres", "volumes"):
+                service_volumes.append(direct_yaml_scalar(sequence.group("value")))
+            elif parent_path in {
+                ("services", "postgres", "environment"),
+                ("volumes", "pgdata"),
+            }:
+                errors.append(
+                    f"line {line_number}: PostgreSQL layout must use the "
+                    "reviewed mapping/list shape"
+                )
+            continue
+
+        match = YAML_BLOCK_KEY.fullmatch(line)
+        if match is None:
+            if parent_path in {
+                ("services", "postgres"),
+                ("services", "postgres", "environment"),
+                ("services", "postgres", "volumes"),
+                ("volumes",),
+                ("volumes", "pgdata"),
+            }:
+                errors.append(
+                    f"line {line_number}: unsupported YAML construct in the "
+                    "PostgreSQL storage layout"
+                )
+            continue
+
+        key = direct_yaml_scalar(match.group("key"))
+        if key is None:
+            errors.append(f"line {line_number}: YAML mapping key is not direct")
+            continue
+        raw_value = match.group("value") or ""
+        key_path = parent_path + (key,)
+
+        if key_path == ("services", "postgres"):
+            service_count += 1
+            if raw_value.strip():
+                errors.append(
+                    f"line {line_number}: services.postgres must be a block mapping"
+                )
+        elif key_path == ("services", "postgres", "environment"):
+            environment_count += 1
+            if raw_value.strip():
+                errors.append(
+                    f"line {line_number}: services.postgres.environment must be "
+                    "a block mapping"
+                )
+        elif key_path == (
+            "services",
+            "postgres",
+            "environment",
+            "PGDATA",
+        ):
+            pgdata_values.append(direct_yaml_scalar(raw_value))
+        elif key_path == ("services", "postgres", "volumes"):
+            service_volumes_count += 1
+            if raw_value.strip():
+                errors.append(
+                    f"line {line_number}: services.postgres.volumes must be a list"
+                )
+        elif key_path == ("volumes", "pgdata"):
+            named_volume_count += 1
+            if raw_value.strip():
+                errors.append(
+                    f"line {line_number}: volumes.pgdata must be a block mapping"
+                )
+
+        parents.append((indent, key))
+
+    if service_count != 1:
+        errors.append("services.postgres must occur exactly once")
+    if environment_count != 1:
+        errors.append("services.postgres.environment must occur exactly once")
+    if pgdata_values != [PGDATA]:
+        errors.append(
+            "services.postgres.environment.PGDATA must occur exactly once and "
+            f"equal {PGDATA!r}; found {pgdata_values!r}"
+        )
+    if service_volumes_count != 1:
+        errors.append("services.postgres.volumes must occur exactly once")
+    if service_volumes != [PG_VOLUME_SPEC]:
+        errors.append(
+            "services.postgres.volumes must contain exactly the reviewed "
+            f"PostgreSQL {PG_MAJOR} mount {PG_VOLUME_SPEC!r}; "
+            f"found {service_volumes!r}"
+        )
+    if named_volume_count != 1:
+        errors.append("the top-level pgdata named volume must occur exactly once")
+    return errors
+
+
+def audit_compose_pg18_layout(report: Report, text: str, label: str) -> None:
+    for error in compose_pg18_layout_errors(text):
+        report.fail(f"{label} {error}")
+
+
 def audit_image_pin(report: Report) -> None:
     """Keep every PostgreSQL test surface on one immutable image manifest."""
     if IMAGE_PIN.fullmatch(PG_IMAGE) is None:
@@ -448,6 +580,8 @@ def audit_image_pin(report: Report) -> None:
             report.fail(f"cannot read {rel(path)} to verify the Postgres image: {exc}")
             continue
         audit_image_text(report, text, surface, rel(path))
+        if surface == "compose":
+            audit_compose_pg18_layout(report, text, rel(path))
 
 
 def substantive_policy_reason(value: object) -> bool:
@@ -506,6 +640,143 @@ def audit_register_local_policy(
     return valid
 
 
+def _escape_string_prefix(sql: str, quote_index: int) -> bool:
+    """Whether a quote begins PostgreSQL's ``E'...'`` string form."""
+    if quote_index == 0 or sql[quote_index - 1] not in {"e", "E"}:
+        return False
+    prefix_index = quote_index - 2
+    return prefix_index < 0 or not (
+        sql[prefix_index].isalnum() or sql[prefix_index] in {"_", "$"}
+    )
+
+
+def executable_psql_meta_commands(sql: str) -> list[tuple[int, int]]:
+    """Locate backslash commands that psql can execute outside SQL literals.
+
+    psql interprets an unquoted backslash as a client-side command, including
+    dangerous forms such as ``\\!``, ``\\include``, ``\\connect``, and
+    ``\\gexec``. A plain line regex would also flag inert text in a function
+    body, string, quoted identifier, or comment, so this scanner tracks the
+    PostgreSQL lexical states that can legitimately contain backslashes.
+    """
+    locations: list[tuple[int, int]] = []
+    state = "normal"
+    block_depth = 0
+    dollar_delimiter = ""
+    index = 0
+
+    while index < len(sql):
+        if state == "line-comment":
+            if sql[index] == "\n":
+                state = "normal"
+            index += 1
+            continue
+
+        if state == "block-comment":
+            if sql.startswith("/*", index):
+                block_depth += 1
+                index += 2
+            elif sql.startswith("*/", index):
+                block_depth -= 1
+                index += 2
+                if block_depth == 0:
+                    state = "normal"
+            else:
+                index += 1
+            continue
+
+        if state == "single-quote":
+            if sql.startswith("''", index):
+                index += 2
+            elif sql[index] == "'":
+                state = "normal"
+                index += 1
+            else:
+                index += 1
+            continue
+
+        if state == "escape-string":
+            if sql[index] == "\\" and index + 1 < len(sql):
+                index += 2
+            elif sql.startswith("''", index):
+                index += 2
+            elif sql[index] == "'":
+                state = "normal"
+                index += 1
+            else:
+                index += 1
+            continue
+
+        if state == "double-quote":
+            if sql.startswith('""', index):
+                index += 2
+            elif sql[index] == '"':
+                state = "normal"
+                index += 1
+            else:
+                index += 1
+            continue
+
+        if state == "dollar-quote":
+            if sql.startswith(dollar_delimiter, index):
+                index += len(dollar_delimiter)
+                dollar_delimiter = ""
+                state = "normal"
+            else:
+                index += 1
+            continue
+
+        if sql.startswith("--", index):
+            state = "line-comment"
+            index += 2
+        elif sql.startswith("/*", index):
+            state = "block-comment"
+            block_depth = 1
+            index += 2
+        elif sql[index] == "'":
+            state = (
+                "escape-string" if _escape_string_prefix(sql, index) else "single-quote"
+            )
+            index += 1
+        elif sql[index] == '"':
+            state = "double-quote"
+            index += 1
+        elif sql[index] == "$":
+            match = DOLLAR_QUOTE.match(sql, index)
+            has_identifier_prefix = index > 0 and (
+                sql[index - 1].isalnum() or sql[index - 1] in {"_", "$"}
+            )
+            if match is not None and not has_identifier_prefix:
+                dollar_delimiter = match.group(0)
+                state = "dollar-quote"
+                index = match.end()
+            else:
+                index += 1
+        elif sql[index] == "\\":
+            line = sql.count("\n", 0, index) + 1
+            previous_newline = sql.rfind("\n", 0, index)
+            column = index - previous_newline
+            locations.append((line, column))
+            index += 1
+        else:
+            index += 1
+
+    return locations
+
+
+def audit_psql_meta_commands(report: Report, path: Path, sql: str) -> None:
+    locations = executable_psql_meta_commands(sql)
+    if not locations:
+        return
+    line, column = locations[0]
+    suffix = "" if len(locations) == 1 else f" (and {len(locations) - 1} more)"
+    report.fail(
+        f"{rel(path)} contains executable psql backslash-command syntax at "
+        f"line {line}, column {column}{suffix}. Migrations must contain SQL only; "
+        "psql meta-commands can escape the scratch database and are forbidden."
+    )
+
+
 def audit_mapping(report: Report, verbose: bool = False) -> dict[str, str]:
     """Check every declaration both ways. Returns Postgres file → SQLite file."""
     claimed: dict[str, str] = {}
@@ -519,6 +790,7 @@ def audit_mapping(report: Report, verbose: bool = False) -> dict[str, str]:
 
     for path in pg_paths:
         text = path.read_text(encoding="utf-8", errors="replace")
+        audit_psql_meta_commands(report, path, text)
         declarations = mapping_declarations(text)
         if len(declarations) > 1:
             report.fail(
@@ -582,6 +854,117 @@ def scratch_url(base: str, database: str) -> str:
     return urlunsplit(parts._replace(path=f"/{database}"))
 
 
+def local_psql_command(database_url: str, *arguments: str) -> list[str]:
+    """Build an isolated local psql invocation.
+
+    ``-X`` prevents a developer's ``~/.psqlrc`` from changing verifier
+    behavior or running commands outside the disposable database.
+    """
+    return ["psql", "-X", "--dbname", database_url, *arguments]
+
+
+def docker_psql_command(
+    container: str, *arguments: str, interactive: bool = False
+) -> list[str]:
+    command = ["docker", "exec"]
+    if interactive:
+        command.append("-i")
+    command.extend([container, "psql", "-X", *arguments])
+    return command
+
+
+def postgres_major_from_version_num(output: str) -> int | None:
+    """Parse PostgreSQL's numeric server version without accepting noise."""
+    normalized = output.strip()
+    if re.fullmatch(r"[0-9]+", normalized) is None:
+        return None
+    version_num = int(normalized)
+    if version_num < 10_000:
+        return None
+    return version_num // 10_000
+
+
+def server_major_result_is_expected(
+    result: subprocess.CompletedProcess[str], report: Report, label: str
+) -> bool:
+    if result.returncode != 0:
+        detail = (
+            result.stderr.strip()
+            or result.stdout.strip()
+            or f"exit status {result.returncode}"
+        )
+        report.fail(f"could not determine {label} PostgreSQL server version: {detail}")
+        return False
+
+    major = postgres_major_from_version_num(result.stdout)
+    if major is None:
+        report.fail(
+            f"{label} returned an invalid server_version_num value: "
+            f"{result.stdout.strip()!r}"
+        )
+        return False
+    if major != PG_MAJOR:
+        report.fail(
+            f"{label} is PostgreSQL major {major}; this verifier requires exactly "
+            f"major {PG_MAJOR}"
+        )
+        return False
+    return True
+
+
+def probe_local_server_major(
+    base_url: str,
+    report: Report,
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> bool:
+    execute = run if runner is None else runner
+    try:
+        result = execute(
+            local_psql_command(
+                base_url,
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-qAt",
+                "-c",
+                SERVER_VERSION_QUERY,
+            ),
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        report.fail(f"could not determine external target PostgreSQL version: {exc}")
+        return False
+    return server_major_result_is_expected(result, report, "external target")
+
+
+def probe_docker_server_major(
+    container: str,
+    database: str,
+    report: Report,
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> bool:
+    execute = run if runner is None else runner
+    try:
+        result = execute(
+            docker_psql_command(
+                container,
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-qAt",
+                "-U",
+                "postgres",
+                "-d",
+                database,
+                "-c",
+                SERVER_VERSION_QUERY,
+            ),
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        report.fail(f"could not determine Docker target PostgreSQL version: {exc}")
+        return False
+    return server_major_result_is_expected(result, report, "Docker target")
+
+
 def psql_transaction_options(sql: str) -> list[str]:
     """Return the psql option matching SQLx 0.9's per-file transaction mode.
 
@@ -596,17 +979,19 @@ def psql_transaction_options(sql: str) -> list[str]:
 
 def apply_with_psql(base_url: str, verbose: bool, report: Report) -> bool:
     """Apply every migration to a freshly created scratch database. True if run."""
+    if not probe_local_server_major(base_url, report):
+        return True
+
     database = scratch_database_name()
     created = run(
-        [
-            "psql",
+        local_psql_command(
             base_url,
             "-v",
             "ON_ERROR_STOP=1",
             "-q",
             "-c",
             f'CREATE DATABASE "{database}"',
-        ]
+        )
     )
     if created.returncode != 0:
         report.fail(f"could not create the scratch database: {created.stderr.strip()}")
@@ -617,8 +1002,7 @@ def apply_with_psql(base_url: str, verbose: bool, report: Report) -> bool:
         for path in pg_migrations():
             sql = path.read_text(encoding="utf-8")
             done = run(
-                [
-                    "psql",
+                local_psql_command(
                     target,
                     "-v",
                     "ON_ERROR_STOP=1",
@@ -626,7 +1010,7 @@ def apply_with_psql(base_url: str, verbose: bool, report: Report) -> bool:
                     *psql_transaction_options(sql),
                     "-f",
                     str(path),
-                ],
+                ),
                 timeout=180,
             )
             if done.returncode != 0:
@@ -638,15 +1022,14 @@ def apply_with_psql(base_url: str, verbose: bool, report: Report) -> bool:
                 print(f"  applied {path.name}")
     finally:
         cleanup = run(
-            [
-                "psql",
+            local_psql_command(
                 base_url,
                 "-v",
                 "ON_ERROR_STOP=1",
                 "-q",
                 "-c",
                 f'DROP DATABASE IF EXISTS "{database}" WITH (FORCE)',
-            ]
+            )
         )
         if cleanup.returncode != 0:
             report.fail(
@@ -695,12 +1078,8 @@ def wait_for_docker_database(
         raise ValueError("Docker database readiness needs at least one attempt")
 
     execute = run if runner is None else runner
-    command = [
-        "docker",
-        "exec",
+    command = docker_psql_command(
         name,
-        "psql",
-        "-X",
         "-v",
         "ON_ERROR_STOP=1",
         "-qAt",
@@ -710,7 +1089,7 @@ def wait_for_docker_database(
         database,
         "-c",
         "SELECT 1",
-    ]
+    )
     last_detail = "no diagnostic output"
     for attempt in range(1, attempts + 1):
         try:
@@ -763,16 +1142,14 @@ def apply_with_docker(verbose: bool, report: Report) -> bool:
     try:
         if not wait_for_docker_database(name, database, report):
             return True
+        if not probe_docker_server_major(name, database, report):
+            return True
 
         for path in pg_migrations():
             sql = path.read_text(encoding="utf-8")
             done = run(
-                [
-                    "docker",
-                    "exec",
-                    "-i",
+                docker_psql_command(
                     name,
-                    "psql",
                     "-v",
                     "ON_ERROR_STOP=1",
                     "-q",
@@ -783,7 +1160,8 @@ def apply_with_docker(verbose: bool, report: Report) -> bool:
                     *psql_transaction_options(sql),
                     "-f",
                     "-",
-                ],
+                    interactive=True,
+                ),
                 stdin=sql,
                 timeout=180,
             )
@@ -866,6 +1244,14 @@ def self_test() -> int:
          {"20260101000000_a.sql":
           "-- Mirrors SQLite 0001_init.sql\n-- Server-only: contradictory.\nSELECT 1;\n"},
          {"0001_init.sql": "SELECT 1;\n"}, True),
+        ("an executable psql meta-command fails the mapping audit",
+         {"20260101000000_a.sql":
+          "-- Mirrors SQLite 0001_init.sql\nSELECT 1; \\gexec\n"},
+         {"0001_init.sql": "SELECT 1;\n"}, True),
+        ("inert psql-like text in a dollar quote passes the mapping audit",
+         {"20260101000000_a.sql":
+          "-- Mirrors SQLite 0001_init.sql\nSELECT $body$\\! inert$body$;\n"},
+         {"0001_init.sql": "SELECT 1;\n"}, False),
     ]
     register_local_cases: list[
         tuple[
@@ -997,6 +1383,44 @@ def self_test() -> int:
         print(f"  {'ok  ' if passed else 'FAIL'}  {label}")
         failures += not passed
 
+    meta_command_cases = (
+        (
+            "a psql shell command is rejected",
+            "SELECT 1;\n\\! touch outside-scratch\n",
+            True,
+        ),
+        (
+            "a psql include command is rejected",
+            "  \\ir /tmp/unreviewed.sql\n",
+            True,
+        ),
+        (
+            "an inline psql command is rejected",
+            "SELECT format('DROP TABLE %I', name) \\gexec\n",
+            True,
+        ),
+        (
+            "backslashes in SQL strings and quoted identifiers are inert",
+            "SELECT '\\! inert', E'\\\\connect inert', \"\\\\identifier\";\n",
+            False,
+        ),
+        (
+            "backslashes in line and nested block comments are inert",
+            "-- \\! inert\n/* \\include inert /* \\connect inert */ */\nSELECT 1;\n",
+            False,
+        ),
+        (
+            "backslashes in dollar-quoted function bodies are inert",
+            "DO $body$\nBEGIN\n  RAISE NOTICE '\\! inert';\nEND\n$body$;\n",
+            False,
+        ),
+    )
+    for label, sql, want_failure in meta_command_cases:
+        got_failure = bool(executable_psql_meta_commands(sql))
+        passed = got_failure == want_failure
+        print(f"  {'ok  ' if passed else 'FAIL'}  {label}")
+        failures += not passed
+
     compose_ok = (
         "services:\n"
         "  postgres:\n"
@@ -1121,6 +1545,55 @@ def self_test() -> int:
         print(f"  {'ok  ' if passed else 'FAIL'}  {label}")
         failures += not passed
 
+    compose_layout_ok = (
+        "services:\n"
+        "  postgres:\n"
+        "    environment:\n"
+        f"      PGDATA: {PGDATA}\n"
+        "    volumes:\n"
+        f"      - {PG_VOLUME_SPEC}\n"
+        "volumes:\n"
+        "  pgdata:\n"
+    )
+    compose_layout_cases = (
+        (
+            "the PostgreSQL 18 PGDATA and parent mount pass",
+            compose_layout_ok,
+            False,
+        ),
+        (
+            "the pre-PostgreSQL-18 data-directory mount fails",
+            compose_layout_ok.replace(
+                PG_VOLUME_SPEC, "pgdata:/var/lib/postgresql/data"
+            ),
+            True,
+        ),
+        (
+            "a stale PGDATA major directory fails",
+            compose_layout_ok.replace(PGDATA, "/var/lib/postgresql/17/docker"),
+            True,
+        ),
+        (
+            "a missing explicit PGDATA fails",
+            compose_layout_ok.replace(f"      PGDATA: {PGDATA}\n", ""),
+            True,
+        ),
+        (
+            "matching storage text outside the Postgres service cannot mask drift",
+            compose_layout_ok.replace(
+                f"      - {PG_VOLUME_SPEC}\n",
+                "      - pgdata:/var/lib/postgresql/data\n",
+            )
+            + f"x-decoy: {PG_VOLUME_SPEC}\n",
+            True,
+        ),
+    )
+    for label, text, want_failure in compose_layout_cases:
+        got_failure = bool(compose_pg18_layout_errors(text))
+        passed = got_failure == want_failure
+        print(f"  {'ok  ' if passed else 'FAIL'}  {label}")
+        failures += not passed
+
     names = {scratch_database_name() for _ in range(20)}
     safe_names = len(names) == 20 and all(
         re.fullmatch(r"[a-z][a-z0-9_]{0,62}", name) for name in names
@@ -1143,6 +1616,101 @@ def self_test() -> int:
     else:
         print("  FAIL  scratch URL preserves connection options")
         failures += 1
+
+    version_number_cases = (
+        ("180000\n", PG_MAJOR),
+        ("180123", PG_MAJOR),
+        ("17\n18", None),
+        ("PostgreSQL 18", None),
+        ("9999", None),
+    )
+    version_parser_ok = all(
+        postgres_major_from_version_num(output) == expected
+        for output, expected in version_number_cases
+    )
+    print(
+        f"  {'ok  ' if version_parser_ok else 'FAIL'}  "
+        "server_version_num parsing rejects malformed or noisy output"
+    )
+    failures += not version_parser_ok
+
+    local_major_report = Report()
+    local_major_calls: list[list[str]] = []
+
+    def wrong_local_major(argv, **_kwargs):
+        local_major_calls.append(argv)
+        return subprocess.CompletedProcess(
+            argv, returncode=0, stdout="170009\n", stderr=""
+        )
+
+    local_major_ok = probe_local_server_major(
+        "postgresql://localhost/postgres",
+        local_major_report,
+        runner=wrong_local_major,
+    )
+    local_major_rejected = (
+        not local_major_ok
+        and len(local_major_calls) == 1
+        and local_major_calls[0][:2] == ["psql", "-X"]
+        and local_major_calls[0][-2:] == ["-c", SERVER_VERSION_QUERY]
+        and any(
+            f"requires exactly major {PG_MAJOR}" in message
+            for message in local_major_report.failures
+        )
+    )
+    print(
+        f"  {'ok  ' if local_major_rejected else 'FAIL'}  "
+        "an external server on the wrong major is rejected with isolated psql"
+    )
+    failures += not local_major_rejected
+
+    docker_major_report = Report()
+    docker_major_calls: list[list[str]] = []
+
+    def wrong_docker_major(argv, **_kwargs):
+        docker_major_calls.append(argv)
+        return subprocess.CompletedProcess(
+            argv, returncode=0, stdout="190001\n", stderr=""
+        )
+
+    docker_major_ok = probe_docker_server_major(
+        "pos-pg-verify-fixture",
+        "pos_migration_check_fixture",
+        docker_major_report,
+        runner=wrong_docker_major,
+    )
+    docker_command = docker_major_calls[0] if docker_major_calls else []
+    docker_psql_index = docker_command.index("psql") if "psql" in docker_command else -1
+    docker_major_rejected = (
+        not docker_major_ok
+        and len(docker_major_calls) == 1
+        and docker_psql_index >= 0
+        and docker_command[docker_psql_index + 1 : docker_psql_index + 2] == ["-X"]
+        and docker_command[-2:] == ["-c", SERVER_VERSION_QUERY]
+        and any(
+            f"requires exactly major {PG_MAJOR}" in message
+            for message in docker_major_report.failures
+        )
+    )
+    print(
+        f"  {'ok  ' if docker_major_rejected else 'FAIL'}  "
+        "a Docker server on the wrong major is rejected with isolated psql"
+    )
+    failures += not docker_major_rejected
+
+    command_builders = (
+        local_psql_command("postgresql://localhost/postgres", "-c", "SELECT 1"),
+        docker_psql_command("fixture", "-c", "SELECT 1"),
+        docker_psql_command("fixture", "-f", "-", interactive=True),
+    )
+    psql_isolated = all(
+        command[command.index("psql") + 1] == "-X" for command in command_builders
+    )
+    print(
+        f"  {'ok  ' if psql_isolated else 'FAIL'}  "
+        "every local and Docker psql command builder disables psqlrc"
+    )
+    failures += not psql_isolated
 
     cleanup_report = Report()
     cleanup_calls: list[list[str]] = []
@@ -1202,6 +1770,7 @@ def self_test() -> int:
         and len(transition_calls) == 2
         and transition_sleeps == [1]
         and all("pg_isready" not in call for call in transition_calls)
+        and all(call[call.index("psql") + 1] == "-X" for call in transition_calls)
         and all(call[-2:] == ["-c", "SELECT 1"] for call in transition_calls)
         and all(
             call[call.index("-d") + 1] == "pos_migration_check_fixture"
@@ -1370,8 +1939,10 @@ def self_test() -> int:
         + len(register_local_cases)
         + len(pin_cases)
         + len(transaction_cases)
+        + len(meta_command_cases)
         + len(image_surface_cases)
-        + 7
+        + len(compose_layout_cases)
+        + 11
     )
     print(f"\nmapping audit self-test: {total - failures} passed, {failures} failed")
     return 1 if failures else 0

@@ -190,8 +190,12 @@ jobs:
         run: bash ./scripts/watch-pr-checks.sh --self-test
       - name: Workspace lint contract still rejects a member that opts out
         run: ./scripts/check-workspace-lints.py --self-test
-      - name: Node version check still rejects a runtime off the pinned line
+      - name: Node contract still rejects runtime and configuration drift
         run: ./scripts/check-node-version.py --self-test
+      - name: Recursive web builds still refuse an omitted workspace package
+        run: ./scripts/check-web-build-coverage.py --self-test
+      - name: JavaScript licence policy still fails closed
+        run: ./scripts/check-js-licenses.py --self-test
       - name: Just recipe arguments remain data rather than shell source
         run: ./scripts/check-justfile-policy.py
       - name: Automation attribution policy still rejects machine trailers
@@ -234,6 +238,8 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
+      - name: Node runtime, package, pnpm, and workflow pins agree
+        run: ./scripts/check-node-version.py
       - run: pnpm install --frozen-lockfile
       - run: pnpm biome ci --error-on-warnings .
 
@@ -244,7 +250,9 @@ jobs:
         run: ./scripts/check-logical-css.sh
 
       - run: pnpm -r --if-present test
-      - run: pnpm -r --if-present build     # this is where `tsc` runs
+      - name: Every workspace project declares a build
+        run: ./scripts/check-web-build-coverage.py
+      - run: pnpm -r build     # this is where `tsc` runs
 
       # `--if-present` makes a package with no test script indistinguishable from
       # one that passed. Name the packages that ran, so a silent gap is visible in
@@ -348,6 +356,8 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with: { node-version-file: .nvmrc, cache: pnpm }
       - run: pnpm install --frozen-lockfile
+      - name: JavaScript dependency licences are reviewed
+        run: ./scripts/check-js-licenses.py
       - name: npm advisories
         run: pnpm audit --audit-level high
 
@@ -403,6 +413,11 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Optional native packages vary by OS. Audit the installed graph on every
+      # release platform so a platform-only licence cannot hide in Linux CI.
+      - name: Platform JavaScript dependency licences are reviewed
+        shell: bash
+        run: ./scripts/run-python.sh ./scripts/check-js-licenses.py
       # Compile and bundle the real desktop application before tag time; unit
       # tests alone do not exercise platform-specific Tauri packaging.
       - name: Build the Tauri application on the target operating system

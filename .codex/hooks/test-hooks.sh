@@ -267,7 +267,7 @@ expect "$DOCS_HOOK" 0 "ignore an external URL ending in .md" \
   "$(payload PostToolUse "$WHOLE" $'*** Begin Patch\n*** Update File: docs/external.md\n@@\n-old\n+new\n*** End Patch')"
 expect "$DOCS_HOOK" 0 "ignore a source-only patch in a broken tree" \
   "$(payload PostToolUse "$BROKEN" $'*** Begin Patch\n*** Update File: src/example.rs\n@@\n-old\n+new\n*** End Patch')"
-expect "$DOCS_HOOK" 0 "ignore Markdown outside docs" \
+expect "$DOCS_HOOK" 2 "a root Markdown patch checks the complete documentation tree" \
   "$(payload PostToolUse "$BROKEN" $'*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch')"
 expect_warning "$DOCS_HOOK" "malformed post-tool input fails open with a visible warning" 'not json'
 

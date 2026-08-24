@@ -20,6 +20,13 @@ HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-Third-party dependencies are licensed by their respective authors under their
-own terms; the permissive licences this project accepts are enumerated in
-deny.toml and enforced by the `supply-chain` CI job.
+Third-party dependencies remain licensed by their respective authors under
+their own terms. The accepted Rust licence identifiers are reviewed in
+deny.toml; accepted JavaScript licence expressions and their rationales are
+reviewed in js-license-policy.json. The `supply-chain` CI job enforces both
+policies against dependency metadata.
+
+Those automated metadata checks do not determine every obligation of a final
+distribution. Before any external distribution, the copyright holder must
+inventory the actual platform-specific artefact, review the applicable licence
+texts and source/notice obligations, and ship all required third-party notices.

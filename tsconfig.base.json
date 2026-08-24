@@ -1,17 +1,10 @@
 {
-  // The compiler options that must not drift between packages.
-  //
-  // They were hand-copied across four tsconfigs, and one copy lost the most
-  // important line: apps/backoffice declared no `strict` in any of its three
-  // files, while apps/terminal and packages/money both set it. Nothing compared
-  // them, so backoffice type-checked in non-strict mode and `just build-web`
-  // stayed green.
-  //
-  // Only the strictness options live here. Target, lib, module resolution and
-  // JSX legitimately differ between a Tauri front end, an admin SPA, a Node
-  // config file and a pure library, so each package still states its own — and
-  // `noEmit` deliberately is NOT here: a referenced project may not disable
-  // emit (TS6310), so it is a per-project build decision, not a shared rule.
+  // Shared correctness checks belong here so every workspace build inherits
+  // them. Runtime and output settings stay in each project: the browser apps,
+  // Node-based Vite configs, and pure packages intentionally have different
+  // targets, libraries, module resolution, and JSX needs. `noEmit` also stays
+  // local because TypeScript project references constrain which referenced
+  // projects may disable emission (TS6310).
   "compilerOptions": {
     "strict": true,
     "noUnusedLocals": true,

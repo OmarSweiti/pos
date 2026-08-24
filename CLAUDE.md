@@ -27,7 +27,7 @@ feature branch  →  development  →  staging  →  main
 Branch from `development`, never from `main`. A work PR into `development` is **squash-merged**
 and its *title* becomes the commit, so the title obeys the commit convention. A promotion PR
 (`development → staging`, `staging → main`) is merged with a **merge commit** — squashing one
-forks the branches permanently. `just branch <name>`, `just pr`, `just flow`,
+forks the branches permanently. `just branch <name>`, `just pr`, `just merge`, `just flow`,
 `just promote-staging`, `just promote-main`.
 
 Commit and squash titles use `<type>(<scope>): <summary>  [<step>]`, where `<step>` is one
@@ -67,7 +67,7 @@ just test       # cargo nextest --locked --workspace · pnpm -r test
 just guards     # prove the write guards still refuse
 just verify-pg  # the Postgres mirror, against a real server
 just pre-push   # lint · test · build-web · guards · full-history secret scan
-just audit      # cargo-deny advisories/licences · pnpm audit
+just audit      # Rust advisories/licences · JS licences · npm advisories
 just setup      # after pulling
 ```
 
@@ -94,7 +94,7 @@ Codex-specific execution policy and hook adapters live under `.codex/`.
 |---|---|
 | `.claude/hooks/protect-immutable.py` | writing, deleting, or moving a **committed migration** or anything in `docs/plan/` through Claude write tools, Bash, PowerShell, or Monitor |
 | `.claude/hooks/docs-links-on-write.py` | leaving a broken cross-reference after Claude changes **any** tracked `.md` — the five root documents included — whatever the link target's extension; the `.sh` file is only an inactive POSIX compatibility wrapper |
-| `.codex/hooks/` | immutable-path and forward-only SQLx checks for Codex shell, immutable-path checks for `apply_patch`, and documentation-link checks after a docs `apply_patch` |
+| `.codex/hooks/` | immutable-path and forward-only SQLx checks for Codex shell, immutable-path checks for `apply_patch`, and complete documentation-link checks after any Markdown `apply_patch` |
 | `.githooks/commit-msg` | a title outside `<type>(<scope>): <summary>  [N.N.N\|N.N.N–N.N.N\|—]`, or coding-assistant attribution |
 | `.githooks/pre-commit` | protected/sensitive paths, oversized staged blobs, plan or committed-migration edits, and Gitleaks findings in staged content |
 | `.githooks/pre-push` | direct/force/deletion pushes to the three flow branches, moving/deleting an existing tag, assistant attribution, or a secret anywhere in reachable history |

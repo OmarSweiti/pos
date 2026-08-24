@@ -6,7 +6,7 @@
       "!**/dist",
       "!**/src-tauri",
       "!**/node_modules",
-      "!**/public"
+      "!**/public/**/*.svg"
     ]
   },
   "formatter": {

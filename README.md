@@ -43,12 +43,15 @@ Requires [Rust](https://rustup.rs) (the pinned toolchain installs itself from
 [`cargo-nextest`](https://nexte.st/docs/installation/pre-built-binaries/),
 [Python 3.11+](https://www.python.org/downloads/),
 [Node.js 24 LTS](https://nodejs.org/) (pinned to an exact release by `.nvmrc`,
-which CI reads too; `pnpm` refuses another line because `engineStrict` is on),
+which CI and the repository checker both read; pnpm resolves dependency engines
+against that release with `nodeVersion` and `engineStrict`),
 [pnpm](https://pnpm.io),
 [just](https://just.systems),
 [`gitleaks`](https://github.com/gitleaks/gitleaks) for content-based secret
-scanning, Ruby with its bundled Psych YAML parser for workflow-policy checks,
-and Docker for the development database.
+scanning, [Ruff](https://docs.astral.sh/ruff/) and
+[ShellCheck](https://www.shellcheck.net/) for policy scripts, Ruby with its
+bundled Psych YAML parser for workflow-policy checks, and Docker for the
+development database.
 [`gh`](https://cli.github.com) is needed by `just pr` and `just merge`, and
 [`sqlx-cli`](https://crates.io/crates/sqlx-cli) by `just migrate` and
 `just db-reset`; each recipe says so before it does any work. Tauri also needs
@@ -77,7 +80,7 @@ everything else.
 just lint     # fmt · clippy · workspace lints · domain purity/acyclicity ·
               # schema/mapping · RTL · prop names · biome · doc links
 just test     # cargo nextest --locked --workspace · pnpm -r test
-just audit    # cargo-deny advisories/licences · pnpm audit
+just audit    # Rust advisories/licences · JS licences · npm advisories
 just guards   # prove the write guards still refuse what they must
 just secrets  # content-scan all reachable Git history with Gitleaks
 just pre-push # lint · test · web build · guards · secret history scan
@@ -93,6 +96,9 @@ adds checksums plus an SBOM to a draft. Published releases are immutable. The
 first external release is intentionally blocked until the updater-signing
 repository secrets, committed updater public configuration, and OS signing
 material are configured; see [`SECURITY.md`](SECURITY.md).
+The JavaScript licence gate reviews dependency metadata, but an external
+installer also requires a platform-specific third-party notice/source audit as
+stated in [`LICENSE`](LICENSE).
 
 ## The invariants
 

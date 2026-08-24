@@ -306,7 +306,7 @@ ones are:
 | Script | Contract |
 |---|---|
 | `verify-schema.py` | the Rust `MIGRATIONS` array exactly and uniquely matches every SQLite migration on disk in order; each file applies with the runtime transaction and `user_version` update; the executable schema reference also applies to real SQLite and obeys naming/reference rules |
-| `verify-pg-migrations.py` | every PostgreSQL migration declares its SQLite mirror or server-only status, both sides are accounted for, and the mirror applies to a real engine when available |
+| `verify-pg-migrations.py` | every PostgreSQL migration declares its SQLite mirror or server-only status, contains SQL rather than `psql` commands, both sides are accounted for, PG18 image/storage policy agrees, and the mirror applies to an exact-major real engine when available |
 | `check-domain-purity.py` | `pos-domain`'s resolved normal graph has no RNG/UUID generation feature and its source has no direct clock/random calls; the broader no-I/O rule remains an architectural review requirement |
 | `check-protected-paths.sh` | a PR does not edit a base-committed migration or source plan |
 | `scan-secrets.sh` | staged, range, or reachable-history content has no known secret |
@@ -316,11 +316,16 @@ ones are:
 | `test-gh-setup.sh` | mocked GitHub API/list/parse failures make bootstrap and project setup stop instead of reporting false success or creating duplicates |
 | `check-logical-css.sh` | frontend paths use logical rather than physical layout properties |
 | `check-prop-test-names.py` | property tests retain the `prop_` names used by verification filters |
-| `check-doc-links.sh` | relative Markdown references under `docs/` resolve |
+| `check-doc-links.sh` / `check-doc-links.py` | local inline and reference targets in every tracked Markdown document resolve with exact filename case; code examples are ignored |
+| `check-node-version.py` | exact Node runtime, root engine, Node typings, pnpm resolver and setup-node workflows agree with `.nvmrc` |
+| `check-web-build-coverage.py` | every non-root pnpm workspace package declares a build before recursive type/build execution |
+| `check-js-licenses.py` | installed JavaScript licence expressions form a non-empty inventory accepted by the reviewed repository policy |
 
 The PostgreSQL verifier never applies migrations directly to the database named
 by `DATABASE_URL`. It creates a collision-resistant scratch database for the run
-and drops it in `finally`. Without a suitable server it creates a uniquely named
+and drops it in `finally`, ignores user `psql` startup files, and refuses a
+server whose major differs from the repository pin. Without a suitable server
+it creates a uniquely named
 throwaway container. The Compose service, CI service, and verifier share one
 full Postgres image digest. If neither path is available, the script states that
 the engine pass was skipped; mapping-only success is not described as engine
