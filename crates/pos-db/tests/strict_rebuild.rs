@@ -10,6 +10,11 @@
 //! A rebuild that drops and recreates the tables holding every completed sale is
 //! the most dangerous statement in the chain. These tests seed the shipped schema
 //! first, then apply the rebuild, then check the money is still there.
+//!
+//! `sync_outbox` is deliberately different: a pre-protocol row has no canonical
+//! commit id, member hash, or envelope version, so the rebuild refuses to invent
+//! financial evidence for it. The positive fixture keeps that legacy queue empty,
+//! and a negative test watches the migration fail closed when a row is present.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod common;
@@ -29,7 +34,7 @@ fn apply_rebuild(conn: &Connection) {
     }
 }
 
-/// One completed sale, two lines, one tender, an outbox row and a cursor.
+/// One completed sale, two lines, one tender and a cursor.
 fn seed_a_days_trading(conn: &Connection) {
     conn.execute(
         "INSERT INTO product (id, sku, name, price_minor, currency)
@@ -45,7 +50,7 @@ fn seed_a_days_trading(conn: &Connection) {
         rusqlite::params![vec![2u8; 16], vec![9u8; 16]],
     )
     .unwrap();
-    for (line, no) in [(0x11u8, 1), (0x12u8, 2)] {
+    for line in [0x11u8, 0x12u8] {
         conn.execute(
             "INSERT INTO sale_line (id, sale_id, product_id, qty_milli,
                                     unit_price_minor, total_minor)
@@ -53,18 +58,11 @@ fn seed_a_days_trading(conn: &Connection) {
             rusqlite::params![vec![line; 16], vec![2u8; 16], vec![1u8; 16]],
         )
         .unwrap();
-        let _ = no;
     }
     conn.execute(
         "INSERT INTO sale_tender (id, sale_id, method, amount_minor, change_minor)
          VALUES (?1, ?2, 'cash', 5000, 1520)",
         rusqlite::params![vec![0x31u8; 16], vec![2u8; 16]],
-    )
-    .unwrap();
-    conn.execute(
-        "INSERT INTO sync_outbox (entity, entity_id, op, payload)
-         VALUES ('sale', ?1, 'insert', '{}')",
-        [vec![2u8; 16]],
     )
     .unwrap();
     conn.execute(
@@ -102,8 +100,8 @@ fn the_rebuild_keeps_every_row_of_a_completed_sale() {
     );
     assert_eq!(
         count("SELECT count(*) FROM sync_outbox"),
-        1,
-        "an outbox row was lost"
+        0,
+        "the rebuild invented a transport row without canonical evidence"
     );
     assert_eq!(
         count("SELECT count(*) FROM sync_cursor"),
@@ -122,6 +120,47 @@ fn the_rebuild_keeps_every_row_of_a_completed_sale() {
         .query_row("SELECT status FROM sale", [], |r| r.get(0))
         .unwrap();
     assert_eq!(status, "completed", "the sale must still be completed");
+}
+
+#[test]
+fn the_rebuild_refuses_a_legacy_outbox_row_without_a_canonical_envelope() {
+    let dir = tempfile::tempdir().unwrap();
+    let conn = shipped(&dir, "legacy-outbox.db");
+    conn.execute(
+        "INSERT INTO sync_outbox
+           (entity, entity_id, op, payload, created_at, pushed_at)
+         VALUES
+           ('sale', ?1, 'insert', '{}', '2026-08-25T10:00:00.000Z', NULL)",
+        [vec![2u8; 16]],
+    )
+    .unwrap();
+
+    let rebuild = reference_blocks()
+        .into_iter()
+        .next()
+        .expect("0003 must begin with the strict rebuild");
+    let tx = conn.unchecked_transaction().unwrap();
+    let error = tx
+        .execute_batch(&rebuild)
+        .expect_err("a pre-protocol outbox row must block the rebuild");
+
+    match error {
+        rusqlite::Error::SqliteFailure(sqlite, Some(message)) => {
+            assert_eq!(sqlite.code, rusqlite::ErrorCode::ConstraintViolation);
+            assert_eq!(sqlite.extended_code, rusqlite::ffi::SQLITE_CONSTRAINT_CHECK);
+            assert_eq!(message, "CHECK constraint failed: row_count = 0");
+        }
+        other => panic!("the rebuild failed for the wrong reason: {other:?}"),
+    }
+
+    drop(tx);
+    let legacy_rows: i64 = conn
+        .query_row("SELECT count(*) FROM sync_outbox", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        legacy_rows, 1,
+        "a refused rebuild must leave the shipped transport row intact"
+    );
 }
 
 #[test]
