@@ -202,6 +202,51 @@ ALTER TABLE product ADD COLUMN max_price_minor  INTEGER;         -- ministry cei
 ALTER TABLE product ADD COLUMN reorder_point_milli INTEGER;
 UPDATE product SET name_ar = name WHERE name_ar IS NULL;
 
+-- ── Arabic search folding ──────────────────────────────────────────────────
+--
+-- `unicode61 remove_diacritics 2` folds LATIN diacritics only. Arabic tashkeel
+-- are treated as token separators, so "قَهْوَة" indexes as four single-letter
+-- tokens and a search for "قهوة" finds nothing. Verified on SQLite 3.51.
+--
+-- Search is the fallback for every unbarcoded item — produce, bakery, damaged
+-- labels — and the only path a cashier has when the scanner fails, so this is
+-- not cosmetic. The fold is a generated column so the expression exists ONCE;
+-- the 0007 triggers index it and never restate it.
+--
+-- VIRTUAL, not STORED: `name_ar` itself arrives by ALTER above, and a generated
+-- column added by ALTER TABLE is only dependably VIRTUAL. Nothing is stored —
+-- the tokens live in the FTS index, and this column is only read to build them.
+--
+-- Stripped (removed entirely):
+--     U+064B  fathatan
+--     U+064C  dammatan
+--     U+064D  kasratan
+--     U+064E  fatha
+--     U+064F  damma
+--     U+0650  kasra
+--     U+0651  shadda
+--     U+0652  sukun
+--     U+0653  maddah above
+--     U+0654  hamza above
+--     U+0655  hamza below
+--     U+0670  superscript alef
+--     U+0640  tatweel
+-- Mapped (spelling variants that must collide):
+--     U+0623 -> U+0627  alef hamza above -> alef
+--     U+0625 -> U+0627  alef hamza below -> alef
+--     U+0622 -> U+0627  alef maddah -> alef
+--     U+0671 -> U+0627  alef wasla -> alef
+--     U+0649 -> U+064A  alef maqsura -> yaa
+--     U+0629 -> U+0647  taa marbuta -> haa
+--     U+0624 -> U+0648  waw hamza -> waw
+--     U+0626 -> U+064A  yaa hamza -> yaa
+--
+-- THE QUERY MUST BE FOLDED THE SAME WAY. A folded index searched with an
+-- unfolded string still returns zero rows — that is the trap this whole column
+-- exists to close. `prop_sql_and_rust_folding_agree` pins the two together.
+ALTER TABLE product ADD COLUMN name_ar_fold TEXT
+  GENERATED ALWAYS AS (replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(name_ar,char(1611),''),char(1612),''),char(1613),''),char(1614),''),char(1615),''),char(1616),''),char(1617),''),char(1618),''),char(1619),''),char(1620),''),char(1621),''),char(1648),''),char(1600),''),char(1571),char(1575)),char(1573),char(1575)),char(1570),char(1575)),char(1649),char(1575)),char(1609),char(1610)),char(1577),char(1607)),char(1572),char(1608)),char(1574),char(1610))) VIRTUAL;
+
 -- A product often carries several codes: multipacks, supplier relabels.
 -- The barcode is a LOOKUP KEY; identity is the UUID (master plan C.1).
 CREATE TABLE barcode (
@@ -519,12 +564,23 @@ CREATE INDEX idx_stock_cache_negative ON stock_cache(store_id) WHERE on_hand_mil
 
 ```sql
 -- FTS5 over Arabic AND English names plus SKU. Budget: <50 ms over 50k SKUs.
--- remove_diacritics=2 folds Arabic tashkeel so "قهوة" matches "قَهْوَة".
+--
+-- `remove_diacritics 2` does NOT fold Arabic — it folds Latin diacritics only,
+-- and treats tashkeel as separators. It stays because the English/SKU columns
+-- still want it. Arabic matching is carried by `name_ar_fold`, the generated
+-- column defined in 0003; `name_ar` remains indexed so an exact-spelling search
+-- still ranks, and the folded column is what makes variant spellings collide.
+--
+-- prefix='2 3' because 1.2.7 benchmarks search at 1–3 characters. Without a
+-- prefix index every such query is a full scan of the term list, and the 50 ms
+-- budget is not reachable — the declaration must exist before the table does,
+-- and this migration is forward-only.
 CREATE VIRTUAL TABLE product_fts USING fts5(
-  name_ar, name_en, sku, barcodes,
+  name_ar, name_ar_fold, name_en, sku, barcodes,
   content='',                                  -- external content, manually synced
   contentless_delete=1,                        -- delete by rowid alone (SQLite 3.43+)
-  tokenize="unicode61 remove_diacritics 2"
+  tokenize="unicode61 remove_diacritics 2",
+  prefix='2 3'                                 -- search-as-you-type from 2 chars
 );
 
 CREATE TABLE product_fts_map (rowid INTEGER PRIMARY KEY, product_id BLOB NOT NULL UNIQUE);
@@ -540,10 +596,10 @@ CREATE TABLE product_fts_map (rowid INTEGER PRIMARY KEY, product_id BLOB NOT NUL
 
 CREATE TRIGGER product_ai AFTER INSERT ON product BEGIN
   INSERT INTO product_fts_map (product_id) VALUES (new.id);
-  INSERT INTO product_fts (rowid, name_ar, name_en, sku, barcodes)
+  INSERT INTO product_fts (rowid, name_ar, name_ar_fold, name_en, sku, barcodes)
   VALUES (
     (SELECT rowid FROM product_fts_map WHERE product_id = new.id),
-    new.name_ar, new.name_en, new.sku,
+    new.name_ar, new.name_ar_fold, new.name_en, new.sku,
     (SELECT COALESCE(group_concat(code, ' '), '')
        FROM barcode WHERE product_id = new.id AND deleted_at IS NULL)
   );
@@ -552,10 +608,10 @@ END;
 CREATE TRIGGER product_au AFTER UPDATE ON product BEGIN
   DELETE FROM product_fts
    WHERE rowid = (SELECT rowid FROM product_fts_map WHERE product_id = new.id);
-  INSERT INTO product_fts (rowid, name_ar, name_en, sku, barcodes)
+  INSERT INTO product_fts (rowid, name_ar, name_ar_fold, name_en, sku, barcodes)
   VALUES (
     (SELECT rowid FROM product_fts_map WHERE product_id = new.id),
-    new.name_ar, new.name_en, new.sku,
+    new.name_ar, new.name_ar_fold, new.name_en, new.sku,
     (SELECT COALESCE(group_concat(code, ' '), '')
        FROM barcode WHERE product_id = new.id AND deleted_at IS NULL)
   );
@@ -574,8 +630,8 @@ END;
 CREATE TRIGGER barcode_ai AFTER INSERT ON barcode BEGIN
   DELETE FROM product_fts
    WHERE rowid = (SELECT rowid FROM product_fts_map WHERE product_id = new.product_id);
-  INSERT INTO product_fts (rowid, name_ar, name_en, sku, barcodes)
-  SELECT m.rowid, p.name_ar, p.name_en, p.sku,
+  INSERT INTO product_fts (rowid, name_ar, name_ar_fold, name_en, sku, barcodes)
+  SELECT m.rowid, p.name_ar, p.name_ar_fold, p.name_en, p.sku,
          (SELECT COALESCE(group_concat(code, ' '), '')
             FROM barcode WHERE product_id = p.id AND deleted_at IS NULL)
     FROM product p JOIN product_fts_map m ON m.product_id = p.id
@@ -585,8 +641,8 @@ END;
 CREATE TRIGGER barcode_au AFTER UPDATE ON barcode BEGIN
   DELETE FROM product_fts
    WHERE rowid = (SELECT rowid FROM product_fts_map WHERE product_id = new.product_id);
-  INSERT INTO product_fts (rowid, name_ar, name_en, sku, barcodes)
-  SELECT m.rowid, p.name_ar, p.name_en, p.sku,
+  INSERT INTO product_fts (rowid, name_ar, name_ar_fold, name_en, sku, barcodes)
+  SELECT m.rowid, p.name_ar, p.name_ar_fold, p.name_en, p.sku,
          (SELECT COALESCE(group_concat(code, ' '), '')
             FROM barcode WHERE product_id = p.id AND deleted_at IS NULL)
     FROM product p JOIN product_fts_map m ON m.product_id = p.id
@@ -596,8 +652,8 @@ END;
 CREATE TRIGGER barcode_ad AFTER DELETE ON barcode BEGIN
   DELETE FROM product_fts
    WHERE rowid = (SELECT rowid FROM product_fts_map WHERE product_id = old.product_id);
-  INSERT INTO product_fts (rowid, name_ar, name_en, sku, barcodes)
-  SELECT m.rowid, p.name_ar, p.name_en, p.sku,
+  INSERT INTO product_fts (rowid, name_ar, name_ar_fold, name_en, sku, barcodes)
+  SELECT m.rowid, p.name_ar, p.name_ar_fold, p.name_en, p.sku,
          (SELECT COALESCE(group_concat(code, ' '), '')
             FROM barcode WHERE product_id = p.id AND deleted_at IS NULL)
     FROM product p JOIN product_fts_map m ON m.product_id = p.id
