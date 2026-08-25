@@ -44,6 +44,23 @@ fn durability_survives_reopening() {
 }
 
 #[test]
+fn the_register_runs_in_wal_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let conn = pos_db::open(&dir.path().join("wal.db"), "test-key").unwrap();
+
+    // FULL is last-commit-durable in WAL. In rollback-journal mode it is weaker
+    // than that mode's EXTRA, so asserting synchronous alone proves nothing
+    // without also pinning the mode it was asserted under.
+    let mode: String = conn
+        .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+        .unwrap();
+    assert!(
+        mode.eq_ignore_ascii_case("wal"),
+        "expected WAL, found {mode}: the durability guarantee does not hold here"
+    );
+}
+
+#[test]
 fn foreign_keys_are_enforced_on_every_connection() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("fk.db");

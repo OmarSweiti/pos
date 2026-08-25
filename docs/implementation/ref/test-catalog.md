@@ -13,7 +13,7 @@ Legend — **Ph**: phase the test lands in · **Kind**: `unit` · `prop` · `gol
 | # | Case | Test | Ph | Kind |
 |---|---|---|---|---|
 | 1 | Power cut mid-`Finalizing` | `interrupted_finalize_resumes_without_double_stock_event`, `…_without_double_outbox_row`, `finalize_is_atomic_under_injected_failure` | 1 | integration |
-| 1b | Power cut **after** the receipt printed | **post-receipt power-cut drill** — the customer has paid and gone, so on restart the sale must be *there*. Case 1 cannot detect this on its own: a kill before commit correctly yields zero sales, and a lost acknowledged commit yields zero sales too. Enforced by `synchronous = FULL`, which `pos_db::open` refuses to run without | 1 | drill |
+| 1b | **Real** power loss after the receipt printed | **post-receipt power-cut drill**, on register hardware, with the power actually cut. Case 1's `pkill -9` cannot test this: killing the process leaves the OS page cache alive, so the writes land whether `synchronous` is NORMAL or FULL. Enforced by `synchronous = FULL` **in WAL**; `pos_db::open` asserts both and refuses otherwise (`the_register_runs_in_wal_mode`, `a_register_database_commits_durably`) | 1 | drill |
 | 2 | Power cut during card `Tendering` | `unknown_triggers_status_query_before_any_retry`, `status_query_approved_attaches_tender` | 2 | unit |
 | 3 | App killed with parked carts | `prop_park_resume_roundtrip_is_identity`, `parked_carts_survive_restart` | 1 | prop |
 | 4 | SQLite `BadKey` — keychain wiped | `bad_key_yields_recovery_state_not_panic` + **keychain-loss restore drill** | 1 / 5 | unit + drill |
