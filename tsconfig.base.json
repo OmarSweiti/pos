@@ -1,0 +1,14 @@
+{
+  // Shared correctness checks belong here so every workspace build inherits
+  // them. Runtime and output settings stay in each project: the browser apps,
+  // Node-based Vite configs, and pure packages intentionally have different
+  // targets, libraries, module resolution, and JSX needs. `noEmit` also stays
+  // local because TypeScript project references constrain which referenced
+  // projects may disable emission (TS6310).
+  "compilerOptions": {
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  }
+}

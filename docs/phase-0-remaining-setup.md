@@ -1,8 +1,18 @@
 # Phase 0 — remaining setup (Parts 12 → 13)
 
-Everything through **Part 11** is built, verified, and committed. Parts 12 and 13 are
-**documented here, not executed** — they touch GitHub (workflows, remote, tags), which is
-yours to trigger.
+> **Historical snapshot — do not execute these commands or copy this YAML.**
+> This file records the handoff before the repository, branch flow, and hardened
+> workflows existed. Its branch names, mutable Action references, test totals,
+> release permissions, and setup status are intentionally stale. Use the live
+> [workflow files](../.github/workflows/),
+> [development workflow](implementation/02-development-workflow.md), and
+> [GitHub runbook](implementation/03-github-workflow.md) instead. The snapshot is
+> retained only because the dated
+> [Phase-0 close-out](implementation/phase-0-closeout.md) references the evidence.
+
+At the time of this snapshot, everything through **Part 11** had been built,
+verified, and committed. Parts 12 and 13 were documented here but had not yet
+been executed because they touched GitHub workflows, remotes, and tags.
 
 Repo state at the time of writing: branch `master`, **no remote configured**, `.github/workflows/`
 exists but is empty (git does not track empty directories, so it is not in any commit).

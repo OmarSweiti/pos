@@ -2,10 +2,13 @@
   "name": "pos",
   "private": true,
   "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": "24.19.0"
+  },
   "scripts": {
     "dev:terminal": "pnpm --filter terminal tauri dev",
     "dev:backoffice": "pnpm --filter backoffice dev",
-    "build:web": "pnpm -r --if-present build",
+    "build:web": "just build-web",
     "test": "pnpm -r --if-present test",
     "lint": "biome ci --error-on-warnings .",
     "format": "biome format --write ."

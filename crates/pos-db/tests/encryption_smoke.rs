@@ -11,7 +11,7 @@ fn encrypted_db_roundtrip_and_wrong_key_rejected() {
     // 1. Create, migrate, write.
     {
         let conn = pos_db::open(&path, "correct-key").unwrap();
-        let id = Uuid::now_v7();
+        let id = Uuid::from_u128(1);
         conn.execute(
             "INSERT INTO product (id, sku, name, price_minor, currency) VALUES (?1, ?2, ?3, ?4, ?5)",
             rusqlite::params![id.as_bytes().as_slice(), "SKU-001", "Espresso", 250_i64, "JOD"],

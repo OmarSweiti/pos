@@ -1,0 +1,34 @@
+# Normalize repository text while preserving the LF shebangs required by Git
+# hooks and developer tooling on every platform.
+* text=auto
+
+.githooks/* text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.rs text eol=lf
+*.sql text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+# The policy checker and the shell-free hook launcher. Both are in the trusted
+# policy set, which compares them byte for byte between a PR's base and head —
+# a CRLF checkout would make that comparison fail for a reason nobody changed.
+*.rb text eol=lf
+*.mjs text eol=lf
+
+# Never ask Git to normalize binary release or design assets.
+*.icns binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.zip binary

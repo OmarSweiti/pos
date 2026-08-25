@@ -5,7 +5,11 @@
 # morning, nothing about a licence that would make this product unshippable, and
 # nothing about a dependency that quietly started coming from somewhere else.
 #
-# Run it the same way CI does:   cargo deny check --all-features
+# Run it the same way CI does:   cargo deny check
+#
+# Not `--all-features`: cargo-deny rejects that flag outright. Feature scope is
+# configuration, set by `all-features` under [graph] below, not a command-line
+# argument.
 
 [graph]
 all-features = true
@@ -71,14 +75,23 @@ allow = [
   # webpki-roots ships Mozilla's CA root store under a data licence, not a code
   # one. Permissive, and the alternative is not verifying TLS certificates.
   "CDLA-Permissive-2.0",
-  # SQLCipher is built against vendored OpenSSL (see rusqlite's feature in the
-  # workspace manifest), so the OpenSSL licence is load-bearing here.
-  "OpenSSL",
   # Weak copyleft, file-level. Safe to link; a MODIFIED MPL file must be
   # published. We do not modify dependencies, so this is allowed and the rule is
   # written down here rather than rediscovered.
   "MPL-2.0",
 ]
+# SQLCipher is built against vendored OpenSSL (rusqlite's
+# `bundled-sqlcipher-vendored-openssl` feature in the workspace manifest), which
+# resolves to openssl-src 300.x — OpenSSL 3.x, relicensed to Apache-2.0 and
+# therefore already covered above. The `OpenSSL` SPDX identifier is the
+# pre-3.0 OpenSSL/SSLeay dual licence and does not appear in this graph; it was
+# allowed here on a justification that had stopped being true.
+#
+# An allow list is a statement of policy, not a mirror of today's dependency
+# graph, so a permissive licence nobody happens to use yet is not a finding.
+# cargo-deny warns about one by default, and a gate that warns on every clean
+# run is a gate that stops being read.
+unused-allowed-license = "allow"
 confidence-threshold = 0.9
 # Our own crates are `publish = false` and proprietary (see workspace.package).
 # Auditing them against a list of open-source licences is asking the wrong

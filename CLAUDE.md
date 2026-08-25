@@ -27,12 +27,20 @@ feature branch  →  development  →  staging  →  main
 Branch from `development`, never from `main`. A work PR into `development` is **squash-merged**
 and its *title* becomes the commit, so the title obeys the commit convention. A promotion PR
 (`development → staging`, `staging → main`) is merged with a **merge commit** — squashing one
-forks the branches permanently. `just branch <name>`, `just pr`, `just flow`,
+forks the branches permanently. `just branch <name>`, `just pr`, `just merge`, `just flow`,
 `just promote-staging`, `just promote-main`.
 
+Commit and squash titles use `<type>(<scope>): <summary>  [<step>]`, where `<step>` is one
+`N.N.N`, an ordered `N.N.N–N.N.N` range, or `—`. Coding assistants are tools, not co-authors:
+never add AI attribution trailers. The exact Dependabot bot author/trailer combination is a
+narrow compatibility exception and uses the same title grammar with `[—]`; Git author metadata
+alone is not cryptographic proof of App identity.
+
 Branch protection does **not** exist here: the repo is private on the GitHub Free plan, where
-protection and rulesets both answer 403. The git hooks in `.githooks/` are the enforcement, so
-`just setup` is not optional — a clone that skipped it can push straight to `main`.
+protection and rulesets both answer 403. The git hooks in `.githooks/` are the first local safety
+net, so `just setup` is not optional — a clone that skipped it, or an explicit `--no-verify`, can
+still bypass them. CI makes violations loud and reviewable but cannot block this repository's
+administrator on the current plan.
 [`03-github-workflow.md`](docs/implementation/03-github-workflow.md) §3 has the full honest table.
 
 ## The nine invariants
@@ -54,56 +62,81 @@ Not style preferences. Each one, violated, produces a class of bug that costs mo
 ## Quality gates
 
 ```bash
-just lint       # fmt --check · clippy -D warnings · acyclic · schema · pg-mapping · logical-css · prop-names · biome ci · doc-links
-just test       # cargo nextest --workspace · pnpm -r test
+just lint       # fmt · clippy · workspace lints · architecture/purity · schema/mapping · CSS · test names · biome · links
+just test       # cargo nextest --locked --workspace · pnpm -r test
 just guards     # prove the write guards still refuse
 just verify-pg  # the Postgres mirror, against a real server
-just pre-push   # lint · test · build-web · guards — the gate before a push
-just audit      # cargo-deny advisories/licences · pnpm audit
+just pre-push   # lint · test · build-web · guards · full-history secret scan
+just audit      # Rust advisories/licences · JS licences · npm advisories
 just setup      # after pulling
 ```
 
-`just pre-push` runs everything CI runs **except** `just audit`, which is left out on
-purpose: both halves reach the network and read advisory databases that change hourly, so
-it can fail a push that changed nothing. CI's `supply-chain` job is where that gate lives.
-Everything else in `pre-push` is hermetic, so a green local run predicts a green build.
+`just pre-push` is the complete local gate. Time-varying advisory checks stay in CI's
+`supply-chain` job because they reach the network and can change without a repository change.
+CI also supplies real PostgreSQL and promotion-only macOS/Windows Tauri builds, so report those
+separately instead of claiming the local gate reproduces every runner environment.
 
 `just verify-pg` needs a Postgres — `$DATABASE_URL` or Docker. Without one it audits the
 SQLite↔Postgres mapping, says it skipped the engine pass, and leaves that to CI.
 `unwrap()` and `expect()` are **denied** outside tests and `main()`.
 
-## What is enforced, not merely written down
+## Safety layers, and their limits
 
 `.claude/rules/` holds the standards, split by the paths they govern — they load
 when a matching file is read, so a Rust rule costs nothing while you edit React.
-`.claude/hooks/` holds the guards, which are not advisory:
+`.claude/hooks/` holds the agent-time guards:
+
+`AGENTS.md` is the Codex entry point for the same repository law, and
+`.agents/skills/` exposes the maintained migration/schema workflows to Codex.
+Codex-specific execution policy and hook adapters live under `.codex/`.
 
 | Guard | Refuses |
 |---|---|
-| `.claude/hooks/protect-immutable.py` | writing, deleting, or moving a **committed migration** or anything in `docs/plan/` — via a write tool, or via a shell command from `Bash` or `Monitor` |
-| `.claude/hooks/docs-links-on-write.sh` | leaving a broken cross-reference in `docs/**.md` |
-| `.githooks/commit-msg` | a commit subject outside `<type>(<scope>): <summary>  [<step>]` |
-| `.githooks/pre-commit` | committing a key, an `.env`, a database file, or a change **or deletion** of a committed migration |
-| `.githooks/pre-push` | a direct push, force-push, or deletion of `main`/`staging`/`development` |
-| `scripts/check-protected-paths.sh` | a **pull request** that edits a source plan, or a migration that already existed in its base — the backstop nothing local can skip (`branch-flow.yml`) |
+| `.claude/hooks/protect-immutable.py` | writing, deleting, or moving a **committed migration** or anything in `docs/plan/` through Claude write tools, Bash, PowerShell, or Monitor |
+| `.claude/hooks/docs-links-on-write.py` | leaving a broken cross-reference after Claude changes **any** tracked `.md` — the five root documents included — whatever the link target's extension; the `.sh` file is only an inactive POSIX compatibility wrapper |
+| `.codex/hooks/` | immutable-path and forward-only SQLx checks for Codex shell, immutable-path checks for `apply_patch`, and complete documentation-link checks after any Markdown `apply_patch` |
+| `.githooks/commit-msg` | a title outside `<type>(<scope>): <summary>  [N.N.N\|N.N.N–N.N.N\|—]`, or coding-assistant attribution |
+| `.githooks/pre-commit` | protected/sensitive paths, oversized staged blobs, plan or committed-migration edits, and Gitleaks findings in staged content |
+| `.githooks/pre-push` | direct/force/deletion pushes to the three flow branches, moving/deleting an existing tag, assistant attribution, or a secret anywhere in reachable history |
+| `scripts/check-protected-paths.sh` | a pull request that edits a source plan or a migration already present in its base; `branch-flow.yml` runs policy from the exact trusted workflow revision |
+| `scripts/check-branch-workflow-policy.rb` | weakening the read-only `pull_request_target` boundary, title/body attribution wiring, any workflow definition, or the trusted CI/agent/Git-hook/label/dependency/security/repository-setup policy and helper set without an explicit red/manual review; ordinary application/test code is not byte-pinned |
+| `scripts/gh-actions-policy.sh` | mutable or unapproved external Action references before the post-merge full-SHA repository policy is enabled |
 
 All are negative-tested — `just guards` runs every suite
-(`.claude/hooks/test-protect-immutable.sh`, `.claude/hooks/test-docs-links.sh`,
-`.githooks/test-hooks.sh`, and three `--self-test`s: `check-protected-paths.sh`,
-`verify-schema.py`, `verify-pg-migrations.py`). Run it after touching any of them.
+(`.claude/hooks/test-settings.py`, `.claude/hooks/test-protect-immutable.sh`,
+`.claude/hooks/test-docs-links.sh`,
+`.codex/hooks/test-hooks.sh`, `.codex/test-policy.py`, `.agents/test-skills.py`,
+`.githooks/test-hooks.sh`, `scripts/test-gh-setup.sh`, and the repository
+checkers' `--self-test`s). Run it
+after touching any of them.
 A guard nobody has seen fail is a guard nobody should trust.
 
 The shell arm of `protect-immutable.py` is defence in depth, not a proof: it follows `cd`,
-covers redirects, copy destinations, and PowerShell verbs, and protects both directories —
-but it cannot read an interpreter, so `python3 -c "open('docs/plan/x','w')"` gets through.
-Three other layers stand there: `.claude/settings.json` denies `Edit`/`Write` under
-`docs/plan/**` at the permission layer (which still holds when the hook does not run at all,
-and it *fails open* by design), `pre-commit` refuses the staged result, and
-`check-protected-paths.sh` refuses the pull request.
+covers redirects, output flags, copy destinations, PowerShell verbs, and literal protected
+paths passed to interpreters. Arbitrary code can still construct a path dynamically.
+`.claude/settings.json` intentionally disables Claude's OS sandbox so permitted package-manager,
+Git/SSH, GitHub, and other networked shell commands can use the host normally. The normal manual
+permission flow, exact project `permissions.deny` list, and repository hooks remain. Those
+Read/Edit denies govern Claude tools, not subprocesses: a permitted shell command has ambient host
+filesystem, network, environment, and credential access. Do not describe this posture as OS
+containment or credential scrubbing. The staged Git hook and trusted-workflow PR check remain
+separate backstops.
 
-**Known gap:** the hook *invocations* are POSIX — one calls `python3`, one is a `.sh`. On
-Windows without Git Bash neither runs, and a failed-open guard is a silent one. The CI
-backstop is the mitigation until someone develops on Windows.
+Claude invokes every active hook through the same shell-free Node launcher and includes actual
+PowerShell/Monitor payload tests. Native Windows hook dispatch was not executed here; the OS
+sandbox is deliberately disabled on every platform, so do not present the hook tests as an OS
+enforcement boundary. Fail-open internal parser errors use a visible structured warning; the
+PreToolUse launcher fails closed if Python cannot start, and ConfigChange validation fails closed
+when project or local settings try to weaken the reviewed contract.
+
+Codex loads this project's config, rules, and hooks only for a trusted repository,
+and hook definitions require their own review. On first use, open `/hooks`, inspect
+the exact commands in `.codex/hooks.json`, and trust them; do not make
+`--dangerously-bypass-hook-trust` routine setup. Codex has Python-only Windows hook
+commands, but native Windows dispatch is not verified here and is not treated as an
+enforcement boundary. Execpolicy prompts are escalation policy, not a universal command parser;
+the PreToolUse adapter separately catches common wrapped and nested `sqlx migrate revert`
+spellings. The git hooks and CI remain the cross-platform backstops.
 
 ## Where things live
 
@@ -116,14 +149,20 @@ apps/terminal/         the register (Tauri 2): src/ = React, src-tauri/ = Rust s
 apps/server/           Axum: sync, auth, reporting
 apps/backoffice/       React admin
 packages/money/        the minor-unit rule, shared by both front ends
+packages/ui/           shared React components, and packages/api-types/ shared DTOs — both scaffolds
 ```
 
 Migrations are **forward-only** and are **never edited once committed** — deleting or renaming
-one counts as editing it. Two are committed: `0001_init.sql`, and `0002_sale_integrity.sql`,
-which fixed `qty` → `qty_milli` (gap G-12) and put I-4 into triggers.
+one counts as editing it. Derive the current chain from the migration directory and the Rust
+`MIGRATIONS` array; do not freeze a count in agent guidance. `verify-schema.py` requires exact
+ordered parity and applies the exact chain the application compiles with the runtime's per-file
+transaction and `user_version` update. Migration entries must be repository-owned regular SQL
+files; symlinks, gitlinks, devices, and other filesystem indirection are forbidden.
 
 The Postgres mirror in `apps/server/migrations/` cannot share those numbers — sqlx names files
-by timestamp — so each mirror **declares** the SQLite migration it corresponds to in a header
+with a unique 14-digit UTC timestamp and lower-snake name — so each mirror **declares** the SQLite migration it corresponds to in a header
 comment, and `./scripts/verify-pg-migrations.py` checks the declaration both ways. The names
 may differ where the server's half of the work differs: `20260820120000_change_sequence.sql`
-mirrors `0002_sale_integrity.sql`.
+mirrors `0002_sale_integrity.sql`. SQLx runs each server migration in a transaction by default;
+only a case-sensitive `-- no-transaction` prefix at byte zero opts out. The verifier mirrors that
+boundary, and an opt-out migration must account explicitly for partial-failure recovery.

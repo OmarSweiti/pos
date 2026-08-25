@@ -1,6 +1,9 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "disableAllHooks": false,
   "permissions": {
+    "defaultMode": "default",
+    "disableBypassPermissionsMode": "disable",
     "allow": [
       "Bash(just lint)",
       "Bash(just test)",
@@ -36,47 +39,81 @@
       "Bash(git rev-parse:*)"
     ],
     "deny": [
-      "Edit(./docs/plan/**)",
-      "Write(./docs/plan/**)",
-      "Read(./.env)",
-      "Read(./**/.env)",
-      "Read(./**/.env.local)",
-      "Read(./**/.env.*.local)",
-      "Read(./**/.env.development)",
-      "Read(./**/.env.production)",
-      "Read(./**/.env.staging)",
-      "Read(./**/.env.test)",
-      "Read(./**/*.sqlite)",
-      "Read(./**/*.sqlite3)",
-      "Read(./**/*.db)",
-      "Read(./**/*.db-wal)",
-      "Read(./**/*.db-shm)",
-      "Read(./**/*.sqlite-wal)",
-      "Read(./**/*.sqlite-shm)",
-      "Read(./**/*.pem)",
-      "Read(./**/*.key)",
-      "Read(./**/*.p12)",
-      "Read(./**/*.pfx)",
-      "Read(./**/*.jks)",
-      "Read(./**/*.keystore)",
-      "Read(./**/id_rsa)",
-      "Read(./**/id_ed25519)",
-      "Read(./**/.npmrc)",
-      "Read(./**/.netrc)",
-      "Read(./**/_netrc)",
-      "Read(./**/.git-credentials)",
-      "Read(./**/credentials.toml)",
-      "Read(./**/.docker/config.json)"
+      "Edit(/docs/plan/**)",
+      "Read(//**/.env)",
+      "Read(//**/.env.local)",
+      "Read(//**/.env.development)",
+      "Read(//**/.env.development.local)",
+      "Read(//**/.env.test)",
+      "Read(//**/.env.test.local)",
+      "Read(//**/.env.staging)",
+      "Read(//**/.env.production)",
+      "Read(//**/.env.production.local)",
+      "Read(//**/*.sqlite)",
+      "Read(//**/*.sqlite3)",
+      "Read(//**/*.db)",
+      "Read(//**/*.db-wal)",
+      "Read(//**/*.db-shm)",
+      "Read(//**/*.sqlite-wal)",
+      "Read(//**/*.sqlite-shm)",
+      "Read(//**/*.pem)",
+      "Read(//**/*.key)",
+      "Read(//**/*.p12)",
+      "Read(//**/*.pfx)",
+      "Read(//**/*.jks)",
+      "Read(//**/*.keystore)",
+      "Read(//**/id_rsa)",
+      "Read(//**/id_ed25519)",
+      "Read(//**/.npmrc)",
+      "Read(//**/.netrc)",
+      "Read(//**/_netrc)",
+      "Read(//**/.git-credentials)",
+      "Read(//**/credentials)",
+      "Read(//**/credentials.toml)",
+      "Read(//**/.docker/config.json)",
+      "Read(~/.ssh/**)",
+      "Read(~/.gnupg/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.azure/**)",
+      "Read(~/.kube/**)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.config/gcloud/**)",
+      "Read(~/.config/op/**)",
+      "Read(~/.local/share/keyrings/**)",
+      "Read(~/.claude/**)",
+      "Read(~/.claude.json)",
+      "Read(~/.codex/**)",
+      "Read(~/Library/Keychains/**)",
+      "Read(~/Library/Application Support/1Password/**)",
+      "Read(~/Library/Application Support/Bitwarden/**)"
     ]
+  },
+  "sandbox": {
+    "enabled": false,
+    "filesystem": {
+      "denyWrite": [
+        "./docs/plan"
+      ]
+    }
+  },
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
   },
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|Monitor",
+        "matcher": "Read|Grep|Glob|Edit|Write|NotebookEdit|Bash|PowerShell|Monitor",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/protect-immutable.py\"",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/run-python-hook.mjs",
+              "--fail-closed",
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/protect-immutable.py"
+            ],
             "timeout": 15
           }
         ]
@@ -84,12 +121,33 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit",
+        "matcher": "Edit|Write|NotebookEdit|Bash|PowerShell|Monitor",
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/docs-links-on-write.sh\"",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/run-python-hook.mjs",
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/docs-links-on-write.py"
+            ],
             "timeout": 30
+          }
+        ]
+      }
+    ],
+    "ConfigChange": [
+      {
+        "matcher": "project_settings|local_settings|skills",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/run-python-hook.mjs",
+              "--fail-closed",
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/validate-settings.py"
+            ],
+            "timeout": 15
           }
         ]
       }

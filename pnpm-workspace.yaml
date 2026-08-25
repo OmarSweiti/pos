@@ -11,3 +11,15 @@ packages:
 allowBuilds:
   esbuild: true
   "@tailwindcss/oxide": true
+
+# Resolve and validate dependency engines against the same exact runtime used by
+# CI, even when `pnpm install` happens to be launched by a newer system Node.
+# The root project's own `engines` field is always enforced by pnpm; this
+# additional setting makes incompatible dependency engines fatal as well.
+nodeVersion: 24.19.0
+engineStrict: true
+
+# Keep every optional peer chosen by Vite/Vitest on the runtime's declaration
+# major, including workspace packages that do not import Node APIs themselves.
+overrides:
+  "@types/node": 24.13.3

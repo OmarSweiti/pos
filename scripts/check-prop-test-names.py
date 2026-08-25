@@ -2,14 +2,14 @@
 """Property tests are named `prop_<invariant>`; example tests are not.
 
 `ref/domain-api.md` is normative for pos-domain, and it names every property test
-with a `prop_` prefix — thirty-one of them. The phase plan names twenty-one more.
-And microstep 1.1.5 verifies the suite with
+with a `prop_` prefix. Microstep 1.1.5 verifies the money suite with
 
-    cargo nextest run -p pos-domain money::prop_
+    cargo nextest run -p pos-domain money::tests::prop_
 
-which is a *filter*. Two tests had been written without the prefix, so that command
-matched nothing and reported success by running zero tests — the failure mode this
-repository builds gates against, arriving through a test name.
+which is a *filter*. A property test that loses the prefix is omitted while the
+other matching properties can still pass. If no tests match at all, current
+nextest correctly exits nonzero; the dangerous case is a partial suite that stays
+green while silently leaving the renamed property out.
 
 Nothing could have caught it. `cargo nextest` has no opinion on naming, clippy has
 no opinion on naming, and a reviewer reading `split_preserves_total` sees a
@@ -31,53 +31,207 @@ Exit:   0 clean · 1 a violation · 2 could not run at all
 
 from __future__ import annotations
 
-import re
 import sys
+from bisect import bisect_right
 from pathlib import Path
+
+from rust_lexer import RustLexError, RustToken, rust_tokens
 
 ROOT = Path(__file__).resolve().parent.parent
 CRATES = ROOT / "crates"
 
-PROPTEST_OPEN = re.compile(r"\bproptest!\s*\{")
-FN = re.compile(r"^\s*(?:pub\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)")
-TEST_ATTR = re.compile(r"^\s*#\[test\]")
+OPEN_TO_CLOSE = {"{": "}", "[": "]", "(": ")"}
+CLOSE_TO_OPEN = {close: open_ for open_, close in OPEN_TO_CLOSE.items()}
+
+
+def is_punct(token: RustToken, value: str) -> bool:
+    return token.kind == "punct" and token.value == value
+
+
+def identifier_name(token: RustToken) -> str | None:
+    """Return an identifier's semantic spelling, including raw identifiers."""
+    if token.kind != "ident":
+        return None
+    return token.value[2:] if token.value.startswith("r#") else token.value
+
+
+def line_number(newlines: list[int], offset: int) -> int:
+    return bisect_right(newlines, offset) + 1
+
+
+def matching_delimiters(tokens: list[RustToken]) -> dict[int, int]:
+    """Return opening-token -> closing-token indexes, rejecting ambiguity."""
+    stack: list[tuple[str, int]] = []
+    matches: dict[int, int] = {}
+
+    for index, token in enumerate(tokens):
+        if token.kind != "punct":
+            continue
+        if token.value in OPEN_TO_CLOSE:
+            stack.append((token.value, index))
+            continue
+        if token.value not in CLOSE_TO_OPEN:
+            continue
+        if not stack or stack[-1][0] != CLOSE_TO_OPEN[token.value]:
+            raise RustLexError(
+                f"unmatched Rust delimiter `{token.value}` at character {token.offset}"
+            )
+        _, opening_index = stack.pop()
+        matches[opening_index] = index
+
+    if stack:
+        opening, opening_index = stack[-1]
+        raise RustLexError(
+            f"unclosed Rust delimiter `{opening}` at character "
+            f"{tokens[opening_index].offset}"
+        )
+    return matches
+
+
+def curly_contexts(tokens: list[RustToken]) -> list[tuple[int, ...]]:
+    """Record the containing brace scopes for each token."""
+    contexts: list[tuple[int, ...]] = []
+    stack: list[int] = []
+    for index, token in enumerate(tokens):
+        contexts.append(tuple(stack))
+        if is_punct(token, "{"):
+            stack.append(index)
+        elif is_punct(token, "}"):
+            stack.pop()
+    return contexts
+
+
+def proptest_aliases(
+    tokens: list[RustToken], contexts: list[tuple[int, ...]]
+) -> dict[tuple[int, ...], set[str]]:
+    """Collect `use ... proptest as alias` bindings by lexical brace scope."""
+    aliases: dict[tuple[int, ...], set[str]] = {}
+    index = 0
+    while index < len(tokens):
+        # Raw `r#use` is an identifier, and `$use` may be a macro metavariable;
+        # neither begins an import item.
+        if (
+            tokens[index].kind != "ident"
+            or tokens[index].value != "use"
+            or (index > 0 and is_punct(tokens[index - 1], "$"))
+        ):
+            index += 1
+            continue
+
+        end = index + 1
+        while end < len(tokens) and not is_punct(tokens[end], ";"):
+            end += 1
+
+        for target in range(index + 1, max(index + 1, end - 1)):
+            if identifier_name(tokens[target]) != "proptest":
+                continue
+            if (
+                target + 2 >= end
+                or tokens[target + 1].kind != "ident"
+                or tokens[target + 1].value != "as"
+            ):
+                continue
+            alias = identifier_name(tokens[target + 2])
+            if alias and alias != "_":
+                aliases.setdefault(contexts[index], set()).add(alias)
+
+        index = end + 1
+    return aliases
+
+
+def alias_is_visible(
+    name: str,
+    context: tuple[int, ...],
+    aliases: dict[tuple[int, ...], set[str]],
+) -> bool:
+    return any(
+        name in names and context[: len(scope)] == scope
+        for scope, names in aliases.items()
+    )
+
+
+def proptest_ranges(
+    tokens: list[RustToken],
+    matches: dict[int, int],
+    contexts: list[tuple[int, ...]],
+) -> list[tuple[int, int]]:
+    """Locate token ranges belonging to real `proptest!` invocations."""
+    aliases = proptest_aliases(tokens, contexts)
+    ranges: list[tuple[int, int]] = []
+    for index in range(len(tokens) - 2):
+        name = identifier_name(tokens[index])
+        if name is None or (
+            name != "proptest"
+            and not alias_is_visible(name, contexts[index], aliases)
+        ):
+            continue
+        if not is_punct(tokens[index + 1], "!"):
+            continue
+        opening = tokens[index + 2]
+        if opening.kind != "punct" or opening.value not in OPEN_TO_CLOSE:
+            continue
+        ranges.append((index + 2, matches[index + 2]))
+    return ranges
+
+
+def is_inside(index: int, ranges: list[tuple[int, int]]) -> bool:
+    return any(opening <= index <= closing for opening, closing in ranges)
 
 
 def scan(text: str) -> tuple[list[tuple[int, str]], list[tuple[int, str]]]:
     """(unprefixed inside a proptest! block, prop_-prefixed example tests)."""
     inside: list[tuple[int, str]] = []
     outside: list[tuple[int, str]] = []
+    tokens = rust_tokens(text)
+    matches = matching_delimiters(tokens)
+    contexts = curly_contexts(tokens)
+    ranges = proptest_ranges(tokens, matches, contexts)
+    newlines = [index for index, char in enumerate(text) if char == "\n"]
 
-    depth = 0          # brace depth once inside a proptest! block, 0 = not in one
+    # Inspect every function declaration token inside a proptest invocation. The
+    # lexer has already removed comments and isolated literal contents, so a
+    # brace or `fn` embedded in either cannot alter this classification.
+    for index, token in enumerate(tokens[:-1]):
+        if token.kind != "ident" or token.value != "fn":
+            continue
+        name = tokens[index + 1]
+        if name.kind != "ident" or not is_inside(index, ranges):
+            continue
+        semantic_name = identifier_name(name)
+        if semantic_name is not None and not semantic_name.startswith("prop_"):
+            inside.append((line_number(newlines, name.offset), name.value))
+
+    # Outside a proptest invocation, pair an exact #[test] attribute with the
+    # next function declaration. Reset at each proptest boundary so an attribute
+    # cannot leak into or out of a macro invocation.
     saw_test_attr = False
-
-    for number, line in enumerate(text.splitlines(), start=1):
-        if depth == 0 and PROPTEST_OPEN.search(line):
-            # The macro's own opening brace counts as depth 1.
-            depth = 1 + line.count("{") - line.count("}") - 1
-            depth = max(depth, 1)
+    was_inside = False
+    for index, token in enumerate(tokens):
+        now_inside = is_inside(index, ranges)
+        if now_inside != was_inside:
             saw_test_attr = False
+            was_inside = now_inside
+        if now_inside:
             continue
 
-        if depth > 0:
-            if found := FN.match(line):
-                name = found.group(1)
-                if not name.startswith("prop_"):
-                    inside.append((number, name))
-            depth += line.count("{") - line.count("}")
-            if depth <= 0:
-                depth = 0
-            continue
-
-        # Outside any proptest! block: an example test must not borrow the prefix.
-        if TEST_ATTR.match(line):
+        if (
+            is_punct(token, "#")
+            and index + 3 < len(tokens)
+            and is_punct(tokens[index + 1], "[")
+            and identifier_name(tokens[index + 2]) == "test"
+            and is_punct(tokens[index + 3], "]")
+        ):
             saw_test_attr = True
             continue
-        if found := FN.match(line):
-            if saw_test_attr and found.group(1).startswith("prop_"):
-                outside.append((number, found.group(1)))
+        if token.kind == "ident" and token.value == "fn" and index + 1 < len(tokens):
+            name = tokens[index + 1]
+            if (
+                saw_test_attr
+                and identifier_name(name) is not None
+                and identifier_name(name).startswith("prop_")
+            ):
+                outside.append((line_number(newlines, name.offset), name.value))
             saw_test_attr = False
-
 
     return inside, outside
 
@@ -97,8 +251,14 @@ def check(roots: list[Path]) -> list[str]:
         for path in sorted(root.rglob("*.rs")):
             if "target" in path.parts:
                 continue
-            text = path.read_text(encoding="utf-8", errors="replace")
-            inside, outside = scan(text)
+            try:
+                text = path.read_text(encoding="utf-8")
+                inside, outside = scan(text)
+            except (OSError, UnicodeError, RustLexError) as error:
+                problems.append(
+                    f"{rel(path)}  could not safely scan Rust source: {error}"
+                )
+                continue
             for number, name in inside:
                 problems.append(
                     f"{rel(path)}:{number}  `{name}` is inside a proptest! block and "
@@ -115,19 +275,19 @@ def check(roots: list[Path]) -> list[str]:
 def self_test() -> int:
     import tempfile
 
-    cases: list[tuple[str, str, bool]] = [
+    cases: list[tuple[str, str, str | None]] = [
         ("a prefixed property test passes", """
 proptest! {
     #[test]
     fn prop_split_preserves_total(x in 0i64..9) { }
 }
-""", False),
+""", None),
         ("an unprefixed property test fails", """
 proptest! {
     #[test]
     fn split_preserves_total(x in 0i64..9) { }
 }
-""", True),
+""", "`split_preserves_total`"),
         ("the second one in a block is caught too", """
 proptest! {
     #[test]
@@ -135,15 +295,15 @@ proptest! {
     #[test]
     fn add_sub_roundtrip(a in 0i64..9) { }
 }
-""", True),
+""", "`add_sub_roundtrip`"),
         ("an example test needs no prefix", """
 #[test]
 fn jod_exponent_is_three() { }
-""", False),
+""", None),
         ("an example test may not borrow the prefix", """
 #[test]
 fn prop_looks_like_a_property_test() { }
-""", True),
+""", "`prop_looks_like_a_property_test`"),
         ("a plain fn after the block is not a test", """
 proptest! {
     #[test]
@@ -151,7 +311,7 @@ proptest! {
 }
 
 fn helper() -> i64 { 0 }
-""", False),
+""", None),
         ("nested braces do not end the block early", """
 proptest! {
     #[test]
@@ -161,21 +321,116 @@ proptest! {
     #[test]
     fn missing_prefix(y in 0i64..9) { }
 }
-""", True),
+""", "`missing_prefix`"),
+        ("a brace in a string cannot end the block early", r'''
+proptest! {
+    #[test]
+    fn prop_string_brace(x in 0i64..9) { let _ = "}"; }
+    #[test]
+    fn missing_after_string(y in 0i64..9) { }
+}
+''', "`missing_after_string`"),
+        ("a brace in a line comment cannot end the block early", """
+proptest! {
+    #[test]
+    fn prop_comment_brace(x in 0i64..9) {
+        // }
+        let _ = x;
+    }
+    #[test]
+    fn missing_after_comment(y in 0i64..9) { }
+}
+""", "`missing_after_comment`"),
+        ("nested block-comment braces cannot end the block early", """
+proptest! {
+    #[test]
+    fn prop_block_comment(x in 0i64..9) {
+        /* outer } /* inner } */ still outer } */
+        let _ = x;
+    }
+    #[test]
+    fn missing_after_block_comment(y in 0i64..9) { }
+}
+""", "`missing_after_block_comment`"),
+        ("a fake macro in a comment or string is ignored", r'''
+// proptest! {
+const NOTE: &str = "proptest! { fn hidden() {} }";
+#[test]
+fn ordinary_example() { }
+''', None),
+        ("parenthesized proptest invocations are covered", """
+proptest! (
+    #[test]
+    fn missing_in_parentheses(x in 0i64..9) { }
+);
+""", "`missing_in_parentheses`"),
+        ("an imported proptest macro alias is covered", """
+use proptest::proptest as property;
+
+property! {
+    #[test]
+    fn missing_through_alias(x in 0i64..9) { }
+}
+""", "`missing_through_alias`"),
+        ("a grouped prelude alias with raw identifiers is covered", """
+use proptest::prelude::{r#proptest as r#property};
+
+r#property! {
+    #[test]
+    fn missing_through_raw_alias(x in 0i64..9) { }
+}
+""", "`missing_through_raw_alias`"),
+        ("a raw property function name is normalized", """
+r#proptest! {
+    #[test]
+    fn r#prop_raw_name(x in 0i64..9) { }
+}
+""", None),
+        ("an alias does not leak into a sibling scope", """
+mod imports_property {
+    use proptest::proptest as property;
+}
+
+mod unrelated_macro {
+    macro_rules! property {
+        ($($tokens:tt)*) => {};
+    }
+    property! {
+        fn not_a_property_test() { }
+    }
+}
+""", None),
+        ("an unterminated string fails closed", '''
+const BROKEN: &str = "unterminated;
+''', "could not safely scan Rust source"),
+        ("an unterminated block comment fails closed", """
+/* never closed
+""", "could not safely scan Rust source"),
+        ("an unclosed delimiter fails closed", """
+fn broken() {
+""", "could not safely scan Rust source"),
     ]
 
     passed = failed = 0
-    for label, body, want_problem in cases:
+    for label, body, wanted_fragment in cases:
         with tempfile.TemporaryDirectory() as tmp:
             crate = Path(tmp) / "src"
             crate.mkdir(parents=True)
             (crate / "lib.rs").write_text(body)
-            got_problem = bool(check([Path(tmp)]))
-        if got_problem == want_problem:
+            problems = check([Path(tmp)])
+        matched = (
+            not problems
+            if wanted_fragment is None
+            else any(wanted_fragment in problem for problem in problems)
+        )
+        if matched:
             print(f"  ok    {label}")
             passed += 1
         else:
-            print(f"  FAIL  {label} (wanted problem={want_problem}, got {got_problem})")
+            print(
+                f"  FAIL  {label} "
+                f"(wanted fragment={wanted_fragment!r}, got {problems!r})"
+            )
             failed += 1
 
     print(f"\n{passed} passed, {failed} failed")
@@ -197,8 +452,8 @@ def main() -> int:
             print(f"  FAIL  {message}")
         print(
             "\nref/domain-api.md is normative and names these with a prop_ prefix; "
-            "microstep 1.1.5 verifies them with the filter `money::prop_`, which "
-            "silently matches nothing when a name drifts."
+            "microstep 1.1.5 verifies them with `money::tests::prop_`; a property "
+            "whose name drifts is omitted from that otherwise-green filtered run."
         )
         return 1
     print("property tests are named prop_<invariant> (ref/domain-api.md)")

@@ -10,9 +10,17 @@ The buildable plan for this POS: what to type, in what order, and how you will k
 2. **[`01-conventions.md`](01-conventions.md)** — the engineering law. Nine invariants, naming, errors, testing, definition of done. **Read once, then keep it open.**
 3. **[`02-development-workflow.md`](02-development-workflow.md)** — how the work gets done: every command, the feature lifecycle, manual testing, the drills, the rituals. **Keep it open next to the law.**
 4. **[`03-github-workflow.md`](03-github-workflow.md)** — how the work gets tracked and shipped: the four branches, issues, the board, pull requests, the two release channels. **Read §3 before your first push** — it says which rules a machine enforces and which are only written down.
-5. **[`phase-0-closeout.md`](phase-0-closeout.md)** — where the repository actually is, and the 1–2 days it takes to make it a foundation.
+5. **[`phase-0-closeout.md`](phase-0-closeout.md)** — the dated Phase-0 close-out record. It is
+   historical evidence, not a current setup or GitHub runbook; use files 2–4 above for live commands
+   and repository posture.
 
 Then work the phase you are in, consulting `ref/` as the microsteps point you there.
+
+**Current implementation frontier (24 August 2026):** Phase 0 is closed; the next product
+microstep is [`1.1.1 — Currency`](phase-1-sellable-mvp.md#111--currency). Repository-hardening
+work may land between numbered product steps, but it does not advance that frontier. Confirm the
+active issue/branch before starting so this dated pointer and the delivery board cannot silently
+diverge.
 
 ---
 
@@ -26,7 +34,7 @@ docs/implementation/
 ├── 02-development-workflow.md     how the work gets done: commands, loops, manual tests
 ├── 03-github-workflow.md          branches, issues, the board, PRs, release channels
 │
-├── phase-0-closeout.md            finish what's started        1–2 days
+├── phase-0-closeout.md            historical close-out record
 ├── phase-1-sellable-mvp.md        cash · tax · Arabic receipts 8–12 weeks
 ├── phase-2-money-grade.md         cards · refunds · fiscal     8–10 weeks
 ├── phase-3-connected.md           sync · back office · CRM     8–10 weeks
@@ -50,7 +58,7 @@ docs/implementation/
 
 Source documents live in [`../plan/`](../plan/): the business & functional master plan, the engineering blueprint, and the original Phase-0 setup guide.
 
-`status-page.html` is a shareable summary of the spine — verdict, corrections, phase map, risk register, live Phase-0 status — published as an Artifact for people who need the picture without the microsteps. Edit the file and republish to the same URL; it is a view of this set, never the source of truth.
+`status-page.html` is a locally shareable summary of the spine — verdict, corrections, phase map, risk register, and live Phase-0 status — for people who need the picture without the microsteps. No publication workflow or stable hosted URL is configured; it is a view of this set, never the source of truth.
 
 ---
 
@@ -111,7 +119,8 @@ If you read nothing else:
 | Question | Where |
 |---|---|
 | Is the business plan any good? | [`ref/plan-validation.md`](ref/plan-validation.md) |
-| What do I do first? | [`phase-0-closeout.md`](phase-0-closeout.md) |
+| What do I do first? | [`02-development-workflow.md`](02-development-workflow.md) §1 |
+| What happened during Phase 0? | [`phase-0-closeout.md`](phase-0-closeout.md) — historical record |
 | Which command do I type, and how do I test it by hand? | [`02-development-workflow.md`](02-development-workflow.md) |
 | Which branch do I work from, and how does a change reach a merchant? | [`03-github-workflow.md`](03-github-workflow.md) |
 | Is this rule actually enforced, or only written down? | [`03-github-workflow.md`](03-github-workflow.md) §3 |

@@ -104,7 +104,10 @@ Scope: the sync API, device tokens, the enrollment flow, the licence mechanism, 
 
 ### 5.4.2 — Dependency and supply chain
 **Files:** `.github/workflows/ci.yml`
-`cargo audit` · `cargo deny` (licences and duplicate versions) · `pnpm audit`. Failing on advisories with an explicit, dated allowlist for accepted ones.
+`cargo deny` (advisories, licences, bans and sources) · reviewed JavaScript licence metadata ·
+`pnpm audit`. Fail on advisories unless an exception is explicit, reasoned and dated. Before the
+first installer leaves the repository, inventory its platform-specific dependencies and include
+every required third-party licence/source notice.
 
 ### 5.4.3 — Secrets audit
 ```bash

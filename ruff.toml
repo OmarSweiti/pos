@@ -1,0 +1,49 @@
+# Ruff — the linter for this repository's policy code.
+#
+# Roughly seven thousand lines of Python enforce the invariants: the write
+# guards, the schema and migration verifiers, the settings validators, the
+# staged-content checks. Until this file existed, none of it was linted by
+# anything. `just lint` covered Rust, TypeScript and CSS; the code that decides
+# whether a migration may be edited or a secret may be committed had no gate.
+#
+# Run it the same way CI does:   just lint-scripts
+#
+# The selection is deliberately narrow. A maximal rule set on a mature codebase
+# produces a wall of style findings, and a gate that reports a hundred things
+# nobody intends to change is a gate that gets switched off — the same erosion
+# deny.toml warns about. These four categories are the ones that catch defects:
+#
+#   E9  syntax and IO errors — the file does not even parse
+#   F   pyflakes: undefined names, unused imports, f-strings with no placeholder
+#   B   bugbear: mutable default arguments, `zip()` that silently truncates,
+#       `except` that discards the original cause, loop variables captured late
+#   I   import order, so a merge conflict in an import block is a conflict about
+#       code rather than about ordering
+#
+# What is deliberately NOT selected, and why:
+#
+#   E501  line length. Ruff is not the formatter here and reflowing prose in
+#         these files' explanatory comments would cost more than it returns.
+#   EXE   "shebang present but file is not executable". Five files trip this,
+#         all deliberately: hooks are launched through run-python.sh and
+#         run-python-hook.mjs rather than exec'd, and
+#         check-branch-workflow-policy.rb pins their executable bit exactly.
+#         Ruff would be asking for a change that the policy checker refuses.
+#   S     flake8-bandit. Its subprocess rules fire on every call to git, cargo
+#         and docker in this repository — which is what these scripts are for.
+#         Real credential handling is covered by Gitleaks and by the security
+#         rules, not by a heuristic that cannot tell `git` from `curl | sh`.
+#   PLW1510  `subprocess.run` without `check=`. These call sites read
+#         `returncode` deliberately, to turn a tool failure into a structured
+#         report rather than a traceback.
+#
+# Widen this list when a category earns its place, not by default.
+
+target-version = "py311"
+
+[lint]
+select = ["E9", "F", "B", "I"]
+
+[lint.per-file-ignores]
+# Fixture and self-test bodies construct deliberately malformed input.
+"**/test_*.py" = ["B"]

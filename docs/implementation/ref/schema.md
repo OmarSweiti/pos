@@ -1012,7 +1012,7 @@ CREATE TABLE label_reprint_queue (
 
 ## Postgres mirror
 
-`apps/server/migrations/` mirrors each SQLite migration with the same number and name, applied through sqlx. Semantics are identical; representations differ:
+`apps/server/migrations/` mirrors the SQLite chain through declared header mappings, not shared filenames: sqlx requires unique timestamp versions while SQLite uses `NNNN`. Semantics align even when names differ; representations differ:
 
 | SQLite | Postgres | Note |
 |---|---|---|

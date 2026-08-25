@@ -41,7 +41,7 @@ Add correct instincts on semi-integrated payments, on treating card timeouts as 
 | File | What it is |
 |---|---|
 | **[`01-conventions.md`](01-conventions.md)** | the engineering law: nine invariants, naming, errors, testing, definition of done. **Read once, keep open** |
-| [`phase-0-closeout.md`](phase-0-closeout.md) | finish what is started — 1–2 days |
+| [`phase-0-closeout.md`](phase-0-closeout.md) | historical Phase-0 close-out record; not a current runbook |
 | [`phase-1-sellable-mvp.md`](phase-1-sellable-mvp.md) | cash, tax, receipts, Arabic — 8–12 weeks |
 | [`phase-2-money-grade.md`](phase-2-money-grade.md) | cards, refunds, shifts, fiscal — 8–10 weeks |
 | [`phase-3-connected.md`](phase-3-connected.md) | sync, back office, customers — 8–10 weeks |

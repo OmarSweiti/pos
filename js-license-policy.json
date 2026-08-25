@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "allowedLicenses": {
+    "Apache-2.0": "Permissive; preserve required notices.",
+    "Apache-2.0 OR MIT": "Either permissive alternative is acceptable.",
+    "BSD-2-Clause": "Permissive; preserve copyright and licence text.",
+    "BSD-3-Clause": "Permissive; preserve copyright, licence text, and non-endorsement clause.",
+    "BlueOak-1.0.0": "Permissive Blue Oak Model License 1.0.0.",
+    "CC0-1.0": "Public-domain dedication with a permissive fallback.",
+    "ISC": "Permissive; preserve copyright and licence text.",
+    "MIT": "Permissive; preserve copyright and licence text.",
+    "MIT OR Apache-2.0": "Either permissive alternative is acceptable.",
+    "MIT-0": "Permissive MIT No Attribution licence.",
+    "MPL-2.0": "File-level weak copyleft; modified MPL-covered files must remain available under MPL-2.0."
+  }
+}

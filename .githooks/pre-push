@@ -1,68 +1,89 @@
 #!/usr/bin/env bash
-# Refuses a direct push to a protected branch, and any force-push to one.
-#
-# WHY THIS EXISTS: branch protection and rulesets are not available on a PRIVATE
-# repository on the GitHub Free plan — the API answers 403 "Upgrade to GitHub Pro
-# or make this repository public". This hook is the local stand-in. It is weaker
-# on purpose-of-fact: a hook lives on one machine and can be skipped with
-# --no-verify. It is still the difference between "impossible to do by accident"
-# and "easy to do at 23:00".
-#
-# Enable once (also done by `just setup`):   git config core.hooksPath .githooks
-# Deliberate override, when you mean it:     POS_ALLOW_PROTECTED_PUSH=1 git push ...
-set -uo pipefail
+# Refuse direct/force/deletion pushes to protected branches and prevent assistant
+# attribution from reaching any ref. Local hooks are a seatbelt, not server-side
+# branch protection; `--no-verify` remains a deliberate bypass.
+set -euo pipefail
+
+remote_name="${1:-}"
+[ -n "$remote_name" ] || {
+  echo "pre-push: ERROR — Git did not supply the destination remote; refusing closed." >&2
+  exit 2
+}
+
+repo_root=$(git rev-parse --show-toplevel) || {
+  echo "pre-push: ERROR — cannot locate the repository root; refusing closed." >&2
+  exit 2
+}
+policy_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+attribution_check="$policy_root/scripts/check-automation-attribution.py"
+
+# Backstop an accidentally skipped pre-commit and scan every reachable commit,
+# including commits introduced by merges. CI repeats this server-side.
+"$policy_root/scripts/scan-secrets.sh" --history "$repo_root" </dev/null
 
 protected='main staging development'
 zero='0000000000000000000000000000000000000000'
 refuse=0
+commits_file=$(mktemp "${TMPDIR:-/tmp}/pos-pre-push.XXXXXX") || {
+  echo "pre-push: ERROR — cannot create a temporary file; refusing closed." >&2
+  exit 2
+}
+trap 'rm -f "$commits_file"' EXIT
 
-while read -r local_ref local_sha remote_ref remote_sha; do
+while IFS=' ' read -r _local_ref local_sha remote_ref remote_sha; do
+  [ -n "${remote_sha:-}" ] || {
+    echo "pre-push: ERROR — Git supplied a malformed ref update; refusing closed." >&2
+    refuse=1
+    continue
+  }
   branch="${remote_ref#refs/heads/}"
 
-  # No agent attribution reaches origin — checked on EVERY ref, not just the
-  # protected ones. `git push --all` would republish `backup-before-rewrite`
-  # (a plain ref under refs/heads/, carrying all 7 original trailers) to a brand
-  # new remote branch that no branch rule covers. --mirror is not the only vector.
-  # This scan is bounded to commits origin does not already have, so it is cheap.
+  # Check only commits absent from the supplied destination remote. Using Git's
+  # first pre-push argument matters when the destination is `upstream`, a fork,
+  # or another named remote; hardcoding origin can reject already-published
+  # history or overlook the actual destination's state.
   if [ "$local_sha" != "$zero" ]; then
-    # Read the log into a variable first, and count matches rather than asking
-    # `grep -q` whether there was one.
-    #
-    # This used to be `git log ... | grep -qiE ...` directly in the `if`, which
-    # was WRONG under `set -o pipefail` — and wrong in the direction that lets a
-    # trailer through. `grep -q` exits the moment it matches, which closes the
-    # pipe; `git log` then dies of SIGPIPE with status 141; pipefail reports the
-    # pipeline as 141, and the `if` reads that as "no match found". The guard
-    # then said nothing and returned 0 on a branch that genuinely carried an
-    # agent trailer. Whether it fired at all depended on whether git finished
-    # writing before grep stopped reading — a race, which is why it passed for
-    # weeks and then failed once the fixture changed size.
-    #
-    # `grep -c` reads its input to the end, so nothing gets SIGPIPE'd, and the
-    # count is the answer rather than a side effect of process scheduling.
-    attributed_log=$(git log "$local_sha" --not --remotes=origin --format='%B' 2>/dev/null || true)
-    attributed_hits=$(printf '%s\n' "$attributed_log" \
-      | grep -ciE '^[[:space:]]*Co-authored-by:.*<[^>]*(anthropic\.com|copilot@|\[bot\]@|\[bot\]>)' || true)
-    if [ "${attributed_hits:-0}" -gt 0 ]; then
-      echo "pre-push: REFUSED — '$branch' carries agent-attribution trailers in commits"
-      echo "          that origin does not have. Publishing them undoes the rewrite that"
-      echo "          removed them (user instruction, 2026-08-20)."
-      echo
-      echo "          If this is 'backup-before-rewrite', it is a LOCAL safety net and is"
-      echo "          not meant to be pushed at all. Push explicit refspecs, never --all."
-      echo "          Offending commits:"
-      git log "$local_sha" --not --remotes=origin --format='            %h %s' 2>/dev/null | head -8
+    if ! git rev-list "$local_sha" --not "--remotes=$remote_name" > "$commits_file"; then
+      echo "pre-push: ERROR — cannot enumerate commits destined for '$remote_name'; refusing closed." >&2
       refuse=1
       continue
     fi
+    while IFS= read -r commit_sha; do
+      [ -n "$commit_sha" ] || continue
+      check_status=0
+      "$policy_root/scripts/run-python.sh" \
+        "$attribution_check" --git-commit "$commit_sha" >/dev/null 2>&1 \
+        || check_status=$?
+      [ "$check_status" -eq 0 ] && continue
+      if [ "$check_status" -eq 1 ]; then
+        echo "pre-push: REFUSED — '$branch' carries assistant attribution in commit $commit_sha."
+      else
+        echo "pre-push: ERROR — could not inspect commit $commit_sha; refusing closed." >&2
+      fi
+      refuse=1
+    done < "$commits_file"
   fi
+
+  # Tags are append-only. Published releases make their associated tags
+  # immutable, but drafts do not; refusing every existing-tag update or deletion
+  # closes the ordinary local accident path during that vulnerable window. A
+  # brand-new tag still proceeds to GitHub, where the release guard validates it.
+  case "$remote_ref" in
+    refs/tags/*)
+      tag_name=${remote_ref#refs/tags/}
+      if [ "$remote_sha" != "$zero" ]; then
+        if [ "$local_sha" = "$zero" ]; then
+          echo "pre-push: REFUSED — deleting existing tag '$tag_name'. Tags are append-only."
+        else
+          echo "pre-push: REFUSED — moving existing tag '$tag_name'. Create a new version tag instead."
+        fi
+        refuse=1
+      fi
+      continue
+      ;;
+  esac
 
   case " $protected " in *" $branch "*) ;; *) continue ;; esac
-
-  if [ "${POS_ALLOW_PROTECTED_PUSH:-0}" = "1" ]; then
-    echo "pre-push: POS_ALLOW_PROTECTED_PUSH=1 — allowing a direct push to '$branch'."
-    continue
-  fi
 
   if [ "$local_sha" = "$zero" ]; then
     echo "pre-push: REFUSED — deleting '$branch'. That branch is the trunk of the flow."
@@ -70,12 +91,18 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     continue
   fi
 
-  if [ "$remote_sha" != "$zero" ] && ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
-    echo "pre-push: REFUSED — this is a FORCE-push to '$branch'. It would discard published commits."
-    echo "          If you genuinely mean it, say so out loud:"
-    echo "            POS_ALLOW_PROTECTED_PUSH=1 git push --force-with-lease origin $branch"
-    refuse=1
-    continue
+  if [ "$remote_sha" != "$zero" ]; then
+    merge_status=0
+    git merge-base --is-ancestor "$remote_sha" "$local_sha" >/dev/null 2>&1 || merge_status=$?
+    if [ "$merge_status" -ne 0 ]; then
+      if [ "$merge_status" -gt 1 ]; then
+        echo "pre-push: ERROR — cannot verify whether '$branch' is fast-forward; refusing closed." >&2
+      else
+        echo "pre-push: REFUSED — this is a FORCE-push to '$branch'. It would discard published commits."
+      fi
+      refuse=1
+      continue
+    fi
   fi
 
   echo "pre-push: REFUSED — '$branch' takes changes through a pull request, not a direct push."
@@ -93,4 +120,3 @@ if [ "$refuse" -ne 0 ]; then
   echo "  docs/implementation/03-github-workflow.md §2"
   exit 1
 fi
-exit 0

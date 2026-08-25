@@ -1,10 +1,20 @@
 # Phase 0 — close-out
 
+> **Historical record — not a current runbook.** This file preserves the repository snapshot and
+> decisions from 20 August 2026. Phase 0 is complete, the remote now exists, and the Git/GitHub
+> posture has since changed substantially. Use [`02-development-workflow.md`](02-development-workflow.md)
+> for current local commands and [`03-github-workflow.md`](03-github-workflow.md) for current branch,
+> CI, and release procedures. Commands and counts below are dated evidence unless a section says it
+> has been reconciled.
+
 **Goal:** turn a working scaffold into a foundation you can build on for two years without tripping over it.
 **Effort:** 1–2 days.
-**Exit:** CI green on a remote, the terminal crate belongs to the workspace, the app is identifiably *this* product, and every quality gate that Phase 1 depends on is enforced rather than aspirational.
+**Historical exit criterion:** CI green on a remote, the terminal crate belongs to the workspace,
+the app is identifiably *this* product, and every quality gate that Phase 1 depends on exists.
 
-`docs/phase-0-remaining-setup.md` describes what Parts 12–13 *should* be. This file is what the repository actually needs, verified against the tree on 20 Aug 2026. Where the two differ, this one was checked.
+`docs/phase-0-remaining-setup.md` described what Parts 12–13 *should* be. This file records what the
+repository needed at close-out, verified against the tree on 20 August 2026. It no longer describes
+the live repository.
 
 ---
 
@@ -19,7 +29,7 @@
 | 0.1.5 cycle guard | ✅ | **cargo-modules can't do this** — custom module-graph checker instead |
 | 0.2.1 `ci.yml` + toolchain pin | ✅ | pinned **1.97.1** (the installed toolchain), not 1.91 |
 | 0.2.2 `release.yml` drafted | ✅ | inert until a `v*` tag |
-| 0.2.3 branch renamed to `main` | ✅ | **remote + push are yours** — no GitHub repo exists yet |
+| 0.2.3 branch renamed to `main` | ✅ | historical bootstrap; the live default branch is now `development` |
 | 0.3.1 `tauri.conf.json` | ✅ | POS Terminal, 1366×768, min-size guard, CSP locked down |
 | 0.3.2 updater keys | ⬜ | needs an interactive password + your GitHub secrets |
 | 0.3.3 biome migrated | ✅ | `rules.recommended` → `rules.preset` |
@@ -27,7 +37,9 @@
 | 0.4.2 `CLAUDE.md` | ✅ | the nine invariants on one screen |
 | 0.4.3 doc link check | ✅ | `scripts/check-doc-links.sh`, folded into `just lint`, negative-tested |
 
-**Local exit gate: 6 of 7 green.** Check 7 (CI green on a remote) is blocked on you creating the GitHub repository.
+**Current note:** the remote exists and Phase 0 is complete. Do not use the dated gate count below
+as live evidence; run the maintained recipes in `02-development-workflow.md` and inspect the exact
+PR/run identifiers described in `03-github-workflow.md`.
 
 Two things reality corrected during execution:
 
@@ -41,8 +53,8 @@ And two things worth keeping:
 
 ---
 
-## Verified current state
-*(as it was before close-out — the table this plan was written against)*
+## Historical pre-close-out snapshot
+*(the table this plan was written against, not the repository's current state)*
 
 | Fact | Evidence |
 |---|---|
@@ -169,17 +181,18 @@ Use §12.2 of the setup doc verbatim. It stays inert until a `v*` tag exists. Co
 
 **Done when:** the file is committed and GitHub lists it as a workflow.
 
-### 0.2.3 — Remote, branch, protection
+### 0.2.3 — Remote and branch bootstrap *(historical; superseded)*
 
-```bash
-git branch -M main
-git remote add origin git@github.com:<you>/pos.git
-git push -u origin main
-```
+This step originally created the remote and renamed the only branch to `main`. The live repository
+now uses `development` as its default and the adjacent promotion path
+`development → staging → main`; [`03-github-workflow.md`](03-github-workflow.md) is the maintained
+procedure.
 
-Then, in repository settings: protect `main`, require the `rust` and `web` checks, disallow force-push.
-
-**Done when:** a PR cannot merge with a red check. Verify by opening one that fails.
+The repository is private on GitHub Free, so branch protection/rulesets, required reviews,
+CODEOWNERS enforcement, and merge blocking on red checks are not available here. No paid-plan
+protection step is active. Hooks and CI are backstops/signals, and an administrator can still merge
+a failing PR; the exact manual sequence in the maintained workflow compensates honestly for that
+limit.
 
 ---
 
@@ -272,30 +285,18 @@ This documentation set is worth only as much as its cross-references. `scripts/c
 
 ---
 
-## Exit gate
+## Historical exit evidence *(superseded)*
 
-Run in order. All seven must pass.
+The original close-out used a small, dated set of lint, test, database, health, frontend, and remote
+CI checks. Test counts, job names, branch topology, and CLI inference have all changed since then,
+so that checklist is intentionally not reproduced as an executable runbook.
 
-```bash
-just lint                      # fmt + clippy -D warnings + biome
-just test                      # 6 Rust + 2 Vitest, all green
-just db-up && just migrate     # container healthy, sqlx migration applied
-just dev-server &              # then:
-curl -s localhost:8080/health      | grep -q '"status":"ok"'
-curl -s localhost:8080/health/db   | grep -q '"db":"ok"'
-pnpm dev:terminal              # window titled POS Terminal, 1366×768,
-                               # "Split via Rust" returns values over IPC
-pnpm dev:backoffice            # placeholder renders with Tailwind styles
-git push && gh run watch       # both CI jobs green on the remote
-```
-
-Plus, by inspection:
-
-- `cargo metadata` shows edition 2024 for every member.
-- `rg 'unwrap\(\)' crates/ apps/ --glob '!*test*'` returns nothing outside `main()`.
-- No `greet`, no orphaned `App.css`, no pnpm warning on install.
-- `docs/plan/` holds the blueprint, the master plan, and the setup guide.
-- A failing PR cannot merge into `main`.
+For current evidence, use the maintained `just` recipes in
+[`02-development-workflow.md`](02-development-workflow.md). For GitHub work, capture the exact PR
+URL/number, run `bash ./scripts/watch-pr-checks.sh <PR>`, verify the reviewed head SHA again
+immediately before merge, then resolve and watch the exact workflow run id for the resulting branch
+SHA. CI remains a signal on the current Free plan; it cannot prevent an administrator from merging
+red.
 
 ---
 

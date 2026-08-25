@@ -12,12 +12,24 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+# This is an unpublished application, not a library with a separately supported
+# MSRV. Keep the package contract equal to the compiler CI actually proves in
+# rust-toolchain.toml; claiming an untested lower floor makes Cargo/Clippy
+# decisions look supported when they are not. Bump both pins together.
+rust-version = "1.97.1"
 # Proprietary and never published to crates.io. Both facts are load-bearing for
 # the supply-chain gate: `publish = false` is what lets deny.toml skip our own
 # crates in the licence audit and permit workspace path dependencies.
 license = "LicenseRef-Proprietary"
 publish = false
+
+[workspace.lints.rust]
+# A register handles money and runs unattended in a shop. Nothing we write needs
+# to opt out of the borrow checker; dependencies still may, and this does not
+# constrain them. `forbid` rather than `deny` so it cannot be lifted by a local
+# allow attribute — if hardware FFI ever genuinely needs it, that is a reviewed
+# change to this line, not a quiet annotation in a file nobody is reading.
+unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 # A panic in a register is a lost sale. Tests and main() opt out locally.
@@ -41,7 +53,7 @@ pos-hardware = { path = "crates/pos-hardware" }
 serde        = { version = "1", features = ["derive"] }
 serde_json   = "1"
 thiserror    = "2"
-uuid         = { version = "1", features = ["v4", "v7", "serde"] }
+uuid         = { version = "1", default-features = false, features = ["serde"] }
 rust_decimal = "1"
 
 # ── data ────────────────────────────────────────────────────────────────

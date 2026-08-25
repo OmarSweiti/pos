@@ -11,6 +11,10 @@
 use rusqlite::{Connection, params};
 use uuid::Uuid;
 
+fn id(value: u128) -> Uuid {
+    Uuid::from_u128(value)
+}
+
 /// Every trigger 0002 installs. A rebuild of a guarded table silently takes its
 /// triggers with it, so the list is asserted rather than assumed.
 const REQUIRED_TRIGGERS: &[&str] = &[
@@ -37,7 +41,7 @@ fn fixture() -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let conn = pos_db::open(&dir.path().join("register.db"), "test-key").unwrap();
 
-    let (product, sale, register) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+    let (product, sale, register) = (id(1), id(2), id(3));
     conn.execute(
         "INSERT INTO product (id, sku, name, price_minor, currency) VALUES (?1,?2,?3,?4,?5)",
         params![
@@ -60,7 +64,7 @@ fn fixture() -> Fixture {
         "INSERT INTO sale_line (id, sale_id, product_id, qty_milli, unit_price_minor, total_minor)
          VALUES (?1,?2,?3,1000,2500,2500)",
         params![
-            Uuid::now_v7().as_bytes().as_slice(),
+            id(4).as_bytes().as_slice(),
             sale.as_bytes().as_slice(),
             product.as_bytes().as_slice()
         ],
@@ -68,10 +72,7 @@ fn fixture() -> Fixture {
     .unwrap();
     conn.execute(
         "INSERT INTO sale_tender (id, sale_id, method, amount_minor) VALUES (?1,?2,'cash',2900)",
-        params![
-            Uuid::now_v7().as_bytes().as_slice(),
-            sale.as_bytes().as_slice()
-        ],
+        params![id(5).as_bytes().as_slice(), sale.as_bytes().as_slice()],
     )
     .unwrap();
 
@@ -161,7 +162,7 @@ fn the_lines_of_a_completed_sale_are_frozen() {
                 "INSERT INTO sale_line (id, sale_id, product_id, qty_milli, unit_price_minor, total_minor)
                  VALUES (?1,?2,?3,1000,100,100)",
                 params![
-                    Uuid::now_v7().as_bytes().as_slice(),
+                    id(6).as_bytes().as_slice(),
                     sale,
                     f.product.as_bytes().as_slice()
                 ],
@@ -232,7 +233,7 @@ fn a_receipt_number_is_unique_per_register_but_not_across_them() {
                            tax_minor, total_minor, currency, business_date, completed_at)
          VALUES (?1,'000123',?2,'parked',1,0,1,'JOD','2026-08-20','2026-08-20T11:00:00.000Z')",
         params![
-            Uuid::now_v7().as_bytes().as_slice(),
+            id(7).as_bytes().as_slice(),
             f.register.as_bytes().as_slice()
         ],
     );
@@ -243,10 +244,7 @@ fn a_receipt_number_is_unique_per_register_but_not_across_them() {
             "INSERT INTO sale (id, receipt_number, register_id, status, subtotal_minor,
                                tax_minor, total_minor, currency, business_date, completed_at)
              VALUES (?1,'000123',?2,'parked',1,0,1,'JOD','2026-08-20','2026-08-20T11:00:00.000Z')",
-            params![
-                Uuid::now_v7().as_bytes().as_slice(),
-                Uuid::now_v7().as_bytes().as_slice()
-            ],
+            params![id(8).as_bytes().as_slice(), id(9).as_bytes().as_slice()],
         )
         .expect("a different register legitimately prints 000123 too");
 }

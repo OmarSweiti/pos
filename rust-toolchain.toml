@@ -1,5 +1,6 @@
 # Pinned deliberately: a Rust release must never turn a green build red on a
-# day you are shipping. Bump it as a commit, with CI proving it.
+# day you are shipping. Bump this and Cargo.toml's workspace rust-version
+# together as one commit, with CI proving the exact compiler contract.
 [toolchain]
 channel = "1.97.1"
 components = ["rustfmt", "clippy"]

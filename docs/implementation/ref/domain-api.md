@@ -4,10 +4,16 @@ The crown jewel. Pure, no I/O, shared by register and server so the two can neve
 
 This document is the **target shape**, assembled across Phases 1–4. Each item is annotated with the microstep that creates it. Signatures here are normative: if a phase file shows something different, this file wins.
 
-**Purity is enforced mechanically.** `pos-domain/Cargo.toml` may depend only on `serde`, `thiserror`, `uuid`, `rust_decimal`, and (dev) `proptest`, `criterion`, `trybuild`, `serde_json`. Adding anything capable of I/O is a design review, not a commit.
+**Purity is enforced mechanically.** `pos-domain/Cargo.toml` may depend only on `serde`,
+`thiserror`, `uuid`, `rust_decimal`, and (dev) `proptest`, `criterion`, `trybuild`,
+`serde_json`. `uuid` is an identity/serialization type here: its default and
+version-generation features stay disabled, and generated IDs are injected by the shell.
+Adding anything capable of I/O, clock access, or randomness is a design review, not a commit.
+`scripts/check-domain-purity.py` audits the resolved normal dependency features and direct
+call sites.
 
-> `trybuild` and `serde_json` are dev-dependencies and ship nothing, which is why they are allowed:
-> purity governs what reaches a register, and a `[dev-dependencies]` entry never does.
+> `trybuild` and `serde_json` are dev-dependencies and ship nothing, which is why they are
+> allowed: purity governs what reaches a register, and a `[dev-dependencies]` entry never does.
 >
 > `trybuild` is here because 1.1.8's claim — that two id types cannot be interchanged — is only
 > provable by code that **fails** to compile, and `cargo nextest` does not run doctests, so a

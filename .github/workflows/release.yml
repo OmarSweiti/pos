@@ -3,10 +3,15 @@ on:
   push:
     tags: ["v*"]
 
+permissions:
+  contents: read
+
 # Two channels, one workflow:
 #   v0.2.0-rc.1  tagged on staging  → a PRE-release, for the pilot channel
 #   v0.2.0       tagged on main     → a production draft release
-# A tag is immutable. A bad build is a new patch, never a moved tag.
+# Repository policy never moves a release tag. GitHub locks the tag and assets
+# only after its draft is published with immutable releases enabled; a bad build
+# gets a new patch instead of rewriting released history.
 
 concurrency:
   group: release-${{ github.ref }}
@@ -18,40 +23,89 @@ jobs:
   # cheapest check in this repository.
   guard:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
     outputs:
       prerelease: ${{ steps.channel.outputs.prerelease }}
+      tag_object: ${{ steps.tag.outputs.tag_object }}
     steps:
-      - uses: actions/checkout@v7
-        with: { fetch-depth: 0 }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: The tag decides the channel
+      - name: The tag grammar decides the channel
         id: channel
         run: |
-          set -uo pipefail
-          tag="${GITHUB_REF_NAME}"
-          case "$tag" in
-            *-*) echo "prerelease=true"  >> "$GITHUB_OUTPUT"; channel=staging ;;
-            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT"; channel=main ;;
-          esac
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          core='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+          if printf '%s' "$tag" | grep -Eq "^v${core}$"; then
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            channel=main
+          elif printf '%s' "$tag" | grep -Eq "^v${core}-(rc|beta)\.[1-9][0-9]*$"; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            channel=staging
+          else
+            echo "::error::release tags must be vX.Y.Z, vX.Y.Z-rc.N, or vX.Y.Z-beta.N without leading zeroes."
+            exit 1
+          fi
           echo "tag=$tag channel=$channel"
           echo "expected_branch=$channel" >> "$GITHUB_ENV"
 
-      - name: A release tag must sit on its own branch
+      - name: A release tag is verified, signed, and identifies the exact branch head
+        id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -uo pipefail
-          branches=$(git branch -r --contains "$GITHUB_SHA" \
-                     | sed 's|origin/||' | tr -d ' ' | paste -sd, -)
-          echo "tagged commit is on: ${branches:-<nothing>}"
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" "origin/$expected_branch"; then
-            echo "::error::$GITHUB_REF_NAME is not an ancestor of origin/$expected_branch."
-            echo "::error::A final vX.Y.Z tag belongs on main; a -rc/-beta tag belongs on staging."
-            echo "::error::Delete the tag, promote properly, and tag again — do not move it."
+          set -euo pipefail
+          tag_ref="refs/tags/$GITHUB_REF_NAME"
+          object_type=$(git cat-file -t "$tag_ref")
+          if [ "$object_type" != "tag" ]; then
+            echo "::error::$GITHUB_REF_NAME is a lightweight tag. Releases require a verified signed tag created with git tag -s."
             exit 1
           fi
 
+          tag_object=$(git rev-parse "$tag_ref")
+          echo "tag_object=$tag_object" >> "$GITHUB_OUTPUT"
+          tag_json=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object")
+          verified=$(printf '%s' "$tag_json" | jq -r '.verification.verified')
+          reason=$(printf '%s' "$tag_json" | jq -r '.verification.reason')
+          target_type=$(printf '%s' "$tag_json" | jq -r '.object.type')
+          target_sha=$(printf '%s' "$tag_json" | jq -r '.object.sha')
+          if [ "$verified" != "true" ]; then
+            echo "::error::GitHub did not verify the tag signature (reason: $reason)."
+            echo "::error::Configure a GPG, SSH, or S/MIME signing key in Git and GitHub, then create a new tag with git tag -s."
+            exit 1
+          fi
+          [ "$target_type" = "commit" ] || {
+            echo "::error::the signed tag must point directly to a commit, not a $target_type object."
+            exit 1
+          }
+
+          tagged_commit=$(git rev-parse "${tag_ref}^{commit}")
+          branch_head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$expected_branch" --jq .object.sha)
+          echo "tagged commit: $tagged_commit"
+          echo "$expected_branch head: $branch_head"
+          [ "$target_sha" = "$tagged_commit" ] || {
+            echo "::error::GitHub's verified tag object and Git disagree about the target commit."
+            exit 1
+          }
+          [ "$tagged_commit" = "$GITHUB_SHA" ] || {
+            echo "::error::the tag object does not resolve to the workflow commit."
+            exit 1
+          }
+          [ "$tagged_commit" = "$branch_head" ] || {
+            echo "::error::$GITHUB_REF_NAME must identify the current GitHub $expected_branch head, not an older ancestor."
+            echo "::error::Promote and validate the intended commit, then create a new tag; never move a published tag."
+            exit 1
+          }
+
       - name: Version in the tag must match the version in the tree
         run: |
-          set -uo pipefail
+          set -euo pipefail
           tag_ver="${GITHUB_REF_NAME#v}"
           base_ver="${tag_ver%%-*}"                     # strip -rc.1
           cargo_ver=$(sed -n 's/^version *= *"\(.*\)".*/\1/p' Cargo.toml | head -1)
@@ -64,23 +118,97 @@ jobs:
           # was checking, so it is the one that drifts.
           [ "$base_ver" = "$pkg_ver" ] || { echo "::error::tag disagrees with apps/terminal/package.json"; exit 1; }
 
+      - name: Updater artifact signing is configured in the application
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const config = require('./apps/terminal/src-tauri/tauri.conf.json');
+          if (config.bundle?.createUpdaterArtifacts !== true) {
+            console.error('::error::bundle.createUpdaterArtifacts must be true before a release tag is built.');
+            process.exitCode = 1;
+          }
+          if (typeof config.plugins?.updater?.pubkey !== 'string' || config.plugins.updater.pubkey.trim() === '') {
+            console.error('::error::plugins.updater.pubkey must contain the generated public key before release.');
+            process.exitCode = 1;
+          }
+          NODE
+
+      - name: CI succeeded for this exact commit on the release branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          endpoint="repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs"
+
+          # A branch push and its tag can arrive together. Wait for that exact
+          # branch CI run rather than accepting a green run for another commit.
+          for attempt in $(seq 1 40); do
+            runs=$(gh api --method GET "$endpoint" \
+              -f branch="$expected_branch" \
+              -f event=push \
+              -f head_sha="$GITHUB_SHA" \
+              -f per_page=20)
+
+            success=$(printf '%s' "$runs" | jq \
+              --arg sha "$GITHUB_SHA" --arg branch "$expected_branch" \
+              '[.workflow_runs[] | select(.head_sha == $sha and .head_branch == $branch and .status == "completed" and .conclusion == "success")] | length')
+            if [ "$success" -gt 0 ]; then
+              echo "CI is green for $GITHUB_SHA on $expected_branch"
+              exit 0
+            fi
+
+            active=$(printf '%s' "$runs" | jq \
+              --arg sha "$GITHUB_SHA" --arg branch "$expected_branch" \
+              '[.workflow_runs[] | select(.head_sha == $sha and .head_branch == $branch and .status != "completed")] | length')
+            completed=$(printf '%s' "$runs" | jq \
+              --arg sha "$GITHUB_SHA" --arg branch "$expected_branch" \
+              '[.workflow_runs[] | select(.head_sha == $sha and .head_branch == $branch and .status == "completed")] | length')
+            if [ "$active" -eq 0 ] && [ "$completed" -gt 0 ]; then
+              printf '%s' "$runs" | jq -r \
+                --arg sha "$GITHUB_SHA" --arg branch "$expected_branch" \
+                '.workflow_runs[] | select(.head_sha == $sha and .head_branch == $branch) | "::error::CI run \(.html_url) concluded \(.conclusion)"'
+              exit 1
+            fi
+
+            echo "waiting for exact-commit CI ($attempt/40)"
+            sleep 15
+          done
+
+          echo "::error::no successful ci.yml push run appeared for $GITHUB_SHA on $expected_branch within ten minutes."
+          exit 1
+
   build:
     needs: guard
     permissions:
-      contents: write
+      contents: read
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: macos-latest
+            artifact_platform: macos
             args: "--target universal-apple-darwin"
           - platform: ubuntu-22.04      # build on oldest supported glibc
+            artifact_platform: linux
             args: ""
           - platform: windows-latest
+            artifact_platform: windows
             args: ""
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Updater signing material is configured
+        shell: bash
+        env:
+          TAURI_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [ -n "$TAURI_KEY" ] || { echo "::error::the repository lacks TAURI_SIGNING_PRIVATE_KEY"; exit 1; }
+          [ -n "$TAURI_KEY_PASSWORD" ] || { echo "::error::the repository lacks TAURI_SIGNING_PRIVATE_KEY_PASSWORD"; exit 1; }
       - name: Linux system deps
         if: matrix.platform == 'ubuntu-22.04'
         run: |
@@ -97,19 +225,22 @@ jobs:
           channel=$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml | head -1)
           [ -n "$channel" ] || { echo "::error::no channel in rust-toolchain.toml"; exit 1; }
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: ${{ steps.pin.outputs.channel }}
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-      - uses: Swatinem/rust-cache@v2
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with: { node-version: 22, cache: pnpm }
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
       - run: pnpm install --frozen-lockfile
+      - name: Cargo.lock resolves without mutation
+        run: cargo metadata --locked --format-version 1 --no-deps > /dev/null
 
-      - uses: tauri-apps/tauri-action@v1
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
+        id: tauri
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Updater artifact signing (generate once, phase-0-closeout.md 0.3.2):
           #   pnpm --filter terminal tauri signer generate
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -119,8 +250,326 @@ jobs:
           # — Phase 5, milestone 5.5.1. Not before.
         with:
           projectPath: apps/terminal
-          tagName: ${{ github.ref_name }}
-          releaseName: "POS Terminal ${{ github.ref_name }}"
-          releaseDraft: true
-          prerelease: ${{ needs.guard.outputs.prerelease == 'true' }}
           args: ${{ matrix.args }}
+
+      # tauri-action's workflow-artifact mode uploads installers, but deliberately
+      # omits the updater archives and `.sig` files. Stage every regular path that
+      # the pinned action reports, prove the required platform pairs locally, and
+      # upload the complete set once under a matrix-unique immutable artifact.
+      - name: Stage and validate the complete signed platform artifact set
+        shell: bash
+        env:
+          ARTIFACT_PATHS: ${{ steps.tauri.outputs.artifactPaths }}
+          ARTIFACT_PLATFORM: ${{ matrix.artifact_platform }}
+        run: |
+          set -euo pipefail
+          upload_dir="$RUNNER_TEMP/release-upload-$ARTIFACT_PLATFORM"
+          [ ! -e "$upload_dir" ] || {
+            echo "::error::release staging path already exists: $upload_dir"
+            exit 1
+          }
+          mkdir -p "$upload_dir"
+          export UPLOAD_DIR="$upload_dir"
+
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+
+          const fail = (message) => {
+            console.error(`::error::${message}`);
+            process.exit(1);
+          };
+          let artifactPaths;
+          try {
+            artifactPaths = JSON.parse(process.env.ARTIFACT_PATHS ?? '');
+          } catch (error) {
+            fail(`tauri-action returned invalid artifactPaths JSON: ${error.message}`);
+          }
+          if (!Array.isArray(artifactPaths) || artifactPaths.length === 0) {
+            fail('tauri-action returned no artifact paths.');
+          }
+
+          const workspace = fs.realpathSync(process.env.GITHUB_WORKSPACE);
+          const uploadDir = process.env.UPLOAD_DIR;
+          const names = new Set();
+          for (const candidate of artifactPaths) {
+            if (typeof candidate !== 'string' || candidate.length === 0) {
+              fail('tauri-action returned a non-string or empty artifact path.');
+            }
+            const metadata = fs.lstatSync(candidate);
+            if (metadata.isSymbolicLink()) {
+              fail(`refusing symbolic-link release artifact: ${candidate}`);
+            }
+            const source = fs.realpathSync(candidate);
+            const relative = path.relative(workspace, source);
+            if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+              fail(`release artifact escaped the checked-out workspace: ${candidate}`);
+            }
+            // The macOS `.app` directory is represented by its DMG for first
+            // install and its signed `.app.tar.gz` for updater delivery.
+            if (metadata.isDirectory()) continue;
+            if (!metadata.isFile()) fail(`release artifact is not a regular file: ${candidate}`);
+
+            const name = path.basename(candidate);
+            if (names.has(name)) fail(`duplicate platform release asset name: ${name}`);
+            names.add(name);
+            fs.copyFileSync(source, path.join(uploadDir, name), fs.constants.COPYFILE_EXCL);
+          }
+          if (names.size === 0) fail('no regular release assets were staged.');
+
+          const requireSuffix = (suffix, description) => {
+            if (![...names].some((name) => name.endsWith(suffix))) {
+              fail(`${process.env.ARTIFACT_PLATFORM} did not produce ${description} (${suffix}).`);
+            }
+          };
+          const requireSignedPair = (signatureSuffix, description) => {
+            const signatures = [...names].filter((name) => name.endsWith(signatureSuffix));
+            if (signatures.length === 0) {
+              fail(`${process.env.ARTIFACT_PLATFORM} did not produce ${description} signatures (${signatureSuffix}).`);
+            }
+            for (const signature of signatures) {
+              const bundle = signature.slice(0, -'.sig'.length);
+              if (!names.has(bundle)) fail(`${signature} has no matching updater bundle ${bundle}.`);
+            }
+          };
+
+          switch (process.env.ARTIFACT_PLATFORM) {
+            case 'macos':
+              requireSuffix('.dmg', 'a first-install disk image');
+              requireSignedPair('.app.tar.gz.sig', 'macOS updater bundle');
+              break;
+            case 'linux':
+              requireSignedPair('.AppImage.sig', 'Linux AppImage updater');
+              break;
+            case 'windows':
+              requireSignedPair('.msi.sig', 'Windows MSI updater');
+              requireSignedPair('.exe.sig', 'Windows NSIS updater');
+              break;
+            default:
+              fail(`unrecognized release artifact platform: ${process.env.ARTIFACT_PLATFORM}`);
+          }
+          console.log(`staged ${names.size} validated ${process.env.ARTIFACT_PLATFORM} release assets`);
+          NODE
+
+      - name: Upload the complete signed platform artifact set
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pos-${{ matrix.artifact_platform }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-upload-${{ matrix.artifact_platform }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  sbom:
+    needs: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Generate the SPDX JSON software bill of materials
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: spdx-json
+          output-file: pos-${{ github.ref_name }}.spdx.json
+          artifact-name: pos-sbom-attempt-${{ github.run_attempt }}
+          syft-version: v1.42.3
+          upload-artifact: true
+          upload-artifact-retention: 7
+          upload-release-assets: false
+
+  publish:
+    needs: [guard, build, sbom]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      # This is the only action that runs with the publisher's write-capable
+      # token. It is GitHub-owned, pinned, and receives no signing secret.
+      - name: Download signed bundles and the SBOM from read-only jobs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: pos-*-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-artifacts
+
+      - name: Validate assets and generate their checksum manifest
+        env:
+          PRERELEASE: ${{ needs.guard.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          download_dir="$RUNNER_TEMP/release-artifacts"
+          publish_dir="$RUNNER_TEMP/publish-assets"
+          sbom="pos-$GITHUB_REF_NAME.spdx.json"
+          sums="POS-$GITHUB_REF_NAME-SHA256SUMS.txt"
+          mkdir -p "$publish_dir"
+
+          expected_directories=$(printf '%s\n' \
+            "pos-linux-attempt-$GITHUB_RUN_ATTEMPT" \
+            "pos-macos-attempt-$GITHUB_RUN_ATTEMPT" \
+            "pos-sbom-attempt-$GITHUB_RUN_ATTEMPT" \
+            "pos-windows-attempt-$GITHUB_RUN_ATTEMPT")
+          actual_directories=$(find "$download_dir" -mindepth 1 -maxdepth 1 -type d \
+            -exec basename {} \; | LC_ALL=C sort)
+          [ "$actual_directories" = "$expected_directories" ] || {
+            echo "::error::the current run attempt did not provide exactly the three platform sets and SBOM."
+            echo "::error::Use GitHub's 'Re-run all jobs'; partial reruns intentionally cannot reuse artifacts from an earlier run attempt."
+            printf 'expected:\n%s\nactual:\n%s\n' "$expected_directories" "$actual_directories"
+            exit 1
+          }
+          if find "$download_dir" -type l -print -quit | grep -q .; then
+            echo "::error::release workflow artifacts must not contain symbolic links."
+            exit 1
+          fi
+
+          # Each workflow artifact downloads into its own directory. Flatten
+          # only regular files, and fail instead of silently overwriting two
+          # platform bundles with the same public release-asset name.
+          while IFS= read -r -d '' source; do
+            name=${source##*/}
+            [ ! -e "$publish_dir/$name" ] || {
+              echo "::error::duplicate release asset name: $name"
+              exit 1
+            }
+            cp "$source" "$publish_dir/$name"
+          done < <(find "$download_dir" -type f -print0)
+
+          [ -f "$publish_dir/$sbom" ] || {
+            echo "::error::the expected SPDX SBOM workflow artifact is missing."
+            exit 1
+          }
+          asset_count=$(find "$publish_dir" -maxdepth 1 -type f | wc -l | tr -d ' ')
+          [ "$asset_count" -gt 1 ] || {
+            echo "::error::no application assets were available to checksum."
+            exit 1
+          }
+          signature_count=0
+          require_file_suffix() {
+            local directory=$1 suffix=$2 description=$3 count
+            count=$(find "$directory" -maxdepth 1 -type f -name "*$suffix" | wc -l | tr -d ' ')
+            [ "$count" -gt 0 ] || {
+              echo "::error::$description is missing from ${directory#"$download_dir"/}."
+              exit 1
+            }
+          }
+          require_signed_suffix() {
+            local directory=$1 suffix=$2 description=$3 found=0
+            while IFS= read -r -d '' signature; do
+              bundle=${signature%.sig}
+              [ -f "$bundle" ] || {
+                echo "::error::$description signature has no matching bundle: ${signature#"$download_dir"/}"
+                exit 1
+              }
+              found=$((found + 1))
+              signature_count=$((signature_count + 1))
+            done < <(find "$directory" -maxdepth 1 -type f -name "*$suffix.sig" -print0)
+            [ "$found" -gt 0 ] || {
+              echo "::error::no signed $description was produced in ${directory#"$download_dir"/}."
+              exit 1
+            }
+            echo "$description: $found signed bundle(s)"
+          }
+
+          macos_dir="$download_dir/pos-macos-attempt-$GITHUB_RUN_ATTEMPT"
+          linux_dir="$download_dir/pos-linux-attempt-$GITHUB_RUN_ATTEMPT"
+          windows_dir="$download_dir/pos-windows-attempt-$GITHUB_RUN_ATTEMPT"
+          require_file_suffix "$macos_dir" '.dmg' 'macOS first-install disk image'
+          require_signed_suffix "$macos_dir" '.app.tar.gz' 'macOS updater bundle'
+          require_signed_suffix "$linux_dir" '.AppImage' 'Linux AppImage updater'
+          require_signed_suffix "$windows_dir" '.msi' 'Windows MSI updater'
+          require_signed_suffix "$windows_dir" '.exe' 'Windows NSIS updater'
+
+          (
+            cd "$publish_dir"
+            find . -maxdepth 1 -type f ! -name "$sums" -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 sha256sum \
+              | sed 's#  \./#  #' > "$RUNNER_TEMP/$sums"
+          )
+          mv "$RUNNER_TEMP/$sums" "$publish_dir/$sums"
+          echo "validated $asset_count assets ($signature_count updater signatures); prerelease=$PRERELEASE"
+
+      - name: Create or refresh the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRERELEASE: ${{ needs.guard.outputs.prerelease }}
+          EXPECTED_TAG_OBJECT: ${{ needs.guard.outputs.tag_object }}
+        run: |
+          set -euo pipefail
+          publish_dir="$RUNNER_TEMP/publish-assets"
+          title="POS Terminal $GITHUB_REF_NAME"
+
+          # Drafts do not lock their tag. Re-read the remote ref immediately
+          # before the first release mutation and require the same signed,
+          # annotated tag object that the guard approved before the builds.
+          [ -n "$EXPECTED_TAG_OBJECT" ] || {
+            echo "::error::the guard did not preserve the verified tag object."
+            exit 1
+          }
+          remote_ref=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME")
+          remote_type=$(printf '%s' "$remote_ref" | jq -r '.object.type')
+          remote_object=$(printf '%s' "$remote_ref" | jq -r '.object.sha')
+          [ "$remote_type" = "tag" ] || {
+            echo "::error::$GITHUB_REF_NAME is no longer an annotated tag."
+            exit 1
+          }
+          [ "$remote_object" = "$EXPECTED_TAG_OBJECT" ] || {
+            echo "::error::$GITHUB_REF_NAME moved while release artifacts were building. Refusing to mutate its draft."
+            exit 1
+          }
+          remote_tag=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$remote_object")
+          remote_target_type=$(printf '%s' "$remote_tag" | jq -r '.object.type')
+          remote_target=$(printf '%s' "$remote_tag" | jq -r '.object.sha')
+          if [ "$remote_target_type" != "commit" ] || [ "$remote_target" != "$GITHUB_SHA" ]; then
+            echo "::error::$GITHUB_REF_NAME no longer points directly to the workflow commit."
+            exit 1
+          fi
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            is_draft=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)
+            [ "$is_draft" = "true" ] || {
+              echo "::error::$GITHUB_REF_NAME is already published and immutable; create a new version tag."
+              exit 1
+            }
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "$title" --draft --prerelease="$PRERELEASE"
+            while IFS= read -r existing; do
+              [ -n "$existing" ] || continue
+              gh release delete-asset "$GITHUB_REF_NAME" "$existing" --yes
+            done < <(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name')
+          else
+            flags=(--draft --verify-tag --generate-notes --title "$title")
+            if [ "$PRERELEASE" = "true" ]; then
+              flags+=(--prerelease)
+            fi
+            gh release create "$GITHUB_REF_NAME" "${flags[@]}"
+          fi
+
+          while IFS= read -r -d '' asset; do
+            gh release upload "$GITHUB_REF_NAME" "$asset"
+          done < <(find "$publish_dir" -maxdepth 1 -type f -print0)
+
+          # GitHub does not atomically bind a draft release to a tag object.
+          # Detect a move that happened during the draft mutations and leave a
+          # conspicuously failed workflow for the human publication gate.
+          post_ref=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME")
+          post_type=$(printf '%s' "$post_ref" | jq -r '.object.type')
+          post_object=$(printf '%s' "$post_ref" | jq -r '.object.sha')
+          if [ "$post_type" != "tag" ] || [ "$post_object" != "$EXPECTED_TAG_OBJECT" ]; then
+            echo "::error::$GITHUB_REF_NAME moved while its draft was being mutated. The draft must not be published."
+            exit 1
+          fi
+          post_tag=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$post_object")
+          post_target_type=$(printf '%s' "$post_tag" | jq -r '.object.type')
+          post_target=$(printf '%s' "$post_tag" | jq -r '.object.sha')
+          if [ "$post_target_type" != "commit" ] || [ "$post_target" != "$GITHUB_SHA" ]; then
+            echo "::error::$GITHUB_REF_NAME no longer points directly to the workflow commit. The draft must not be published."
+            exit 1
+          fi
+          echo "draft assets uploaded for unchanged tag object $post_object and commit $post_target"
