@@ -18,16 +18,16 @@ JOD = 3 (1 dinar = 1000 fils). USD/EUR = 2. It is a column and a `Currency` fiel
 3 decimal places, same integer discipline as money. `1 unit = 1000`. Weighed goods (0.347 kg = `347`) and discrete goods (2 = `2000`) share one representation, so nothing branches on "is this weighed" in arithmetic.
 
 **I-4 · Completed sales are immutable.**
-No `UPDATE` on a `Complete` sale, ever. Corrections are new documents referencing the original. Enforced in the storage engine by the triggers in `0002_sale_integrity.sql` — which hold against a repository that has a bug in it, and against a hand-typed `sqlite3` session — and in the code by the absence of any repository method that could do it. `crates/pos-db/tests/sale_immutability.rs` holds both. The one deliberate exception is a tender's settlement columns: a semi-integrated card capture confirms after the sale closes, so `tender_state`/`captured_at` stay writable while the amount does not.
+No `UPDATE` on a `Complete` sale, ever. Corrections are new documents referencing the original. Enforced in the storage engine by the triggers in `0002_sale_integrity.sql` — which hold against a repository that has a bug in it, and against a hand-typed `sqlite3` session — and in the code by the absence of any repository method that could do it. `crates/pos-db/tests/sale_immutability.rs` holds both. Tender settlement and shift close are not exceptions: they append `tender_status_event` and `shift_close_event` facts, and current state is a rebuildable projection. Otherwise the register would update rows the server correctly protects with `REVOKE UPDATE`, leaving central reconciliation permanently stale.
 
 **I-5 · Price and name are copied onto the sale line at capture time.**
 Reports and refunds read `sale_line`, never `product`. A refund six months later uses the price the customer paid, automatically, because it was never anywhere else.
 
 **I-6 · Stock is a ledger.**
-Every quantity change is an append-only event with a kind and a reference document. On-hand is `SUM(qty_delta)`, cached in `stock_cache`, and **the cache must be rebuildable from the ledger by a command that CI runs**. If the cache and the ledger can disagree without a test noticing, the cache is a liability.
+Every quantity change is an append-only event with a kind and a reference document. On-hand is `SUM(qty_delta)`, cached in `stock_cache`, and **the cache must be rebuildable from the ledger by a command that Phase 1 microstep 1.10.3 wires into CI**. Ledger append, cache projection and the event-head watermark commit in one transaction; startup and periodic verification alarm and rebuild on mismatch. If the cache and the ledger can disagree until the next verification, the cache is a liability on the merchant's register.
 
-**I-7 · Ordering comes from server versions and UUIDv7, never from device clocks.**
-Registers drift; cashiers change the system time. Record device time for humans to read. Never branch on it.
+**I-7 · Ordering comes from owned sequences, never from device clocks.**
+Pull order is the server's `version`; push order is `(register_id, sync_outbox.seq)`. UUIDv7 supplies identity and index locality, not causal order. Registers drift and cashiers change the system time, so time-dependent rules use persisted `ClockState` and `effective_now` (§11), while document and delivery order never use the clock.
 
 **I-8 · `pos-domain` is pure.**
 No I/O, no SQLite, no Tauri, no network, no `std::time::SystemTime::now()`, no filesystem,
@@ -37,8 +37,8 @@ UUID generation features are disabled, and `scripts/check-domain-purity.py` audi
 normal dependency graph and direct calls. Adding clock, random, or I/O capability is a design
 review.
 
-**I-9 · Every fact write and its outbox row commit in one transaction.**
-A sale that exists without its outbox row is a sale that never syncs. A outbox row without its sale is a phantom. One `BEGIN`, one `COMMIT`.
+**I-9 · Every fact graph and its delivery envelope commit in one transaction.**
+One business transaction commits its facts, one `sync_commit`, the complete `fact_commit_member` manifest and the corresponding `sync_outbox` delivery rows together. A sale without its manifest never syncs; a delivery row without its fact is a phantom; a partial manifest lets the server accept a header without its lines or tenders. One `BEGIN`, one `COMMIT`.
 
 ---
 
@@ -58,7 +58,7 @@ A sale that exists without its outbox row is a sale that never syncs. A outbox r
 | Rust error enum | `<Module>Error`, `thiserror` | `TaxError`, `CartError` |
 | Tauri command | `snake_case` verb-first | `cart_add_line`, `sale_finalize` |
 | TS type from Rust | identical name, generated | `Money`, `CartSnapshot` |
-| Migration file | `NNNN_short_name.sql` | `0004_shifts_and_cash.sql` |
+| Migration file | `NNNN_short_name.sql` | `0004_people_and_audit.sql` |
 | Test (example) | `<subject>_<behaviour>` | `inclusive_16pct_extracts_exactly` |
 | Test (property) | `prop_<invariant>` | `prop_line_tax_sum_equals_receipt_tax` |
 | Golden file | `tests/golden/<name>.<ext>` | `tests/golden/receipt_ar_80mm.bin` |
@@ -66,6 +66,8 @@ A sale that exists without its outbox row is a sale that never syncs. A outbox r
 | i18n key | `<screen>.<element>.<variant>` | `sale.action.park` |
 
 **Rate as parts-per-million, not basis points.** The blueprint says basis points (`rate_bp`). Parts-per-million is used instead: Jordanian reduced rates include values like 1% and 2%, and future decrees are not guaranteed to land on whole basis points. `rate_ppm` costs nothing and removes a class of "we cannot represent 0.125%" conversation. 16% = `160_000`; 4% = `40_000`; 0% = `0`.
+
+**Tax rounding is jurisdiction policy, not a merchant preference.** `HalfAwayFromZero` is only the provisional implementation vector. Microstep `1.3.4` blocks live provisioning and finalization until an approved policy records the source and hash that settle it; `2.7.0` rechecks that policy against the pinned fiscal package before fiscal work. A cashier or store setting cannot select `HalfEven`, floor or ceil and make two registers compute different tax. [`00-master-plan.md`](00-master-plan.md) §4a, “Errata and concordance”, records both source-plan overrides.
 
 ---
 
@@ -93,16 +95,21 @@ Every repository is a struct holding `&Connection`, with methods returning `Resu
 - **Shell errors** (Tauri commands, axum handlers) may use `anyhow` internally but serialize to a **typed** payload:
   ```rust
   #[derive(Serialize)]
-  struct IpcError { code: &'static str, message_key: String, detail: Option<String> }
+  struct IpcError {
+      code: &'static str,
+      message_key: String,
+      detail: Option<&'static str>,
+      trace_id: Uuid,
+  }
   ```
-  `code` is what the UI branches on. `message_key` is what the UI translates. `detail` is for the log and the diagnostics screen, never shown raw to a cashier.
+  `code` is what the UI branches on. `message_key` is what the UI translates. `detail` is a reviewed static explanation, never a database, PSP or fiscal error converted to text. The source error goes only to the separately scrubbed sink under `trace_id`, so a bind value cannot reach the webview or a screenshot.
 - **`unwrap()` and `expect()` are banned outside tests and `main()`.** A panic in a register is a lost sale. `clippy::unwrap_used` and `clippy::expect_used` are denied at the workspace level from Phase 1 (microstep 1.0.3).
 
 ---
 
 ## 5. Testing
 
-Five layers. A microstep is not done until its layer is green.
+Nine layers. A microstep is not done until every applicable layer is green.
 
 | Layer | Tool | Where | Rule |
 |---|---|---|---|
@@ -110,11 +117,31 @@ Five layers. A microstep is not done until its layer is green.
 | **Property tests** | `proptest` | inline `mod tests` | Every invariant in §1 and every one in `test-catalog.md`. This is the layer that finds the bugs you did not imagine |
 | Golden files | byte diff | `tests/golden/` | Receipts (per width, per language), fiscal XML documents. Regenerate deliberately, review the diff, commit |
 | Integration | real SQLite / real Postgres | `crates/*/tests/` | Migrations run; repositories round-trip; transactions roll back on error |
-| Chaos | scripted | `crates/pos-sync/tests/` | Replay, drop, duplicate, reorder. Both databases converge byte-identical |
+| Concurrency | barriers or `loom` | beside the owning repository | Force the contested interleaving; never use sleeps or scheduler luck for sequence, audit or lease correctness |
+| Fuzz | `cargo-fuzz` | `crates/*/fuzz/` | Every parser reachable from a scanner, renderer input or network; crashes become committed corpus regressions |
+| Packaged app | WebdriverIO + `tauri-driver` | `apps/terminal/tests/e2e/` | Launch the artifact a merchant runs and cross the real IPC boundary; Playwright cannot drive a Tauri webview |
+| Chaos | scripted | `crates/pos-sync/tests/` | Replay, drop, duplicate and reorder; prove `prop_server_facts_equal_the_union_of_register_outboxes`, `prop_reference_tables_converge_across_all_three_nodes` and `prop_apply_is_idempotent_under_any_replay_order` against the canonical semantic dump in [`ref/sync-protocol.md`](ref/sync-protocol.md), never storage bytes |
+| Soak / long chaos | `cargo nextest run --profile soak` | `crates/*/tests/soak.rs`, `chaos.rs` | Excluded from default `just test`; nightly and phase-gate only, so the three-minute inner loop remains usable |
 
 **Property tests are not optional and not a later phase.** `Money::split_evenly` already has one and it is the model: state the invariant in a comment in the words a human would use, then let `proptest` attack it.
 
 **Determinism.** No test may read the wall clock, generate a random UUID outside `proptest`'s control, or depend on filesystem ordering. Time and IDs are injected. A flaky test in a money system is worse than no test — it trains you to ignore red.
+
+### 5.1 Property-test configuration
+
+`crates/pos-test-support/src/proptest.rs`, owned by prerequisite microstep `1.1.0`, holds the configuration once; individual properties do not choose a case count that makes themselves convenient:
+
+```rust
+pub fn domain_proptest_config() -> ProptestConfig; // default cases = 4_096
+pub fn io_proptest_config() -> ProptestConfig;     // default cases = 256
+```
+
+- Every property names its `Strategy` — for example `terminal_event_sequences()` — beside the property, with a comment stating the input space it covers and what it deliberately excludes. The generator is part of the proof; an anonymous tuple of ranges is not reviewable evidence against a double charge.
+- Default and pull-request runs use a repository-recorded deterministic seed. Every failure prints the seed, persists the minimized case, and commits it under `proptest-regressions/`. A scheduled higher-count run may use another seed only when the log records it well enough to replay; a failed scheduled seed becomes a committed regression before the fix merges.
+- The shared counts are defaults. When `PROPTEST_CASES` is present, the helper applies it after selecting the crate default and refuses an invalid value or one below that default; a local helper assignment may not shadow the environment override. `pos-domain` runs a scheduled `PROPTEST_CASES=100000` lane, with `scheduled_case_override_is_not_shadowed_by_shared_default` proving that its effective configuration is exactly 100,000 cases. I/O-bound crates stay at the lower shared default because a slow database property that nobody runs protects nothing.
+- A bounded universal claim uses an exhaustive `#[test]` loop when that loop is feasible. A few hundred generated gross amounts cannot prove “every gross from 1 through 1,000,000.”
+- Wall-clock assertions are forbidden inside `proptest!` and ordinary unit tests. Performance belongs to the failing benchmark gate in §7 and never uses the `prop_` prefix. Concurrency tests force an interleaving with a barrier or `loom`; they do not sleep and hope.
+- `just test` must finish in under three minutes on the reference register. A test that pushes the gate over that budget belongs in the soak profile, which is selected explicitly and may never report a silent skip.
 
 ---
 
@@ -134,14 +161,21 @@ A microstep is done when **all** of these hold. Not most.
 
 ## 7. Performance budgets — measured, not asserted
 
-| Budget | Limit | Measured by | Added in |
-|---|---|---|---|
-| Scan → line on screen | < 100 ms | Playwright trace, hardware simulator | 1.9.4 |
-| Cart total recompute | < 16 ms | `criterion`, 200-line cart | 1.4.9 |
-| Search-as-you-type, 50k SKUs | < 50 ms | `criterion` over the seeded fixture | 1.2.7 |
-| Cold start → sellable | < 3 s | packaged-app smoke timer | 2.9.3 |
+| Budget | Absolute limit | Measurement | Samples | Measured on | Added in |
+|---|---|---|---|---|---|
+| Scan → line visible | < 100 ms | packaged-app WebDriver trace through the hardware simulator | ≥ 50 scans after warm-up | reference register | 1.11.13 |
+| Cart total recompute | < 16 ms | `criterion`, 200-line cart | 50 measured samples after warm-up | reference register | 1.4.9 |
+| Search-as-you-type, 50k SKUs | < 50 ms | `criterion` over the seeded fixture | 50 measured samples after warm-up | reference register | 1.2.7 |
+| Cold start → sellable | < 3 s | packaged-app WebDriver timer | median of 10 clean launches | reference register | 2.9.3 / 2.9.5 |
+| PIN verification | target 250 ms; median 200–350 ms and p99 < 500 ms | `criterion` `pin_verify` | 50 measured samples after warm-up | reference register | 1.6.2 |
 
-Each becomes a CI job that **fails the build on regression**, not a dashboard nobody opens. A budget without a failing test is a wish.
+### 7.1 Benchmark methodology
+
+The **reference register** is the lowest register-hardware row in the supported-device matrix in [`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6a. Its CPU, RAM, storage, OS version, power mode, device-matrix identity and release-build profile are mirrored in `benchmarks/reference-register.toml`; no baseline is accepted while either record is blank or they disagree. Each run records median, p99 and median absolute deviation. The absolute limit applies to p99 except cold start, whose table entry is explicitly a median, and PIN verification, whose row carries both a median security/UX band and a p99 ceiling. Cross-OS packaged-app launch coverage belongs to 2.9.5; it is not presented as a latency measurement on hardware that does not run that OS.
+
+Committed baselines live under `benchmarks/baselines/*.json`. `just bench-gate [budget]` accepts the exact slugs `search`, `price-cart`, `pin-verify`, `scan-to-line` and, once Phase 2 adds it, `cold-start`; omitting the argument runs every budget implemented at that gate. It exits non-zero when an absolute limit is exceeded, or when the median is more than 20% slower **and** more than three baseline median absolute deviations slower. A noisy run is investigated, not blessed. Updating a baseline requires a `perf(...)` change with before/after measurements and the reason, because moving the baseline without explaining the slower till deletes the budget.
+
+`cargo bench` reporting a number is not a gate. Microsteps 1.2.0 and 1.12.3 own the future live CI measurement job that runs `just bench-gate` only on `runs-on: [self-hosted, reference-register]`; no such job or recipe exists in the current tree. Hosted runners will exercise the threshold parser against fixed pass/fail fixtures but never produce or bless a performance baseline. Phase and release gates repeat the live command on that physical register after those microsteps land. A budget without a command that exits non-zero is a wish.
 
 ---
 
@@ -152,7 +186,7 @@ Each becomes a CI job that **fails the build on regression**, not a dashboard no
 
 feat(domain): tax engine, inclusive + exclusive extraction   [1.3.4]
 fix(db): sale_line qty to milli-units                        [1.1.7]
-test(fiscal): discount percentage round-trip property        [2.7.6]
+test(fiscal): allowance recap conservation property         [2.7.3]
 docs(impl): phase 2 fiscal conformance harness               [—]
 ```
 
@@ -188,7 +222,9 @@ is running. The model and its enforcement are
 
 **Forward-only. No down migrations.**
 
-The blueprint says migrations should be "tested up *and* down in CI." The shipped runner (`crates/pos-db/src/lib.rs`) is a `PRAGMA user_version` counter with no down path, and that is the right choice — down migrations in a system whose whole premise is that financial facts are never destroyed are a liability that rots unmaintained. The rollback story is **restore from an encrypted backup**, which is a real operation the business needs anyway, and which is therefore actually tested (G-1, microstep 1.8.x).
+The blueprint says migrations should be "tested up *and* down in CI." The shipped runner (`crates/pos-db/src/lib.rs`) is a `PRAGMA user_version` counter with no down path, and that is the right choice — down migrations in a system whose whole premise is that financial facts are never destroyed are a liability that rots unmaintained.
+
+The operational recovery path is precise because “install the old binary” does not work after a schema change: the older binary correctly refuses the database with `SchemaTooNew`. Before the first migration of an update, take and verify an encrypted snapshot. A failure before migration may restore the previous application bundle. Once any register migrates, halt the rollout and fix forward. Restoring the previous bundle **and** its pre-migration snapshot is permitted only before that register writes a new fact; afterwards it would delete real sales, so fix-forward is mandatory. Any “one-click rollback” claim elsewhere is a bug against this section.
 
 Rules:
 
@@ -202,6 +238,8 @@ Rules:
 4. Postgres mirrors SQLite in `apps/server/migrations/` via sqlx, **same semantics**. The numbers cannot match — sqlx names files `<14-digit UTC timestamp>_<lower_snake>.sql`, with unique, strictly increasing versions — so the mapping is *declared*, not inferred: every mirror opens with `-- Mirrors SQLite NNNN_name.sql` or `-- Server-only: <why>`, and `./scripts/verify-pg-migrations.py` checks filenames and mapping both ways before applying the mirror to a real PostgreSQL server. SQLx runs a file transactionally unless its bytes begin exactly, case-sensitively, with `-- no-transaction`; that escape is only for statements PostgreSQL forbids inside a transaction and requires an explicit partial-failure recovery test or procedure. The name may differ where the server's half of the work differs. A register-local entity gets no mirror at all — record it in `REGISTER_LOCAL` in that script rather than committing an empty file. Undeclared divergence is a sync bug waiting.
 5. The app **refuses to start on a half-migrated database** (E.58) and says so — it does not guess.
 
+The recovery contract is held by `schema_from_a_newer_build_is_refused`, `half_migrated_db_refuses_to_open_with_a_named_error`, `a_failed_update_before_migration_restores_the_previous_bundle`, and `a_post_migration_failure_restores_the_pre_update_snapshot_or_rolls_forward`. These tests exist because a failed update at 07:55 must produce a named recovery action, not a cashier repeatedly relaunching a half-migrated register.
+
 ---
 
 ## 10. Internationalisation (G-5)
@@ -211,7 +249,7 @@ Arabic is not a translation of this product. It is the product; English is the t
 - **Direction:** the app is RTL by default. `<html dir="rtl" lang="ar">`; the English toggle flips `dir`/`lang` only. Every layout uses **CSS logical properties** — `margin-inline-start`, not `margin-left`; `inset-inline-end`, not `right`. Tailwind's `ps-*`/`pe-*`/`ms-*`/`me-*`/`start-*`/`end-*` throughout; `pl-*`/`left-*` is a lint failure — `./scripts/check-logical-css.sh`, in `just lint` and CI's `web` job. Biome's recommended preset knows nothing about Tailwind utilities or CSS sides, so until that script existed this rule was written down and unenforced. A case that really is physical carries `physical-ok: <reason>` on the line.
 - **Numerals:** Western Arabic digits (0–9) everywhere. That is Jordanian retail practice; Eastern Arabic-Indic digits on a receipt confuse more than they serve.
 - **Catalog:** a typed message catalog, keys as §2, `ar` and `en` files kept in lockstep by a test that fails when a key exists in one and not the other. The catalog is the single source for UI strings; a string literal in a component is a lint failure.
-- **Money and dates render through one function.** `formatMoney(minor, currency, locale)` and `formatDate(iso, tz, locale)` — never `toLocaleString` scattered inline, because display precision (2 vs 3 decimals, B.5) is a store setting.
+- **Money and dates render through one function.** `formatMoney(minor, currency, locale)` and `formatDate(iso, tz, locale)` — never `toLocaleString` scattered inline. Totals, tax, tenders, change, rounding adjustments, receipts and fiscal views render at the currency exponent. A shorter catalogue display is separate and permitted only when exact; hiding fils that are later charged is a price-display defect.
 - **Font:** one family covering Arabic and Latin, embeddable, shipped with the app — no network font. The same font file feeds the receipt rasteriser, so the receipt looks like the screen. Chosen in microstep 1.7.2.
 - **Product names carry both `name_ar` and `name_en`.** The receipt prints per store setting; search matches both.
 
@@ -220,7 +258,8 @@ Arabic is not a translation of this product. It is the product; English is the t
 ## 11. Time (G-4)
 
 - **Storage:** UTC, ISO-8601 with milliseconds, `TEXT`. `strftime('%Y-%m-%dT%H:%M:%fZ','now')` is already the schema default.
-- **Reporting:** store-local calendar day, `Asia/Amman`, from the store's configured timezone — not the OS timezone, which a cashier can change.
+- **Zone:** the store keeps the IANA zone id `Asia/Amman`, never a fixed offset or a hand-written DST rule. The shell resolves the offset for each instant from shipped tzdata and passes only that value into pure `pos-domain`. Jordan has used UTC+3 year-round since 2022; carrying the superseded seasonal rule would move winter sales across the 04:00 business-day boundary.
+- **Clock confidence:** persisted `ClockState` records the trusted anchor, boot-monotonic projection, high-water timestamp and anomaly. Business-date and effective-tax decisions use `effective_now`; `Suspect` or `Untrusted` time alarms and requires the specified audited operator confirmation, but a clock fault does not refuse a sale.
 - **Business date** is *not* derived from wall-clock midnight. It is:
 
   ```
@@ -231,7 +270,7 @@ Arabic is not a translation of this product. It is the product; English is the t
   ```
 
   A shift opened at 00:30 belongs to yesterday's trading day. `day_cutover_time` defaults to `04:00` local and is a store setting. Z reports close a *shift*, so a Z belongs to the shift's business date, not the wall clock's (E.7).
-- **Monotonic guard:** persist the last observed timestamp. On a backward jump, log an audit entry and keep issuing non-decreasing timestamps until wall-clock catches up. Sequences are counters and never derived from time (E.6).
+- **Monotonic guard:** persist the last observed timestamp. On a backward jump, log an audit entry and keep issuing non-decreasing timestamps until wall-clock catches up. Document numbers and outbox order are counters and never derived from time (E.6).
 
 ---
 
@@ -239,11 +278,11 @@ Arabic is not a translation of this product. It is the product; English is the t
 
 Full treatment in [`ref/security-compliance.md`](ref/security-compliance.md). The rules you must not break without reading it:
 
-- **Never log:** PAN, track data, CVV, PINs, PIN hashes, DB keys, JoFotara secrets, customer name/phone/email. Enforced by a scrubbing layer *and* a test that feeds known PII through the logger and asserts absence (G-8).
+- **Never-log rules are executable, not copied prose.** One `SENSITIVE_FIELD_RULES` registry carries exact-name, suffix and contains rules. The tracing layer, `scrubber_redacts_every_known_pii_field`, `scrubber_redacts_every_suffix_rule`, the audit-payload guard, diagnostic bundle and telemetry transport all derive from it. Adding a sensitive field in one place without covering every sink must fail CI (G-8).
 - **Never store:** anything from a card except the PSP reference, the masked PAN the terminal returns for the receipt, and the scheme.
-- **Permissions are checked in Rust**, in the command handler, via the guard in §6 of the security doc. Hiding a button is UX. The check is security.
-- **The DB key lives in the OS credential store.** Never a file, never an env var in production. `POS_DB_KEY` exists for CI and dev only, and the release build refuses to honour it — `pos_db::key::honours_env_key()` is `cfg!(debug_assertions)`, and the policy is a pure function so a debug test can assert what a release build does. The refusal is ignore-and-continue, not an error: falling through to the credential store is the safer outcome, and a stray variable inherited from a shell must never stop a register from opening.
-- **Escalation is recorded distinctly from operation.** The approving manager's id is a different column from the operating cashier's, and a setting can require them to differ (E.52).
+- **Permissions are checked in Rust**, in the command handler, via the guard in §5 of the security doc. Hiding a button is UX. The check is security.
+- **The plaintext DB data key lives in the OS credential store.** Never a plaintext file, never an env var in production. Provisioning issues and displays the merchant-held recovery code once. A wrapped data-key envelope is stored beside **every** backup and, from Phase 3, in the organisation record; `restore` unwraps it with that code before the database or a user session exists. `POS_DB_KEY` exists for CI and dev only and is ignored in release, where credential-store lookup continues. Ignore-and-continue is deliberate: a stray inherited variable must neither supply the production key nor stop the till opening.
+- **Escalation is bound, not merely recorded.** A one-use `ApprovalHandle` carries exactly `{ id, capability, actor, approver, entity_id, amount_minor, content_hash: Option<PreparedIntentHash>, reason, issued_at, expires_at, nonce }`. `actor != approver` on every handle path; `ban_self_approval` decides whether an operation requires escalation at all and never permits self-issued handles. A privileged effect with no money value binds `amount_minor = 0`; zero is an exact value, never a wildcard. A prepared non-money effect also binds the BLAKE3 hash of its versioned canonical intent, and the commit recomputes it before consuming the handle, because an unchanged row id does not prove the manager approved unchanged fields. The handle remains immutable audit evidence, while its `approval_consumption` fact commits in the same transaction as the financial effect and audit row, so a restart cannot replay approval for a different sale, a larger amount or altered prepared content (E.52, E.86).
 
 ---
 
@@ -251,7 +290,9 @@ Full treatment in [`ref/security-compliance.md`](ref/security-compliance.md). Th
 
 - Commands are the **only** channel from UI to core. No `fs`, no `shell`, no `http` plugin exposed to the webview; the capability file grants nothing beyond what a command needs.
 - Every command: `snake_case`, verb-first, returns `Result<T, IpcError>`, and declares its required capability in the registry (see [`ref/ipc-contract.md`](ref/ipc-contract.md)). A command with no capability declaration fails the exhaustiveness test.
-- **TS types are generated from Rust, not hand-written.** `ts-rs` derives on every IPC type, emitted into `packages/api-types/`, and CI fails if the committed output differs from a fresh generation. Two hand-maintained copies of a money type is how a rounding bug ships.
+- **No base sale command accepts a price.** `cart_add_line` is `{ product_id, qty_milli? }`; price-embedded labels reach `cart_add_scan` as typed `ScanLookup::PriceEmbedded { hit, price: PriceSource, derived }`, whose `#[non_exhaustive]` variant and private label constructor are available only to the pure domain scan handler after the shell resolves the parsed item code. Price-bearing command arguments exist only on three controlled entries: audited `cart_override_price` under `price.override`; capped, audited `cart_add_department_sale` under `sale.department`; and inert `product_quick_add_prepare`, which content-hashes a proposed catalogue row but creates neither a product nor a cart line until `product_quick_add { product_id, approval_id }` consumes a matching approval. At 1.6.7, `no_command_argument_carries_a_price` walks the registry and refuses every price field outside those three entries, so a base `sale.create` friend-price path fails the gate; the current tree does not yet contain that future registry.
+- **Compile-time and runtime authorisation both apply.** `Authorized<C>` proves the capability inside Rust. Each registry entry declares `ApprovalRequirement::Never`, `Always { binding }`, or `Conditional { predicate, binding }`. An always-privileged command accepts `approval_id`; a conditionally privileged command accepts `approval_id?` but must reject a missing handle whenever its named predicate is true. Every privileged execution resolves the persisted `ApprovalHandle`, validates its entity, amount, reason and optional prepared-content binding, and inserts `approval_consumption` in the effect-and-audit transaction. `every_privileged_command_binds_its_approval` and `conditional_privilege_cannot_cross_threshold_without_approval` make an omitted or post-commit approval check impossible to overlook.
+- **TS types are generated from Rust, not hand-written.** `ts-rs` owns `packages/api-types/src/ipc/`; Phase 3 OpenAPI owns `packages/api-types/src/http/`. A DTO crossing both boundaries is generated once from Rust and re-exported by HTTP, never emitted twice. The owning frontend and Phase-3 microsteps must make CI fail on drift and on `no_type_name_is_emitted_by_both_generators`; the current tree has neither generator gate, so prose is not credited as enforcement. Two generated copies of `Money` can disagree as surely as two hand-written ones.
 - Long operations (card collection, printing, fiscal submission) are commands that return immediately with a handle and emit **events** for progress. A cashier watching a spinner with no state is a cashier who presses the button again.
 
 ---
@@ -263,10 +304,12 @@ Written down because it is the only question that matters when a phase runs long
 | After | A real store could… |
 |---|---|
 | Phase 0 | …nothing. It compiles and ships. |
-| **Phase 1** | …**sell for cash, all day, fully offline, in Arabic, with correct GST and a printed receipt.** |
-| Phase 2 | …take cards, handle returns, run shifts and Z reports, and produce fiscal documents that pass every check short of the ISTD network. |
-| Phase 3 | …run more than one register, administer from a back office, keep customers, and clear invoices with ISTD for real. |
-| Phase 4 | …run three stores with promotions, receiving, counts, transfers, and a full report suite. |
+| **Phase 1** | …**open a shift and sell for cash, all day, fully offline, in Arabic, with correct GST and a printed receipt.** |
+| Phase 2 | …take cards, handle returns, run blind close and Z reports, and produce fiscal documents against the package pinned at `2.7.0`, passing every non-provisional check short of the credentialed ISTD endpoint. |
+| Phase 3 | …run more than one register, administer from a back office, and keep customers; fiscal transport still uses the pinned-spec harness and mock. |
+| Phase 4 | …run three stores with promotions, receiving, counts, transfers, and a full report suite under the evidenced pilot fiscal posture; this row does not authorize live ISTD submissions. |
 | Phase 5 | …be sold to someone who is not you. |
+
+Real ISTD contact occurs only under [`phase-5-harden-and-launch.md`](phase-5-harden-and-launch.md) milestone `5.2`, using its written certification procedure, production credentials and the merchant's informed consent. Every submission there is a live fiscal document against the merchant's tax record, which is why an earlier gate cannot use it as a connectivity test.
 
 If a phase is running long, cut scope toward the next row of this table, never away from it.

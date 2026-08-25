@@ -5,17 +5,30 @@ Tauri 2 + Rust core + React UI; SQLite/SQLCipher on the register, Axum/Postgres 
 
 ## The plan
 
+`docs/implementation/` is the plan of record. The two source plans under `docs/plan/` are
+**immutable historical inputs**, frozen on purpose — read them for intent, never for a name.
+
 | Document | Answers |
 |---|---|
-| [`docs/plan/business-functional-master-plan.md`](docs/plan/business-functional-master-plan.md) | **what** to build, and why Jordanian law demands it |
-| [`docs/plan/engineering-blueprint.md`](docs/plan/engineering-blueprint.md) | **how** — stack, architecture, standards |
 | [`docs/implementation/`](docs/implementation/) | **what to type**, in what order, and how you know it worked |
 | [`docs/implementation/02-development-workflow.md`](docs/implementation/02-development-workflow.md) | **how to work** — every command, the feature lifecycle, manual testing, drills, release |
 | [`docs/implementation/03-github-workflow.md`](docs/implementation/03-github-workflow.md) | **how work ships** — the four branches, issues, the board, PRs, release channels, Jira |
+| [`docs/plan/business-functional-master-plan.md`](docs/plan/business-functional-master-plan.md) | *immutable source* — what to build, and why Jordanian law demands it |
+| [`docs/plan/engineering-blueprint.md`](docs/plan/engineering-blueprint.md) | *immutable source* — stack, architecture, standards |
 
 Start at [`docs/implementation/README.md`](docs/implementation/README.md).
 The engineering law is [`docs/implementation/01-conventions.md`](docs/implementation/01-conventions.md) — read it once, keep it open.
 The daily workflow, command by command, is [`docs/implementation/02-development-workflow.md`](docs/implementation/02-development-workflow.md).
+
+**Before you act on a sentence from `docs/plan/`, read
+[`00-master-plan.md`](docs/implementation/00-master-plan.md) §4a, "Errata and concordance."** It is
+the single ledger of every place a source plan has been superseded, and the list is long enough to
+cost a day: `rate_bp`, banker's rounding as the money default, `stock_movement`, `tax_group`,
+`product_barcode`, `user`, `role_perm`, a mutable `loyalty_points` column, migrations with `down`
+steps, and a Phase-3 fiscal production cutover all read as current truth in `docs/plan/` and are
+all wrong now. §4a also carries the status of corrections C-1 to C-4 — **two of the four
+corrections were themselves wrong** — and the open items none of them closed. Nothing edits a
+source plan; the concordance is how a superseded table name fails to become a schema.
 
 ## The flow
 
@@ -52,24 +65,56 @@ Not style preferences. Each one, violated, produces a class of bug that costs mo
    `clippy::float_arithmetic` is **denied** workspace-wide.
 2. **The minor-unit exponent is per-currency data.** JOD = 3 (1 dinar = 1000 fils). Never `100`.
 3. **Quantities are `i64` milli-units.** `1 unit = 1000`. Weighed and discrete share one representation.
-4. **Completed sales are immutable.** No `UPDATE` on a complete sale, ever. Corrections are new documents.
+4. **Completed sales are immutable.** No `UPDATE` on a complete sale, ever. Corrections are new
+   documents. Tender settlement and shift close are **not** exceptions: they append
+   `tender_status_event` and `shift_close_event` facts, and current state is a rebuildable
+   projection. The server revokes `UPDATE` on fact tables, so a register that mutates one leaves
+   central reconciliation permanently stale.
 5. **Price and name are copied onto the sale line** at capture time. Reports and refunds read the line, never today's catalog.
-6. **Stock is a ledger.** On-hand is `SUM(qty_delta)`, cached and rebuildable.
-7. **Ordering comes from server versions and UUIDv7**, never a device clock.
+6. **Stock is a ledger.** On-hand is `SUM(qty_delta)`, cached in `stock_cache`, and the cache is
+   **rebuildable by a command CI runs**. Ledger append, cache projection and watermark commit together.
+7. **Ordering comes from owned sequences**, never a device clock. Pull order is the server's
+   `version`; push order is `(register_id, sync_outbox.seq)`. UUIDv7 supplies identity and index
+   locality — it embeds a device timestamp and is never the causal authority.
 8. **`pos-domain` is pure.** No I/O, no SQLite, no Tauri, no network, no clock, no randomness — time and IDs are *arguments*.
-9. **Every fact write and its outbox row commit in one transaction.**
+9. **Every fact graph and its delivery envelope commit in one transaction.** The facts, one
+   `sync_commit`, the complete `fact_commit_member` manifest, and the `sync_outbox` delivery rows.
+   One `BEGIN`, one `COMMIT` — a partial manifest lets the server accept a header without its lines.
+
+Two more rules are refused just as hard, and both are how a price control gets defeated. **No base
+sale command accepts a price**: `cart_add_line` has no `unit_price_minor`, a price-embedded label
+arrives as a typed `ScanLookup::PriceEmbedded`, and price-bearing IPC arguments exist only on
+audited `cart_override_price`, capped audited `cart_add_department_sale`, and inert content-hashed
+`product_quick_add_prepare`. **Every privileged command consumes a one-use `ApprovalHandle`** in
+the same transaction as its financial effect and audit row. [`01-conventions.md`](docs/implementation/01-conventions.md) §12–§13 owns both.
 
 ## Quality gates
 
 ```bash
-just lint       # fmt · clippy · workspace lints · architecture/purity · schema/mapping · CSS · test names · biome · links
-just test       # cargo nextest --locked --workspace · pnpm -r test
-just guards     # prove the write guards still refuse
-just verify-pg  # the Postgres mirror, against a real server
-just pre-push   # lint · test · build-web · guards · full-history secret scan
-just audit      # Rust advisories/licences · JS licences · npm advisories
-just setup      # after pulling
+just check          # cargo check --locked --workspace --all-targets — the fastest "would build"
+just fmt            # rewrite formatting, Rust and TS, before lint refuses it
+just lint           # node pin · fmt · clippy · workspace lints · acyclic/purity · schema + PG
+                    # mapping · logical CSS · prop names · test catalog · biome · doc links
+                    # · policy-script lint
+just test           # cargo nextest --locked --workspace · pnpm -r test
+just guards         # the write guards, the git hooks and every policy checker still refuse
+just build-web      # web build coverage · pnpm -r build — the only place `tsc` runs
+just verify-schema  # exact MIGRATIONS/disk parity, then the runtime chain on real SQLite
+just verify-pg      # the Postgres mirror, against a real server
+just secrets        # Gitleaks over every commit reachable from this clone
+just pre-push       # lint · test · build-web · guards · secrets
+just audit          # Rust advisories/licences · JS licences · npm advisories
+just setup          # after pulling
 ```
+
+`just lint` also reconciles [`ref/test-catalog.md`](docs/implementation/ref/test-catalog.md)
+against the suite, the phase files and its own arithmetic
+(`scripts/check-test-catalog.py`). That gate exists because the dangerous failure of a coverage
+matrix is not a red test — it is an absent test behind a green row, and a hand-maintained table
+counted 73 cases against a stated total of 72 before anything checked it. **It is the one checker
+in the local gate with no `ci.yml` step**, so on this repository it is only as strong as the person
+who ran `just lint`; wiring it into CI is a change to the frozen workflow surface and gets its own
+reviewed edit ([`03-github-workflow.md`](docs/implementation/03-github-workflow.md) §3).
 
 `just pre-push` is the complete local gate. Time-varying advisory checks stay in CI's
 `supply-chain` job because they reach the network and can change without a repository change.
@@ -80,10 +125,16 @@ separately instead of claiming the local gate reproduces every runner environmen
 SQLite↔Postgres mapping, says it skipped the engine pass, and leaves that to CI.
 `unwrap()` and `expect()` are **denied** outside tests and `main()`.
 
+Four recipes the workflow document names do not exist yet, and each has an owning microstep:
+`just seed` (1.12.1), `just bench-gate` (harness and recipe 1.2.0; budgets 1.2.7, 1.4.9, 1.11.13, 1.12.3), `just fuzz` (1.2.8) and
+`just test-soak` (2.9.6). `just --list` is the only authority on what is runnable today.
+
 ## Safety layers, and their limits
 
-`.claude/rules/` holds the standards, split by the paths they govern — they load
-when a matching file is read, so a Rust rule costs nothing while you edit React.
+`.claude/rules/` holds the standards. Three are path-scoped — they load when a matching file is
+read, so a Rust rule costs nothing while you edit React. `security.md` carries **no** path scope
+and always applies, because a never-log rule that arrives only once you are already editing the
+logger is a rule that arrives too late.
 `.claude/hooks/` holds the agent-time guards:
 
 `AGENTS.md` is the Codex entry point for the same repository law, and
@@ -94,21 +145,24 @@ Codex-specific execution policy and hook adapters live under `.codex/`.
 |---|---|
 | `.claude/hooks/protect-immutable.py` | writing, deleting, or moving a **committed migration** or anything in `docs/plan/` through Claude write tools, Bash, PowerShell, or Monitor |
 | `.claude/hooks/docs-links-on-write.py` | leaving a broken cross-reference after Claude changes **any** tracked `.md` — the five root documents included — whatever the link target's extension; the `.sh` file is only an inactive POSIX compatibility wrapper |
+| `.claude/hooks/validate-settings.py` | a session-time weakening of the reviewed project or local Claude settings, or the loss of a required skill contract. The one hook here that **fails closed** |
 | `.codex/hooks/` | immutable-path and forward-only SQLx checks for Codex shell, immutable-path checks for `apply_patch`, and complete documentation-link checks after any Markdown `apply_patch` |
 | `.githooks/commit-msg` | a title outside `<type>(<scope>): <summary>  [N.N.N\|N.N.N–N.N.N\|—]`, or coding-assistant attribution |
 | `.githooks/pre-commit` | protected/sensitive paths, oversized staged blobs, plan or committed-migration edits, and Gitleaks findings in staged content |
 | `.githooks/pre-push` | direct/force/deletion pushes to the three flow branches, moving/deleting an existing tag, assistant attribution, or a secret anywhere in reachable history |
 | `scripts/check-protected-paths.sh` | a pull request that edits a source plan or a migration already present in its base; `branch-flow.yml` runs policy from the exact trusted workflow revision |
-| `scripts/check-branch-workflow-policy.rb` | weakening the read-only `pull_request_target` boundary, title/body attribution wiring, any workflow definition, or the trusted CI/agent/Git-hook/label/dependency/security/repository-setup policy and helper set without an explicit red/manual review; ordinary application/test code is not byte-pinned |
+| `scripts/check-branch-workflow-policy.rb` | weakening the read-only `pull_request_target` boundary, title/body attribution wiring, any workflow definition, or the trusted CI/agent/Git-hook/label/dependency/security/repository-setup policy and helper set without an explicit red/manual review. **This file and `AGENTS.md` are inside that frozen set**, so editing either is deliberately red until a human reads the diff; ordinary application/test code is not byte-pinned |
 | `scripts/gh-actions-policy.sh` | mutable or unapproved external Action references before the post-merge full-SHA repository policy is enabled |
 
 All are negative-tested — `just guards` runs every suite
 (`.claude/hooks/test-settings.py`, `.claude/hooks/test-protect-immutable.sh`,
 `.claude/hooks/test-docs-links.sh`,
 `.codex/hooks/test-hooks.sh`, `.codex/test-policy.py`, `.agents/test-skills.py`,
-`.githooks/test-hooks.sh`, `scripts/test-gh-setup.sh`, and the repository
-checkers' `--self-test`s). Run it
-after touching any of them.
+`.githooks/test-hooks.sh`, `scripts/test-gh-setup.sh`, and every repository
+checker's `--self-test`). Two entries are not self-tests but live proofs:
+`scripts/check-justfile-policy.py` proves a `just` argument never becomes shell source, and
+`scripts/check-branch-workflow-policy.rb --candidate-root .` runs the frozen-surface policy
+against this working tree. Run `just guards` after touching any of them.
 A guard nobody has seen fail is a guard nobody should trust.
 
 The shell arm of `protect-immutable.py` is defence in depth, not a proof: it follows `cd`,
@@ -141,16 +195,25 @@ spellings. The git hooks and CI remain the cross-platform backstops.
 ## Where things live
 
 ```
-crates/pos-domain/     pure rules: Money, tax, cart machine   ← the crown jewel, keep it pure
-crates/pos-db/         SQLite schema, migrations, repositories
-crates/pos-sync/       outbox/cursor protocol (client + server)
-crates/pos-hardware/   printer/scanner/terminal traits + simulator
-apps/terminal/         the register (Tauri 2): src/ = React, src-tauri/ = Rust shell
-apps/server/           Axum: sync, auth, reporting
-apps/backoffice/       React admin
-packages/money/        the minor-unit rule, shared by both front ends
-packages/ui/           shared React components, and packages/api-types/ shared DTOs — both scaffolds
+crates/pos-domain/        pure rules: Money, tax, cart machine   ← the crown jewel, keep it pure
+crates/pos-db/            SQLite schema, migrations, repositories
+crates/pos-sync/          outbox/cursor protocol (client + server)
+crates/pos-hardware/      printer/scanner/terminal traits + simulator
+crates/pos-test-support/  the shared proptest configuration and strategies       → 1.1.0
+crates/pos-fiscal/        UBL builder, pinned code tables, queue, conformance    → group 2.7
+apps/terminal/            the register (Tauri 2): src/ = React, src-tauri/ = Rust shell
+apps/server/              Axum: sync, auth, reporting
+apps/backoffice/          React admin
+packages/money/           the minor-unit rule, shared by both front ends
+packages/ui/              shared React components, and packages/api-types/ shared DTOs — both scaffolds
 ```
+
+The two arrowed rows **do not exist on disk yet**; the arrow is the microstep that creates each.
+They are named here because the reference documents already specify their contents and because
+`pos-fiscal` must stay its own crate: everything reconstructed from the ISTD specification lives in
+one module, `pos-fiscal/src/codes.rs`, so an official code change is one diff in one file and its
+goldens rather than conditionals leaking through the builder. Its layout is
+[`ref/fiscal-jofotara.md`](docs/implementation/ref/fiscal-jofotara.md) §9.
 
 Migrations are **forward-only** and are **never edited once committed** — deleting or renaming
 one counts as editing it. Derive the current chain from the migration directory and the Rust

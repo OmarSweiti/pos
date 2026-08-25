@@ -1,18 +1,36 @@
 # Plan validation — auditing the master plan before building on it
 
-**Audited:** `pos-business-functional-master-plan.md` (Parts A–J) against independent sources, August 2026.
-**Method:** every load-bearing factual claim — tax rates, thresholds, e-invoicing mandate, data-protection law, PCI scoping, currency mechanics, library versions — was checked against a primary or authoritative secondary source. Architectural claims were checked against the shipped Phase-0 code in `crates/`.
+**Audited:** [`docs/plan/business-functional-master-plan.md`](../../plan/business-functional-master-plan.md)
+(Parts A–J) against independent sources on `2026-08-20`.
+**Revised:** `2026-08-25` after the independent seven-lens audit.
+**Method:** primary government texts, official forms, standards, and regulator material settle a
+claim where they are public. Implementer documentation and open-source integrations are
+corroborating evidence only; a Jordan-profile value that the official package or a named advisor
+must settle remains provisional. Architectural claims were checked against the shipped Phase-0
+code in `crates/`.
 
-**Verdict: build on it.** The master plan is materially better than the specifications most commercial POS products are built from. It gets right the four things that cheap POS software gets wrong, and those four are the ones you cannot retrofit:
+> **Revision note (`2026-08-25`).** The original audit found four corrections, but later review
+> found that C-2 and C-3 were themselves wrong and that C-1 and C-4 needed narrower premises. The
+> controlling correction ledger is [`00-master-plan.md`](../00-master-plan.md) §4a, "Errata and
+> concordance". This audit-of-record marks each correction's current status in place; the source
+> plan remains an immutable historical input.
+
+**Verdict (revised `2026-08-25`): build from the remediated implementation set, not from the source
+plan as written.** The master plan's foundations remain stronger than those of most commercial POS
+specifications, especially the four decisions that are expensive to retrofit:
 
 1. **Sales are immutable facts; corrections are new documents.** This single rule eliminates the hardest class of sync conflict and the hardest class of audit dispute.
 2. **Price and name are captured onto the sale line at sale time.** Reports and refunds read the line, never today's catalog. Half of all historical-data bugs in POS systems are this rule missing.
 3. **Stock is a ledger, not a column.** On-hand is a derived cache. Append-only rows merge across offline registers without a lock.
 4. **Tax rates are data with effective dates, not code.** Jordan changes reduced rates by Cabinet decree; a hardcoded 16% is a re-release every time.
 
-Add to that: correct instinct on semi-integrated payments (PCI scope collapse), correct instinct on treating card timeouts as *unknown* rather than *failed*, correct instinct on rasterising Arabic receipts instead of fighting printer codepages, and a genuinely rare willingness to enumerate 72 edge cases before writing code.
+Add to that: correct instinct on keeping card data outside the POS process, correct instinct on
+treating card timeouts as *unknown* rather than *failed*, correct instinct on rasterising Arabic
+receipts instead of fighting printer codepages, and a genuinely rare willingness to enumerate 72
+edge cases before writing code.
 
-Four claims are wrong. One of them invalidates a phase gate. They are corrected below and repeated inline at the exact microstep they affect.
+The original four corrections now have different dispositions. Their current status follows; every
+source-plan correction and superseded mapping is also recorded in the concordance named above.
 
 ---
 
@@ -20,144 +38,245 @@ Four claims are wrong. One of them invalidates a phase gate. They are corrected 
 
 ### C-1 — There is no JoFotara sandbox (severity: **blocks a phase gate**)
 
+**Current status (`2026-08-25`): conclusion retained; specification premise revised.**
+
+**Evidence confidence:** high that no public ISTD sandbox contract is documented; the authenticated
+environment rules remain provisional until `2.7.0` pins the official package or a written ISTD answer.
+
 > **Master plan B.2:** "credentials: Client ID + Secret; separate sandbox and production"
 > **Master plan Part G, Phase 2 exit:** "the four sandbox fiscal docs clear (C.11)"
 > **Master plan C.11:** "Gate Phase 2 exit on sandbox clearance of: plain sale, discounted sale (prorated), multi-rate sale, refund credit note."
 
-Odoo's official Jordan fiscal localization — a first-party implementer with a production JoFotara integration — states plainly that **no sandbox environment is available**. Testing requires credentials issued to a real ISTD-registered entity, and every submission is a live fiscal document against that entity's real tax record.
+Current implementer evidence still supports the conclusion that ISTD provides no public sandbox.
+Testing against the real endpoint therefore requires credentials issued to an ISTD-registered
+entity, and a submission affects that entity's real fiscal record.
 
 Vendor marketing pages claim "sandbox verification available"; they mean *their own* staging environment, not ISTD's. Do not plan against them.
 
+The original audit incorrectly coupled that sandbox conclusion to a second premise: that the
+authoritative technical material could not be obtained before Phase 5. ISTD now publicly lists its
+Technical Integration Guide. Microstep `2.7.0` obtains the official guide, XSD, business rules, and
+code lists, records the package version and hash, and diffs the reconstruction **before**
+`codes.rs`, the builder, or any fiscal golden is frozen.
+
 **Consequence.** The Phase-2 exit gate as written cannot be executed by anyone, merchant or not. And with no merchant yet on this project, there are no credentials at all.
 
-**What replaces it** (see [`fiscal-jofotara.md`](fiscal-jofotara.md) §6 and `phase-2-money-grade.md` group 2.7):
+**What replaces it** (see [`fiscal-jofotara.md`](fiscal-jofotara.md) §6 and
+[`phase-2-money-grade.md`](../phase-2-money-grade.md) group 2.7):
 
-- A **conformance harness** — every documented ISTD validation rule encoded as an assertion over the built document, run in CI on a golden set of fixture sales.
-- A **mock ISTD server** implementing the documented request/response contract with fault injection: timeout, validation rejection, duplicate UUID, "already exists", malformed response, slow response.
-- The four golden documents (plain, discounted, multi-rate, credit note) must clear the harness and survive every mock fault, byte-stable.
-- The **real network hop becomes a separate gated milestone** in Phase 5 — *Fiscal Certification* — executed once with the first merchant, against production, using low-value invoices immediately reversed by credit note.
+- `2.7.0` pins the official package and settles every provisional mapping before construction starts.
+- A **conformance harness** encodes the pinned XSD and business rules as assertions over the built
+  document and runs in CI on fixture sales.
+- A **mock ISTD transport** exercises only the request, response, retry, and ambiguous-timeout
+  behaviour documented by that pinned contract; the mock must not invent a `409`, fetch-existing,
+  or duplicate-recovery operation.
+- Five golden documents — plain, discounted, multi-rate, weighed, and credit note — are frozen only
+  after `2.7.0`, pass every applicable pinned rule, and remain byte-stable; the companion training
+  case proves absence and the suite exercises all 22 rules.
+- Credentialed production submission remains a separate live-certification gate. The harness is
+  continuous internal evidence; it is not ISTD certification and must never be described as such.
 
-This is strictly better than the original gate even if a sandbox existed: the harness runs on every commit forever; a sandbox run is a one-off.
+The original Phase-2 sandbox gate remains unbuildable. Moving official-package acquisition to
+`2.7.0` removes the separate and more dangerous error of building the harness from a reconstruction
+that was known to be provisional.
 
 ---
 
 ### C-2 — Order-level discounts are rejected outright, not merely un-prorated (severity: high)
 
+**Current status (`2026-08-25`): superseded; reclassified `BLOCKER` because the old eligibility
+gate rejects valid fiscal documents. Do not implement the correction below as originally written.**
+
+**Evidence confidence:** high that percentage round-trip gating is mathematically wrong; final XML
+placement remains provisional until `2.7.0` pins the official package.
+
 > **Master plan B.2:** "order-level discounts must be **prorated across lines** (negative or unbalanced lines get rejected — your largest-remainder `Money::split_evenly` is exactly the right tool)"
 
-The instinct is right and the tool is right, but the requirement is stricter than stated. Odoo's Jordan localization documents that **global discounts are unsupported** and that discounts "must be applied per invoice line **as a percentage**."
+The original audit promoted an implementation's UI restriction into an ISTD wire rule. Available
+official portal material and current implementation evidence instead support line allowance
+**amounts** plus a document-level recap. Microstep `2.7.0` settles the final XML placement against
+the pinned official package; percentage representability is never an eligibility gate.
 
-So proration alone is insufficient. A prorated *absolute* fils amount on a line is still not what ISTD's validator expects.
-
-**Consequence.** The fiscal document builder needs a second stage after proration:
+The retained rule is exact amount conservation:
 
 ```
 basket discount (fils)
-  → largest-remainder proration to lines      [Money::split_evenly — already built]
-  → per-line absolute fils discount
-  → convert to percentage of that line's gross
-  → RE-DERIVE the fils amount from that percentage
-  → assert it reproduces the stored fils value
+  → largest-remainder proportional allocation to line gross values
+      [Money::split_proportional]
+  → exact line allowance amounts in fils
+  → document allowance recap = exact sum of line allowance amounts
 ```
 
-If the re-derivation does not reproduce the stored value, the document is **not submitted** — it goes to a local dead-letter with a loud alert. A rounding argument you lose locally is free; one you lose at ISTD costs a rejected invoice, an uncleared receipt, and a customer who cannot deduct.
+An entered percentage is provenance only. If the official profile requires a percentage element,
+the builder emits it at the single precision named by `DISCOUNT_PERCENT_DECIMALS`; it does not
+re-derive or reject the exact allowance amount from that percentage. The prior worked example was
+also false: at integer ppm, a 3-fil discount on a 7-fil line rounds to `428_571` ppm and re-derives
+to 3 fils.
 
-Property test: `prop_discount_percentage_roundtrip_is_exact`. See [`fiscal-jofotara.md`](fiscal-jofotara.md) §4.3.
+The load-bearing property is
+`prop_document_allowance_recap_equals_sum_of_line_allowances`. See
+[`fiscal-jofotara.md`](fiscal-jofotara.md) §4.3.
+
+> ⚠️ **OPEN — blocks 2.7.0.** How many decimal places may the current JoFotara discount percentage carry when the pinned profile requires one? Default until answered: exact line allowance amounts and their exact document recap are authoritative; an entered percentage is provenance only, `DISCOUNT_PERCENT_DECIMALS` is the single emission constant, and percentage round-trip never gates fiscal eligibility.
+> Owner: 2.7.0. Source that settles it: the pinned official ISTD Technical Integration Guide, XSD, business rules and accepted boundary vectors.
 
 ---
 
 ### C-3 — ISTD recomputes totals at 9 decimals; tolerance is < 0.001 JOD (severity: medium)
 
+**Current status (`2026-08-25`): superseded; reclassified `BLOCKER` because the old invoice-level
+check rejects correct multi-line documents. The claimed ISTD tolerance is not sourced.**
+
+**Evidence confidence:** high that the old local check is arithmetically invalid; the regulator's
+actual tolerance remains unresolved pending the official rules and accepted boundary vectors.
+
 > **Master plan C.3:** "round **once per line** (default: half away from zero, at line level) to i64 fils; receipt summary is the exact sum of line taxes (no re-derivation — that's how you fail JoFotara total checks)."
 
-The *receipt* rule is correct and stays. But the plan assumes ISTD accepts the sum-of-rounded-lines as authoritative. It does not: ISTD recomputes at nine decimal places, and Odoo documents a tolerated error margin of **less than 0.001 JOD** arising precisely from this precision mismatch (three decimals on the sender's side, nine on ISTD's).
+The receipt rule is correct and stays: each line rounds once, and document totals are exact sums of
+the carried line values. The prior audit misread implementation commentary as an ISTD acceptance
+tolerance. It also proposed a self-check that rejects correct baskets: each carried line may differ
+from an unrounded projection by up to half a fil, so the accumulated difference across three or
+more lines can exceed one fil without any arithmetic error.
 
-**Consequence.** Per-line rounding to fils is fine for a three-line minimarket basket and can drift past tolerance on a long or heavily-discounted one. The fix is not to change the receipt — the receipt's fils values are the money the customer paid and must never move. The fix is a **pre-submit self-check**:
+The corrected pre-submit check cannot reject an internally correct document:
 
 ```
-FiscalTotalsPolicy::check(&invoice) -> Result<(), Drift>
-  recompute every line and the invoice total at rust_decimal precision, unrounded
-  compare against the fils values the document carries
-  |delta| >= 1 fil  →  Err(Drift)  →  local dead-letter + alert, NEVER submitted
+for each line:
+  compare its fixed-scale projection with the carried value at a half-fil tolerance
+
+for the document:
+  tax_exclusive_total == sum(carried line nets)
+  tax_total           == sum(carried line taxes)
+  tax_inclusive_total == tax_exclusive_total + tax_total
+  payable_total       == the exact identity over the document's carried values
 ```
 
-This turns a class of remote rejection into a local, debuggable, pre-flight failure. See [`fiscal-jofotara.md`](fiscal-jofotara.md) §4.4.
+A failure is `QueueState::BuildFailed`, with a `Local, build failed` reconciliation row and the
+audited operator command `fiscal_rebuild_failed` after the builder or pinned configuration is corrected.
+The rebuild preserves the immutable sale and `fiscal_uuid`. It is not `Rejected` — ISTD did not
+reject it — and it is not `Dead`, because retry exhaustion did not occur. See
+[`fiscal-jofotara.md`](fiscal-jofotara.md) §4.4.
+
+> ⚠️ **OPEN — blocks 2.7.0.** What tolerance, if any, does the current ISTD validator apply to transmitted line and document equations? Default until answered: enforce the half-fil per-line projection check and exact identities over the document's own carried values; do not implement an invoice-level tolerance or claim an ISTD tolerance.
+> Owner: 2.7.0. Source that settles it: the pinned official ISTD business rules and Schematron/XSD package, plus credentialed accepted boundary vectors.
 
 ---
 
 ### C-4 — GST registration thresholds are higher than stated (severity: low, but it's a seeded default)
 
+**Current status (`2026-08-25`): threshold numbers retained; merchant categories corrected;
+severity reclassified high because the wrong default changes a merchant's registration advice.**
+
+**Evidence confidence:** high; the official threshold regulation and GST Law settle the activity
+classes, threshold amounts, mixed-activity rule, forecast test, and first-taxable-import trigger.
+
 > **Master plan B.1:** "**Registration thresholds** (annual): ~JOD 50,000 goods / 30,000 services"
 
-Current thresholds, over any rolling 12-month period:
+The official threshold categories carry these figures; applying one to a merchant still requires
+their registered activity and evidence:
 
-| Supply type | Threshold |
-|---|---|
-| Goods **not** subject to Special Sales Tax | **JOD 75,000** |
+| Registered activity used for the threshold test | Threshold |
+|---|---:|
+| Ordinary goods seller/trader outside the special producer/manufacturer class | **JOD 75,000** |
 | Services | **JOD 30,000** |
-| Goods **subject to** Special Sales Tax | **JOD 10,000** |
+| Producer/manufacturer of goods subject to Special Sales Tax | **JOD 10,000** |
+| Mixed activities | **the lowest threshold applicable to the merchant's registered activities** |
 
-The services figure was right. The goods figure was low by JOD 25,000, and the plan missed the special-tax tier entirely — which matters, because a minimarket selling tobacco crosses at JOD 10,000, not 75,000. That is a very different conversation with a merchant about whether they must register.
+An ordinary minimarket does **not** enter the JOD 10,000 class merely because it resells tobacco or
+another SST-bearing product. SST is generally charged at import or the designated domestic tax
+point; assortment alone neither identifies that tax point nor proves producer liability.
 
-**Consequence.** Documentation and the seeded default in `merchant-decisions.md` §10; no code change. The "tax-disabled merchant" configuration the plan calls for remains correct and necessary.
+**Consequence.** Onboarding records the merchant's registered activity, producer/manufacturer and
+importer roles, any SST certificate or designated tax point, mixed activities, trailing turnover,
+forward forecast, the statutory first-taxable-import test, and the dated evidence supporting the
+answer. [`merchant-decisions.md`](merchant-decisions.md) owns the questionnaire; no assortment-based
+default may decide registration.
+
+GST registration and JoFotara obligation are independent axes. GST evidence selects the tax
+profile and taxpayer category; separate official obligation or exemption evidence enables or
+disables fiscal issuance. A merchant below a GST threshold may still require an income invoice, so
+"GST unregistered" must never imply `fiscal_profile = 'disabled'`.
 
 ---
 
 ## 2. Confirmed as written
 
-Everything in this table was checked and stands. Where the plan hedged appropriately ("verify with the merchant's advisor"), the hedge was correct.
+The architectural claims retained below still stand. Rows whose earlier legal or protocol wording
+did not survive the `2026-08-25` review are marked **revised** rather than silently carried forward
+as confirmations.
 
 | Master plan claim | Status |
 |---|---|
 | GST standard rate 16%, administered by ISTD | ✅ |
-| Zero-rated: exports, free zones, ASEZ, development areas | ✅ |
+| Zero-rated supplies include distinct domestic, export, free-zone, ASEZ, and development-area cases | ⚠️ **revised** — destination, reason, eligibility, and evidence can be supply-specific; a product category alone must not zero-rate every sale |
 | Exempt: bread, water < 5 L, tea, sugar, gold, currency, electricity; plus air transport, education, sewage/waste, public health, religious & social organisations | ✅ — the plan's list was goods-only; services exemptions confirmed and added |
-| Special (excise) Sales Tax as an additional per-item component — cement, tobacco, wines, spirits, cars, beer, fuel, lubricants | ✅ — schema must allow > 1 tax component per item |
+| Special Sales Tax as an additional per-item component | ⚠️ **revised** — the model must represent fixed and ad-valorem components, their unit basis and ordering, and GST calculated on the base including SST; a percentage-only hook is insufficient |
 | Reduced rates set by Cabinet resolution ⇒ rates are time-effective data | ✅ |
-| GST returns filed periodically ⇒ the tax report by rate *is* the filing input | ✅ |
-| JoFotara: ISTD + MoDEE, GST Law 38/2018 Art. 23, Reg. 34/2019, Amended Reg. 2/2025 | ✅ |
-| Phase 2 mandatory from **1 April 2025**, covering **B2B, B2C and B2G** — ordinary retail receipts in scope | ✅ — architect as if every receipt must clear |
-| Continuous Transaction Control (clearance) model, real-time validation before issue | ✅ |
-| UBL 2.1 XML transmitted as JSON | ✅ — specifically, XML base64-encoded into a JSON field |
-| ISTD returns a QR that **must** appear on the customer document | ✅ |
-| Two invoice types: cash (POS default) and receivable (credit) | ✅ — codes recovered, see §3 |
-| Buyer identification not required below ~JOD 10,000 | ✅ — but capture-and-retain is still advised for audit |
-| Penalties up to JOD 500 per violation | ✅ |
-| Credit notes / refunds go through the same pipeline referencing the original | ✅ |
-| PDPL Law No. 24 of 2023; published 17 Sep 2023; in force 17 Mar 2024; grace ended Mar 2025; retroactive | ✅ |
-| PDPL: explicit consent, purpose limitation, subject rights, restricted cross-border transfer, 24-hour breach notification, sensitive-data category | ✅ |
-| PDPL enforcement institutions still standing up ⇒ build to the law, not to enforcement lag | ✅ — as of Aug 2026 the electronic controller/processor registry is still not activated; manual registration with the Personal Data Protection Directorate is the interim path |
-| Semi-integrated certified terminals ⇒ short-SAQ territory | ✅ **with a caveat** — see §4 |
+| GST returns require periodic reporting | ⚠️ **revised** — `report_tax_by_rate` is a sales-side tax reconciliation, not a complete GST filing input; purchases, imports, input-tax deductibility/apportionment, credits, adjustments, elections, and return-box mapping arrive with the accounting work in Phase 4 |
+| Tax rounding is a merchant-selectable store preference | ❌ **superseded** — line rounding is one versioned Jordan jurisdiction policy; its official scale and tie rule remain an open item owned by `2.7.0`, and cash rounding is a separate settlement policy; see [`tax-jordan.md`](tax-jordan.md) §4 |
+| GST registration determines JoFotara obligation | ❌ **superseded** — registration/tax treatment and fiscal obligation/category are separate decisions backed by separate merchant evidence |
+| A blanket `2025-04-01` B2B/B2C/B2G statement proves every merchant's JoFotara obligation | ❌ **superseded** — onboarding records the merchant's current official obligation or exemption evidence and never infers it from GST registration alone |
+| The documented transport uses UBL XML in a base64-in-JSON envelope | ✅ for the documented transport shape; the exact Jordan profile is pinned in `2.7.0` |
+| ISTD returns a QR and the customer handoff rule is settled for outages | ⚠️ **revised** — QR persistence is part of the response path; the legal status, wording, and QR-at-handoff rule for a pending document remain open pending an official ruling |
+| Cash and receivable are settlement modes | ✅ — they feed one component of composite `InvoiceTypeCode@name`; `012` and `022` are not standalone payment-method codes |
+| Buyer identification has one value threshold | ❌ **superseded** — receivable and cash documents have different buyer rules, and the pinned official package in `2.7.0` owns the exact field/scheme matrix |
+| Credit notes / refunds go through the same pipeline referencing the original | ✅ — they also preserve original buyer and line identity, price, tax, and remaining refundable quantity because a later catalog or CRM edit must not change the fiscal correction |
+| PDPL Law No. 24 of 2023; published `2023-09-17`; in force `2024-03-17`; grace ended `2025-03` | ✅; deployment-specific duties still require the open determination below |
+| PDPL: explicit consent, purpose limitation, subject rights, restricted cross-border transfer, and sensitive-data controls | ⚠️ — the incident workflow keeps the affected-person `24 h` and supervisory-unit `72 h` clocks as interim drill defaults until the counsel-owned OPEN item at 5.3.2 settles both deadlines, content and filing channels |
+| PDPL electronic controller/processor registration is unavailable | ❌ **superseded on `2026-08-25`** — MoDEE now publishes the electronic register; each deployment still needs a dated controller/processor/DPO and registration determination before customer PII processing |
+| Semi-integrated certified terminals ⇒ short-SAQ territory | ⚠️ **revised** — semi-integration alone proves no SAQ eligibility; the selected deployment changes engineering and operations as §4 specifies |
 | Card timeout = *unknown*, status-query before retry | ✅ — the single most important payment rule in the document |
 | JOD minor-unit exponent 3 (1 JOD = 1000 fils); exponent must be per-currency data | ✅ |
 | Tax-inclusive shelf pricing is the Jordanian retail norm | ✅ |
 | Arabic ESC/POS via raster (`GS v 0`), not codepages | ✅ — the field consensus; codepage 1256 text mode does not shape or reorder |
-| CliQ / wallet QR behaves like a terminal driver | ✅ — CliQ merchant QR reaches merchants through bank/PSP POS devices (JoPACC × Network International), so it is a `PaymentTerminal` implementation, not a new integration class |
+| CliQ / wallet QR behaves like a terminal driver | ✅ for v1 only through a bank or CBJ-licensed merchant acquirer; a vendor-operated direct funds or acceptance path stays blocked until CBJ gives a written classification |
 | Consumer Protection Law No. 7 of 2017: price transparency, truthful promotion, redress for defective goods; MoITS inspects | ✅ — J.3's promotion of shelf-label printing to a compliance feature is correct |
-| Blueprint stack choices (Tauri 2 + Rust core + React, SQLCipher, Axum/SQLx/Postgres, ESC/POS, outbox sync) | ✅ — all current, see §5 |
+| Blueprint stack choices (Tauri 2 + Rust core + React, SQLCipher, Axum/SQLx/Postgres, ESC/POS, outbox sync) | ✅ as architecture; dependency currency and the SQLCipher/SQLite WAL safety prerequisite are separate checks in §5 |
+
+> ⚠️ **OPEN — blocks 2.7.0.** Does ISTD permit asynchronous reporting during an outage, what artifact may be handed to the customer, when is the legal issuance event, what is the submission deadline, and how are backdating and later rejection handled? Default until answered: complete the sale, print only a non-fiscal payment acknowledgement, and issue the fiscal invoice only through the approved clearance path.
+> Owner: 2.7.0. Source that settles it: the official ISTD outage procedure or a written ruling from the ISTD E-Invoicing Directorate.
+
+> ⚠️ **OPEN — blocks 3.4.1.** For this deployment, which entity is controller, which is processor, who is a recipient, is a DPO required, and is the Personal Data Processing Register entry required and complete? Default until answered: the schema may migrate, but customer capture, consent collection and customer-PII sync remain disabled.
+> Owner: 3.4.1. Source that settles it: the current MoDEE Personal Data Processing Register instructions and dated Jordanian counsel advice for the deployed roles.
+
+> ⚠️ **OPEN — blocks 3.1.6.** In which country and legal entity will the shared service and each subprocessor host merchant and customer data, and what cross-border basis applies? Default until answered: no customer PII may sync or enter telemetry outside Jordan; only non-PII fixtures may use a development host.
+> Owner: 3.1.6. Source that settles it: the signed hosting/subprocessor contract, Jordan PDPL transfer assessment and counsel's written conclusion.
 
 ---
 
 ## 3. Fiscal constants the master plan does not carry
 
-The plan describes the JoFotara pipeline correctly but at prose level. Building it needs concrete values. These were recovered from implementer documentation and open-source SDKs, and are recorded in [`fiscal-jofotara.md`](fiscal-jofotara.md) with their provenance:
+The plan describes the JoFotara pipeline at prose level. Generic UBL syntax and the documented
+transport can be stated now; every Jordan-profile mapping remains provisional until `2.7.0`
+downloads the official package, records its version and hash, and reconciles the table with the
+pinned XSD, business rules, and code lists. Implementer code corroborates a mapping but cannot
+settle a conflict with that package.
 
-| Item | Value |
-|---|---|
-| Endpoint | `https://backend.jofotara.gov.jo/core/invoices/` |
-| Auth headers | `Client-Id`, `Secret-Key` |
-| Body | JSON; the UBL 2.1 XML base64-encoded into a single field |
-| Invoice category (by taxpayer type) | `income` (unregistered) · `general_sales` (registered, standard) · `special_sales` (registered, special tax) |
-| Payment method code | `012` cash · `022` receivable |
-| Required counter | ICV — a monotonically increasing per-taxpayer invoice counter |
-| Required seller field | income source sequence (activity number) |
-| Buyer ID types | TIN · NIN · PN |
-| Issue date format | `dd-mm-yyyy` |
-| Invoice UUID | rendered in **v4 shape** by every implementation seen |
+| Item | Build contract before `2.7.0` closes | Status |
+|---|---|---|
+| Endpoint | `https://backend.jofotara.gov.jo/core/invoices/` | documented transport default; confirm and pin |
+| Auth headers | `Client-Id`, `Secret-Key` | documented transport default; credential scope/rotation remains provisional |
+| Body | JSON containing base64-encoded UBL XML | documented transport default; exact field schema is pinned in `2.7.0` |
+| Taxpayer/document category | `income`, `general_sales`, `special_sales`, plus supported zone profiles | provisional mapping; GST registration and JoFotara category are resolved independently |
+| `InvoiceTypeCode@name` | `compose_invoice_type_name(scope, settlement, taxpayer_type)` | three component tables, exhaustive supported-profile tests, and refusal of unsupported combinations; exact digits provisional |
+| ICV | `fiscal_queue.icv` is nullable; allocate once at first submission from the store-scoped default counter and never regenerate | authoritative scope provisional; selling does not wait for allocation |
+| Required seller field | income source sequence / activity identifier | provisional name and scheme |
+| Buyer ID schemes | `TN`, `NIN`, `PN` | provisional field matrix pending the official package |
+| `cbc:IssueDate` | `YYYY-MM-DD` | fixed by UBL's `xs:date` lexical form and validated by the real XSD, never a string-pattern check |
+| `cbc:ID` | immutable register-prefixed invoice number | explicit and distinct from ICV and UUID |
+| Fiscal UUID | locally generated `fiscal_uuid`, distinct from the sale's UUIDv7 primary key | generated at sale time for idempotency; Jordan-profile UUID constraints provisional |
 
-> ⚠️ **The last row is a live risk against this codebase.** The blueprint mandates UUIDv7 primary keys everywhere. If ISTD's validator inspects the version nibble, a v7 UUID submitted as the fiscal UUID is rejected. **Mitigation:** the fiscal UUID is a *separate column* (`fiscal_result.uuid`) generated as v4, never the sale's v7 primary key. This costs nothing and removes the risk entirely. Confirm against the official spec during Fiscal Certification.
+The earlier table's `012`/`022` row was mislabelled: those values are composite
+`InvoiceTypeCode@name` examples, not payment-method codes. The composition combines document
+scope, settlement method, and taxpayer type. `codes.rs` owns the three provisional component maps
+so `2.7.0` changes one isolated module instead of scattering digits through the builder.
 
-> ⚠️ **The authoritative technical specification is not public.** ISTD's field-level spec, code lists (UoM, tax category, city codes), and XSD are distributed through the taxpayer's own JoFotara portal account. Every value above is reconstructed from implementers. **Obtaining the official spec is microstep 5.2.1 and is a hard prerequisite for certification.** Until then, the conformance harness encodes the reconstruction and is expected to need corrections.
+> ⚠️ **OPEN — blocks 2.7.0.** Is the authoritative ICV namespace per register, store/income source, or one TIN across stores? Default until answered: allocate from one store-scoped counter keyed as `('store', store_id, 'fiscal_icv')`; Phase 2 uses the single register's in-process allocator, Phase 3 uses a server-issued one-value lease, and no register advances an independent register-scoped ICV counter.
+> Owner: 2.7.0. Source that settles it: the official ISTD business rules or a written ISTD E-Invoicing Directorate ruling.
+
+The public ISTD guidance listing makes official-package acquisition a Phase-2 precondition, not a
+Phase-5 discovery. No `codes.rs` table, builder contract, or fiscal golden may be frozen before
+`2.7.0` records the package hash and closes or explicitly carries forward each provisional row.
 
 ---
 
@@ -167,13 +286,24 @@ The plan describes the JoFotara pipeline correctly but at prose level. Building 
 
 **SAQ P2PE applies only if the terminal is part of a PCI-listed, validated P2PE solution.** "Semi-integrated" and "P2PE-validated" are different properties, and a terminal can be the first without being the second. If the merchant's acquirer supplies an internet-connected terminal that is *not* on the PCI SSC's validated P2PE list, the merchant lands on **SAQ B-IP or SAQ C** — substantially longer, pulling the store network and supporting infrastructure into scope.
 
-**Consequence.** The engineering posture does not change — PAN never touches this process either way, and that is the point. But the *claim* changes, and merchant-facing material must not promise SAQ P2PE. The action is concrete: when evaluating Jordanian acquirers (Phase 2), ask for each candidate terminal's **PCI P2PE listing number**, and record it. See [`security-compliance.md`](security-compliance.md) §3.
+**Consequence.** The engineering and operating posture **does** change with the answer. SAQ B-IP
+has eligibility and network-isolation requirements. SAQ C brings the payment environment's network,
+configuration, patching, access control, monitoring, testing, and policy evidence into scope. PAN
+must still never enter the POS process; a driver response containing full PAN is an integration
+rejection, not data the application may accept and discard. Merchant-facing material must not
+promise SAQ P2PE, B-IP, C, or compliance before the acquirer and QSA determine the deployed scope.
+See [`security-compliance.md`](security-compliance.md) §3.
+
+> ⚠️ **OPEN — blocks 2.1.1.** Which exact PCI SAQ applies to the selected acquirer, terminal model and firmware, PTS/P2PE listing, integration protocol, store network and support model? Default until answered: design and operate to the SAQ C baseline, reject any integration that exposes a full PAN to this process, and make no P2PE-eligibility claim anywhere.
+> Owner: `2.1.1` collects the evidence; `5.3.3` determines the SAQ. Source that settles it: the acquirer's written responsibility matrix and a QSA determination against the current PCI SSC eligibility criteria.
 
 ---
 
 ## 5. Stack currency check
 
-Verified against crates.io, August 2026. No stack decision in the blueprint has aged badly.
+Dependency versions were compared with crates.io on `2026-08-20`. Version currency is not a safety
+proof for the embedded SQLCipher/SQLite runtime, and the WAL prerequisite below must close before
+the Phase-1 storage layer permits concurrent source connections.
 
 | Crate / tool | Repo pins | Latest | Action |
 |---|---|---|---|
@@ -183,9 +313,16 @@ Verified against crates.io, August 2026. No stack decision in the blueprint has 
 | `rust_decimal` | 1 | 1.42.1 | none |
 | `proptest` | 1 | 1.11.0 | none |
 | `keyring` | 4 | 4.1.6 | none |
-| `rusqlite` | **0.39** | 0.40.2 | **stay on 0.39** — the `libsqlite3-sys` `links` collision with sqlx documented in `docs/phase-0-remaining-setup.md` is still live. Revisit when sqlx accepts `libsqlite3-sys` ≥ 0.38 |
+| `rusqlite` | **0.39** | 0.40.2 | retain until the `libsqlite3-sys` `links` collision documented in [`docs/phase-0-remaining-setup.md`](../../phase-0-remaining-setup.md) is resolved; independently verify the compiled SQLCipher/SQLite WAL safety before storage work |
 
-Crates the phases will add, all healthy: `argon2` 0.5.3 · `cosmic-text` 0.19 · `rustybuzz` 0.20 · `tiny-skia` 0.12 · `image` 0.25 · `qrcode` 0.14 · `quick-xml` 0.41 · `base64` 0.23 · `reqwest` 0.13 · `jiff` 0.2 · `sentry` 0.49 · `ed25519-dalek` 3.0 · `serialport` 4.9 · `rusb` 0.9.
+Versions recorded for crates the phases may add, to be rechecked when each dependency lands:
+`argon2` 0.5.3 · `cosmic-text` 0.19 · `rustybuzz` 0.20 · `tiny-skia` 0.12 ·
+`image` 0.25 · `qrcode` 0.14 · `quick-xml` 0.41 · `base64` 0.23 · `reqwest`
+0.13 · `jiff` 0.2 · `sentry` 0.49 · `ed25519-dalek` 3.0 · `serialport` 4.9 · `rusb`
+0.9.
+
+> ⚠️ **OPEN — blocks 1.8.1.** Does the resolved bundled SQLCipher/SQLite runtime contain the upstream WAL-reset corruption fix for every supported source-connection and checkpoint pattern? Default until answered: permit one source database connection only and do not start a concurrent checkpoint, backup, reporting, or sync connection.
+> Owner: `1.8.1`. Source that settles it: runtime `sqlite_version()` and `cipher_version()` matched to the official SQLite and SQLCipher advisories/release notes, plus the upstream concurrency regression on the compiled build.
 
 One thing to check rather than assume: `rusqlite` exposes **no `fts5` feature flag**. FTS5 arrives through the bundled SQLite build. With `bundled-sqlcipher-vendored-openssl` this needs *verifying*, not hoping — microstep 1.2.6 adds a startup assertion and a test that fails loudly if FTS5 is absent, rather than discovering it when product search silently returns nothing.
 
@@ -204,7 +341,7 @@ Not errors. The master plan is a business and functional specification and these
 | G-5 | **i18n mechanism** | Phase 1 | "Arabic-first RTL from the first commit" is a requirement without a mechanism. Needs: catalog format, key naming, RTL strategy, numeral policy, and a font that serves both the UI and the receipt rasterizer |
 | G-6 | **Permission-enforcement pattern** | Phase 1 | "RBAC enforced in Rust command handlers" needs teeth — a guard type plus an exhaustive test that every IPC command declares a capability. Otherwise the twentieth command silently ships without a check |
 | G-7 | **Audit hash-chain spec** | Phase 1 | `prev_hash`/`hash` columns are specified; the canonical serialization, coverage, verifier, and chain-break behaviour are not. An unverifiable hash chain is decoration |
-| G-8 | **Telemetry with proven PII scrubbing** | Phase 1 (fields), Phase 3 (Sentry) | PDPL's 24-hour breach clock makes "no PII in logs" a legal position, and a legal position needs a test |
+| G-8 | **Telemetry with proven PII scrubbing** | Phase 1 (fields), Phase 3 (Sentry) | the interim 24-hour affected-person drill clock makes an untested "no PII in logs" claim operationally indefensible; the statutory clocks remain open at 5.3.2 |
 | G-9 | **Performance budgets as CI benchmarks** | Phase 1 | Four budgets are stated. None is measured. Unmeasured budgets are decoration |
 | G-10 | **Jordanian minimarket seed fixture** | Phase 1 | You cannot build or demo an Arabic-first, tax-inclusive, weighed-goods POS against `SKU-001 / Espresso`. The fixture is a development tool and the RTL/tax/rounding test corpus |
 | G-11 | **`Money` is incomplete** | Phase 1, first | Today's `Money` is a bare `i64` with no currency and no exponent, so JOD's 3-decimal minor unit (B.5) is unrepresentable and USD/JOD cannot coexist. Everything else depends on this type |
@@ -226,43 +363,48 @@ Recorded so nobody "fixes" them later:
 
 ## 8. Sources
 
+Official statutes, regulator publications, standards, and scheme-owner material settle the open
+items above. Implementer documentation and source code show compatibility evidence only; they are
+not described as primary ISTD or PCI authority.
+
 **JoFotara / e-invoicing**
-- [Odoo 19.0 — Jordan fiscal localization](https://www.odoo.com/documentation/19.0/applications/finance/fiscal_localizations/jordan.html) — *primary source for C-1 (no sandbox), C-2 (per-line percentage discounts), C-3 (9-decimal recomputation, < 0.001 JOD tolerance), taxpayer-type classification*
-- [VATupdate — E-Invoicing & E-Reporting in Jordan briefing (Mar 2026)](https://www.vatupdate.com/2026/03/20/briefing-document-podcast-e-invoicing-e-reporting-in-jordan/)
-- [ClearTax — Jordan e-invoicing timeline & process](https://www.cleartax.com/jo/jordan-e-invoicing) — *invoice type codes 388/381, cash & A/R sub-types*
-- [OrchidaTax — Jordan e-invoicing compliance guide 2026](https://orchidatax.com/countries-compliance/jordan-e-invoicing-compliance/) — *CTC clearance model, launch date, penalties*
-- [Flick Network — JoFotara rules & deadlines](https://www.flick.network/en-jo/e-invoicing-jordan-jofotara) — *JOD 10,000 buyer-identification threshold*
-- [Mozon — JoFotara guide 2026](https://mozon-tech.com/en/blog/the-ultimate-guide-to-jofotara/) — *endpoint, base64-in-JSON envelope*
-- [`jafar-albadarneh/jofotara` PHP SDK](https://packagist.org/packages/jafar-albadarneh/jofotara) — *field inventory, payment codes 012/022, invoice categories, ICV, income source sequence, buyer ID types, v4 UUID shape*
-- [`sedhha/automation-script-jordan-tax-dept`](https://github.com/sedhha/automation-script-jordan-tax-dept) — *endpoint confirmation*
+- [ISTD — National E-Invoicing System guidance listing](https://istd.gov.jo/AR/List/%D8%A7%D9%84%D8%A7%D8%AF%D9%84%D8%A9_%D8%A7%D9%84%D8%A7%D8%B1%D8%B4%D8%A7%D8%AF%D9%8A%D8%A9_%D9%84%D9%86%D8%B8%D8%A7%D9%85_%D8%A7%D9%84%D9%81%D9%88%D8%AA%D8%B1%D8%A9_%D8%A7%D9%84%D9%88%D8%B7%D9%86%D9%8A) — *official source proving the Technical Integration Guide is obtainable*
+- [ISTD — linking procedure](https://istd.gov.jo/ebv4.0/root_storage/en/eb_list_page/procedure_manual_for_linking_to_the_jordanian_national_electronic_invoicing_system.pdf) — *official transport and response procedure; does not by itself settle outage or duplicate recovery*
+- [JoFotara portal manual](https://portal.jofotara.gov.jo/85e41d44095082ee4c9c.pdf) — *official portal evidence for line discount amounts*
+- [OASIS UBL 2.1 XSD](https://docs.oasis-open.org/ubl/os-UBL-2.1/xsd/common/UBL-CommonBasicComponents-2.1.xsd) and [W3C `xs:date`](https://www.w3.org/TR/xmlschema11-2/#date) — *normative `cbc:IssueDate` lexical form*
+- [Odoo Jordan fiscal localization](https://www.odoo.com/documentation/19.0/applications/finance/fiscal_localizations/jordan.html) and [current Jordan UBL builder](https://github.com/odoo/odoo/blob/19.0/addons/l10n_jo_edi/models/account_edi_xml_ubl_21_jo.py) — *implementation evidence only; not authority for ISTD tolerances or code lists*
 
 **Tax**
-- [PwC Worldwide Tax Summaries — Jordan, Other taxes](https://taxsummaries.pwc.com/jordan/corporate/other-taxes) *(updated 05 Jul 2026)* — *16% standard rate, zero-rated categories, exempt goods and services, excise scope*
-- [Flick Network — GST in Jordan](https://www.flick.network/en-jo/gst-in-jordan) — *registration thresholds 75k / 30k / 10k (C-4)*
-- [Quaderno — Jordan GST guide 2026](https://quaderno.io/guides/jordan-gst-guide/) — *bi-monthly filing*
-- [BDO Jordan — VAT Navigator](https://www.bdo.com.jo/getattachment/827089db-2161-4aec-a718-03e0ce5307bb/VAT_Jordan_2024_Final3.pdf?lang=en-GB)
+- [ISTD — General Sales Tax Law and amendments](https://istd.gov.jo/ebv4.0/root_storage/en/eb_list_page/general_sales_tax_law_and_its_amendments_2023-1.pdf) — *rates, taxable value, registration tests, filing and SST interaction*
+- [ISTD — Registration Threshold Regulation No. 81/2000 and amendments](https://istd.gov.jo/EBV4.0/Root_Storage/AR/EB_Legislation/%D9%86%D8%B8%D8%A7%D9%85_%D8%AD%D8%AF_%D8%A7%D9%84%D8%AA%D8%B3%D8%AC%D9%8A%D9%84_%D9%84%D8%BA%D8%A7%D9%8A%D8%A7%D8%AA_%D8%A7%D9%84%D8%B6%D8%B1%D9%8A%D8%A8%D8%A9_%D8%A7%D9%84%D8%B9%D8%A7%D9%85%D8%A9_%D8%B9%D9%84%D9%89_%D8%A7%D9%84%D9%85%D8%A8%D9%8A%D8%B9%D8%A7%D8%AA_%D8%B1%D9%82%D9%85_81_%D9%84%D8%B3%D9%86%D8%A9_2000_%D9%88%D8%AA%D8%B9%D8%AF%D9%8A%D9%84%D8%A7%D8%AA%D9%87.pdf) — *C-4 category and threshold authority*
+- [ISTD — GST declaration](https://istd.gov.jo/ebv4.0/root_storage/en/eb_list_page/gst_declaration-1.pdf) and [tax-return filing manuals](https://istd.gov.jo/ebv4.0/root_storage/en/eb_list_page/tax_returns_filling_manuals.pdf) — *return inputs beyond sales*
+- [ISTD — current tax-rate catalogue](https://www.istd.gov.jo/AR/List/%D8%A7%D9%84%D9%86%D8%B3%D8%A8_%D8%A7%D9%84%D8%B6%D8%B1%D9%8A%D8%A8%D9%8A%D8%A9) — *enabled reduced bands must be confirmed from the current catalogue and merchant evidence*
+- [ISTD — Special Tax Regulation No. 80/2000](https://istd.gov.jo/EBV4.0/Root_Storage/AR/Regulations/KTA_Document_%2839%29.pdf) — *fixed and ad-valorem component schedules; pin the current version before enabling SST*
+- [ASEZA Regulation 54/2005 as amended](https://aseza.jo/EBV4.0/Root_Storage/EN/EB_List_Page/Regulation_no_54_of_2005_for_the_Goods_and_Services_Sales_Tax_in_Aqaba_Special_Economic_Zone_%28ASEZA%29_as_amended.pdf) and [ASEZA declaration](https://istd.gov.jo/ebv4.0/root_storage/en/eb_list_page/aqaba_gst_declaration-0.pdf) — *zone-specific rules and return rows; no standard-profile fallback*
 
 **Data protection**
-- [Personal Data Protection Law No. 24 of 2023 — official text (MoDEE)](https://www.modee.gov.jo/ebv4.0/root_storage/en/eb_list_page/pdpl.pdf)
-- [Securiti — Jordan PDPL overview](https://securiti.ai/jordan-personal-data-protection-law-of-2023/)
-- [DLA Piper — Data protection laws: Jordan](https://www.dlapiperdataprotection.com/?t=law&c=JO)
-- [Nsair & Partners — DPOs in Jordan](https://nsairs.com/2025/05/20/1257/) — *registry not yet activated; manual registration interim path*
+- [Personal Data Protection Law No. 24 of 2023 — official translation (MoDEE)](https://www.modee.gov.jo/ebv4.0/root_storage/en/eb_list_page/official_translation_of_the_personal_data_protection_law_no.24_of_2023_-_stamped-2.pdf)
+- [MoDEE — electronic Personal Data Processing Register announcement](https://modee.gov.jo/En/NewsDetails/%D8%A7%D9%84%D8%A7%D9%82%D8%AA%D8%B5%D8%A7%D8%AF_%D8%A7%D9%84%D8%B1%D9%82%D9%85%D9%8A_%D8%AA%D8%B9%D9%84%D9%86_%D8%A5%D8%B7%D9%84%D8%A7%D9%82_%D8%A7%D9%84%D9%85%D9%88%D9%82%D8%B9_%D8%A7%D9%84%D8%A7%D9%84%D9%83%D8%AA%D8%B1%D9%88%D9%86%D9%8A_%D9%84%D8%B3%D8%AC%D9%84_%D9%85%D8%B3%D8%A4%D9%88%D9%84%D9%8A_%D9%88%D9%85%D8%B9%D8%A7%D9%84%D8%AC%D9%8A_%D9%88%D9%85%D8%B1%D8%A7%D9%82%D8%A8%D9%8A_%D8%AD%D9%85%D8%A7%D9%8A%D8%A9_%D8%A7%D9%84%D8%A8%D9%8A%D8%A7%D9%86%D8%A7%D8%AA_%D8%A7%D9%84%D8%B4%D8%AE%D8%B5%D9%8A%D8%A9_%D8%AA%D8%AC%D8%B1%D9%8A%D8%A8%D9%8A%D8%A7%D9%8B) and [official register instructions](https://www.modee.gov.jo/ebv4.0/root_storage/en/eb_list_page/the_register_of_dpos_processors_and_controllers_instructions_-_en.pdf) — *the prior inactive-registry claim is stale*
+- [MoDEE — Security Technical and Organisational Measures Instructions 2025](https://www.modee.gov.jo/ebv4.0/root_storage/en/eb_list_page/security_technical_and_organizational_measures_instructions_2025_-_en_%282%29.pdf) — *DPIA and foreign-processing controls*
 
 **Payments & PCI**
-- [Semi-integrated POS (overview)](https://en.wikipedia.org/wiki/Semi-integrated_POS)
-- [episki — PCI DSS SAQ types explained](https://episki.com/frameworks/pci/saq-types-explained) — *§4: SAQ P2PE requires a PCI-listed validated P2PE solution*
-- [JoPACC — CliQ system](https://www.jopacc.com/what-we-do/systems-platforms/cliq-system) and [JoPACC × Network International merchant QR](https://www.jopacc.com/En/NewsDetails/JoPACC__NI_Launch_Instant_QR_Payment_through_CliQ)
+- [PCI SSC — SAQ eligibility guidance](https://www.pcisecuritystandards.org/faqs/1443/) and [P2PE eligibility guidance](https://www.pcisecuritystandards.org/faqs/1247/) — *scheme-owner criteria; the deployed QSA still determines the exact SAQ*
+- [JoPACC — CliQ services](https://www.jopacc.com/what-we-do/systems-platforms/instant-payment-system-cliq/cliq-services) and [CBJ payment-licensing guide](https://www.cbj.gov.jo/ebv4.0/root_storage/en/eb_list_page/licensing_guideline_for_electronic_payments_and_money_transfer_activities-0.pdf) — *v1 stays behind a bank/acquirer boundary*
 
 **Consumer trade**
-- [Consumer Protection — UN ESCWA Jordan brief](https://www.unescwa.org/sites/default/files/inline-files/ABLF-2023-consumer-CP-Jordan-english.pdf)
+- [Ministry of Industry, Trade and Supply — Consumer Protection Law No. 7 of 2017](https://www.mit.gov.jo/ebv4.0/root_storage/ar/eb_list_page/%D9%82%D8%A7%D9%86%D9%88%D9%86_%D8%AD%D9%85%D8%A7%D9%8A%D8%A9_%D8%A7%D9%84%D9%85%D8%B3%D8%AA%D9%87%D9%84%D9%83.pdf)
 - [Petra (Jordan News Agency) — MoITS consumer complaint & enforcement reporting](https://petra.gov.jo/en/index.php/en/news/ministry-resolves-81-percent-of-consumer-complaints-in-first-quarter)
 
 **Engineering**
 - [SQLite FTS5 extension](https://www.sqlite.org/fts5.html) — *tokenizer options for Arabic search*
+- [SQLite WAL documentation](https://www.sqlite.org/wal.html) and [SQLCipher release notes](https://www.zetetic.net/blog/) — *official sources that settle the compiled-runtime WAL prerequisite; this audit does not guess the fixed version boundary*
 - [Star Micronics — ESC/POS command specification](https://www.starmicronics.com/support/Mannualfolder/escpos_cm_en.pdf) — *`GS v 0` raster*
 - [Tauri core releases](https://tauri.app/release/core/)
-- crates.io API, queried 20 Aug 2026, for every version in §5
+- crates.io API, queried `2026-08-20`, for every version in §5
 
 ---
 
-*Re-run this audit before each phase gate. Jordanian tax rates move by Cabinet decree, JoFotara is still adding waves, and the PDPL authority is still standing up. The master plan's own J.0 rule applies to this document too: anything that does not map to a row here is a gap, not an absence.*
+*Re-run this audit before each phase gate. Last reconciled `2026-08-25`; next scheduled review is no
+later than `2026-11-25`. Jordanian rates and official fiscal packages change, and a compliance claim
+has a shelf life. The master plan's own J.0 rule applies here too: anything that does not map to a
+row is a gap, not an absence.*

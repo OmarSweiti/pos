@@ -244,8 +244,9 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just db-local-reset` | delete this machine's register database |
 | `just migrate` | `sqlx migrate run` against `DATABASE_URL` |
 | `just fmt` | rewrite formatting, Rust and TS |
-| `just lint` | fmt-check · Clippy/workspace lint contract · acyclic/domain-pure · SQLite/PG mapping · policy-script lint · logical CSS/property names · Biome · doc-links |
-| `just test` | `cargo nextest run --locked --workspace` · `pnpm -r --if-present test` |
+| `just lint` | fmt-check · Clippy/workspace lint contract · acyclic/domain-pure · SQLite/PG mapping · policy-script lint · logical CSS/property names · **test-catalog reconciliation** · Biome · doc-links |
+| `just test` | `cargo nextest run --locked --workspace` · `pnpm -r --if-present test` — until 2.9.6 adds the `soak` profile, the default nextest run still includes soak and long-chaos tests |
+| `just test-catalog` | locally reconcile catalog and normative-reference test names with runner listings, the shrinking `PLANNED` ceiling and exact phase-microstep owners; `just lint` invokes this full check, `just guards` invokes only its `--self-test`, and `ci.yml` invokes neither |
 | `just audit` | Rust advisories/licences/bans/sources · reviewed JavaScript licence expressions · npm advisories |
 | `just node-version-check` | exact runtime, root engine, Node typings, pnpm resolver and every CI setup-node step agree with `.nvmrc` |
 | `just workspace-lints` | every Cargo member inherits the exact workspace lint levels |
@@ -271,8 +272,16 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just gh-protect` | branch protection; refuses politely on the Free plan |
 | `just gh-project` | the delivery board and its fields |
 
-Not yet recipes, and the microstep that creates each: `just seed` (1.12.1) · `cargo bench`
-benchmarks (1.4.9, 1.2.7, 1.12.3) · the TS type generation gate (conventions §13).
+Not yet recipes, and the microstep that creates each: `just seed` (1.12.1) · `just bench-gate`
+(harness and recipe 1.2.0; budgets at 1.2.7, 1.4.9, 1.11.13 and 1.12.3) · `just fuzz` and its first
+target (1.2.8) · `just test-soak` and the `soak` nextest profile (2.9.6) · the TS type generation
+gate (conventions §13).
+
+After 2.9.6 lands, **`just test` has a runtime budget: under three minutes on the reference
+machine**, and suites that exceed it belong in the `soak` profile. Until then the default command
+includes soak and long-chaos tests and no selection-policy budget is enforced, as §17 records. A
+gate loop that takes twenty minutes is a gate loop that stops being run — which is the failure §2
+exists to prevent.
 
 `just verify-pg` never applies migrations to the database named in a connection URL. When a
 development server is supplied, it creates a unique scratch database for that run and drops it in
@@ -678,12 +687,17 @@ The station that gets skipped, and the reason a doc set rots:
 | changed the schema | update [`ref/schema.md`](ref/schema.md) and re-run `just verify-schema` |
 | added or changed a command | update [`ref/ipc-contract.md`](ref/ipc-contract.md) |
 | proved a microstep wrong | fix the microstep in the phase file |
-| surfaced a new edge case | it becomes **E.73** in [`ref/test-catalog.md`](ref/test-catalog.md) — with a test, a written accepted risk, or an explicit out-of-scope. A surprise that becomes none of the three will happen again |
+| **completed a numbered product microstep** | move the **current implementation frontier** line in [`README.md`](README.md) to the next one. Nothing else maintains it, and a dated pointer nobody moves is worse than no pointer |
+| surfaced a new edge case | it becomes **E.93** in [`ref/test-catalog.md`](ref/test-catalog.md) — with a test, a written accepted risk, an open question carrying a stated default and an owning microstep, or an explicit out-of-scope. A surprise that becomes none of those will happen again |
+| superseded something a source plan states | record it in [`00-master-plan.md`](00-master-plan.md) §4a. `docs/plan/` is immutable and a reader is routed there first, so an uncorrected name is a name someone will build |
+| hit an external unknown — legal, tax, regulatory, protocol | add a `⚠️ OPEN` block to the reference document that owns it: the question, the default the code runs on meanwhile, the owning microstep, and the source that settles it. **Never a guessed fact** |
 | needed a merchant's answer | add it to [`ref/merchant-decisions.md`](ref/merchant-decisions.md) rather than guessing in code |
+| ran a drill | a dated record in `docs/drills/` — §5.10 |
 | changed a command or a gate | update this file |
 
 ```bash
-just docs-links     # the doc set is only worth its cross-references
+just docs-links            # the doc set is only worth its cross-references
+just test-catalog          # the catalog and normative test tables still match runners and owners
 ```
 
 ---
@@ -797,6 +811,33 @@ xxd crates/pos-hardware/tests/golden/receipt_ar_80mm.bin | head -40
 A golden-file diff is regenerated **deliberately**, reviewed as a diff, and committed. A golden
 file updated to make a test pass is a test deleted.
 
+#### Reviewing a binary golden
+
+"Look at the diff" is earned for the five fiscal goldens: they are XML, a diff is readable, and a
+changed byte is visible. It is **not** earned for the receipt and label goldens, which are 1-bit
+rasters — a hexdump cannot show that an Arabic letter lost its medial form, and a `cosmic-text`,
+`rustybuzz`, `tiny-skia` or font bump produces a byte diff indistinguishable from a shaping
+regression. Under that rule the only available response to a red golden test is `UPDATE_GOLDEN=1`,
+which is a change-detector, not a correctness check.
+
+So **every raster golden ships a committed `.png` beside its `.bin`**, generated by the same
+rasteriser and diffed in the same pull request. GitHub renders the image diff; that is the review.
+
+```bash
+UPDATE_GOLDEN=1 cargo nextest run -p pos-hardware golden
+git diff --stat crates/pos-hardware/tests/golden/     # the .bin AND the .png must both move
+```
+
+Three rules follow, and they are the ones that get skipped:
+
+1. **A regenerated `receipt_ar_*` or `receipt_bilingual_*` golden carries the native-reader
+   confirmation in that same pull request**, recorded in the drill log (§5.10) — not deferred to the
+   next release, which is where it used to live.
+2. A change under the golden directory earns a `risk: arabic-rendering` label, so the PR is
+   reviewed as a rendering change rather than as whatever else it was about.
+3. **A shaping-stack or font bump is its own pull request**, never inside a grouped dependency
+   update, and it carries the same confirmation.
+
 Real hardware has its own checklist — [`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md)
 §2.1 for Arabic rasterisation, and the lab checklist for paper, cutters, and drawer wiring. Arabic on
 a thermal printer is never proven by a simulator; print it on paper before believing it.
@@ -899,8 +940,27 @@ on their worst day.
 | **Backup and restore** (G-1) | take a backup, `just db-local-reset`, restore | every sale is still there, byte-identical |
 | **Two registers, last unit** (E.12) | two instances offline, both sell the last unit | both sales stand; stock goes negative and is flagged |
 
-Restore your clock afterwards (`sudo sntp -sS time.apple.com`). Drills are timed and written down —
-a drill whose result nobody recorded did not happen.
+Restore your clock afterwards (`sudo sntp -sS time.apple.com`).
+
+**A drill produces a record or it did not happen**, and "signed off and dated" needs somewhere to be
+signed — a normative reference document is not a log. Every run is a dated file under `docs/drills/`,
+which the first drill creates:
+
+```
+docs/drills/
+├── README.md                      the index
+└── YYYY-MM-DD-<drill>.md          one per run
+```
+
+Each carries: the drill, the commit SHA or tag it ran against, the hardware, **the operator's name**
+(Phase 5 requires someone who did not write the code), start and end time, elapsed, the outcome, and
+any surprise plus the case number it became. `.github/ISSUE_TEMPLATE/05-drill-result.yml` is the same
+form, so it can be filed from a phone in the lab.
+
+The drills that gate a phase — the hardware lab, the card reconciliation, the blind-Z, the three
+restore drills, the key rotation, the breach tabletop, fiscal certification — all read their evidence
+from here. So does the release checklist in §15: *"did the hardware lab run for `v0.4.0`?"* is a
+question about a file, not about a memory.
 
 ### 5.11 When something is wrong, write this down
 
@@ -1048,11 +1108,11 @@ CI runs on every push to `development`, `staging` and `main`, and on every PR in
 
 | Workflow | Job | Steps | Local equivalent |
 |---|---|---|---|
-| [`ci.yml`](../../.github/workflows/ci.yml) | `rust` | locked fmt/Clippy/tests · domain structure/purity · property names · exact runtime SQLite · real scratch PostgreSQL | `just lint && just test && just verify-pg` |
+| [`ci.yml`](../../.github/workflows/ci.yml) | `rust` | locked fmt/Clippy/tests · domain structure/purity · property names · exact runtime SQLite · real scratch PostgreSQL. **It does not run the test-catalog reconciler** | `just lint && just test && just verify-pg` *(local lint adds that reconciler)* |
 | [`ci.yml`](../../.github/workflows/ci.yml) | `guards` | Claude/Codex/Git/protected-path/schema/title/attribution/secret/workflow policy negative suites | `just guards` |
 | [`ci.yml`](../../.github/workflows/ci.yml) | `web` | exact Node contract · Biome · logical CSS · tests · fail-closed build/types coverage · test coverage notice · docs links | `just lint && just test && just build-web` |
 | [`ci.yml`](../../.github/workflows/ci.yml) | `supply-chain` | trusted-range Gitleaks · Rust advisories/licences/bans/sources · reviewed JavaScript licences · npm advisories | `just secrets && just audit` |
-| [`ci.yml`](../../.github/workflows/ci.yml) | `cross-platform` | core tests and real Tauri package build on Linux/macOS/Windows for promotions and the protected release branches | run the platform build on each supported OS |
+| [`ci.yml`](../../.github/workflows/ci.yml) | `cross-platform` | core tests and a real Tauri package build on Linux/macOS/Windows; the packaged-app WebDriver smoke suite is future work owned by 2.9.5 | run the platform tests and Tauri build on each supported OS |
 | [`branch-flow.yml`](../../.github/workflows/branch-flow.yml) | `protected-paths`, `topology` | exact-workflow-revision policy · verified data-only PR head · legal head/base/repository · title and attribution | relevant `just guards` self-tests |
 | [`labeler.yml`](../../.github/workflows/labeler.yml) | `label` | path-derived area/risk plus title-derived type, executing only trusted base code | — |
 | [`security.yml`](../../.github/workflows/security.yml) | workflow analysis, scheduled advisories | actionlint · zizmor · weekly full-history secret and dependency scan | policy self-tests plus `just secrets && just audit` |
@@ -1118,6 +1178,28 @@ PROPTEST_CASES=100000 cargo nextest run -p pos-domain -E 'test(prop_)'    # hunt
 Shrink first, then debug: proptest hands you the minimal failing input, and the minimal input
 usually names the cause.
 
+**How a property is configured is engineering law, not a per-test choice** — conventions §5.1. The
+part that matters at the keyboard:
+
+- The case count comes from a shared `ProptestConfig` (4096 for `pos-domain`, 256 for the I/O-bound
+  crates), set once in a test helper rather than sprinkled per test. Proptest's default is 256
+  *randomly generated* cases, and 256 random sequences from an unstated generator is a green tick
+  rather than evidence — especially for a property over input sequences to a state machine, which is
+  what `prop_no_input_sequence_yields_two_tenders_for_one_auth` is.
+- **Every property names its `Strategy`, beside the property, with a comment saying what input space
+  it covers and what it deliberately excludes.** An unstated generator is the difference between a
+  property that bites and one that has never looked at the case that matters.
+- `failure_persistence` is on, `proptest-regressions/` is committed, and the seed is printed on
+  failure. A green `cargo nextest run -E 'test(prop_)'` is reproducible evidence only if the seed
+  that failed can be replayed — otherwise a genuinely failing property presents as a flake, under a
+  flake policy that says there isn't one.
+- A **wall-clock assertion never lives inside `proptest!`** and never carries the `prop_` prefix. A
+  performance budget is a criterion bench under §11, not a property, and `prop_` is a filter the
+  phase gates depend on.
+- The stateful multi-process harness — the sync chaos generator — is the exception: a seeded RNG
+  with committed seeds and **no shrinking**, because shrinking a fault sequence across processes
+  produces a different execution. Replaying a recorded seed does not.
+
 **Frontend:** devtools in the dev build; React Query's cache is inspectable from the console; Zustand
 stores are plain objects. When a value is wrong on screen, find out whether it is wrong in the store,
 wrong at the IPC boundary, or wrong in Rust — `await ipc(...)` from the console (§5.2) settles it in
@@ -1130,19 +1212,32 @@ version you did not expect.
 
 ## 11 · Performance — measured, not asserted
 
-Four budgets, from conventions §7. Each becomes a CI job that **fails the build on regression**; a
-budget without a failing test is a wish.
+Four budgets, from conventions §7. Microsteps 1.2.0 and 1.12.3 create the recipe and the live
+reference-register CI job that **fails the build on regression**; neither exists in the current tree.
+A budget without that failing command is a wish, because `cargo bench` exits 0 whatever it measures.
 
-| Budget | Limit | Tool | Lands at |
-|---|---|---|---|
-| Scan → line on screen | < 100 ms | Playwright trace + hardware simulator | 1.9.4 |
-| Cart total recompute, 200 lines | < 16 ms | `criterion` | 1.4.9 |
-| Search-as-you-type, 50k SKUs | < 50 ms | `criterion` over the seed fixture | 1.2.7 |
-| Cold start → sellable | < 3 s | packaged-app smoke timer | 2.9.3 |
+| Budget | Limit | Tool | Measured on | Lands at |
+|---|---|---|---|---|
+| Scan → line on screen | < 100 ms | packaged-app WebDriver trace + hardware simulator | the reference register | 1.11.13 |
+| Cart total recompute, 200 lines | < 16 ms | `criterion` | the reference register | 1.4.9 |
+| Search-as-you-type, 50k SKUs | < 50 ms | `criterion` over the seed fixture | the reference register | 1.2.7 |
+| Cold start → sellable | < 3 s | packaged-app smoke timer (2.9.5) | the reference register | 2.9.3 |
+
+**"The slowest supported hardware" is not a machine.** Conventions §7 names one reference register —
+the lowest-spec device on the merchant's supported hardware list (section G of the questionnaire) —
+and every number above is measured there. A hosted CI runner varies well beyond 20% on a 16 ms
+workload, so a budget gated on a runner fails randomly, and §17's own prediction comes true: an
+unstable benchmark gets disabled within a month.
+
+**The baseline is a file, and moving it is a commit.** `benchmarks/baselines/<budget>.json` is
+committed; it changes only in a `perf(...)` commit whose body pastes the measurement. `just
+bench-gate` compares medians over at least 50 samples and fails on a regression beyond 20% **and**
+more than three baseline median absolute deviations outside the baseline's own noise — both
+conditions, because either alone is a flake generator.
 
 ```bash
-cargo bench --workspace                       # once criterion benches exist
-cargo bench -p pos-domain -- price_cart       # one benchmark
+just bench-gate                               # available after 1.2.0; exits non-zero on regression
+cargo bench -p pos-domain -- price_cart       # one benchmark, while iterating
 ```
 
 Rules that keep this from becoming folklore: measure on a **release** build over the **seed
@@ -1164,16 +1259,15 @@ just secrets                        # all reachable history; also part of just p
 /security-review                    # before any PR that touches money, auth, logging, or IPC
 ```
 
-- **Never log** a value under any canonical sensitive field name: `pin`, `pin_hash`, `pan`,
-  `card_number`, `cvv`, `track`, `phone`, `email`, `customer_name`, `buyer_name`, `secret_key`,
-  `client_id`, `db_key`, `token`, `password`, or `entitlement` — not via `tracing`,
-  `IpcError.detail`, crash reporting, or a test fixture that prints. Fiscal credentials and
-  signing material remain sensitive under any provider-specific name; the authoritative list is
-  [`ref/security-compliance.md`](ref/security-compliance.md) §5.
+- **Never log** a value matched by `SENSITIVE_FIELD_RULES` — exact names, suffixes and contains rules
+  are defined once in [`ref/security-compliance.md`](ref/security-compliance.md) §6 and mirrored in
+  the reviewed `.claude/rules/security.md`. Do not maintain another field list here. The registry
+  covers `tracing`, `IpcError.detail`, crash reporting, diagnostic bundles and fixtures that print.
 - **Never store** anything from a card beyond the PSP reference, the masked PAN the terminal returns
   for the receipt, and the scheme.
-- **The DB key lives in the OS credential store.** `POS_DB_KEY` is dev and CI only, and the release
-  build must refuse to honour it.
+- **The DB key lives in the OS credential store.** `POS_DB_KEY` is dev and CI only; the release build
+  ignores it and continues to credential-store lookup, so a stray environment value cannot supply
+  the key or stop the till opening.
 - **Permissions are checked in Rust, in the handler.** Every time. Hiding a button is UX.
 - **Escalation is recorded distinctly from operation** — the approving manager's id is a different
   column from the operating cashier's (E.52).
@@ -1263,10 +1357,18 @@ The recurring jobs, from [`README.md`](README.md):
   Jordanian rates move by Cabinet decree, JoFotara keeps adding waves and changing validation, and
   the PDPL authority is still standing up. A compliance claim has a shelf life. *(Last verified
   20 August 2026 — next due November 2026.)*
-- **Per surprise:** it becomes `E.73` in [`ref/test-catalog.md`](ref/test-catalog.md), with a test, a
-  written accepted risk, or an explicit out-of-scope.
+- **Per surprise:** it becomes `E.93` in [`ref/test-catalog.md`](ref/test-catalog.md), with a test, a
+  written accepted risk, an open question carrying a stated default and an owning microstep, or an
+  explicit out-of-scope. `just test-catalog` is what keeps that promise mechanical.
 - **Per merchant question:** into [`ref/merchant-decisions.md`](ref/merchant-decisions.md) rather
   than guessed at in code.
+- **Per correction to a source plan:** into [`00-master-plan.md`](00-master-plan.md) §4a. `docs/plan/`
+  cannot be edited and a reader is routed there first, so a superseded name that is not in the
+  concordance is a name someone will build.
+- **Per external unknown:** a `⚠️ OPEN` block in the reference document that owns it, in one shape —
+  the question, the default until it is answered, the owning microstep, and the source that settles
+  it. Never a guessed legal, tax or regulatory fact. An invented compliance fact is worse than a
+  visible gap, and this repository has a standing rule against claiming an unearned validation.
 
 A decision that shaped the architecture and is not written down will be re-litigated. If it does not
 fit an existing reference file, it belongs in the phase file at the microstep it changed, in the
@@ -1435,13 +1537,25 @@ release workflow is not the first platform-specific packaging run.
 
 What is **not** ready, and must be before anything reaches a machine you do not own:
 
-- **Verified tag signing and updater keys** — configure a signing identity; run
-  `pnpm --filter terminal tauri signer generate`; store `TAURI_SIGNING_PRIVATE_KEY` and its
-  password as repository Actions secrets; and commit the updater public configuration
-  (microstep 0.3.2).
+- **Verified tag signing and updater keys** — configure a signing identity, generate the updater
+  keypair **on the offline signing host**, and commit the updater public configuration. This was
+  Phase-0 item 0.3.2, left open when Phase 0 closed and then owned by no phase and no gate, while
+  `release.yml` hard-fails without the public key — so no release could be built at all. It is
+  re-homed as **microstep 5.5.0**, first in that milestone. The private key does not become a
+  repository Actions secret on a step that compiles third-party code (5.5.1).
 - **OS code signing** — Windows Authenticode certificate, Apple Developer ID plus notarisation
   (milestone 5.5.1). Until then an installer will warn, loudly, on every machine.
 - **A tested restore path.** Do not ship a version whose backup you have not restored from (§5.10).
+- **An update service.** There is no manifest endpoint, no cohort assignment and no `plugins.updater`
+  block, so "staged rollout with rollback" describes nothing (5.5.0, 5.5.2).
+
+Before publishing a draft, three things that are files rather than memories:
+
+- **The hardware-lab record for this tag exists in `docs/drills/`** — a golden file proves bytes;
+  only paper proves a receipt, and only a dated record proves the paper was looked at.
+- **The migration duration against the soak dataset is recorded** for this release, so the trend is
+  visible before it crosses the 60-second budget (5.5.3).
+- **`just bench-gate` passed on the reference register**, not on a hosted runner.
 
 Version discipline: `0.x` while pre-pilot; the minor number moves with a phase gate, the patch with
 a fix. A bad build is a new patch, never a moved tag. The workflow refuses unsigned annotated and
@@ -1463,18 +1577,20 @@ These are the smallest set that actually works.
 | **Per group** | PR into `development`, CI, squash-merge, delete the branch, close the doc loop, run the §5.9 smoke |
 | **Per candidate** | `just flow`, then promote `development → staging` with the promotion template's evidence filled in honestly, tag `-rc.<n>`, and install it somewhere real |
 | **Weekly** | re-read the phase's group graph. Is the order still right? Then the board's **Blocked** view — `gh issue list --label "needs: merchant answer"`. Anything blocked for a week is a risk, not a task |
-| **Per phase** | the exit gate, in full, including the demonstrations. Then re-read the risk register in [`00-master-plan.md`](00-master-plan.md) and the accepted risks in [`ref/sync-protocol.md`](ref/sync-protocol.md) |
-| **Quarterly** | the validation re-audit (§14) |
+| **Per phase** | the exit gate, in full, including the demonstrations. Then re-read the risk register in [`00-master-plan.md`](00-master-plan.md) §6 — every row has a **review date** for exactly this moment — the long-lead register in §6a, the open items in §4a.3, and the accepted risks in [`ref/sync-protocol.md`](ref/sync-protocol.md). Run `just bench-gate` after 1.2.0; from Phase 2 onward, run `just test-soak` only after 2.9.6 creates it |
+| **Quarterly** | the validation re-audit (§14), and re-diff the pinned ISTD manifest against the current official package in the same pass |
 
 Two habits that pay for themselves:
 
 - **Time-box the unknown.** A microstep that has taken triple its estimate is a microstep that is
   wrong, not a day that is going badly. Stop, write down what you learned, fix the microstep, and
   either do the corrected version or move to an independent group.
-- **Keep one page of "what I do not yet know".** In this project the honest list starts with
-  JoFotara's real-world validation behaviour (`C-1`: no sandbox) and Arabic rasterisation on the
-  actual printer model. Unknowns that stay written down get scheduled; unknowns in your head become
-  the reason a phase runs long.
+- **Keep one page of "what I do not yet know" — and it is already written.** The `⚠️ OPEN` blocks in
+  the reference documents *are* that page, and [`00-master-plan.md`](00-master-plan.md) §4a.3 is its
+  index. Each carries the question, the default the code runs on meanwhile, the owning microstep, and
+  the source that settles it. Grep for `⚠️ OPEN` at every phase gate. Unknowns that stay written down
+  get scheduled; unknowns in your head become the reason a phase runs long — and an unknown that
+  quietly becomes an assumption becomes a compliance claim nobody earned.
 
 ---
 
@@ -1486,19 +1602,25 @@ it.
 | Gap | Closed by |
 |---|---|
 | `just seed` does not exist; there is no fixture, so every manual test is ad-hoc | 1.12.1 |
-| `cargo bench` has nothing to run; no budget is enforced anywhere | 1.4.9, 1.2.7, 1.12.3 |
+| No benchmark, no committed baseline, and no `just bench-gate`; **no budget is enforced anywhere**, and `cargo bench` alone cannot enforce one | harness/recipe 1.2.0; budgets 1.2.7, 1.4.9, 1.11.13, 1.12.3 |
+| No reference register is named, so "the slowest supported hardware" has no machine behind it | conventions §7, with the hardware list at 2.9.4 |
 | `pos-db` is not wired into the terminal yet, so `just db-local-reset` currently has nothing to delete | 1.8.x persistence |
-| TS types are hand-written in `packages/api-types`; no `ts-rs` generation, no CI drift gate | conventions §13, with the first real IPC surface |
+| TS types are hand-written in `packages/api-types`; no `ts-rs` generation into `src/ipc/`, no CI drift gate | conventions §13, with the first real IPC surface |
 | No i18n catalog lockstep test, and no message catalog to test | 1.11.1 |
 | No PII-scrubber test on the logger (G-8) | 1.6.x |
-| No E2E harness; the scan-latency budget has no measurement | 1.9.4 (Playwright) |
-| Test coverage is not measured. Deliberate — property tests over invariants are the coverage story here — but `cargo llvm-cov` is worth running once per phase to find modules with **no** test at all | per-phase, by hand |
+| **No DOM component harness in `apps/terminal`** — it has `vitest` and no `jsdom` environment, while `apps/backoffice` already has the pattern. Three named 1.11.x tests, including `scan_routes_while_search_focused`, cannot be written until it exists | 1.11.0 |
+| **Nothing automated launches the packaged application, on any OS.** CI builds the Tauri bundle and never starts it; `.spec.ts` naming implies Playwright, which drives browser engines and cannot attach to a Tauri webview | 2.9.5 (WebdriverIO + `tauri-driver`). Any platform `tauri-driver` does not support is named there, not left implicit |
+| No fuzzing, for four parsers that consume input this product does not control — the scan parser, the receipt raster path, the UBL builder, and the sync decoder — under a `unwrap`/`expect` ban that makes panic-freedom on hostile input an invariant | 1.2.8, then per parser |
+| `scripts/check-test-catalog.py` is wired into local `just lint`, and its `--self-test` into `just guards`, with product ownership at 1.12.4; `ci.yml` invokes neither | a separate reviewed workflow edit; until then every contributor runs the local gates and no document calls the reconciler a CI control |
+| The soak and long-chaos suites live in the default `cargo nextest --workspace` run, with no selection policy and no runtime budget | 2.9.6, and the `soak` nextest profile |
+| Test coverage is not measured. Deliberate — property tests over invariants are the coverage story here — but `cargo llvm-cov` is worth running once per phase to find modules with **no** test at all. **Mutation testing on `pos-domain` is the better instrument** for the same reason: line coverage says a line ran, and `cargo-mutants` says whether the properties bite when `>=` becomes `>` or `HalfAwayFromZero` becomes `HalfEven` | per-phase, by hand |
 | No installer signing of any kind | 0.3.2 (updater), 5.5.1 (OS) |
 | **Branch protection does not exist.** This repo is private on the current GitHub Free plan, where protection and rulesets both return 403. `.githooks/pre-push` and server-side checks provide safety and evidence, but `--no-verify` and the administrator merge button remain possible | a plan/repository visibility change outside this setup; no paid-plan control is claimed here |
 | A clone that has not run `just setup` has **no** protection, because the hooks live in `core.hooksPath` | nothing — it is inherent to hook-based enforcement. It is why §12 of `03-github-workflow.md` leads with `just setup` |
 | GitHub-native secret scanning and push protection are unavailable for this private repository | independent Gitleaks scanning is installed locally and in CI; native GitHub coverage remains unavailable |
 | Claude's OS sandbox is intentionally disabled on every host, so permitted shell subprocesses have ambient filesystem, network, environment, and credential access; native PowerShell process dispatch was not exercised here | accepted development-policy tradeoff; manual permissions, exact tool-level denies, hooks, Git hooks, and CI remain controls rather than OS containment. Re-enable an audited sandbox policy if host isolation becomes required |
-| `staging` means "a tagged candidate", not "a running system" — there is no hosted environment for `apps/server` | a deployment target, when there is something to deploy |
+| `staging` means "a tagged candidate", not "a running system" — there is no hosted environment for `apps/server`, no server backup, no tested restore, no monitoring and no on-call | group 3.10. Running one small instance from Phase 3 is also the cheapest way to buy operational experience before a merchant supplies it |
+| There is no update service — no manifest endpoint, no cohort assignment, no `plugins.updater` block — behind a gate that requires a staged rollout proven end to end | 5.5.0, 5.5.2 |
 | Ordinary commits are not signed | release tags already require verified signing; decide whether to require ordinary commit signing before external contributors arrive |
 
 ---
@@ -1509,16 +1631,24 @@ One screen. These are the things that get forgotten, in the order they get forgo
 
 ```
 [ ] the property test — not just the example test
+[ ] the Strategy beside it, saying what it covers and what it excludes
 [ ] the E.n rows in ref/test-catalog.md that this change was supposed to close
+[ ] the PLANNED allowlist entry you were supposed to REMOVE, not add
 [ ] the Postgres mirror of the SQLite migration
 [ ] the data migration, and the test that seeds the old shape and asserts the new one
-[ ] the outbox row, in the same transaction as the fact
+[ ] the fact table's no-UPDATE / no-DELETE triggers, and its row in FACT_TABLES
+[ ] the outbox row, in the same transaction as the fact — and the whole commit group
 [ ] the permission check in Rust — not only the hidden button
+[ ] the ApprovalHandle on the privileged command, consumed in the same transaction
 [ ] the Arabic pass, and the RTL mirror, on this exact screen
+[ ] the .png beside the regenerated .bin golden, and the native reader in THIS pull request
 [ ] both language catalogs, in lockstep
 [ ] the keyboard path for the thing you just built with a mouse
 [ ] the reference doc you contradicted
+[ ] the erratum in 00-master-plan.md §4a, if you superseded something a source plan says
+[ ] the ⚠️ OPEN block, if the honest answer is "we do not know yet"
 [ ] the microstep you proved wrong
+[ ] the drill record in docs/drills/ — a drill nobody wrote down did not happen
 [ ] `just docs-links` after renaming any document or linked local target
 [ ] `just guards` after touching .claude/hooks or .claude/rules
 [ ] the manual smoke on a FRESH database, not the one you have been poking at

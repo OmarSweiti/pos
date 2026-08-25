@@ -14,7 +14,7 @@ use rusqlite::{Connection, types::Value};
 /// rather than silently skipping the check.
 const SCHEMA_REF: &str = include_str!("../../../../docs/implementation/ref/schema.md");
 
-/// The twelve tables the reference calls facts, read from its own marker.
+/// Every table the reference calls a fact, read from its own marker.
 pub fn declared_fact_tables() -> Vec<String> {
     let line = SCHEMA_REF
         .lines()

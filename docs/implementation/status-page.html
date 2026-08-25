@@ -325,16 +325,22 @@
   <header class="masthead">
     <div class="eyebrow">
       <span class="label">Implementation plan &amp; status</span>
-      <span class="pill alert">4 corrections</span>
+      <span class="pill alert">4 corrections · 2 superseded</span>
       <span class="pill pass">Phase 0 complete</span>
     </div>
     <h1>Jordan POS Build Plan</h1>
-    <p class="lede">A verdict on the business master plan, the four compliance claims that turned out to be wrong, and the phased build order from a bare scaffold to a product someone else can sell.</p>
+    <p class="lede">A verdict on the business master plan, four compliance claims that turned out to be wrong — two of whose corrections turned out to be wrong in turn — and the phased build order from a bare scaffold to a product someone else can sell.</p>
     <div class="meta">
-      <span>Repository posture 22 Aug 2026 · compliance sources 20 Aug 2026</span>
+      <span>Remediated 25 Aug 2026 · repository posture 22 Aug 2026 · compliance sources 20 Aug 2026</span>
       <span>Tauri 2 · Rust · React</span>
       <span>JOD · Arabic-first · offline-first</span>
     </div>
+    <blockquote><b>This page is a view, never the source of truth.</b> It summarises
+      <code>docs/implementation/00-master-plan.md</code> for someone who needs the picture without the
+      microsteps. Where the two disagree, the master plan is right and this page is stale — including
+      every date, count and week range below. Corrections to the immutable source plans live in
+      <b>master plan §4a, &ldquo;Errata and concordance&rdquo;</b>, and nothing here replaces it. There is no
+      publication workflow and no hosted URL; it is a local file you may share deliberately.</blockquote>
   </header>
 
   <section>
@@ -348,48 +354,71 @@
       <li><div><b>Stock is a ledger, not a column.</b> Append-only rows merge across offline registers without a lock.</div></li>
       <li><div><b>Tax rates are data with effective dates.</b> Jordan changes reduced rates by Cabinet decree; a hardcoded 16% is a re-release every time.</div></li>
     </ol>
-    <p>Add correct instincts on semi-integrated payments, on treating a card timeout as <em>unknown</em> rather than <em>failed</em>, on rasterising Arabic receipts instead of fighting printer codepages, and a rare willingness to enumerate 72 edge cases before writing code.</p>
+    <p>Add correct instincts on semi-integrated payments, on treating a card timeout as <em>unknown</em> rather than <em>failed</em>, on rasterising Arabic receipts instead of fighting printer codepages, and a rare willingness to enumerate the edge cases before writing code — now 92 numbered ones, reconciled against the test suite by a script rather than by reading a table.</p>
+    <p>Build on it, but not <em>from</em> it. The two source plans under <code>docs/plan/</code> are immutable historical inputs, and a superseded name in them reads as current truth: <code>rate_bp</code>, banker's rounding, <code>stock_movement</code>, <code>tax_group</code>, <code>role_perm</code>, a mutable <code>loyalty_points</code> column, <code>down</code> migrations. Master plan §4a is the ledger of every one.</p>
   </section>
 
   <section class="bleed">
     <div class="wrap" style="padding:0; grid-template-columns: 1fr min(var(--measure),100%) 1fr;">
       <div class="rule-head" style="grid-column:2;"><h2>Four corrections</h2><span class="label">Part 2</span></div>
-      <p style="grid-column:2; margin-top:1rem;">Every load-bearing factual claim was checked against a primary or authoritative source. Four are wrong. One of them invalidates a phase gate.</p>
+      <p style="grid-column:2; margin-top:1rem;">Every load-bearing factual claim was checked against a primary or authoritative source. Four are wrong. One invalidates a phase gate. A later independent audit then found that <b>two of the four corrections were themselves wrong</b> — both in the direction that matters, because each would have rejected fiscal documents whose arithmetic was correct. The current disposition of all four is master plan §4a.1; the cards below are the short form.</p>
     </div>
     <div class="corrections" style="margin-top:1.5rem;">
 
       <article class="correction sev-high">
-        <div class="c-head"><span class="c-id">C-1</span><span class="pill alert c-sev">Blocks a gate</span></div>
+        <div class="c-head"><span class="c-id">C-1</span><span class="pill alert c-sev">Retained</span></div>
         <div class="claim"><span class="label">Plan claimed</span><p>JoFotara has separate sandbox and production credentials; Phase 2 exits when four sandbox documents clear.</p></div>
         <div class="truth"><span class="label">Verified</span><p>There is no JoFotara sandbox. Testing requires credentials issued to a real ISTD-registered entity, where every submission is a live fiscal document.</p></div>
-        <p class="c-effect">The Phase-2 exit gate is unbuildable by anyone. Replaced with a 22-rule conformance harness, a fault-injecting mock ISTD, and five byte-stable golden documents. The real network hop became a gated Phase-5 certification milestone.</p>
+        <p class="c-effect"><b>Conclusion retained, premise narrowed.</b> The Phase-2 exit gate is still unbuildable and is still replaced by a 22-rule conformance harness, a fault-injecting mock ISTD, and <b>five</b> byte-stable goldens. But the <em>specification</em> is obtainable now: ISTD publicly lists its Technical Integration Guide, so pinning the official package moved out of Phase 5 and became microstep <b>2.7.0</b> — a precondition of every fiscal step. Nothing reconstructed is frozen before it, and no golden is signed off until it is pinned.</p>
       </article>
 
       <article class="correction sev-high">
-        <div class="c-head"><span class="c-id">C-2</span><span class="pill alert c-sev">High</span></div>
+        <div class="c-head"><span class="c-id">C-2</span><span class="pill alert c-sev">Superseded</span></div>
         <div class="claim"><span class="label">Plan claimed</span><p>Order-level discounts must be prorated across lines.</p></div>
-        <div class="truth"><span class="label">Verified</span><p>ISTD rejects global discounts entirely. Discounts must be per-line <em>and expressed as a percentage</em>.</p></div>
-        <p class="c-effect">Proration is necessary but insufficient. The fiscal builder converts each line's absolute fils discount to a percentage, re-derives the amount from it, and asserts the round-trip. A mismatch dead-letters locally instead of failing at ISTD.</p>
+        <div class="truth"><span class="label">The correction was wrong</span><p>It said: convert each line's fils discount to a percentage and gate fiscal eligibility on an exact round-trip.</p></div>
+        <p class="c-effect"><b>Do not implement it.</b> A percentage is not a representation of the money, so the round-trip rejects baskets whose arithmetic is exactly right. Proration stays — largest-remainder, to exact line allowance <em>amounts</em> — plus a document recap equal to their sum, and the property is <code>prop_document_allowance_recap_equals_sum_of_line_allowances</code>. A percentage is provenance, never an eligibility gate. If one must be emitted at all, its precision is a single constant, open at 2.7.0.</p>
       </article>
 
       <article class="correction">
-        <div class="c-head"><span class="c-id">C-3</span><span class="pill c-sev">Medium</span></div>
+        <div class="c-head"><span class="c-id">C-3</span><span class="pill alert c-sev">Superseded</span></div>
         <div class="claim"><span class="label">Plan claimed</span><p>Round once per line to fils; the receipt summary is the exact sum of line taxes.</p></div>
-        <div class="truth"><span class="label">Verified</span><p>ISTD recomputes at nine decimal places and tolerates less than 0.001 JOD of drift.</p></div>
-        <p class="c-effect">The receipt rule stays — those fils are the money the customer paid. A pre-submit self-check recomputes at full precision and dead-letters any document that would drift, naming the offending line.</p>
+        <div class="truth"><span class="label">The correction was wrong</span><p>It asserted that ISTD recomputes at nine decimals and tolerates less than 0.001 JOD. That tolerance has no source.</p></div>
+        <p class="c-effect">Round-once-per-line stays — those fils are the money the customer paid. The local pre-submit check is redefined so it cannot reject an arithmetically correct document: a <b>half-fil comparison per line</b>, plus exact identities over the document's <em>own carried values</em>, never an unrounded invoice-level recomputation against a one-fil tolerance. A failure is <code>QueueState::BuildFailed</code> — neither an ISTD rejection nor an exhausted retry. The regulator's real tolerance is an open item owned by 2.7.0.</p>
       </article>
 
       <article class="correction">
-        <div class="c-head"><span class="c-id">C-4</span><span class="pill c-sev">Low</span></div>
+        <div class="c-head"><span class="c-id">C-4</span><span class="pill c-sev">Numbers kept</span></div>
         <div class="claim"><span class="label">Plan claimed</span><p>Registration thresholds of roughly JOD 50,000 goods / 30,000 services.</p></div>
-        <div class="truth"><span class="label">Verified</span><p>JOD 75,000 goods · 30,000 services · <b>10,000 for special-tax goods</b>.</p></div>
-        <p class="c-effect">The services figure was right; goods was low by 25,000, and the special-tax tier was missing entirely. A minimarket selling tobacco crosses at 10,000, not 75,000 — a very different conversation about whether the merchant must register at all.</p>
+        <div class="truth"><span class="label">Verified</span><p>JOD 75,000 goods · 30,000 services · <b>10,000 for a producer of special-tax goods</b>.</p></div>
+        <p class="c-effect"><b>Numbers retained, categories corrected.</b> The 10,000 class is the <em>producer or manufacturer</em> of special-tax goods — a minimarket that merely <em>resells</em> tobacco does not enter it, which the first version of this card got wrong. Registration follows the merchant's registered activity and dated evidence, never their shelf assortment; GST registration and JoFotara obligation are independent axes.</p>
       </article>
 
     </div>
     <blockquote style="max-width: var(--measure); margin: 1.5rem auto 0;">
-      A fifth finding changes the claim rather than the code: <b>SAQ P2PE applies only if the terminal is in a PCI-listed validated P2PE solution.</b> &ldquo;Semi-integrated&rdquo; and &ldquo;P2PE-validated&rdquo; are different properties. Without a listing number the merchant is on SAQ B-IP or C. Ask each acquirer for the number.
+      A fifth finding changes the claim rather than the code: <b>SAQ P2PE applies only if the terminal is in a PCI-listed validated P2PE solution.</b> &ldquo;Semi-integrated&rdquo; and &ldquo;P2PE-validated&rdquo; are different properties. Without a listing number the merchant is on SAQ B-IP or C. Ask each acquirer for the number — and note that this is <em>not</em> only a wording change, which the first version of this finding claimed: B-IP carries eligibility and isolation requirements, and C pulls the store network, patching, access control, monitoring and policy evidence into scope. Which SAQ applies here is an open item; the acquirer's written responsibility matrix and a QSA settle it.
     </blockquote>
+  </section>
+
+  <section class="bleed">
+    <div class="wrap" style="padding:0;">
+      <div class="rule-head" style="grid-column:2;"><h2>What the corrections did not close</h2><span class="label">Errata §4a.3</span></div>
+      <p style="grid-column:2; margin-top:1rem;">Eight questions have no answer yet, and each one needs an external source rather than a decision at the keyboard. Every one lives in the reference document that owns it as a greppable <code>⚠️ OPEN</code> block carrying the question, the default until it is answered, the owning microstep, and the source that settles it. <b>A default is what the code does today, not an answer</b> — and nothing in this set may state one of these as resolved. A fabricated tax fact is worse than a visible gap.</p>
+    </div>
+    <div class="table-scroll" style="max-width:1000px; margin:1.25rem auto 0;">
+      <table>
+        <thead><tr><th>Question</th><th>Owner</th><th>Settled by</th></tr></thead>
+        <tbody>
+          <tr><td>The authoritative ICV namespace — register, store, income source, credential, or TIN across stores</td><td class="n">2.7.0</td><td>Pinned ISTD business rules, or a written Directorate ruling</td></tr>
+          <tr><td>Whether a sale completed during an outage may be handed to the customer as a pending fiscal document</td><td class="n">2.7.0</td><td>An official ISTD outage procedure or a written Directorate ruling</td></tr>
+          <tr><td>The ISTD validator's real arithmetic tolerance</td><td class="n">2.7.0</td><td>Pinned Schematron/business rules plus accepted boundary vectors</td></tr>
+          <tr><td>Discount percentage precision, if a percentage must be emitted at all</td><td class="n">2.7.0</td><td>The pinned XSD and business rules</td></tr>
+          <tr><td>Which entity is controller, processor and DPO here, and whether the register entry is complete</td><td class="n">3.4.1</td><td>MoDEE register instructions and dated Jordanian counsel advice</td></tr>
+          <tr><td>Hosting jurisdiction, sub-processors, and the cross-border transfer basis</td><td class="n">3.1.6</td><td>Signed hosting contracts, the PDPL assessment, and counsel</td></tr>
+          <tr><td>Which exact PCI SAQ this deployment completes</td><td class="n">2.1.1 → 5.3.3</td><td>The acquirer's written responsibility matrix and a QSA</td></tr>
+          <tr><td>Statutory retention clocks per record class, and what extends them</td><td class="n">5.3.4</td><td>The merchant's accountant, and counsel on the dispute hold</td></tr>
+        </tbody>
+      </table>
+    </div>
   </section>
 
   <section>
@@ -409,6 +438,7 @@
       <div class="gap"><span class="g-id">G-11</span><div><code>Money</code> has no currency or exponent<span class="g-when">Phase 1 · irreversible</span></div></div>
       <div class="gap"><span class="g-id">G-12</span><div><code>sale_line.qty</code> in the wrong unit<span class="g-when">Phase 1 · irreversible</span></div></div>
     </div>
+    <p style="color: var(--muted); font-size:.93rem;">Phase 1 then grew a second time, for the same reason: each addition was a Phase-1 dependency the plan named and no Phase-1 microstep built. A <b>shift skeleton</b>, because <code>business_date</code> is defined as the business date of its shift and Phase 1 created no shift. <code>stock_adjust</code>, the sales-side tax report the exit gate demands, and the approval modal. <b>Key custody with a merchant-held recovery code</b> and a second, off-machine backup destination — because the keychain-loss demonstration could not pass in a release build, which correctly refuses the development key variable.</p>
   </section>
 
   <section class="bleed">
@@ -430,50 +460,56 @@
       <div class="phase">
         <span class="num">1</span>
         <div class="phase-body">
-          <div class="phase-top"><h3>Sellable MVP</h3><span class="effort">8–12 weeks</span></div>
-          <p class="could">Sell for cash, all day, fully offline, in Arabic, with correct GST and a printed receipt.</p>
-          <p class="adds">Money/Qty/ids/time · catalog + FTS · the tax engine · cart state machine · cash tenders · users, permissions, audit chain · Arabic raster receipts · atomic finalize · backup · sequences · stock ledger · RTL UI · seed fixture.</p>
+          <div class="phase-top"><h3>Sellable MVP</h3><span class="effort">112 steps · 14–20 weeks · 1A 8–11 / 1B 6–9</span></div>
+          <p class="could">Open a shift and sell for cash, all day, fully offline, in Arabic, with correct GST and a printed receipt.</p>
+          <p class="adds">Money/Qty/ids/time · catalog + FTS · the tax engine · cart state machine · cash tenders · users, permissions, audit chain and the one-use <code>ApprovalHandle</code> · Arabic raster receipts · atomic finalize · <b>backup with a merchant-held recovery code</b> · a shift skeleton · sequences · stock ledger and <code>stock_adjust</code> · the sales-side tax report · RTL UI · seed fixture.</p>
+          <p class="adds">Gate: <b>10 demonstrations, done with the cable unplugged.</b></p>
         </div>
       </div>
 
       <div class="phase">
         <span class="num">2</span>
         <div class="phase-body">
-          <div class="phase-top"><h3>Money-grade</h3><span class="effort">8–10 weeks</span></div>
+          <div class="phase-top"><h3>Money-grade</h3><span class="effort">61 steps · 10–13 weeks</span></div>
           <p class="could">Take cards that reconcile to the fil, handle returns without being defrauded, close a shift that balances.</p>
-          <p class="adds">Payment terminal and the <code>Unknown</code> protocol · refunds, returns, exchanges · shifts, cash movements, X/Z · the fiscal pipeline · electronic journal · diagnostics.</p>
+          <p class="adds"><b>2.7.0: obtain and pin the official ISTD specification</b> · payment terminal and the <code>Unknown</code> protocol · refunds, returns, exchanges and minimal store credit · shifts, cash locations, X/Z · the fiscal pipeline · electronic journal · diagnostics · the packaged-app smoke suite.</p>
+          <p class="adds">Gate: <b>14 demonstrations plus drills.</b> Fiscal documents pass every non-provisional check short of the credentialed ISTD endpoint.</p>
         </div>
       </div>
 
       <div class="phase">
         <span class="num">3</span>
         <div class="phase-body">
-          <div class="phase-top"><h3>Connected</h3><span class="effort">8–10 weeks</span></div>
+          <div class="phase-top"><h3>Connected</h3><span class="effort">45 steps · 11–14 weeks</span></div>
           <p class="could">Run more than one register, administer from a back office, keep customers under PDPL-grade consent.</p>
-          <p class="adds">Sync push/pull · chaos convergence · customers &amp; loyalty · back office · device provisioning · licensing · telemetry.</p>
+          <p class="adds">Sync push/pull · chaos convergence · customers &amp; loyalty · back office with real human authentication · <b>multi-tenant isolation</b> · device provisioning · licensing · Sentry · <b>operating the server</b>.</p>
+          <p class="adds">Gate: <b>15 demonstrations.</b> No ISTD endpoint is contacted in this phase.</p>
         </div>
       </div>
 
       <div class="phase">
         <span class="num">4</span>
         <div class="phase-body">
-          <div class="phase-top"><h3>Depth</h3><span class="effort">8–10 weeks</span></div>
+          <div class="phase-top"><h3>Depth</h3><span class="effort">42 steps · 9–12 weeks + pilot</span></div>
           <p class="could">Run three stores with promotions, receiving, counts, transfers, and a full report suite.</p>
-          <p class="adds">Price lists · receiving and WAC · counts · transfers · promotions engine · reports · shelf labels as a compliance feature · multi-store.</p>
+          <p class="adds">Price lists · receiving and WAC · counts · transfers · promotions engine · supplier tax invoices and filing periods · reports · shelf labels as a compliance feature · multi-store.</p>
+          <p class="adds">Gate: <b>a pre-pilot gate first</b>, then 10 demonstrations and a three-store pilot week. The pilot cannot precede fiscal certification.</p>
         </div>
       </div>
 
       <div class="phase">
         <span class="num">5</span>
         <div class="phase-body">
-          <div class="phase-top"><h3>Harden &amp; launch</h3><span class="effort">6–10 weeks</span></div>
+          <div class="phase-top"><h3>Harden &amp; launch</h3><span class="effort">36 steps · 9–13 weeks</span></div>
           <p class="could">Be sold to someone who is not you.</p>
-          <p class="adds">Year-one soak · <b>Fiscal Certification</b> · PDPL walkthrough · PCI SAQ with a QSA · restore drills · signing · staged updater · onboarding.</p>
+          <p class="adds">Year-one soak · <b>Fiscal Certification</b> — nine credentialed items, and it now sits <em>in front of</em> the pilot · PDPL registration walkthrough · PCI SAQ with a QSA · restore drills · signing · the update service · onboarding · commercial and legal readiness.</p>
+          <p class="adds">Gate: <b>13 items</b>, the last of which is someone else installing, provisioning and selling from the docs alone.</p>
         </div>
       </div>
 
     </div>
-    <p style="max-width: var(--measure); margin: 1.5rem auto 0; color: var(--muted); font-size:.93rem;">Roughly 40–52 weeks solo — a range, not a commitment. Phases 1 and 2 deliberately front-load the unforgiving parts, because hardware, money, offline and fiscal dictate the architecture. Dashboards never do.</p>
+    <p style="max-width: var(--measure); margin: 1.5rem auto 0; color: var(--muted); font-size:.93rem;"><b>Roughly 53–72 weeks solo</b> — a range, not a commitment, and up from an earlier 40–52. The old figure priced Phase 1 at 8–12 weeks for 87 microsteps in the only phase whose author is learning the language, then asserted that the hardest integration work &ldquo;accelerates sharply&rdquo;. The counts above are what the phase files actually contain. Record the real per-microstep cycle time over the first two groups and correct the range from evidence; an estimate nobody revises against measurement is a decoration. Nothing here prices the long-lead items — legal entity, the ISTD package, an acquirer terminal, printers, counsel — because those are queue time, not effort.</p>
+    <p style="max-width: var(--measure); margin: .9rem auto 0; color: var(--muted); font-size:.93rem;">Phases 1 and 2 deliberately front-load the unforgiving parts, because hardware, money, offline and fiscal dictate the architecture. Dashboards never do.</p>
   </section>
 
   <section>
@@ -487,7 +523,8 @@
       <div class="gate-row ok"><span class="n">Flow</span><span><code>development → staging → main</code>, with exact PR-head and post-merge workflow-SHA evidence required by the human procedure</span><span class="pill pass">Documented</span></div>
       <div class="gate-row block"><span class="n">Free</span><span>Branch protection/rulesets, required reviews, CODEOWNERS enforcement, and native secret-scanning enforcement are unavailable; CI cannot block an administrator merge</span><span class="pill">Unavailable</span></div>
       <div class="gate-row block"><span class="n">Actions</span><span>Workflow dependencies are full-SHA pinned in this change; the live SHA-only Actions setting remains unchanged until the hardened files merge and the post-merge preflight succeeds</span><span class="pill">Pending merge</span></div>
-      <div class="gate-row block"><span class="n">Release</span><span>Published-release immutability is enabled, but releases intentionally fail until verified tag signing, repository updater secrets, updater public configuration, and platform signing are configured</span><span class="pill">Blocked safely</span></div>
+      <div class="gate-row block"><span class="n">Release</span><span>Published-release immutability is enabled, but releases intentionally fail until verified tag signing, repository updater secrets, updater public configuration, and platform signing are configured — and the updater key must first be moved off the step that compiles third-party code</span><span class="pill">Blocked safely</span></div>
+      <div class="gate-row block"><span class="n">Coverage</span><span>The catalogue reconciliation runs in the local <code>just lint</code> gate; no CI step runs it yet, because adding one is a change to the frozen workflow surface and needs its own reviewed edit</span><span class="pill">Local only</span></div>
     </div>
     <p class="gate-note">Phase-0 lessons remain useful historical context, but they are not live gate evidence:</p>
     <ul style="display:grid; gap:.6rem; padding-inline-start:1.1rem; font-size:.93rem;">
@@ -501,19 +538,29 @@
   <section class="bleed">
     <div class="wrap" style="padding:0;">
       <div class="rule-head" style="grid-column:2;"><h2>Risk register</h2><span class="label">Part 5</span></div>
+      <p style="grid-column:2; margin-top:1rem;"><b>The trigger column is the one that makes a register work.</b> A trigger is the observation that makes a risk live — without one, nobody notices until it has already happened. The master plan carries two further columns, an owner and a review date, and a per-phase ritual that re-reads every row whether or not anything triggered.</p>
     </div>
-    <div class="table-scroll" style="max-width:1000px; margin:1.25rem auto 0;">
+    <div class="table-scroll" style="max-width:1180px; margin:1.25rem auto 0;">
       <table>
-        <thead><tr><th>Risk</th><th>Likelihood</th><th>Impact</th><th>Mitigation</th></tr></thead>
+        <thead><tr><th>Risk</th><th>Likelihood</th><th>Impact</th><th>Trigger</th><th>Mitigation</th></tr></thead>
         <tbody>
-          <tr><td>ISTD spec differs from the reconstruction</td><td class="n">High</td><td class="n">Medium</td><td>Everything reconstructed lives in one module. One diff, one place to correct.</td></tr>
-          <tr><td>No sandbox — the first real submission lands on a merchant's tax record</td><td class="n">Certain</td><td class="n">High</td><td>Conformance harness and mock ISTD; certification uses low-value invoices immediately credit-noted, with written consent.</td></tr>
-          <tr><td>Acquirer terminal lacks a last-transaction-status query</td><td class="n">Medium</td><td class="n">High</td><td>Ask before choosing. Without it there is no safe timeout recovery — choose a different acquirer.</td></tr>
-          <tr><td>Learning Rust slows Phase 1</td><td class="n">Medium</td><td class="n">Medium</td><td>The first three groups are the steep part. Budget generously; the curve flattens hard.</td></tr>
-          <tr><td>Arabic receipt looks wrong on real paper</td><td class="n">Medium</td><td class="n">Medium</td><td>Raster pipeline, six golden files, and a hardware lab where a native reader confirms on paper.</td></tr>
-          <tr><td>Jordan changes a rate by decree mid-build</td><td class="n">Medium</td><td class="n">Low</td><td>Rates are time-effective data. A decree is a row, not a release.</td></tr>
-          <tr><td>Scope creep from the deferred feature list</td><td class="n">High</td><td class="n">Medium</td><td>Every deferred item has a named architectural hook. A &ldquo;yes&rdquo; is a phase, not a rewrite.</td></tr>
-          <tr><td>Solo-developer bus factor</td><td class="n">Certain</td><td class="n">High</td><td>The documentation set is the mitigation, and the final gate tests it: someone else installs, provisions and sells from the docs alone.</td></tr>
+          <tr><td><b>Offline clearance is ruled unacceptable</b> — a pending-clearance receipt may not be a lawful document, so a sale completed during an outage cannot be handed over as one</td><td class="n">Unknown</td><td class="n">Critical</td><td>The advisor's or the Directorate's answer arrives, in either direction</td><td>Buy the written ruling early — it is an advisor's hour, not a phase. Design the <code>clearance_required</code> fallback alongside the default so neither answer is a rewrite.</td></tr>
+          <tr><td>ISTD spec differs from the reconstruction</td><td class="n">High</td><td class="n">High</td><td>The 2.7.0 diff reports any provisional row that does not match</td><td>Everything reconstructed lives in one module. 2.7.0 pins the official package <em>before</em> the builder or any golden is frozen, instead of discovering the difference in Phase 5.</td></tr>
+          <tr><td>No sandbox — the first real submission lands on a merchant's tax record</td><td class="n">Certain</td><td class="n">High</td><td>Milestone 5.2 is scheduled</td><td>Conformance harness, mock ISTD and five goldens; certification uses low-value invoices immediately credit-noted, with the merchant's written consent.</td></tr>
+          <tr><td>JoFotara changes its API, code lists or validation mid-build</td><td class="n">High</td><td class="n">High</td><td><code>rejection_rate_24h</code> above 2%, or three consecutive rejections with the same error code</td><td>The pinned 2.7.0 manifest records a version and hash, so a change is a diff rather than a surprise. The rejection alarm is the primary detector, not the quarterly audit.</td></tr>
+          <tr><td>Signing certificate or entitlement key lost, expired or leaked</td><td class="n">Expiry certain, annual</td><td class="n">High</td><td>90 days before any expiry; immediately on suspected exposure</td><td>Two independently encrypted recovery copies per key, <code>kid</code> in every entitlement so two can be valid at once, an old-key-signed bridge for updater rotation, expiry dates on a calendar.</td></tr>
+          <tr><td><b>A cross-tenant leak on the shared server</b></td><td class="n">Medium</td><td class="n">Critical</td><td>Any query reaching the database without a principal-derived <code>org_id</code>; any new merchant-owned table without a row-level-security policy</td><td><code>org_id NOT NULL</code>, tenant-scoped unique keys, composite foreign keys that cannot cross orgs, forced row-level security under a non-owner role, and an adversarial two-org property test rather than a review.</td></tr>
+          <tr><td>Jordan changes a rate by decree mid-build</td><td class="n">Medium</td><td class="n">Low</td><td>An ISTD rate-catalogue publication</td><td>Rates are time-effective data. A decree is a row, not a release.</td></tr>
+          <tr><td>Learning Rust slows Phase 1 badly</td><td class="n">Medium</td><td class="n">Medium</td><td>Actual rate below 4 microsteps a week for two consecutive weeks</td><td>Groups 1.1–1.3 are the steep part. The effort table now prices it, and the implied rate makes a slip visible in week 3 rather than week 16.</td></tr>
+          <tr><td>No acquirer will give a pre-revenue vendor a test terminal</td><td class="n">Medium</td><td class="n">High</td><td>Four weeks of no answer from the second candidate acquirer</td><td>Start the conversation in Phase 1 and establish the legal entity first. Stated fallback: Phase 2 ships against the simulator and the real driver moves to Phase 5 with the terminal.</td></tr>
+          <tr><td>Acquirer terminal lacks a last-transaction-status query</td><td class="n">Medium</td><td class="n">High</td><td>Any candidate's written protocol omits it</td><td>Ask before choosing. Without it there is no safe timeout recovery — choose a different acquirer.</td></tr>
+          <tr><td>Arabic receipt looks wrong on real paper</td><td class="n">Medium</td><td class="n">Medium</td><td>Any diff under the golden directory, or a text-shaping or font bump</td><td>Raster pipeline, seven goldens, a committed PNG beside every raster golden so a human can review the diff, and a hardware lab where a native reader confirms on paper.</td></tr>
+          <tr><td>Performance degrades at year-one volume</td><td class="n">Medium</td><td class="n">Medium</td><td>Any budget within 20% of its limit</td><td>Budgets are failing CI benchmarks from Phase 1 against named reference hardware, and the soak dataset is generated at the end of Phase 2 — a Phase-5 soak is a detector, not a mitigation.</td></tr>
+          <tr><td>PDPL enforcement arrives suddenly</td><td class="n">Low</td><td class="n">Medium</td><td>Any MoDEE publication; the registration determination at 3.4.1</td><td>Built to the law, not to the lag: consent as an append-only event ledger, export, anonymisation, scrubbed logs, both breach clocks — all tested. The electronic register is live, so registration is a dated determination rather than a wait.</td></tr>
+          <tr><td>Scope creep from the deferred feature list</td><td class="n">High</td><td class="n">Medium</td><td>Any merchant answer flipping a deferred row to &ldquo;yes&rdquo;</td><td>Every deferred item has a named architectural hook and a merchant-decisions row. A &ldquo;yes&rdquo; is a phase, not a rewrite.</td></tr>
+          <tr><td><b>Runway runs out before Phase 3</b> — Phases 1–2 produce a register nobody can be billed for</td><td class="n">Medium</td><td class="n">Critical</td><td>Remaining runway below two phases at the current rate</td><td>Front-load the commercial decision: the unit of sale is decided before microstep 3.8.1, because it determines what an entitlement asserts. The legal entity is ordered in Phase 1 for the same reason.</td></tr>
+          <tr><td>Solo-developer bus factor — documentation</td><td class="n">Certain</td><td class="n">High</td><td>—</td><td>This documentation set <em>is</em> the mitigation, and the last item of the Phase-5 gate tests it: someone else must install, provision and sell from the docs alone.</td></tr>
+          <tr><td>Solo-developer unavailability — trading</td><td class="n">Certain over a decade</td><td class="n">Critical</td><td>Any absence longer than the stated entitlement buffer</td><td>Expiry blocks <em>enrollment and updates</em>, never a sale on a register that was entitled when it last synced. Entitlements are dated to the paid term plus a stated buffer, so trading needs no online validation at all.</td></tr>
         </tbody>
       </table>
     </div>
@@ -521,17 +568,17 @@
 
   <section>
     <div class="rule-head"><h2>What &ldquo;done&rdquo; means</h2><span class="label">Part 6</span></div>
-    <p>Nine claims. Each is a passing test, a signed checklist, or a named advisor — never an intention.</p>
+    <p>Nine claims. Each is a passing test, a signed checklist, or a named advisor — never an intention. A claim whose named test cannot hold is worse than no claim, because it gets weakened at the keyboard by the one person who can also edit the sentence; two of these were in that state and are restated here.</p>
     <ol class="claims">
-      <li><div><b>Sells offline.</b><span>A cut cable changes nothing.</span></div></li>
+      <li><div><b>Sells offline.</b><span>A cut cable changes nothing — including fiscal: the sale completes and the document queues with <code>icv IS NULL</code>.</span></div></li>
       <li><div><b>Money is exact.</b><span>No float touches it; every total is a property test.</span></div></li>
-      <li><div><b>Tax is correct.</b><span>The filing report reconciles to a hand-check on a scripted trading day.</span></div></li>
-      <li><div><b>Arabic is right.</b><span>Confirmed on paper by a native reader, defended by golden files.</span></div></li>
+      <li><div><b>Tax is correct.</b><span>The <b>sales-side reconciliation</b> by rate reconciles to a hand-check on a scripted trading day. It is not a completed GST return, and it is not described as one — purchases, input-tax deductibility, apportionment and box mapping arrive in Phase 4.</span></div></li>
+      <li><div><b>Arabic is right.</b><span>Confirmed on paper by a native reader, and defended by golden files a human can actually review — every raster golden ships a committed PNG beside it.</span></div></li>
       <li><div><b>Cards never double-charge.</b><span>No input sequence yields two tenders for one authorisation.</span></div></li>
-      <li><div><b>Refunds cannot exceed what was sold.</b><span>In any order, across any sequence of partial refunds.</span></div></li>
-      <li><div><b>Registers converge.</b><span>Byte-identical, through a chaos week.</span></div></li>
-      <li><div><b>Fiscal clears.</b><span>Eleven certification items, dated and signed — the only thing that makes &ldquo;JoFotara compliant&rdquo; true.</span></div></li>
-      <li><div><b>Data is safe.</b><span>Restored on real hardware by someone who did not write the code, twice, and timed.</span></div></li>
+      <li><div><b>Refunds cannot exceed what was sold.</b><span>In any order, across any sequence of partial refunds, against a link ledger that is itself a guarded fact table.</span></div></li>
+      <li><div><b>Registers and the server converge.</b><span><b>Three</b> properties through a chaos week, over a specified canonical semantic dump — not a byte-identical one. The old single claim could never hold: facts travel up only, so two registers' fact sets are disjoint by design.</span></div></li>
+      <li><div><b>Fiscal clears.</b><span>The pinned official package (2.7.0) plus <b>nine</b> credentialed certification items, dated and signed, before any real store trades fiscally. Until every one is signed, the claim is <em>&ldquo;passes our conformance harness against the pinned specification&rdquo;</em> — and it is said in those words.</span></div></li>
+      <li><div><b>Data is safe.</b><span>Restored on real hardware by someone who did not write the code — including the case where the machine <b>and</b> the credential store are both gone and only the printed recovery code survives — twice, and timed.</span></div></li>
     </ol>
   </section>
 
@@ -539,33 +586,35 @@
     <div class="rule-head"><h2>The document set</h2><span class="label">Reference</span></div>
     <p>The maintained plan lives under <code>docs/implementation/</code>. Microsteps are numbered <code>phase.group.step</code> and the numbers are stable — they are commit-message references.</p>
     <div class="docset">
-      <div class="doc"><span class="path">00-master-plan.md</span><span class="what">The spine: verdict, corrections, phase map, risk register</span></div>
-      <div class="doc"><span class="path">01-conventions.md</span><span class="what">The engineering law — nine invariants, naming, errors, definition of done</span></div>
-      <div class="doc"><span class="path">phase-0 … phase-5</span><span class="what">Phase plans with objective gates; Phase 0 is retained as a historical close-out record</span></div>
-      <div class="doc"><span class="path">ref/plan-validation.md</span><span class="what">The audit, the four corrections, every source</span></div>
+      <div class="doc"><span class="path">00-master-plan.md</span><span class="what">The spine: verdict, phase map, risk register, long-lead register — and <b>§4a, the errata and concordance</b>: every correction to the immutable source plans, every superseded name, and every open item that can still change an architecture. Read §4a if you have read <code>docs/plan/</code> first</span></div>
+      <div class="doc"><span class="path">01-conventions.md</span><span class="what">The engineering law — nine invariants, naming, errors, testing, definition of done</span></div>
+      <div class="doc"><span class="path">phase-0 … phase-5</span><span class="what">Phase plans with objective gates; Phase 0 is retained as a dated historical close-out record, not a runbook</span></div>
+      <div class="doc"><span class="path">ref/plan-validation.md</span><span class="what">The audit of record and every source, carrying a dated revision note against each correction in place. §4a, not this file, is the current correction ledger</span></div>
       <div class="doc"><span class="path">ref/domain-api.md</span><span class="what">Every <code>pos-domain</code> type and signature</span></div>
-      <div class="doc"><span class="path">ref/schema.md</span><span class="what">Executable schema reference aligned with the runtime-registered SQLite and PostgreSQL migration chains</span></div>
-      <div class="doc"><span class="path">ref/tax-jordan.md</span><span class="what">GST as an engine — categories, rates-as-data, rounding, the filing report</span></div>
+      <div class="doc"><span class="path">ref/schema.md</span><span class="what">Executable schema reference — authoritative for every migration number, and aligned with the runtime-registered SQLite and PostgreSQL chains</span></div>
+      <div class="doc"><span class="path">ref/tax-jordan.md</span><span class="what">GST as an engine — categories, rates-as-data, rounding as one versioned jurisdiction policy, and the sales-side reconciliation</span></div>
       <div class="doc"><span class="path">ref/fiscal-jofotara.md</span><span class="what">The highest-risk component in the product</span></div>
-      <div class="doc"><span class="path">ref/ipc-contract.md</span><span class="what">Every Tauri command, its capability, its audit</span></div>
-      <div class="doc"><span class="path">ref/sync-protocol.md</span><span class="what">Ownership classes, chaos convergence, the accepted risks stated plainly</span></div>
-      <div class="doc"><span class="path">ref/hardware-and-receipts.md</span><span class="what">Traits, the Arabic raster pipeline, the hardware-lab checklist</span></div>
+      <div class="doc"><span class="path">ref/ipc-contract.md</span><span class="what">Every Tauri command, its capability, its approval binding, its audit</span></div>
+      <div class="doc"><span class="path">ref/sync-protocol.md</span><span class="what">Ownership classes, push/pull, chaos convergence and the canonical dump it is proved over, the accepted risks stated plainly</span></div>
+      <div class="doc"><span class="path">ref/hardware-and-receipts.md</span><span class="what">Traits, the Arabic raster pipeline, the supported-device matrix, the hardware-lab checklist</span></div>
       <div class="doc"><span class="path">ref/ui-spec.md</span><span class="what">Screen by screen, RTL mechanics, the keyboard map</span></div>
-      <div class="doc"><span class="path">ref/test-catalog.md</span><span class="what">Edge cases mapped to named tests, accepted risks, deferrals, or explicit scope decisions</span></div>
-      <div class="doc"><span class="path">ref/security-compliance.md</span><span class="what">PDPL, PCI, the audit chain, permissions, secrets</span></div>
+      <div class="doc"><span class="path">ref/test-catalog.md</span><span class="what"><b>92 numbered edge cases</b> mapped to named tests, accepted risks, deferrals, or explicit scope decisions — reconciled against the suite and the phase files by a script, not by reading the table</span></div>
+      <div class="doc"><span class="path">ref/security-compliance.md</span><span class="what">PDPL, PCI, the audit chain, permissions, tenancy, key custody, secrets</span></div>
       <div class="doc"><span class="path">ref/merchant-decisions.md</span><span class="what">The questionnaire to fill in with the merchant, with defaults</span></div>
     </div>
   </section>
 
   <section>
     <div class="rule-head"><h2>Coverage</h2><span class="label">Reference</span></div>
-    <p>The plan's own falsifiability rule, applied to itself: an edge case with no row is a gap, not an absence.</p>
+    <p>The plan's own falsifiability rule, applied to itself: an edge case with no row is a gap, not an absence. Ninety-two numbered cases, each with exactly one of these statuses — and a script rather than a reader reconciles them against the test suite, the phase files, and the table's own arithmetic. The dangerous failure of a coverage matrix is not a red test; it is an absent test behind a green row.</p>
     <div class="table-scroll">
       <table>
         <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
         <tbody>
-          <tr><td>Tested</td><td>A named test, in a named file, at a named phase</td></tr>
+          <tr><td>Tested</td><td>A named test, in a named file, at a named phase — and the runner's listing must actually contain that name</td></tr>
+          <tr><td>Planned</td><td>On a ceiling that may only shrink; a landed or removed name leaves a tombstone, so re-adding it fails</td></tr>
           <tr><td>Accepted risk</td><td>Bounded, mitigated, and disclosed to the merchant rather than hidden</td></tr>
+          <tr><td>Open question</td><td>With a stated default, an owning microstep, and the external source that settles it</td></tr>
           <tr><td>Deferred</td><td>With a named architectural hook that keeps adding it cheap</td></tr>
           <tr><td>Out of v1 scope</td><td>With a written rationale</td></tr>
         </tbody>
@@ -574,8 +623,9 @@
   </section>
 
   <footer>
-    <p>Compliance sections are engineering guidance, not legal or tax advice. Validate JoFotara, GST treatment, PDPL and PCI scope with the merchant's accountant, a Jordanian tax advisor, and a QSA before launch.</p>
-    <p>Re-run the validation audit quarterly. Rates move by Cabinet decree, JoFotara is still adding waves, and the PDPL authority is still standing up. A compliance claim has a shelf life.</p>
+    <p>Compliance sections are engineering guidance, not legal or tax advice. Validate JoFotara, GST treatment, PDPL and PCI scope with the merchant's accountant, a Jordanian tax advisor, and a QSA before launch. <b>No compliance validation here is complete</b>, and nothing in this repository claims PCI DSS, an SAQ, JoFotara certification, or PDPL registration without the evidence the security reference requires.</p>
+    <p>Re-run the validation audit quarterly, and re-diff the pinned ISTD manifest in the same pass. Rates move by Cabinet decree, JoFotara is still adding waves and changing validation, and the PDPL electronic register is now live. A compliance claim has a shelf life — and &ldquo;re-audited&rdquo; with no artefact is a memory, not evidence.</p>
+    <p>A view of <code>docs/implementation/</code>, generated by hand and corrected from the master plan. It is never the source of truth.</p>
   </footer>
 
 </div>

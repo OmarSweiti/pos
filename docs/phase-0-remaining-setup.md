@@ -9,6 +9,14 @@
 > [GitHub runbook](implementation/03-github-workflow.md) instead. The snapshot is
 > retained only because the dated
 > [Phase-0 close-out](implementation/phase-0-closeout.md) references the evidence.
+>
+> **Its engineering claims are stale too, as of 25 August 2026.** The nine
+> invariants are specified in
+> [`01-conventions.md`](implementation/01-conventions.md) §1, and every superseded
+> name this file repeats from the source plans — basis points, configurable
+> rounding, a single outbox row per sale — is recorded in
+> [`00-master-plan.md`](implementation/00-master-plan.md) §4a. Read the note at the
+> end of Part 13 before using anything below as a to-do list.
 
 At the time of this snapshot, everything through **Part 11** had been built,
 verified, and committed. Parts 12 and 13 were documented here but had not yet
@@ -207,6 +215,22 @@ Seven checks. Five are verified locally already; two need a screen or a remote.
    then the push/pull endpoints on the server.
 5. **ESC/POS renderer** (template → bytes) with golden-file tests, behind the `ReceiptPrinter`
    trait (§5, §8).
+
+> **Note, 25 August 2026 — this backlog is superseded, not merely dated.**
+> [`phase-1-sellable-mvp.md`](implementation/phase-1-sellable-mvp.md) replaces it microstep by
+> microstep, and three of the claims above are wrong as written, not merely old:
+>
+> - **Basis points** became `rate_ppm`, parts per million, because Jordanian reduced rates include
+>   values a whole basis point cannot always express.
+> - **Configurable rounding** is not a setting. Line rounding is one versioned Jordan jurisdiction
+>   policy; a store preference that let two registers compute different tax was the bug.
+> - **"Every sale insert also writes `sync_outbox`"** is now the whole commit group: the facts, one
+>   `sync_commit`, the complete `fact_commit_member` manifest, and the delivery rows, in one
+>   transaction. A header accepted without its lines is what the partial version allowed.
+>
+> Item 3's "migrations 0002+" is also spent — `0002` shipped under microstep 1.1.7. The engineering
+> law is [`01-conventions.md`](implementation/01-conventions.md); the errata are
+> [`00-master-plan.md`](implementation/00-master-plan.md) §4a.
 
 ---
 
