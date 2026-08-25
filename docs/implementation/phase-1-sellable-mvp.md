@@ -36,6 +36,24 @@
 
 *Gap G-11. Nothing else can start until `Money` knows what currency it is.*
 
+> **Build order inside this group is not step order.** 1.1.2 asks for `mul_qty`, `mul_percent` and
+> `round_to_step`, but `Qty` is 1.1.3, `Percent` is 1.1.4 and `RoundingRule` is 1.1.6 — so written in
+> the numbered order, 1.1.2 does not compile. Split it in two and build in this order:
+>
+> | Order | Step | What |
+> |---|---|---|
+> | 1 | 1.1.1 | `Currency` |
+> | 2 | 1.1.2a | `Money` gains `Currency` — constructors, `checked_add`/`sub`/`neg`, `sum`, `split_evenly`, `checked_cmp` |
+> | 3 | 1.1.6 | `RoundingRule`, `RoundingDirection` — rounding is a *parameter*, so it precedes the arithmetic that takes one |
+> | 4 | 1.1.3 | `Qty` |
+> | 5 | 1.1.4 | `Percent` |
+> | 6 | 1.1.2b | `Money`'s arithmetic — `mul_qty`, `mul_percent`, `split_proportional`, `round_to_step`, `to_decimal`, `from_decimal`, `format`, `parse` |
+> | 7 | 1.1.5 | the eight properties |
+> | 8 | 1.1.8 | typed ids, `Clock`, `IdSource` |
+> | 9 | 1.1.9 | `Timestamp`, `BusinessDate`, `DayBoundary`, `MonotonicClock` |
+>
+> Step numbers in commit messages stay as specified, so a commit tagged `[1.1.2]` appears twice.
+
 ### 1.1.1 — `Currency`
 **Files:** `crates/pos-domain/src/money.rs`
 Add the `Currency` type from [`ref/domain-api.md`](ref/domain-api.md) §1.1, with `JOD` (exponent 3) and `USD` (exponent 2) constants. `Copy`, four bytes, interned `code()` returning `&'static str` with no allocation.
@@ -46,7 +64,8 @@ Add the `Currency` type from [`ref/domain-api.md`](ref/domain-api.md) §1.1, wit
 ### 1.1.2 — `Money` carries `Currency`
 **Files:** `crates/pos-domain/src/money.rs`, `apps/terminal/src-tauri/src/lib.rs` (fix `split_tender`)
 Thread `Currency` through every constructor and operation. `checked_add`/`checked_sub` return `CurrencyMismatch` rather than coercing. **Do not rewrite `split_evenly`** — its largest-remainder implementation and property test are correct; only add the currency field.
-Add `mul_qty`, `mul_percent`, `split_proportional`, `round_to_step`, `to_decimal`, `from_decimal`, `format`, `parse`.
+Add `mul_qty`, `mul_percent`, `split_proportional`, `round_to_step`, `to_decimal`, `from_decimal`, `format`, `parse` — all of which need 1.1.3, 1.1.4 and 1.1.6 first; see the build-order note above.
+**`PartialOrd` and `Ord` come off the derive list.** Derived over `(minor, currency)` they would order a JOD amount against a USD one and answer confidently. `checked_cmp` replaces them, returning `Result<Ordering, MoneyError>`, so a mixed-currency comparison is a handled error and not a wrong answer. Every `<`, `>`, `min`, `max` and `sort` on a `Money` becomes a compile error that has to be looked at, which is the point.
 **Tests:** `prop_currency_mismatch_never_silently_coerces` · `prop_format_parse_roundtrip` · `prop_mul_qty_whole_units_is_repeated_add` · `prop_split_proportional_preserves_total`
 **Done when:** `Money::from_minor(1250, JOD).format(3) == "1.250"` and `format(2) == "1.25"`.
 
@@ -72,12 +91,23 @@ All eight properties from API reference §1.6. This is the layer that finds what
 Default `HalfAwayFromZero`, not banker's — see [`ref/tax-jordan.md`](ref/tax-jordan.md) §4 for why.
 **Tests:** `half_away_from_zero_rounds_1_5_to_2_and_neg_1_5_to_neg_2` · `half_even_rounds_1_5_and_2_5_both_to_2`
 
-### 1.1.7 — Migration `0002`, part one: the qty fix
-*Gap G-12. **Must land before any sale row exists.***
-**Files:** `crates/pos-db/migrations/0003_catalog_depth.sql`, `crates/pos-db/src/lib.rs` (`MIGRATIONS` array)
-The `sale_line` rebuild from [`ref/schema.md`](ref/schema.md) §0002, plus `sale_line_tax` and `sale_line_discount`.
-**Tests:** `crates/pos-db/tests/migrations.rs::migration_0002_converts_qty_to_milli` — seed a `0001`-shaped row, migrate, assert `qty_milli == qty * 1000`.
-**Done when:** `PRAGMA user_version` is 2 and the seeded row survives with `qty_milli = 2000`.
+### 1.1.7 — Migration `0002`: the qty fix — **SHIPPED**
+*Gap G-12. **Must land before any sale row exists**, which is why it went first.*
+**Files:** `crates/pos-db/migrations/0002_sale_integrity.sql`, `crates/pos-db/src/lib.rs` (`MIGRATIONS` array)
+The `sale_line` rebuild from [`ref/schema.md`](ref/schema.md) §0002 — `qty` → `qty_milli`, multiplying
+by 1000 because existing rows hold unit counts — plus the eight I-4 immutability triggers, the
+per-register receipt-number uniqueness index, and the two foreign-key indexes. All in one file,
+because a rebuild silently takes its triggers and indexes with it.
+**Tests:** `crates/pos-db/tests/migration_0002_qty_milli.rs` —
+`quantities_are_multiplied_by_a_thousand_not_merely_renamed` seeds a `0001`-shaped row, migrates,
+and asserts `qty_milli == qty * 1000`; `the_rebuilt_table_is_still_guarded_by_the_immutability_triggers`
+proves the rebuild did not drop them. `crates/pos-db/tests/sale_immutability.rs` holds all eight.
+**Done when:** `PRAGMA user_version` is 2 and the seeded row survives with `qty_milli = 2000`. ✅
+> `sale_line_tax` and `sale_line_discount` are **not** here. They belong to `0003_catalog_depth.sql`
+> (§0003), because they reference `tax_category`, which does not exist until that migration.
+> `sale_line`'s remaining capture-time columns arrive there too, by `ALTER TABLE` rather than a
+> second rebuild — and `0003` must drop and recreate the three `sale_line` triggers around its
+> backfill, since an `UPDATE` on a completed sale's line is exactly what they refuse.
 
 ### 1.1.8 — Typed ids and the `Clock` / `IdSource` ports
 **Files:** `crates/pos-domain/src/ids.rs` (new), `crates/pos-domain/src/lib.rs`
@@ -96,10 +126,10 @@ Per API reference §3, including `business_date_of` and `MonotonicClock`.
 
 ## Group 1.2 — Catalog, barcodes, search
 
-### 1.2.1 — Migration `0002`, part two: org / store / register / taxonomy
+### 1.2.1 — Migration `0003`: org / store / register / taxonomy
 **Files:** `crates/pos-db/migrations/0003_catalog_depth.sql`
 The `org`, `store`, `register`, `category`, `tax_category`, `tax_rate`, `barcode`, `setting` tables and the `product` `ALTER`s from [`ref/schema.md`](ref/schema.md).
-**Tests:** `migration_0002_creates_all_tables` · `barcode_live_uniqueness_allows_reissue_after_tombstone`
+**Tests:** `migration_0003_creates_all_tables` · `barcode_live_uniqueness_allows_reissue_after_tombstone`
 **Done when:** a tombstoned barcode code can be reassigned to a different product; two live rows with the same code cannot exist.
 
 ### 1.2.2 — `Product` and `UnitOfMeasure` in the domain
@@ -127,9 +157,9 @@ Repository law (conventions §3): returns owned domain types, never a `rusqlite:
 **Tests:** `prop_ean13_checksum_matches_reference` · `prop_embedded_parse_roundtrip` · `prop_corrupt_digit_never_parses_clean` · `weight_embedded_2xxxxxwwwww_parses` · `price_embedded_parses`
 **Done when (E.40):** flipping any single digit of a valid embedded barcode either fails the checksum or produces a *different* item code — it never silently produces a wrong price for the right item.
 
-### 1.2.5 — Migration `0006`: FTS5, PLU, tiles, scan rules
+### 1.2.5 — Migration `0007`: FTS5, PLU, tiles, scan rules
 **Files:** `crates/pos-db/migrations/0007_search_and_seed.sql`
-Per [`ref/schema.md`](ref/schema.md) §0006. Tokeniser `unicode61 remove_diacritics 2` so Arabic tashkeel folds.
+Per [`ref/schema.md`](ref/schema.md) §0007. Tokeniser `unicode61 remove_diacritics 2` so Arabic tashkeel folds.
 **Tests:** `fts_matches_arabic_with_and_without_diacritics` · `fts_matches_english_and_sku` · `fts_survives_product_update` · `fts_row_removed_on_tombstone`
 
 ### 1.2.6 — Assert FTS5 exists at open
@@ -287,9 +317,9 @@ JOD denominations (50, 20, 10, 5, 1 dinar; 500, 250, 100, 50, 25, 10 fils) for t
 
 *Gaps G-6 and G-7. Independent of the cart work.*
 
-### 1.6.1 — Migration `0003`
+### 1.6.1 — Migration `0004`
 **Files:** `crates/pos-db/migrations/0004_people_and_audit.sql`
-Per [`ref/schema.md`](ref/schema.md) §0003. Note `app_user`, not `user` — reserved in Postgres.
+Per [`ref/schema.md`](ref/schema.md) §0004. Note `app_user`, not `user` — reserved in Postgres.
 
 ### 1.6.2 — Argon2id PINs
 **Files:** `crates/pos-db/src/auth.rs` (new), `crates/pos-db/Cargo.toml` (`argon2`)
@@ -458,9 +488,9 @@ Every fact write appends its outbox row in the same transaction (I-9). No pusher
 
 *Gap G-2.*
 
-### 1.9.1 — Migration `0004`
+### 1.9.1 — Migration `0005`
 **Files:** `crates/pos-db/migrations/0005_sale_columns_and_sequences.sql`
-Per [`ref/schema.md`](ref/schema.md) §0004: sale columns, `sale_tax_summary`, tender columns, `tender_type`, `parked_cart`, `doc_sequence`.
+Per [`ref/schema.md`](ref/schema.md) §0005: sale columns, `sale_tax_summary`, tender columns, `tender_type`, `parked_cart`, `doc_sequence`.
 
 ### 1.9.2 — `SequenceRepository`
 **Files:** `crates/pos-db/src/repo/sequence.rs` (new)
@@ -486,7 +516,7 @@ Derived from the shift (conventions §11), not from wall-clock midnight.
 
 ## Group 1.10 — Stock ledger
 
-### 1.10.1 — Migration `0005`
+### 1.10.1 — Migration `0006`
 **Files:** `crates/pos-db/migrations/0006_stock_ledger.sql`
 
 ### 1.10.2 — `StockRepository`
