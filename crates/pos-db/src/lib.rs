@@ -24,7 +24,18 @@ pub enum DbError {
     SchemaTooNew { found: i64, supported: usize },
     #[error("database reports an impossible schema version ({found})")]
     SchemaVersionInvalid { found: i64 },
+    #[error(
+        "refusing to open a register database with synchronous={found}: a completed \
+         sale must survive a power cut, which requires synchronous=FULL (2)"
+    )]
+    DurabilityRefused { found: i64 },
+    #[error("refusing to open a register database with foreign keys disabled")]
+    ForeignKeysRefused,
 }
+
+/// `PRAGMA synchronous = FULL`, as SQLite reports it back. The pragma accepts a
+/// name on the way in and answers with a number on the way out.
+const SQLITE_SYNCHRONOUS_FULL: i64 = 2;
 
 /// Ordered, forward-only migrations (blueprint §8). `PRAGMA user_version`
 /// tracks how many have been applied. Append new files; never edit old ones.
@@ -50,9 +61,36 @@ pub fn open(path: &Path, key: &str) -> Result<Connection, DbError> {
 
     // Durability + concurrency settings for a register (blueprint appendix: WAL).
     let _mode: String = conn.query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))?;
-    conn.pragma_update(None, "synchronous", "NORMAL")?;
+
+    // FULL, not NORMAL. In WAL mode SQLite documents `synchronous = NORMAL` as
+    // losing the most recent commits after a power loss — the WAL is not fsynced
+    // on every commit, only at checkpoint. On a server that is a good trade. On a
+    // register it is the wrong one, because I-9 commits the sale, its stock event,
+    // its outbox row and its fiscal-queue row in ONE transaction: losing that
+    // commit loses all four together, cleanly and invisibly. There is no
+    // half-written state to detect and no alarm to raise. The cashier took the
+    // cash, the customer left with a printed receipt, and at Z time the drawer is
+    // over with no document to explain it.
+    //
+    // The cost is an fsync per commit. A register commits a few transactions a
+    // minute, so the cost is irrelevant and the failure it prevents is money.
+    conn.pragma_update(None, "synchronous", "FULL")?;
     conn.pragma_update(None, "foreign_keys", true)?;
     conn.busy_timeout(Duration::from_secs(5))?;
+
+    // Assert what we just set, rather than trusting that we set it. A pragma is
+    // advisory: an unknown value leaves the old one in place silently, and this
+    // one is exactly the setting a future benchmark is tempted to relax. Reading
+    // it back turns "someone changed it for a throughput run" into a failed open.
+    let synchronous: i64 = conn.query_row("PRAGMA synchronous", [], |r| r.get(0))?;
+    if synchronous != SQLITE_SYNCHRONOUS_FULL {
+        return Err(DbError::DurabilityRefused { found: synchronous });
+    }
+
+    let foreign_keys: bool = conn.query_row("PRAGMA foreign_keys", [], |r| r.get(0))?;
+    if !foreign_keys {
+        return Err(DbError::ForeignKeysRefused);
+    }
 
     migrate(&conn)?;
     Ok(conn)
