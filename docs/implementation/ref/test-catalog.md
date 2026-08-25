@@ -86,7 +86,7 @@ Legend — **Ph**: phase the test lands in · **Kind**: `unit` · `prop` · `gol
 | 39 | Unknown barcode scan | `unknown_barcode_offers_quick_add_or_department_sale`, `queue_never_stalls_on_unknown_code` | 1 | unit |
 | 40 | Price-embedded barcode with a checksum error | `prop_corrupt_digit_never_parses_clean` | 1 | prop |
 | 41 | Unicode names (Arabic + emoji) | `golden_receipt_ar_80mm`, `unicode_names_roundtrip_through_db_and_fts` | 1 | golden |
-| 41b | Arabic typed in a different but equivalent spelling — tashkeel, أ/إ/آ for ا, ى for ي, ة for ه, tatweel | `fts_matches_arabic_with_and_without_diacritics`, `fts_matches_alef_and_yaa_spelling_variants`, `fts_matches_taa_marbuta_spelled_as_haa`, `fts_ignores_tatweel`, `fts_prefix_search_works_at_two_characters` | 1 | integration |
+| 41b | Arabic typed in a different but equivalent spelling — tashkeel, أ/إ/آ for ا, ى for ي, ة for ه, tatweel | `fts_matches_arabic_with_and_without_diacritics`, `fts_matches_alef_and_yaa_spelling_variants`, `fts_matches_taa_marbuta_spelled_as_haa`, `fts_ignores_tatweel`, `fts_prefix_search_works_at_two_characters`, `exact_spelling_outranks_a_folded_variant`, `a_single_letter_query_does_not_match_a_vocalised_name` | 1 | integration |
 
 ## Inventory
 

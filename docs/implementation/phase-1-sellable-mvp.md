@@ -149,7 +149,15 @@ impl<'c> ProductRepository<'c> {
 ```
 Repository law (conventions §3): returns owned domain types, never a `rusqlite::Row`, never computes a total. Writes take an explicit `&Transaction`.
 
-`search` folds the query string before it reaches `MATCH`, by exactly the rules the 0003 `name_ar_fold` column applies — see 1.2.5. Skip it and Arabic search silently returns nothing for any word a customer spells with tashkeel, أ, ى or ة.
+`search` issues **two branches**, not one — see 1.2.5:
+
+```
+name_ar_exact : <query with tashkeel and tatweel stripped>
+     OR
+name_ar_fold  : <query fully folded>
+```
+
+Folding only, which is what a first pass reaches for, makes Arabic search *work* and makes it *wrong*: once the query is folded, an exact spelling and a near-miss are indistinguishable, so the product the cashier meant can sort second. Querying both columns costs nothing and fixes it — the exactly-spelled row matches both branches and a variant-only row matches one, so `ORDER BY rank` puts the exact match first with no manual scoring.
 **Tests:** `by_barcode_returns_newest_active_on_collision` (E.36) · `by_id_ignores_tombstones`
 **Done when:** two live products sharing a barcode is impossible; a tombstoned one is invisible to lookup but still resolvable by id for history.
 
@@ -165,10 +173,12 @@ Per [`ref/schema.md`](ref/schema.md) §0007.
 
 `remove_diacritics 2` folds **Latin** diacritics only — it does not fold Arabic, and treats tashkeel as token separators, so `قَهْوَة` indexes as four single-letter tokens and a search for `قهوة` finds nothing (verified on SQLite 3.51). Arabic matching comes from `name_ar_fold`, the generated column added in 0003 and indexed here, plus `prefix='2 3'` for the 1–3 character search 1.2.7 benchmarks.
 
-**Both sides must fold.** The repository folds the query string with the same rules before it reaches `MATCH`; a folded index searched with an unfolded string returns zero rows. `search()` in 1.2.3 owns that, and `prop_sql_and_rust_folding_agree` is what stops the two implementations drifting.
+**Both sides must transform, and precision needs its own branch.** The repository applies the same two transforms to the query that 0003 applies to the columns — a folded index searched with an unfolded string returns zero rows — and then queries `name_ar_exact` and `name_ar_fold` together so the spelling the cashier typed outranks a variant. `search()` in 1.2.3 owns that, and `prop_sql_and_rust_folding_agree` is what stops the two implementations drifting.
+
+Raw `name_ar` is not indexed, on purpose: tashkeel are token separators, so a vocalised name would contribute single-letter tokens and make one-character prefix search match unrelated products.
 
 Search is the fallback for every unbarcoded item and the only path a cashier has when the scanner fails. 0007 is forward-only, so getting this wrong costs a compensating migration plus a full reindex on every installed register.
-**Tests:** `fts_matches_arabic_with_and_without_diacritics` · `fts_matches_alef_and_yaa_spelling_variants` · `fts_matches_taa_marbuta_spelled_as_haa` · `fts_ignores_tatweel` · `prop_sql_and_rust_folding_agree` · `fts_prefix_search_works_at_two_characters` · `fts_matches_english_and_sku` · `fts_survives_product_update` · `fts_row_removed_on_tombstone`
+**Tests:** `fts_matches_arabic_with_and_without_diacritics` · `fts_matches_alef_and_yaa_spelling_variants` · `fts_matches_taa_marbuta_spelled_as_haa` · `fts_ignores_tatweel` · `prop_sql_and_rust_folding_agree` · `fts_prefix_search_works_at_two_characters` · `exact_spelling_outranks_a_folded_variant` · `a_single_letter_query_does_not_match_a_vocalised_name` · `fts_matches_english_and_sku` · `fts_survives_product_update` · `fts_row_removed_on_tombstone`
 
 ### 1.2.6 — Assert FTS5 exists at open
 **Files:** `crates/pos-db/src/lib.rs`
