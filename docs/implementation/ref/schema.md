@@ -2,6 +2,28 @@
 
 `0001_init.sql` and `0002_sale_integrity.sql` exist and are committed. Everything below them is new, appended in order, **never edited once committed** (conventions §9).
 
+**Every table below is `STRICT`.** SQLite's default is that a declared type is a
+suggestion: `INTEGER NOT NULL` accepts `'ten point five'`, and a `REAL` lands in a
+`*_minor` column without complaint — which is invariant I-1 defeated by the storage
+engine rather than by anyone's mistake. `STRICT` makes the declared type the rule.
+
+It also closes the NULL-identity hole for free: **in a `STRICT` table the primary key
+columns are implicitly `NOT NULL`**, composite keys included. Before this, two rows with
+a NULL `id` inserted cleanly into any table here. There is deliberately no separate
+`NOT NULL` sweep over the id columns, because `STRICT` already states it once per table
+instead of 57 times, and because `INTEGER PRIMARY KEY` rowid aliases (`audit_log.seq`,
+`sync_outbox.seq`) must keep accepting a NULL on insert to auto-assign — `STRICT` preserves
+that, an explicit sweep invites someone to "fix" it.
+
+**Six tables are not `STRICT`, and cannot be here: `product`, `sale`, `sale_line`,
+`sale_tender`, `sync_cursor`, `sync_outbox`.** They ship in 0001/0002, and migrations are
+never edited once committed. `STRICT` cannot be added by `ALTER TABLE`, so those six need a
+twelve-step table rebuild in a migration of their own — the shape 0002 already used for
+`sale_line`. Until that lands, `sale.id`, `sale_line.id`, `sale_tender.id`, `product.id` and
+`sync_cursor.entity` still accept NULL, and `total_minor` still accepts a string. That is a
+real remaining gap, recorded rather than rounded off; it is cheap now and dearer with every
+register in the field.
+
 **The eleven fact tables, and the rule that keeps them facts.** `sale`, `sale_line`,
 `sale_tender`, `sale_line_tax`, `sale_line_discount`, `sale_tax_summary`, `audit_log`,
 `stock_ledger`, `cash_movement`, `z_report`, `drawer_event`. Each one refuses `UPDATE` and
@@ -117,7 +139,7 @@ CREATE TABLE org (
   deleted_at    TEXT,
   updated_at    TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   version       INTEGER NOT NULL DEFAULT 0
-);
+) STRICT;
 
 CREATE TABLE store (
   id                 BLOB PRIMARY KEY,
@@ -151,7 +173,7 @@ CREATE TABLE store (
   deleted_at         TEXT,
   updated_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   version            INTEGER NOT NULL DEFAULT 0
-);
+) STRICT;
 
 CREATE TABLE register (
   id           BLOB PRIMARY KEY,
@@ -164,7 +186,7 @@ CREATE TABLE register (
   updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   version      INTEGER NOT NULL DEFAULT 0,
   UNIQUE (store_id, code)
-);
+) STRICT;
 
 -- ── Taxonomy ───────────────────────────────────────────────────────────────
 CREATE TABLE category (
@@ -176,7 +198,7 @@ CREATE TABLE category (
   deleted_at  TEXT,
   updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   version     INTEGER NOT NULL DEFAULT 0
-);
+) STRICT;
 
 CREATE TABLE tax_category (
   id          BLOB PRIMARY KEY,
@@ -187,7 +209,7 @@ CREATE TABLE tax_category (
   deleted_at  TEXT,
   updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   version     INTEGER NOT NULL DEFAULT 0
-);
+) STRICT;
 
 -- Rates are DATA with effective dates. Jordan changes reduced rates by Cabinet
 -- decree; a rate in code is a re-release (master plan B.1).
@@ -205,7 +227,7 @@ CREATE TABLE tax_rate (
   deleted_at       TEXT,
   updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   version          INTEGER NOT NULL DEFAULT 0
-);
+) STRICT;
 CREATE INDEX idx_tax_rate_lookup ON tax_rate(tax_category_id, component_code, valid_from);
 
 -- ── Product depth ──────────────────────────────────────────────────────────
@@ -278,7 +300,7 @@ CREATE TABLE barcode (
   deleted_at  TEXT,
   updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   version     INTEGER NOT NULL DEFAULT 0
-);
+) STRICT;
 -- Partial unique: a tombstoned code may be reissued, and collisions among LIVE
 -- codes are caught. E.36 resolves scans to the newest active + a warning.
 CREATE UNIQUE INDEX idx_barcode_code_live ON barcode(code) WHERE deleted_at IS NULL;
@@ -295,7 +317,7 @@ CREATE TABLE setting (
   updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   version     INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (scope, scope_id, key)
-);
+) STRICT;
 ```
 
 ### Filling out `sale_line` — the capture-time columns
@@ -373,7 +395,7 @@ CREATE TABLE sale_line_tax (
   rate_ppm        INTEGER NOT NULL,
   net_minor       INTEGER NOT NULL,
   tax_minor       INTEGER NOT NULL
-);
+) STRICT;
 CREATE INDEX idx_sale_line_tax_line ON sale_line_tax(sale_line_id);
 
 -- Discount attributions. Campaign-cost reporting (C.9) AND JoFotara's per-line
@@ -388,7 +410,7 @@ CREATE TABLE sale_line_discount (
   reason         TEXT,
   amount_minor   INTEGER NOT NULL,
   percent_ppm    INTEGER            -- the percentage the fiscal builder emits (C-2)
-);
+) STRICT;
 CREATE INDEX idx_sale_line_discount_line ON sale_line_discount(sale_line_id);
 
 -- ── I-4 on the tax and discount detail ─────────────────────────────────────
@@ -465,7 +487,7 @@ CREATE TABLE app_user (                    -- `user` is reserved in Postgres
   deleted_at    TEXT,
   updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   version       INTEGER NOT NULL DEFAULT 0
-);
+) STRICT;
 
 CREATE TABLE role (
   id          BLOB PRIMARY KEY,
@@ -475,21 +497,21 @@ CREATE TABLE role (
   deleted_at  TEXT,
   updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   version     INTEGER NOT NULL DEFAULT 0
-);
+) STRICT;
 
 CREATE TABLE role_capability (
   role_id     BLOB NOT NULL REFERENCES role(id),
   capability  TEXT NOT NULL,               -- 'sale.void', flat strings (C.10)
   limit_json  TEXT,                        -- e.g. {"max_percent_ppm":50000}
   PRIMARY KEY (role_id, capability)
-);
+) STRICT;
 
 CREATE TABLE user_role (
   user_id   BLOB NOT NULL REFERENCES app_user(id),
   role_id   BLOB NOT NULL REFERENCES role(id),
   store_id  BLOB REFERENCES store(id),     -- NULL = org-wide
   PRIMARY KEY (user_id, role_id, store_id)
-);
+) STRICT;
 
 CREATE TABLE user_session (
   id           BLOB PRIMARY KEY,
@@ -498,7 +520,7 @@ CREATE TABLE user_session (
   started_at   TEXT NOT NULL,
   ended_at     TEXT,
   end_reason   TEXT CHECK (end_reason IN ('logout','idle_lock','switch_user','shift_close','crash'))
-);
+) STRICT;
 
 -- Hash-chained (G-7). hash = BLAKE3(prev_hash ‖ canonical_json(entry)).
 -- Append-only: no UPDATE, no DELETE, ever.
@@ -516,7 +538,7 @@ CREATE TABLE audit_log (
   prev_hash   BLOB NOT NULL,
   hash        BLOB NOT NULL,
   at          TEXT NOT NULL
-);
+) STRICT;
 CREATE INDEX idx_audit_action_at ON audit_log(action, at);
 CREATE INDEX idx_audit_actor_at  ON audit_log(actor_id, at);
 
@@ -571,7 +593,7 @@ CREATE TABLE sale_tax_summary (
   net_minor       INTEGER NOT NULL,
   tax_minor       INTEGER NOT NULL,
   gross_minor     INTEGER NOT NULL
-);
+) STRICT;
 CREATE INDEX idx_sale_tax_summary_sale ON sale_tax_summary(sale_id);
 
 ALTER TABLE sale_tender ADD COLUMN tender_state TEXT NOT NULL DEFAULT 'collected'
@@ -591,7 +613,7 @@ CREATE TABLE tender_type (
                     CHECK (refundable_to IN ('same','cash','store_credit','none')),
   sort_order      INTEGER NOT NULL DEFAULT 0,
   is_active       INTEGER NOT NULL DEFAULT 1
-);
+) STRICT;
 
 -- Parked carts are register-local and NEVER sync (master plan C.14).
 CREATE TABLE parked_cart (
@@ -602,7 +624,7 @@ CREATE TABLE parked_cart (
   snapshot     TEXT NOT NULL,           -- serialized Cart
   parked_at    TEXT NOT NULL,
   expires_on   TEXT NOT NULL            -- end of business day (C.2)
-);
+) STRICT;
 
 -- Sequence integrity (G-2). Counters, never derived from time (E.6).
 -- Bumped in the SAME transaction as the document it numbers, so a crash
@@ -613,7 +635,7 @@ CREATE TABLE doc_sequence (
   next_value   INTEGER NOT NULL DEFAULT 1,
   prefix       TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (register_id, kind)
-);
+) STRICT;
 
 -- ── I-4 on the per-sale tax summary ────────────────────────────────────────
 --
@@ -665,7 +687,7 @@ CREATE TABLE stock_ledger (
   actor_id        BLOB,
   occurred_at     TEXT NOT NULL,
   business_date   TEXT NOT NULL
-);
+) STRICT;
 CREATE INDEX idx_stock_ledger_product_store ON stock_ledger(product_id, store_id, occurred_at);
 CREATE INDEX idx_stock_ledger_ref           ON stock_ledger(ref_kind, ref_id);
 
@@ -678,7 +700,7 @@ CREATE TABLE stock_cache (
   wac_minor     INTEGER NOT NULL DEFAULT 0,
   last_event_at TEXT,
   PRIMARY KEY (product_id, store_id)
-);
+) STRICT;
 CREATE INDEX idx_stock_cache_negative ON stock_cache(store_id) WHERE on_hand_milli < 0;  -- C.7
 
 -- ── I-6: stock is a ledger, and a ledger is append-only ────────────────────
@@ -728,7 +750,7 @@ CREATE VIRTUAL TABLE product_fts USING fts5(
   prefix='2 3'                                 -- search-as-you-type from 2 chars
 );
 
-CREATE TABLE product_fts_map (rowid INTEGER PRIMARY KEY, product_id BLOB NOT NULL UNIQUE);
+CREATE TABLE product_fts_map (rowid INTEGER PRIMARY KEY, product_id BLOB NOT NULL UNIQUE) STRICT;
 
 -- Triggers keep FTS in step with product and barcode writes.
 --
@@ -821,14 +843,14 @@ CREATE TABLE embedded_barcode_rule (
   is_active        INTEGER NOT NULL DEFAULT 1,
   updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   version          INTEGER NOT NULL DEFAULT 0
-);
+) STRICT;
 
 -- PLU quick codes + the tile grid for unbarcoded goods (C.1).
 CREATE TABLE plu_code (
   code        TEXT PRIMARY KEY,
   product_id  BLOB NOT NULL REFERENCES product(id),
   deleted_at  TEXT
-);
+) STRICT;
 
 CREATE TABLE tile_grid (
   id          BLOB PRIMARY KEY,
@@ -836,7 +858,7 @@ CREATE TABLE tile_grid (
   name_ar     TEXT NOT NULL,
   name_en     TEXT,
   sort_order  INTEGER NOT NULL DEFAULT 0
-);
+) STRICT;
 
 CREATE TABLE tile (
   id          BLOB PRIMARY KEY,
@@ -846,7 +868,7 @@ CREATE TABLE tile (
   label_ar    TEXT,
   color       TEXT,
   position    INTEGER NOT NULL
-);
+) STRICT;
 ```
 
 > **FTS5 must be verified, not assumed.** `rusqlite` has no `fts5` feature flag; FTS5 arrives through the bundled SQLite build, and this project uses `bundled-sqlcipher-vendored-openssl`. Microstep 1.2.6 adds a startup assertion (`SELECT * FROM pragma_compile_options WHERE compile_options = 'ENABLE_FTS5'`) that fails loudly at open rather than letting search silently return nothing.
@@ -873,7 +895,7 @@ CREATE TABLE shift (
   close_kind         TEXT CHECK (close_kind IN ('normal','forced_stale')),  -- E.53
   ack_by             BLOB REFERENCES app_user(id),   -- over/short past threshold
   UNIQUE (register_id, z_number)
-);
+) STRICT;
 -- One open shift per register (C.6).
 CREATE UNIQUE INDEX idx_shift_one_open ON shift(register_id) WHERE closed_at IS NULL;
 
@@ -887,7 +909,7 @@ CREATE TABLE cash_movement (
   actor_id      BLOB NOT NULL REFERENCES app_user(id),
   approver_id   BLOB REFERENCES app_user(id),
   occurred_at   TEXT NOT NULL
-);
+) STRICT;
 CREATE INDEX idx_cash_movement_shift ON cash_movement(shift_id);
 
 CREATE TABLE shift_count_line (          -- the denomination grid (D screen 8/9)
@@ -896,7 +918,7 @@ CREATE TABLE shift_count_line (          -- the denomination grid (D screen 8/9)
   phase              TEXT NOT NULL CHECK (phase IN ('open','close')),
   denomination_minor INTEGER NOT NULL,
   count              INTEGER NOT NULL
-);
+) STRICT;
 
 -- The Z report is an immutable stored DOCUMENT: reprintable, synced,
 -- sequentially numbered per register (C.6).
@@ -908,7 +930,7 @@ CREATE TABLE z_report (
   payload      TEXT NOT NULL,            -- the full ZReport model, frozen
   generated_at TEXT NOT NULL,
   generated_by BLOB NOT NULL REFERENCES app_user(id)
-);
+) STRICT;
 
 CREATE TABLE drawer_event (              -- no-sale opens are the classic theft tell (E.35)
   id           BLOB PRIMARY KEY,
@@ -920,7 +942,7 @@ CREATE TABLE drawer_event (              -- no-sale opens are the classic theft 
   sale_id      BLOB,
   reason       TEXT,
   occurred_at  TEXT NOT NULL
-);
+) STRICT;
 
 -- ── The cash trail is append-only ──────────────────────────────────────────
 --
@@ -983,7 +1005,7 @@ CREATE TABLE refund_line_link (
   restock               TEXT NOT NULL CHECK (restock IN ('to_stock','damaged','none')),
   reason_code           TEXT NOT NULL,   -- change_of_mind|defective|wrong_item|expired
   is_defective_claim    INTEGER NOT NULL DEFAULT 0   -- rights-based, may bypass the window (J.3)
-);
+) STRICT;
 CREATE INDEX idx_refund_link_original ON refund_line_link(original_line_id);
 
 -- Denormalised guard for the invariant that must never break:
@@ -992,7 +1014,7 @@ CREATE INDEX idx_refund_link_original ON refund_line_link(original_line_id);
 CREATE TABLE refunded_qty_cache (
   original_line_id BLOB PRIMARY KEY REFERENCES sale_line(id),
   refunded_milli   INTEGER NOT NULL DEFAULT 0
-);
+) STRICT;
 
 CREATE TABLE refund_policy (
   store_id                     BLOB PRIMARY KEY REFERENCES store(id),
@@ -1006,7 +1028,7 @@ CREATE TABLE refund_policy (
   ban_self_approval            INTEGER NOT NULL DEFAULT 1,   -- E.52
   updated_at                   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   version                      INTEGER NOT NULL DEFAULT 0
-);
+) STRICT;
 
 -- Exchange = return + new sale, settling only the difference. Under the hood it
 -- is exactly those two documents, linked (C.5). The chain matters because
@@ -1017,7 +1039,7 @@ CREATE TABLE document_link (
   to_sale    BLOB NOT NULL REFERENCES sale(id),
   link_kind  TEXT NOT NULL CHECK (link_kind IN ('exchange','correction','reprint_of')),
   created_at TEXT NOT NULL
-);
+) STRICT;
 ```
 
 ---
@@ -1047,7 +1069,7 @@ CREATE TABLE fiscal_queue (
   depends_on     BLOB REFERENCES fiscal_queue(id),
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL
-);
+) STRICT;
 CREATE INDEX idx_fiscal_queue_pending ON fiscal_queue(state, next_attempt_at)
   WHERE state IN ('queued','sending');
 CREATE UNIQUE INDEX idx_fiscal_queue_sale_kind ON fiscal_queue(sale_id, doc_kind);
@@ -1060,7 +1082,7 @@ CREATE TABLE fiscal_result (
   raw_response  TEXT NOT NULL,
   cleared_at    TEXT NOT NULL,
   environment   TEXT NOT NULL CHECK (environment IN ('production','mock'))  -- E.28
-);
+) STRICT;
 
 -- Rejections surface the ISTD error VERBATIM. The local sale is never mutated;
 -- amount corrections are a credit note plus a new invoice (E.25).
@@ -1074,7 +1096,7 @@ CREATE TABLE fiscal_dead_letter (
   resolved_at   TEXT,
   resolved_by   BLOB REFERENCES app_user(id),
   resolution    TEXT CHECK (resolution IN ('requeued','superseded','written_off'))
-);
+) STRICT;
 
 CREATE TABLE fiscal_credentials_ref (       -- POINTER only. Secrets live in the keyring.
   store_id      BLOB PRIMARY KEY REFERENCES store(id),
@@ -1084,7 +1106,7 @@ CREATE TABLE fiscal_credentials_ref (       -- POINTER only. Secrets live in the
   income_source_sequence TEXT NOT NULL,
   environment   TEXT NOT NULL CHECK (environment IN ('production','mock')),
   updated_at    TEXT NOT NULL
-);
+) STRICT;
 ```
 
 ---
@@ -1107,7 +1129,7 @@ CREATE TABLE customer (
   deleted_at    TEXT,
   updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   version       INTEGER NOT NULL DEFAULT 0
-);
+) STRICT;
 CREATE UNIQUE INDEX idx_customer_phone_live ON customer(phone)
   WHERE phone IS NOT NULL AND deleted_at IS NULL AND is_anonymized = 0;
 
@@ -1122,7 +1144,7 @@ CREATE TABLE consent (
   captured_by   BLOB REFERENCES app_user(id),
   captured_at   TEXT NOT NULL,
   channel       TEXT NOT NULL CHECK (channel IN ('register','backoffice','web'))
-);
+) STRICT;
 CREATE INDEX idx_consent_customer_kind ON consent(customer_id, kind, captured_at);
 
 -- Append-only ledger. Balance = Σ points_delta. Conflict-free across offline
@@ -1136,14 +1158,14 @@ CREATE TABLE loyalty_ledger (
   actor_id      BLOB REFERENCES app_user(id),
   reason        TEXT,
   occurred_at   TEXT NOT NULL
-);
+) STRICT;
 CREATE INDEX idx_loyalty_customer ON loyalty_ledger(customer_id, occurred_at);
 
 CREATE TABLE loyalty_balance_cache (        -- rebuildable, like stock_cache
   customer_id BLOB PRIMARY KEY REFERENCES customer(id),
   points      INTEGER NOT NULL DEFAULT 0,
   updated_at  TEXT NOT NULL
-);
+) STRICT;
 
 -- Stored value & store credit (J.1). Online-authorize-only by default (E.61).
 CREATE TABLE stored_value_ledger (
@@ -1154,7 +1176,7 @@ CREATE TABLE stored_value_ledger (
   kind          TEXT NOT NULL CHECK (kind IN ('issue','topup','redeem','expire','adjust')),
   ref_kind TEXT, ref_id BLOB,
   occurred_at   TEXT NOT NULL
-);
+) STRICT;
 ```
 
 ---
@@ -1169,7 +1191,7 @@ CREATE TABLE price_list (
   valid_from TEXT, valid_to TEXT,
   priority   INTEGER NOT NULL DEFAULT 0,
   deleted_at TEXT, updated_at TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 0
-);
+) STRICT;
 CREATE TABLE price (
   id            BLOB PRIMARY KEY,
   price_list_id BLOB NOT NULL REFERENCES price_list(id),
@@ -1177,7 +1199,7 @@ CREATE TABLE price (
   unit_minor    INTEGER NOT NULL,
   deleted_at TEXT, updated_at TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 0,
   UNIQUE (price_list_id, product_id)
-);
+) STRICT;
 -- Resolution order: promotion > store price list > base price (C.1).
 
 CREATE TABLE promotion (
@@ -1194,39 +1216,39 @@ CREATE TABLE promotion (
   customer_group TEXT,
   is_active   INTEGER NOT NULL DEFAULT 1,
   deleted_at TEXT, updated_at TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 0
-);
+) STRICT;
 
 CREATE TABLE supplier (
   id BLOB PRIMARY KEY, name TEXT NOT NULL, phone TEXT, email TEXT, tin TEXT,
   deleted_at TEXT, updated_at TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 0
-);
+) STRICT;
 CREATE TABLE goods_receipt (
   id BLOB PRIMARY KEY, store_id BLOB NOT NULL REFERENCES store(id),
   supplier_id BLOB REFERENCES supplier(id),
   reference TEXT, received_by BLOB NOT NULL REFERENCES app_user(id),
   received_at TEXT NOT NULL, business_date TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'posted' CHECK (status IN ('draft','posted'))
-);
+) STRICT;
 CREATE TABLE goods_receipt_line (
   id BLOB PRIMARY KEY, receipt_id BLOB NOT NULL REFERENCES goods_receipt(id),
   product_id BLOB NOT NULL REFERENCES product(id),
   qty_milli INTEGER NOT NULL, unit_cost_minor INTEGER NOT NULL,
   cost_confirmed INTEGER NOT NULL DEFAULT 0   -- deviation guard (E.43)
-);
+) STRICT;
 
 CREATE TABLE stock_count (
   id BLOB PRIMARY KEY, store_id BLOB NOT NULL REFERENCES store(id),
   started_at TEXT NOT NULL, started_by BLOB NOT NULL REFERENCES app_user(id),
   posted_at TEXT, posted_by BLOB REFERENCES app_user(id),
   scope TEXT NOT NULL DEFAULT 'full' CHECK (scope IN ('full','category','partial'))
-);
+) STRICT;
 CREATE TABLE stock_count_line (
   id BLOB PRIMARY KEY, count_id BLOB NOT NULL REFERENCES stock_count(id),
   product_id BLOB NOT NULL REFERENCES product(id),
   expected_milli INTEGER NOT NULL,      -- snapshot at count START; sales mid-count are fine (E.42)
   counted_milli INTEGER,
   variance_milli INTEGER
-);
+) STRICT;
 
 CREATE TABLE transfer (
   id BLOB PRIMARY KEY,
@@ -1234,13 +1256,13 @@ CREATE TABLE transfer (
   to_store   BLOB NOT NULL REFERENCES store(id),
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','in_transit','received','cancelled')),
   sent_at TEXT, received_at TEXT
-);
+) STRICT;
 CREATE TABLE transfer_line (
   id BLOB PRIMARY KEY, transfer_id BLOB NOT NULL REFERENCES transfer(id),
   product_id BLOB NOT NULL REFERENCES product(id),
   qty_sent_milli INTEGER NOT NULL,
   qty_received_milli INTEGER            -- short/damaged → adjustment at destination (E.44)
-);
+) STRICT;
 
 -- Price display is actively enforced in Jordan (J.3), so a price change
 -- produces a labels-to-reprint worklist.
@@ -1250,7 +1272,7 @@ CREATE TABLE label_reprint_queue (
   store_id BLOB NOT NULL REFERENCES store(id),
   cause TEXT NOT NULL CHECK (cause IN ('price_change','new_product','displayed_price_override')),
   queued_at TEXT NOT NULL, printed_at TEXT
-);
+) STRICT;
 ```
 
 ---
