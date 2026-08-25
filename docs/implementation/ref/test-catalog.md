@@ -85,6 +85,7 @@ Legend — **Ph**: phase the test lands in · **Kind**: `unit` · `prop` · `gol
 | 39 | Unknown barcode scan | `unknown_barcode_offers_quick_add_or_department_sale`, `queue_never_stalls_on_unknown_code` | 1 | unit |
 | 40 | Price-embedded barcode with a checksum error | `prop_corrupt_digit_never_parses_clean` | 1 | prop |
 | 41 | Unicode names (Arabic + emoji) | `golden_receipt_ar_80mm`, `unicode_names_roundtrip_through_db_and_fts` | 1 | golden |
+| 41b | Arabic typed in a different but equivalent spelling — tashkeel, أ/إ/آ for ا, ى for ي, ة for ه, tatweel | `fts_matches_arabic_with_and_without_diacritics`, `fts_matches_alef_and_yaa_spelling_variants`, `fts_matches_taa_marbuta_spelled_as_haa`, `fts_ignores_tatweel`, `fts_prefix_search_works_at_two_characters` | 1 | integration |
 
 ## Inventory
 
@@ -156,6 +157,7 @@ The tests that matter most. Each states an invariant in the words a human would 
 | `prop_split_preserves_total` *(exists)* | splitting a tender never changes the total | 0 |
 | `prop_split_proportional_preserves_total` | proration conserves to the fil, for any weights | 1 |
 | `prop_currency_mismatch_never_silently_coerces` | a JOD amount can never become a USD one | 1 |
+| `prop_sql_and_rust_folding_agree` | the fold in the 0003 generated column and the fold the query path applies produce the same string, for any input — two implementations of one rule, so they will drift unless something holds them together | 1 |
 | `prop_inclusive_net_plus_tax_equals_gross` | inclusive extraction is exact, at every rate | 1 |
 | `prop_line_tax_sum_equals_receipt_tax` | the summary is the sum, never a re-derivation | 1 |
 | `prop_exempt_and_zero_produce_zero_tax_but_differ_in_reporting` | the distinction survives to the filing report | 1 |
@@ -244,7 +246,7 @@ Not tests. Procedures, performed on real hardware, written down, and repeated by
 
 62 + 4 + 4 + 2 = 72. The deferred row previously said 3 while naming four cases, which made the
 column sum to 73 against a total of 72 — corrected here rather than left for the reader to
-reconcile. Case 1b is a drill *variant* of case 1, not a seventy-third case.
+reconcile. Cases 1b and 41b are *variants* of cases 1 and 41, not additional numbered cases.
 
 **Every one of the 72 has a row.** That is what "comprehensive" means operationally: not that nothing exists beyond this list, but that everything on it has a deliberate status.
 
