@@ -134,19 +134,35 @@ A tamper-evidence mechanism that halts trade converts a forensic signal into an 
 ### The proof-carrying token
 
 ```rust
-pub struct Authorized<const C: &'static str> {
-    pub actor: UserId,
-    pub approver: Option<UserId>,   // distinct on escalation
-    pub at: Timestamp,
+pub trait Capability { const NAME: &'static str; }
+
+pub struct Authorized<C: Capability> {
+    actor: UserId,
+    approver: Option<UserId>,        // distinct on escalation
+    at: Timestamp,
+    _capability: PhantomData<fn() -> C>,
 }
 ```
 
-Constructing one is the **only** way to obtain a `&Authorized<C>`, and every domain function that reverses money or opens the drawer **requires one in its signature**. You cannot forget the check, because you cannot call the function without it.
+A **marker type**, not a const-generic string. `Authorized<const C: &'static str>`
+does not compile — rustc: "`&'static str` is forbidden as the type of a const
+generic parameter". The full declaration, the `capabilities!` macro that derives
+`cap::ALL`, and the accessors live in [`domain-api.md`](domain-api.md) §8; this
+section is about what the token *buys*, not how it is spelled.
+
+The fields are private on purpose. Public fields make the token a struct literal
+anybody can write, which proves nothing.
+
+`authorize` is the **only** way to obtain a `&Authorized<C>`, and every domain function that reverses money or opens the drawer **requires one in its signature**. You cannot forget the check, because you cannot call the function without it.
 
 ```rust
 pub fn void_sale(sale: Sale, reason: VoidReason,
-                 auth: &Authorized<{cap::SALE_VOID}>) -> Result<…>;
+                 auth: &Authorized<cap::SaleVoid>) -> Result<…>;
 ```
+
+Two things the compiler enforces, both `trybuild` cases in 1.6.4: a validly
+obtained token for the **wrong** capability is a type error, and a token cannot
+be **forged**, because the marker field is private.
 
 ### The exhaustiveness test
 
