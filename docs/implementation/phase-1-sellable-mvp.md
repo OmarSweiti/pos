@@ -103,7 +103,7 @@ because a rebuild silently takes its triggers and indexes with it.
 and asserts `qty_milli == qty * 1000`; `the_rebuilt_table_is_still_guarded_by_the_immutability_triggers`
 proves the rebuild did not drop them. `crates/pos-db/tests/sale_immutability.rs` holds all eight.
 **Done when:** `PRAGMA user_version` is 2 and the seeded row survives with `qty_milli = 2000`. ✅
-> `sale_line_tax` and `sale_line_discount` are **not** here. They belong to `0003_catalog_depth.sql`
+> `sale_line_tax` and `sale_line_discount` are **not** here. They belong to `0003_strict_rebuild_and_catalog_depth.sql`
 > (§0003), because they reference `tax_category`, which does not exist until that migration.
 > `sale_line`'s remaining capture-time columns arrive there too, by `ALTER TABLE` rather than a
 > second rebuild — and `0003` must drop and recreate the three `sale_line` triggers around its
@@ -127,9 +127,11 @@ Per API reference §3, including `business_date_of` and `MonotonicClock`.
 ## Group 1.2 — Catalog, barcodes, search
 
 ### 1.2.1 — Migration `0003`: org / store / register / taxonomy
-**Files:** `crates/pos-db/migrations/0003_catalog_depth.sql`
-The `org`, `store`, `register`, `category`, `tax_category`, `tax_rate`, `barcode`, `setting` tables and the `product` `ALTER`s from [`ref/schema.md`](ref/schema.md).
-**Tests:** `migration_0003_creates_all_tables` · `barcode_live_uniqueness_allows_reissue_after_tombstone`
+**Files:** `crates/pos-db/migrations/0003_strict_rebuild_and_catalog_depth.sql`
+Per [`ref/schema.md`](ref/schema.md) §0003, **in that order**: the STRICT rebuild of the six tables 0001/0002 created loose, then the `org`, `store`, `register`, `category`, `tax_category`, `tax_rate`, `barcode`, `setting` tables and the `product` `ALTER`s.
+
+The rebuild goes first, and its statements are the most dangerous in the chain — they drop and recreate the tables holding every completed sale. Read the recipe before you type it: SQLite's twelve-step procedure begins by turning foreign keys off, which is a no-op inside a transaction, and `defer_foreign_keys` does not substitute. Staging tables are why this commits with foreign keys enforced.
+**Tests:** `migration_0003_creates_all_tables` · `barcode_live_uniqueness_allows_reissue_after_tombstone` · `the_rebuild_keeps_every_row_of_a_completed_sale` · `the_rebuilt_tables_are_all_strict` · `the_rebuild_restores_the_immutability_triggers` · `no_staging_table_survives_the_rebuild` · `after_the_rebuild_the_six_tables_enforce_their_types`
 **Done when:** a tombstoned barcode code can be reassigned to a different product; two live rows with the same code cannot exist.
 
 ### 1.2.2 — `Product` and `UnitOfMeasure` in the domain
@@ -239,7 +241,7 @@ Grouped by `(component, treatment, rate)`. The **exact sum** of line taxes, neve
 **Done when:** exempt and zero-rated items on one receipt produce two summary rows, not one.
 
 ### 1.3.7 — Seed the Jordanian tax data
-**Files:** `crates/pos-db/migrations/0003_catalog_depth.sql` (seed block)
+**Files:** `crates/pos-db/migrations/0003_strict_rebuild_and_catalog_depth.sql` (seed block)
 `STD16` 16%, `RED04` 4%, `ZERO` 0%, `EXEMPT`. `valid_from` at go-live, `valid_to` NULL.
 **Done when:** `resolve_components(STD16, …, now)` returns one GST component at 160 000 ppm.
 > Which product sits in which category is the merchant's accountant's call, not this seed's. Flagged as merchant decision #10.

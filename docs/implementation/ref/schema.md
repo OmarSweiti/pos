@@ -24,14 +24,13 @@ instead of 57 times, and because `INTEGER PRIMARY KEY` rowid aliases (`audit_log
 `sync_outbox.seq`) must keep accepting a NULL on insert to auto-assign — `STRICT` preserves
 that, an explicit sweep invites someone to "fix" it.
 
-**Six tables are not `STRICT`, and cannot be here: `product`, `sale`, `sale_line`,
-`sale_tender`, `sync_cursor`, `sync_outbox`.** They ship in 0001/0002, and migrations are
-never edited once committed. `STRICT` cannot be added by `ALTER TABLE`, so those six need a
-twelve-step table rebuild in a migration of their own — the shape 0002 already used for
-`sale_line`. Until that lands, `sale.id`, `sale_line.id`, `sale_tender.id`, `product.id` and
-`sync_cursor.entity` still accept NULL, and `total_minor` still accepts a string. That is a
-real remaining gap, recorded rather than rounded off; it is cheap now and dearer with every
-register in the field.
+**All six shipped tables are now `STRICT` too.** `product`, `sale`, `sale_line`,
+`sale_tender`, `sync_cursor` and `sync_outbox` were created loose by 0001/0002. `STRICT`
+cannot be added by `ALTER TABLE` and a committed migration is never edited, so 0003 rebuilds
+them — first in the migration, before anything below points a foreign key at one, because
+rebuilding a table with inbound references is far worse later. See the head of §0003 for the
+staging recipe and why SQLite's documented twelve-step procedure cannot be used inside the
+migration runner's transaction.
 
 <!-- fact-tables: sale, sale_line, sale_tender, sale_line_tax, sale_line_discount, sale_tax_summary, audit_log, stock_ledger, cash_movement, z_report, drawer_event, loyalty_ledger -->
 
@@ -59,7 +58,7 @@ fact-ness is a design judgement rather than something the DDL records.
 | # | File | Adds | Phase |
 |---|---|---|---|
 | 0002 | `0002_sale_integrity.sql` | **shipped** — `sale_line.qty`→`qty_milli` (G-12), FK indexes, receipt-number uniqueness, I-4 immutability triggers | 1 |
-| 0003 | `0003_catalog_depth.sql` | stores, registers, categories, tax categories & rates, barcodes, settings | 1 |
+| 0003 | `0003_strict_rebuild_and_catalog_depth.sql` | **rebuilds the six 0001/0002 tables as `STRICT`**, corrects two I-4 triggers, then adds stores, registers, categories, tax categories & rates, barcodes, settings | 1 |
 | 0004 | `0004_people_and_audit.sql` | users, roles, capabilities, sessions, hash-chained audit log | 1 |
 | 0005 | `0005_sale_columns_and_sequences.sql` | sale identity/shift/training/rounding columns, per-register counters | 1 |
 | 0006 | `0006_stock_ledger.sql` | stock ledger + rebuildable on-hand/WAC cache | 1 |
@@ -137,11 +136,230 @@ catches it.
 
 ---
 
-## 0003 — catalog depth  ·  Phase 1, microsteps 1.2.1–1.2.3
+## 0003 — strict rebuild and catalog depth  ·  Phase 1, microsteps 1.2.1–1.2.3
 
 Introduces the organisational spine the whole schema hangs from. `store` and `register` must exist in Phase 1 even though multi-store is Phase 4 — retrofitting a `store_id` onto a live stock ledger is a data migration nobody enjoys.
 
 ```sql
+-- ── Rebuilding the six shipped tables as STRICT ────────────────────────────
+--
+-- 0001 and 0002 created `product`, `sale`, `sale_line`, `sale_tender`,
+-- `sync_outbox` and `sync_cursor` without STRICT, so today `total_minor` accepts
+-- the string 'ten point five' and `sale.id` accepts NULL. Every other table in
+-- this file is STRICT; these six are the ones a register actually opens, which
+-- makes them the wrong six to leave loose. STRICT cannot be added by ALTER TABLE
+-- and a committed migration is never edited, so the table has to be rebuilt, and
+-- it is done here — first, before anything below points a foreign key at it.
+-- Rebuilding a table with inbound references is far worse later.
+--
+-- WHY THE STAGING TABLES, rather than SQLite's documented twelve-step procedure:
+-- that procedure begins by turning foreign keys off, and `PRAGMA foreign_keys`
+-- is a no-op inside a transaction. The migration runner wraps every file in one,
+-- and `open()` enables foreign keys before migrating. `PRAGMA defer_foreign_keys`
+-- is not a substitute: DROP TABLE performs an implicit delete that records a
+-- deferred violation, and re-creating the parent afterwards does not clear it —
+-- the COMMIT fails. Verified both ways.
+--
+-- So: copy each table into an unconstrained staging table, drop the originals
+-- children-first, create the STRICT replacements, copy back parents-first, drop
+-- the staging tables, then restore the indexes and the triggers. Nothing
+-- constrained holds a row pointing at a dropped parent at any point, so this
+-- commits with foreign keys enforced. `CREATE TABLE ... AS SELECT` is what makes
+-- the staging tables constraint-free.
+--
+-- One deliberate consequence: if a database already contains a row that violates
+-- the STRICT types — a REAL in a `*_minor` column — the copy back refuses and the
+-- migration fails, loudly, with nothing changed. That is the correct outcome. It
+-- has never happened, because no register has shipped.
+
+CREATE TABLE stage_product     AS SELECT * FROM product;
+CREATE TABLE stage_sale        AS SELECT * FROM sale;
+CREATE TABLE stage_sale_line   AS SELECT * FROM sale_line;
+CREATE TABLE stage_sale_tender AS SELECT * FROM sale_tender;
+CREATE TABLE stage_sync_outbox AS SELECT * FROM sync_outbox;
+CREATE TABLE stage_sync_cursor AS SELECT * FROM sync_cursor;
+
+-- Children before parents. Dropping the originals also drops their indexes and
+-- the 0002 triggers, both restored below.
+DROP TABLE sale_line;
+DROP TABLE sale_tender;
+DROP TABLE sale;
+DROP TABLE product;
+DROP TABLE sync_outbox;
+DROP TABLE sync_cursor;
+
+CREATE TABLE product (
+  id            BLOB PRIMARY KEY,
+  sku           TEXT NOT NULL UNIQUE,
+  name          TEXT NOT NULL,
+  price_minor   INTEGER NOT NULL,
+  currency      TEXT NOT NULL,
+  is_active     INTEGER NOT NULL DEFAULT 1,
+  deleted_at    TEXT,
+  updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  version       INTEGER NOT NULL DEFAULT 0
+) STRICT;
+
+CREATE TABLE sale (
+  id             BLOB PRIMARY KEY,
+  receipt_number TEXT NOT NULL,
+  register_id    BLOB NOT NULL,
+  status         TEXT NOT NULL CHECK (status IN ('completed','voided','parked')),
+  subtotal_minor INTEGER NOT NULL,
+  tax_minor      INTEGER NOT NULL,
+  total_minor    INTEGER NOT NULL,
+  currency       TEXT NOT NULL,
+  ref_sale_id    BLOB,
+  business_date  TEXT NOT NULL,
+  completed_at   TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE sale_line (
+  id               BLOB PRIMARY KEY,
+  sale_id          BLOB NOT NULL REFERENCES sale(id),
+  product_id       BLOB NOT NULL REFERENCES product(id),
+  qty_milli        INTEGER NOT NULL,          -- G-12: 1 unit = 1000 (I-3)
+  unit_price_minor INTEGER NOT NULL,
+  discount_minor   INTEGER NOT NULL DEFAULT 0,
+  tax_minor        INTEGER NOT NULL DEFAULT 0,
+  total_minor      INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE sale_tender (
+  id           BLOB PRIMARY KEY,
+  sale_id      BLOB NOT NULL REFERENCES sale(id),
+  method       TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL,
+  psp_ref      TEXT,
+  change_minor INTEGER NOT NULL DEFAULT 0
+) STRICT;
+
+CREATE TABLE sync_outbox (
+  seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity     TEXT NOT NULL,
+  entity_id  BLOB NOT NULL,
+  op         TEXT NOT NULL,
+  payload    TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  pushed_at  TEXT
+) STRICT;
+
+CREATE TABLE sync_cursor (
+  entity         TEXT PRIMARY KEY,
+  server_version INTEGER NOT NULL DEFAULT 0
+) STRICT;
+
+-- Parents before children, so the foreign keys hold at every step.
+INSERT INTO product     SELECT id, sku, name, price_minor, currency, is_active,
+                               deleted_at, updated_at, version FROM stage_product;
+INSERT INTO sale        SELECT id, receipt_number, register_id, status, subtotal_minor,
+                               tax_minor, total_minor, currency, ref_sale_id,
+                               business_date, completed_at FROM stage_sale;
+INSERT INTO sale_line   SELECT id, sale_id, product_id, qty_milli, unit_price_minor,
+                               discount_minor, tax_minor, total_minor FROM stage_sale_line;
+INSERT INTO sale_tender SELECT id, sale_id, method, amount_minor, psp_ref,
+                               change_minor FROM stage_sale_tender;
+INSERT INTO sync_outbox SELECT seq, entity, entity_id, op, payload, created_at,
+                               pushed_at FROM stage_sync_outbox;
+INSERT INTO sync_cursor SELECT entity, server_version FROM stage_sync_cursor;
+
+DROP TABLE stage_product;
+DROP TABLE stage_sale;
+DROP TABLE stage_sale_line;
+DROP TABLE stage_sale_tender;
+DROP TABLE stage_sync_outbox;
+DROP TABLE stage_sync_cursor;
+
+-- The indexes 0001 and 0002 created on these tables.
+CREATE INDEX        idx_sale_business_date   ON sale(business_date);
+CREATE INDEX        idx_outbox_unpushed      ON sync_outbox(pushed_at) WHERE pushed_at IS NULL;
+CREATE UNIQUE INDEX idx_sale_receipt_number  ON sale(register_id, receipt_number);
+CREATE INDEX        idx_sale_line_sale       ON sale_line(sale_id);
+CREATE INDEX        idx_sale_tender_sale     ON sale_tender(sale_id);
+
+-- ── The I-4 triggers, restored — and two of them corrected ─────────────────
+--
+-- Dropping the tables dropped 0002's triggers, so they are recreated here. Two
+-- come back with a fix rather than a copy: 0002's UPDATE guards on `sale_line`
+-- and `sale_tender` tested the OLD parent only, which refused an edit to a row
+-- already on a completed sale and permitted the inbound move — take a row
+-- belonging to a PARKED sale and re-point its `sale_id` at a completed one. The
+-- closed document grows a line, or gains a tender, and not one protected row was
+-- edited. Reproduced against the shipped chain: a completed sale went from one
+-- line to two.
+--
+-- `sale_tender` looked protected because its guard already compared
+-- `NEW.sale_id <> OLD.sale_id`, but that comparison sat behind the same
+-- OLD-parent WHEN, so it only ever blocked moves OUT of a completed sale.
+
+CREATE TRIGGER sale_no_update_once_completed
+BEFORE UPDATE ON sale
+WHEN OLD.status = 'completed'
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: a completed sale is immutable — issue a correcting document');
+END;
+
+CREATE TRIGGER sale_no_delete_once_completed
+BEFORE DELETE ON sale
+WHEN OLD.status = 'completed'
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: a completed sale cannot be deleted — issue a correcting document');
+END;
+
+CREATE TRIGGER sale_line_no_insert_once_completed
+BEFORE INSERT ON sale_line
+WHEN (SELECT status FROM sale WHERE id = NEW.sale_id) = 'completed'
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: cannot add a line to a completed sale');
+END;
+
+CREATE TRIGGER sale_line_no_update_once_completed
+BEFORE UPDATE ON sale_line
+WHEN (SELECT status FROM sale WHERE id = OLD.sale_id) = 'completed'
+  OR (SELECT status FROM sale WHERE id = NEW.sale_id) = 'completed'
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: a line of a completed sale is immutable');
+END;
+
+CREATE TRIGGER sale_line_no_delete_once_completed
+BEFORE DELETE ON sale_line
+WHEN (SELECT status FROM sale WHERE id = OLD.sale_id) = 'completed'
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: a line of a completed sale cannot be deleted');
+END;
+
+CREATE TRIGGER sale_tender_no_insert_once_completed
+BEFORE INSERT ON sale_tender
+WHEN (SELECT status FROM sale WHERE id = NEW.sale_id) = 'completed'
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: cannot add a tender to a completed sale');
+END;
+
+CREATE TRIGGER sale_tender_no_delete_once_completed
+BEFORE DELETE ON sale_tender
+WHEN (SELECT status FROM sale WHERE id = OLD.sale_id) = 'completed'
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: a tender of a completed sale cannot be deleted');
+END;
+
+CREATE TRIGGER sale_tender_amount_frozen_once_completed
+BEFORE UPDATE ON sale_tender
+-- The settlement columns stay open on a completed sale (a semi-integrated
+-- capture settles asynchronously; 0005 adds tender_state/captured_at). The money,
+-- the method and the parent do not move — in either direction. The inbound half
+-- requires the parent to have actually CHANGED, or it would fire on every
+-- settlement update and close the exception it exists to protect.
+WHEN ((SELECT status FROM sale WHERE id = OLD.sale_id) = 'completed'
+      AND (NEW.amount_minor <> OLD.amount_minor
+        OR NEW.change_minor <> OLD.change_minor
+        OR NEW.method       <> OLD.method
+        OR NEW.sale_id      <> OLD.sale_id))
+   OR (NEW.sale_id <> OLD.sale_id
+       AND (SELECT status FROM sale WHERE id = NEW.sale_id) = 'completed')
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: the amount of a tender on a completed sale is immutable');
+END;
+
 -- ── Organisation ───────────────────────────────────────────────────────────
 CREATE TABLE org (
   id            BLOB PRIMARY KEY,
@@ -357,7 +575,8 @@ accepts a `REFERENCES` clause there, so there is no second rebuild.
 **The triggers have to come off first.** `0002` froze every line of a completed
 sale, and the backfill below is an `UPDATE` on exactly those rows. Dropping and
 recreating them in this same migration is the rule stated in 0002: a guard is
-either restored in the migration that suspends it, or it is gone. The trigger
+either restored in the migration that suspends it, or it is gone — and it is
+restored in the form the rebuild above established, not the form 0002 shipped. The trigger
 test in `crates/pos-db/tests/sale_immutability.rs` is what notices if it is not.
 
 ```sql
@@ -388,7 +607,12 @@ UPDATE sale_line
 
 CREATE UNIQUE INDEX idx_sale_line_no ON sale_line(sale_id, line_no);
 
--- Restored exactly as 0002 defined them.
+-- Restored as the REBUILD at the head of this migration defines them, not as
+-- 0002 did. 0002's UPDATE guard tested the OLD parent only, which permitted a row
+-- on a parked sale to be re-pointed at a completed one; the rebuild fixed that,
+-- and this block runs afterwards, so restoring 0002's wording here would quietly
+-- undo the fix. It did, once — `no_fact_row_can_be_reparented_into_a_completed_sale`
+-- is what caught it.
 CREATE TRIGGER sale_line_no_insert_once_completed
 BEFORE INSERT ON sale_line
 WHEN (SELECT status FROM sale WHERE id = NEW.sale_id) = 'completed'
@@ -399,6 +623,7 @@ END;
 CREATE TRIGGER sale_line_no_update_once_completed
 BEFORE UPDATE ON sale_line
 WHEN (SELECT status FROM sale WHERE id = OLD.sale_id) = 'completed'
+  OR (SELECT status FROM sale WHERE id = NEW.sale_id) = 'completed'
 BEGIN
   SELECT RAISE(ABORT, 'I-4: a line of a completed sale is immutable');
 END;
@@ -439,53 +664,6 @@ CREATE TABLE sale_line_discount (
   percent_ppm    INTEGER            -- the percentage the fiscal builder emits (C-2)
 ) STRICT;
 CREATE INDEX idx_sale_line_discount_line ON sale_line_discount(sale_line_id);
-
--- ── Superseding two 0002 triggers that guard the wrong direction ───────────
---
--- 0002's UPDATE guards on `sale_line` and `sale_tender` test the OLD parent
--- only. That refuses an edit to a row already on a completed sale, and permits
--- the inbound move: take a row belonging to a PARKED sale and re-point its
--- `sale_id` at a completed one. The completed document grows a line, or gains a
--- tender, without a single protected row being edited. Reproduced against the
--- shipped chain: a completed sale went from one line to two.
---
--- `sale_tender` looks protected because its guard already compares
--- `NEW.sale_id <> OLD.sale_id`, but that comparison sits behind the same
--- OLD-parent WHEN, so it only blocks moves OUT of a completed sale.
---
--- 0002 is committed and is never edited (conventions §9). Forward-only means
--- DROP and recreate here, which is why these two live in 0003 rather than
--- beside the triggers they replace.
-
-DROP TRIGGER sale_line_no_update_once_completed;
-CREATE TRIGGER sale_line_no_update_once_completed
-BEFORE UPDATE ON sale_line
-WHEN (SELECT status FROM sale WHERE id = OLD.sale_id) = 'completed'
-  OR (SELECT status FROM sale WHERE id = NEW.sale_id) = 'completed'
-BEGIN
-  SELECT RAISE(ABORT, 'I-4: a line of a completed sale is immutable');
-END;
-
-DROP TRIGGER sale_tender_amount_frozen_once_completed;
-CREATE TRIGGER sale_tender_amount_frozen_once_completed
-BEFORE UPDATE ON sale_tender
--- The settlement columns stay open on a completed sale (a semi-integrated
--- capture settles asynchronously; 0005 adds tender_state/captured_at). The
--- money, the method and the parent do not move — in either direction.
-WHEN ((SELECT status FROM sale WHERE id = OLD.sale_id) = 'completed'
-      AND (NEW.amount_minor <> OLD.amount_minor
-        OR NEW.change_minor <> OLD.change_minor
-        OR NEW.method       <> OLD.method
-        OR NEW.sale_id      <> OLD.sale_id))
--- The inbound half must require the parent to have actually CHANGED. Without
--- `NEW.sale_id <> OLD.sale_id` this clause fires on every update to a tender
--- already sitting on a completed sale, which is exactly the settlement path the
--- exception above exists to keep open.
-   OR (NEW.sale_id <> OLD.sale_id
-       AND (SELECT status FROM sale WHERE id = NEW.sale_id) = 'completed')
-BEGIN
-  SELECT RAISE(ABORT, 'I-4: the amount of a tender on a completed sale is immutable');
-END;
 
 -- ── I-4 on the tax and discount detail ─────────────────────────────────────
 --

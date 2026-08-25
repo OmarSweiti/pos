@@ -18,6 +18,7 @@ Legend — **Ph**: phase the test lands in · **Kind**: `unit` · `prop` · `gol
 | 3 | App killed with parked carts | `prop_park_resume_roundtrip_is_identity`, `parked_carts_survive_restart` | 1 | prop |
 | 4 | SQLite `BadKey` — keychain wiped | `bad_key_yields_recovery_state_not_panic` + **keychain-loss restore drill** | 1 / 5 | unit + drill |
 | 4b | A fact table is left writable — the audit trail, stock ledger or cash trail edited after the fact | `every_shipped_fact_table_refuses_update_and_delete`, `the_fact_table_list_has_no_duplicates_and_names_nothing_twice`, `a_fact_table_that_does_not_exist_yet_is_not_silently_counted` | 1 | integration |
+| 4c | A migration rebuilds the tables holding every completed sale | `the_rebuild_keeps_every_row_of_a_completed_sale`, `the_rebuilt_tables_are_all_strict`, `the_rebuild_restores_the_immutability_triggers`, `no_staging_table_survives_the_rebuild`, `after_the_rebuild_the_six_tables_enforce_their_types` | 1 | integration |
 | 5 | Disk full | `low_disk_blocks_new_sales_and_alarms` | 1 | integration |
 | 6 | Clock skew / cashier changes system time | `prop_monotonic_clock_never_decreases`, `clock_jump_back_reports_anomaly` | 1 | prop |
 | 7 | DST / timezone; Z day boundary belongs to the shift | `sale_at_0100_belongs_to_previous_business_date`, `z_belongs_to_the_shifts_business_date_not_the_wall_clock`, `business_date_survives_timezone_change` | 1 / 2 | unit |
@@ -247,7 +248,7 @@ Not tests. Procedures, performed on real hardware, written down, and repeated by
 
 62 + 4 + 4 + 2 = 72. The deferred row previously said 3 while naming four cases, which made the
 column sum to 73 against a total of 72 — corrected here rather than left for the reader to
-reconcile. Cases 1b, 4b and 41b are *variants* of cases 1, 4 and 41, not additional numbered cases.
+reconcile. Cases 1b, 4b, 4c and 41b are *variants* of cases 1, 4 and 41, not additional numbered cases.
 
 **Every one of the 72 has a row.** That is what "comprehensive" means operationally: not that nothing exists beyond this list, but that everything on it has a deliberate status.
 
