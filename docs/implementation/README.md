@@ -6,7 +6,7 @@ The buildable plan for this POS: what to type, in what order, and how you will k
 
 ## Start here
 
-1. **[`00-master-plan.md`](00-master-plan.md)** — the spine. Verdict on the master plan, the four corrections research turned up, the phase map, the risk register. **20 minutes.**
+1. **[`00-master-plan.md`](00-master-plan.md)** — the spine. Verdict on the master plan, the phase map, the risk register, the long-lead register, and **§4a, the errata and concordance**: every correction to the immutable source plans, every superseded name, and every open item that can still change an architecture. **25 minutes**, and §4a is the part you cannot skip if you have read `docs/plan/` first.
 2. **[`01-conventions.md`](01-conventions.md)** — the engineering law. Nine invariants, naming, errors, testing, definition of done. **Read once, then keep it open.**
 3. **[`02-development-workflow.md`](02-development-workflow.md)** — how the work gets done: every command, the feature lifecycle, manual testing, the drills, the rituals. **Keep it open next to the law.**
 4. **[`03-github-workflow.md`](03-github-workflow.md)** — how the work gets tracked and shipped: the four branches, issues, the board, pull requests, the two release channels. **Read §3 before your first push** — it says which rules a machine enforces and which are only written down.
@@ -16,11 +16,15 @@ The buildable plan for this POS: what to type, in what order, and how you will k
 
 Then work the phase you are in, consulting `ref/` as the microsteps point you there.
 
-**Current implementation frontier (24 August 2026):** Phase 0 is closed; the next product
-microstep is [`1.1.1 — Currency`](phase-1-sellable-mvp.md#111--currency). Repository-hardening
-work may land between numbered product steps, but it does not advance that frontier. Confirm the
-active issue/branch before starting so this dated pointer and the delivery board cannot silently
-diverge.
+**Current implementation frontier (25 August 2026):** Phase 0 is closed and the product build has
+not started; the next product microstep is `1.1.1 — Currency` in
+[`phase-1-sellable-mvp.md`](phase-1-sellable-mvp.md). Repository-hardening and documentation work
+may land between numbered product steps, but it does not advance that frontier.
+
+**This pointer is maintained by station 13 of the feature lifecycle** — the documentation loop in
+[`02-development-workflow.md`](02-development-workflow.md) §4.13 — and by nothing else. It is a
+dated convenience, not a source of truth: the delivery board and the merged history are. If the two
+disagree, the history is right and this line is a bug; fix it in the same commit that noticed.
 
 ---
 
@@ -35,24 +39,24 @@ docs/implementation/
 ├── 03-github-workflow.md          branches, issues, the board, PRs, release channels
 │
 ├── phase-0-closeout.md            historical close-out record
-├── phase-1-sellable-mvp.md        cash · tax · Arabic receipts 8–12 weeks
-├── phase-2-money-grade.md         cards · refunds · fiscal     8–10 weeks
-├── phase-3-connected.md           sync · back office · CRM     8–10 weeks
-├── phase-4-depth.md               promos · supply · reports    8–10 weeks
-├── phase-5-harden-and-launch.md   certification · launch       6–10 weeks
+├── phase-1-sellable-mvp.md        cash · tax · Arabic receipts 14–20 weeks
+├── phase-2-money-grade.md         cards · refunds · fiscal     10–13 weeks
+├── phase-3-connected.md           sync · back office · CRM     11–14 weeks
+├── phase-4-depth.md               promos · supply · reports     9–12 weeks
+├── phase-5-harden-and-launch.md   certification · launch        9–13 weeks
 │
 └── ref/
-    ├── plan-validation.md         the audit + every source
+    ├── plan-validation.md         the audit of record + every source
     ├── domain-api.md              every pos-domain type & signature
-    ├── schema.md                  migrations 0002→0012
+    ├── schema.md                  migrations 0002→0012 — authoritative for every migration number
     ├── tax-jordan.md              GST as an engine
     ├── fiscal-jofotara.md         the highest-risk component
     ├── ipc-contract.md            every Tauri command
     ├── sync-protocol.md           ownership, chaos, accepted risks
     ├── hardware-and-receipts.md   traits, Arabic raster, lab checklist
     ├── ui-spec.md                 screens, RTL, keyboard map
-    ├── test-catalog.md            E.1–E.72 → named tests
-    ├── security-compliance.md     PDPL · PCI · audit chain · secrets
+    ├── test-catalog.md            92 edge cases → named tests
+    ├── security-compliance.md     PDPL · PCI · tenancy · keys · audit chain
     └── merchant-decisions.md      the questionnaire
 ```
 
@@ -85,16 +89,25 @@ Done when:     Σ line tax == receipt tax, exactly, ∀ inputs
 
 ---
 
-## The four corrections
+## The four corrections, and what became of them
 
-Research found four claims in the business master plan that are wrong. One invalidates a phase gate. They appear in [`ref/plan-validation.md`](ref/plan-validation.md) with sources, and again inline at the exact microstep they change — so reading only a phase file cannot lead you to implement the wrong thing.
+Research found four claims in the business master plan that are wrong. A later independent audit
+found that **two of the corrections were themselves wrong**, in the direction that matters: each
+would have rejected valid fiscal documents. The current disposition of all four, the concordance
+that maps every superseded name to its current authority, and the open items none of them closed
+live in one place — **[`00-master-plan.md`](00-master-plan.md) §4a, "Errata and concordance"**.
+[`ref/plan-validation.md`](ref/plan-validation.md) is the audit of record and carries a dated
+revision note against each correction in place.
 
-| | Correction |
-|---|---|
-| **C-1** | **JoFotara has no sandbox.** The master plan's Phase-2 exit gate is unbuildable as written |
-| **C-2** | ISTD rejects **global discounts entirely** — per-line, as a percentage, not merely prorated |
-| **C-3** | ISTD recomputes totals at **9 decimals**, tolerating **< 0.001 JOD** drift |
-| **C-4** | GST registration thresholds are **75k goods / 30k services / 10k special-tax goods** |
+| | Original correction | Now |
+|---|---|---|
+| **C-1** | **JoFotara has no sandbox.** The master plan's Phase-2 exit gate is unbuildable as written | **Retained.** But the specification *is* obtainable, so pinning it moved from Phase 5 into microstep **2.7.0**, ahead of every fiscal build step |
+| **C-2** | ISTD rejects global discounts — per-line, as a percentage, with an exact round-trip | **Superseded.** Exact line allowance **amounts** plus a document recap equal to their sum. A percentage round-trip is not a representation of the money, and gating on it dead-letters correct baskets |
+| **C-3** | ISTD recomputes totals at 9 decimals, tolerating < 0.001 JOD drift | **Superseded.** The tolerance is not sourced. The local check is a half-fil per-line comparison plus exact identities over the document's own carried values |
+| **C-4** | GST thresholds are 75k goods / 30k services / 10k special-tax goods | **Numbers retained, categories corrected.** The 10k class is the *producer* of SST goods. A minimarket that resells tobacco does not enter it |
+
+Each still appears inline at the exact microstep it changes, so reading only a phase file cannot
+lead you to implement the wrong thing.
 
 ---
 
@@ -105,12 +118,19 @@ If you read nothing else:
 - **Money is `i64` minor units, always.** No float touches money, anywhere.
 - **The minor-unit exponent is per-currency data.** JOD = 3.
 - **Quantities are `i64` milli-units.** Weighed and discrete share one representation.
-- **Completed sales are immutable.** Corrections are new documents.
+- **Completed sales are immutable.** Corrections are new documents. What looks like a mutation —
+  tender settlement, shift close — is an append-only transition fact plus a rebuildable projection.
 - **Price and name are copied onto the sale line** at capture time.
 - **Stock is a ledger.** On-hand is a rebuildable cache.
-- **Ordering comes from server versions and UUIDv7**, never a device clock.
+- **Ordering comes from server versions and the outbox sequence**, never a device clock. UUIDv7 is
+  identity and index locality; it embeds a device timestamp and cannot be the ordering authority.
 - **`pos-domain` is pure.** No I/O, no clock, no randomness — they are arguments.
-- **Every fact write and its outbox row commit in one transaction.**
+- **Every fact write and its outbox row commit in one transaction**, and a business transaction's
+  facts travel as one commit group that the server applies whole or not at all.
+- **No base sale command accepts an uncontrolled price.** Price-bearing IPC arguments exist only on
+  audited `cart_override_price`, capped audited `cart_add_department_sale`, and inert,
+  content-hashed `product_quick_add_prepare`; every privileged effect consumes its bound
+  `ApprovalHandle` in the effect-and-audit transaction.
 
 ---
 
@@ -119,6 +139,8 @@ If you read nothing else:
 | Question | Where |
 |---|---|
 | Is the business plan any good? | [`ref/plan-validation.md`](ref/plan-validation.md) |
+| The source plan says X and this set says Y — which wins? | [`00-master-plan.md`](00-master-plan.md) §4a |
+| What is still unanswered, and what do we do meanwhile? | [`00-master-plan.md`](00-master-plan.md) §4a.3, then the `⚠️ OPEN` blocks in `ref/` |
 | What do I do first? | [`02-development-workflow.md`](02-development-workflow.md) §1 |
 | What happened during Phase 0? | [`phase-0-closeout.md`](phase-0-closeout.md) — historical record |
 | Which command do I type, and how do I test it by hand? | [`02-development-workflow.md`](02-development-workflow.md) |
@@ -138,8 +160,9 @@ If you read nothing else:
 
 ## Keeping this set alive
 
-- **Re-run the validation audit quarterly.** Jordanian rates move by Cabinet decree, JoFotara is still adding waves and changing validation, and the PDPL authority is still standing up. A compliance claim has a shelf life.
-- **When a merchant or a pilot surfaces something new, it becomes E.73** in the test catalog — with a test, an accepted risk, or an explicit out-of-scope. A surprise that becomes none of the three will happen again.
+- **Re-run the validation audit quarterly**, and re-diff the pinned ISTD manifest in the same pass. Jordanian rates move by Cabinet decree, JoFotara is still adding waves and changing validation, and the PDPL register is now live. A compliance claim has a shelf life.
+- **When a merchant or a pilot surfaces something new, it becomes E.93** in the test catalog — with a test, an accepted risk, an open question with a stated default, or an explicit out-of-scope. A surprise that becomes none of those will happen again.
+- **When a correction turns out to be wrong, correct it in [`00-master-plan.md`](00-master-plan.md) §4a and mark it in place in `ref/plan-validation.md`.** Two of the original four were wrong; leaving an audit reading as still-true is how a fix becomes a defect.
 - **When a microstep turns out to be wrong at the keyboard, fix the microstep.** These files are the plan of record, not a historical artefact.
 
-*Verified against the repository and current sources on 20 August 2026.*
+*Verified against the repository and current sources on 20 August 2026; remediated against an independent seven-lens audit on 25 August 2026.*
