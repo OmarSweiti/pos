@@ -267,7 +267,7 @@ Every variant from API reference §6.3. Exhaustive and data-carrying — the UI 
 
 ### 1.4.7 — Price override
 **Files:** `crates/pos-domain/src/pricing.rs`
-Requires `Authorized<{cap::PRICE_OVERRIDE}>`, a reason code, and respects a floor (cost, or cost + x%) and a ceiling.
+Requires `Authorized<cap::PriceOverride>`, a reason code, and respects a floor (cost, or cost + x%) and a ceiling.
 **Reasons ship with a dedicated `displayed_price` variant** — Jordan's ministry inspects price display, and "the shelf tag says 0.99" must be a one-tap, always-audited action that also feeds the label-reprint worklist (J.3, E.70).
 **Tests:** `override_below_floor_is_denied` · `override_above_max_price_is_hard_blocked` (E.71) · `displayed_price_override_queues_a_label_reprint`
 
@@ -338,7 +338,9 @@ The `cap` module from API reference §8, and the default matrix from master plan
 
 ### 1.6.4 — `Authorized<C>` and `authorize`
 **Files:** `crates/pos-domain/src/permissions.rs`
-The proof-carrying token. Constructing one is the *only* way to obtain a `&Authorized<C>`, and privileged domain functions require one — so the check cannot be forgotten, because the function cannot be called without it.
+The proof-carrying token, as a **marker type** — `Authorized<C: Capability>` with a private `PhantomData<fn() -> C>`. Not `Authorized<const C: &'static str>`, which does not compile on any stable rustc: `&'static str` is forbidden as the type of a const generic parameter. Resist "fixing" it with a runtime `&str` field, which throws away the property the design exists for.
+
+`authorize` is the *only* way to obtain a `&Authorized<C>`, and privileged domain functions require one — so the check cannot be forgotten, because the function cannot be called without it. The `capabilities!` macro derives `cap::ALL` from the marker types, so a capability the IPC catalogue uses can never again be missing from the list.
 **Tests:** `cashier_cannot_void_a_sale` · `manager_self_approval_denied_when_policy_bans_it` (E.52) · `deactivated_user_denied` · `offline_auth_window_expires` (E.55)
 
 ### 1.6.5 — Audit hash chain

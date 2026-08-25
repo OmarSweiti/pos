@@ -35,7 +35,7 @@ crates/pos-domain/src/
 ├── pricing.rs       discounts, overrides, proration    [1.4.x]
 ├── tender.rs        tenders, change, cash rounding     [1.5.x]
 ├── receipt.rs       ReceiptModel (render input)        [1.7.x]
-├── permissions.rs   capability strings + Authorized<C> [1.6.x]
+├── permissions.rs   capability marker types + Authorized<C> [1.6.x]
 ├── audit.rs         hash-chain construction            [1.6.x]
 ├── refund.rs        refundable balances, credit docs   [2.3.x]
 ├── shift.rs         shift lifecycle, over/short, Z     [2.4.x]
@@ -543,13 +543,13 @@ pub fn set_qty(cart: Cart, line: SaleLineId, q: Qty) -> Result<Cart, CartError>;
 pub fn void_line(cart: Cart, line: SaleLineId, reason: VoidReason, by: UserId)
                                                     -> Result<(Cart, AuditIntent), CartError>;
 pub fn apply_line_discount(cart: Cart, line: SaleLineId, d: DiscountRequest,
-                           auth: &Authorized<{cap::DISCOUNT_MANUAL}>)
+                           auth: &Authorized<cap::DiscountManual>)
                                                     -> Result<(Cart, AuditIntent), CartError>;
 pub fn apply_basket_discount(cart: Cart, d: DiscountRequest,
-                           auth: &Authorized<{cap::DISCOUNT_MANUAL}>)
+                           auth: &Authorized<cap::DiscountManual>)
                                                     -> Result<(Cart, AuditIntent), CartError>;
 pub fn override_price(cart: Cart, line: SaleLineId, to: Money, reason: OverrideReason,
-                      auth: &Authorized<{cap::PRICE_OVERRIDE}>)
+                      auth: &Authorized<cap::PriceOverride>)
                                                     -> Result<(Cart, AuditIntent), CartError>;
 pub fn attach_customer(cart: Cart, c: CustomerId)   -> Result<Cart, CartError>;
 pub fn set_buyer_tin(cart: Cart, tin: String)       -> Result<Cart, CartError>;
@@ -565,7 +565,7 @@ pub fn begin_finalize(t: Tendering)                  -> Result<Finalizing, CartE
 pub fn complete(f: Finalizing, effects: FinalizeEffects) -> Result<CompletedSale, CartError>;
 
 pub fn void_sale(sale: Sale, reason: VoidReason,
-                 auth: &Authorized<{cap::SALE_VOID}>)
+                 auth: &Authorized<cap::SaleVoid>)
                                                      -> Result<(VoidedSale, AuditIntent), CartError>;
 ```
 
@@ -704,40 +704,86 @@ Properties: `prop_split_tender_sums_to_total`, `prop_cash_rounding_only_on_final
 "RBAC enforced in Rust, not in the UI" needs a mechanism, or the twentieth command ships without a check.
 
 ```rust
-pub mod cap {
-    pub const SALE_CREATE: &str        = "sale.create";
-    pub const SALE_VOID: &str          = "sale.void";
-    pub const LINE_VOID: &str          = "line.void";
-    pub const DISCOUNT_MANUAL: &str    = "discount.manual";
-    pub const PRICE_OVERRIDE: &str     = "price.override";
-    pub const REFUND_RECEIPTED: &str   = "refund.receipted";
-    pub const REFUND_ABOVE_THRESHOLD: &str = "refund.above_threshold";
-    pub const REFUND_RECEIPTLESS: &str = "refund.receiptless";
-    pub const REFUND_CASH_FOR_CARD: &str = "refund.cash_for_card";
-    pub const DRAWER_OPEN: &str        = "drawer.open";
-    pub const CASH_MOVEMENT: &str      = "cash.movement";
-    pub const SHIFT_OPEN: &str         = "shift.open";
-    pub const SHIFT_CLOSE: &str        = "shift.close";
-    pub const ZREPORT_RUN: &str        = "zreport.run";
-    pub const PRODUCT_EDIT: &str       = "product.edit";
-    pub const TRAINING_TOGGLE: &str    = "training_mode.toggle";
-    pub const SETTINGS_EDIT: &str      = "settings.edit";
-    pub const USER_ADMIN: &str         = "user.admin";
-    pub const REPORTS_ALL: &str        = "reports.all";
-
-    pub const ALL: &[&str] = &[ /* every constant above */ ];
+/// A capability is a marker TYPE, not a const-generic string.
+///
+/// `Authorized<const C: &'static str>` does not compile, and never has:
+/// rustc answers "`&'static str` is forbidden as the type of a const generic
+/// parameter — the only supported types are integers, `bool`, and `char`".
+/// String const generics remain unstable. Do NOT "fix" this back into a
+/// runtime `&str` field: that discards the entire compile-time property this
+/// design exists for, silently. The marker type below keeps that property,
+/// on stable, and is what 1.6.4 builds.
+pub trait Capability {
+    const NAME: &'static str;
 }
 
-/// A proof-carrying token. Constructing one is the ONLY way to get a
-/// `&Authorized<C>`, and domain functions that reverse money REQUIRE one.
-/// You cannot forget the check, because you cannot call the function without it.
-pub struct Authorized<const C: &'static str> {
-    pub actor: UserId,
-    pub approver: Option<UserId>,     // distinct on escalation (E.52)
-    pub at: Timestamp,
+/// Declares each capability exactly once: its marker type, its wire name, and
+/// its membership in `ALL`. One source, so a name and a type cannot drift —
+/// which is how `sale.park`, `sale.resume` and the cash-movement capability
+/// came to be used by the IPC catalogue while missing from the list.
+macro_rules! capabilities {
+    ($($ident:ident => $name:literal),+ $(,)?) => {
+        pub mod cap {
+            use super::Capability;
+            $(
+                #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+                pub struct $ident;
+                impl Capability for $ident { const NAME: &'static str = $name; }
+            )+
+            /// Derived from the types themselves, never hand-maintained.
+            pub const ALL: &[&str] = &[$(<$ident as Capability>::NAME),+];
+        }
+    };
 }
 
-pub fn authorize<const C: &'static str>(
+capabilities! {
+    SaleCreate           => "sale.create",
+    SalePark             => "sale.park",
+    SaleResume           => "sale.resume",
+    SaleVoid             => "sale.void",
+    LineVoid             => "line.void",
+    DiscountManual       => "discount.manual",
+    PriceOverride        => "price.override",
+    RefundReceipted      => "refund.receipted",
+    RefundAboveThreshold => "refund.above_threshold",
+    RefundReceiptless    => "refund.receiptless",
+    RefundCashForCard    => "refund.cash_for_card",
+    DrawerOpen           => "drawer.open",
+    CashMovement         => "cash.movement",       // all five kinds (schema §cash_movement)
+    ShiftOpen            => "shift.open",
+    ShiftClose           => "shift.close",
+    ZReportRun           => "zreport.run",
+    ProductEdit          => "product.edit",
+    CustomerLookup       => "customer.lookup",     // PII: name, phone (PDPL) [3.x]
+    TrainingToggle       => "training_mode.toggle",
+    SettingsEdit         => "settings.edit",
+    UserAdmin            => "user.admin",
+    ReportsAll           => "reports.all",
+}
+
+/// A proof-carrying token. `authorize` is the ONLY way to obtain one, and
+/// domain functions that reverse money REQUIRE one. You cannot forget the
+/// check, because you cannot call the function without it.
+///
+/// Every field is PRIVATE. Public fields would make the token a struct literal
+/// anyone can write — `Authorized { actor, approver, at }` — which is not a
+/// proof of anything. Read them through the accessors.
+pub struct Authorized<C: Capability> {
+    actor: UserId,
+    approver: Option<UserId>,        // distinct on escalation (E.52)
+    at: Timestamp,
+    _capability: PhantomData<fn() -> C>,
+}
+
+impl<C: Capability> Authorized<C> {
+    pub fn actor(&self) -> UserId { self.actor }
+    pub fn approver(&self) -> Option<UserId> { self.approver }
+    pub fn at(&self) -> Timestamp { self.at }
+    /// The capability this token proves, for the audit row.
+    pub const fn capability() -> &'static str { C::NAME }
+}
+
+pub fn authorize<C: Capability>(
     actor: UserId, grants: &GrantSet, approver: Option<(UserId, &GrantSet)>,
     policy: &EscalationPolicy, at: Timestamp,
 ) -> Result<Authorized<C>, PermissionError>;
@@ -751,6 +797,13 @@ pub enum PermissionError {
     #[error("offline authorization window expired")]       OfflineAuthExpired,               // E.55
 }
 ```
+
+**Two properties, both proven by the compiler rather than by review.** A token for
+the wrong capability is a *type* error — `expected &Authorized<SaleVoid>, found
+&Authorized<DiscountManual>` — even though it was validly obtained. And a token
+cannot be forged outside the module, because `_capability` is private: attempting
+the struct literal is `error[E0451]: field `_capability` ... is private`. Both are
+`trybuild` cases in 1.6.4.
 
 **The exhaustiveness test** (`ipc_commands_all_declare_a_capability`, microstep 1.6.7) walks the IPC command registry and fails if any command has no capability entry. Adding a command without declaring one breaks CI.
 
@@ -816,7 +869,7 @@ pub fn refundable_lines(original: &CompletedSale, prior: &[CompletedSale])
 
 pub fn build_refund(
     original: &CompletedSale, req: &RefundRequest,
-    auth: &Authorized<{cap::REFUND_RECEIPTED}>, ctx: &RefundContext,
+    auth: &Authorized<cap::RefundReceipted>, ctx: &RefundContext,
 ) -> Result<RefundDocument, RefundError>;
 
 /// Cards refund to the original card via the PSP against `psp_ref`.

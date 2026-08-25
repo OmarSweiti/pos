@@ -135,7 +135,7 @@ Legend — **Ph**: phase introduced · **Cap**: required capability · **A**: wr
 | `shift_close_begin` | `()` → `CloseSession` | 2 | `shift.close` | | |
 | `shift_close_submit_count` | `{ session_id, count_by_denomination }` → `CloseResult` | 2 | `shift.close` | ✓ | |
 | `shift_force_close_stale` | `{ shift_id }` → `CloseResult` | 2 | `shift.close` | ✓ | ✓ |
-| `cash_movement` | `{ kind, amount_minor, reason, note? }` → `()` | 2 | `cash.paid_in_out` | ✓ | ✓ |
+| `cash_movement` | `{ kind, amount_minor, reason, note? }` → `()` | 2 | `cash.movement` | ✓ | ✓ |
 | `drawer_open_no_sale` | `{ reason }` → `()` | 2 | `drawer.open` | ✓ | ✓ |
 | `report_x` | `()` → `XReport` | 2 | `zreport.run` | | |
 | `report_z` | `()` → `ZReport` | 2 | `zreport.run` | ✓ | |
