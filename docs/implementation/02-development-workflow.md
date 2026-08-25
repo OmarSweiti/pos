@@ -889,6 +889,7 @@ on their worst day.
 | Drill | How to cause it | Must happen |
 |---|---|---|
 | **Power cut mid-finalize** (E.1) | kill the register during finalize: `pkill -9 -f target/debug/terminal` — match the build path, not the word "terminal", or you kill your shell | on restart: exactly one sale, one stock event, one outbox row |
+| **Power cut *after* the receipt printed** (E.1b) | the same kill, but only once the receipt is in your hand — the customer has paid and gone | on restart the sale is **there**. Zero sales is unambiguously a bug here, which is the whole point of the variant: in E.1 above, zero sales is the *correct* answer to a kill before commit, so E.1 alone cannot detect a commit that was acknowledged and then lost. `synchronous = FULL` is what makes this pass; `pos-db` refuses to open without it |
 | **App killed with parked carts** (E.3) | `pkill -9` with two carts parked | both carts resume intact |
 | **Keychain wiped** (E.4) | macOS Keychain Access → delete `pos-terminal`, then launch | a named recovery screen, not a panic and not a silent new database |
 | **Clock moved backwards** (E.6) | `sudo date -v-2H` (macOS), then sell | an audit anomaly is recorded; timestamps never decrease; sequences unaffected |

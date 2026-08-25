@@ -13,6 +13,7 @@ Legend — **Ph**: phase the test lands in · **Kind**: `unit` · `prop` · `gol
 | # | Case | Test | Ph | Kind |
 |---|---|---|---|---|
 | 1 | Power cut mid-`Finalizing` | `interrupted_finalize_resumes_without_double_stock_event`, `…_without_double_outbox_row`, `finalize_is_atomic_under_injected_failure` | 1 | integration |
+| 1b | Power cut **after** the receipt printed | **post-receipt power-cut drill** — the customer has paid and gone, so on restart the sale must be *there*. Case 1 cannot detect this on its own: a kill before commit correctly yields zero sales, and a lost acknowledged commit yields zero sales too. Enforced by `synchronous = FULL`, which `pos_db::open` refuses to run without | 1 | drill |
 | 2 | Power cut during card `Tendering` | `unknown_triggers_status_query_before_any_retry`, `status_query_approved_attaches_tender` | 2 | unit |
 | 3 | App killed with parked carts | `prop_park_resume_roundtrip_is_identity`, `parked_carts_survive_restart` | 1 | prop |
 | 4 | SQLite `BadKey` — keychain wiped | `bad_key_yields_recovery_state_not_panic` + **keychain-loss restore drill** | 1 / 5 | unit + drill |
@@ -236,10 +237,14 @@ Not tests. Procedures, performed on real hardware, written down, and repeated by
 
 | Status | Count | Cases |
 |---|---|---|
-| ✅ Tested | 63 | all except those below |
+| ✅ Tested | 62 | all except those below |
 | ⚠️ Accepted risk, disclosed | 4 | 31, 55, 61 *(only when enabled)*, 63 |
-| 🧩 Deferred with a named hook | 3 | 45, 64, 66, 68 |
+| 🧩 Deferred with a named hook | 4 | 45, 64, 66, 68 |
 | 🚫 Out of v1 scope with a rationale | 2 | 67, 72 |
+
+62 + 4 + 4 + 2 = 72. The deferred row previously said 3 while naming four cases, which made the
+column sum to 73 against a total of 72 — corrected here rather than left for the reader to
+reconcile. Case 1b is a drill *variant* of case 1, not a seventy-third case.
 
 **Every one of the 72 has a row.** That is what "comprehensive" means operationally: not that nothing exists beyond this list, but that everything on it has a deliberate status.
 
