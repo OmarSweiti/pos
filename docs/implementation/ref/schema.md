@@ -2,6 +2,25 @@
 
 `0001_init.sql` and `0002_sale_integrity.sql` exist and are committed. Everything below them is new, appended in order, **never edited once committed** (conventions §9).
 
+**The eleven fact tables, and the rule that keeps them facts.** `sale`, `sale_line`,
+`sale_tender`, `sale_line_tax`, `sale_line_discount`, `sale_tax_summary`, `audit_log`,
+`stock_ledger`, `cash_movement`, `z_report`, `drawer_event`. Each one refuses `UPDATE` and
+`DELETE` through a `BEFORE` trigger that `RAISE(ABORT)`s — the sale-scoped ones once the
+parent sale is `completed`, the append-only ones unconditionally. `sale_tender` is the single
+deliberate exception on `UPDATE`: a semi-integrated card capture settles asynchronously, so
+the row still moves, but `amount_minor` is frozen.
+
+0002 shipped guards for three of them. The other eight were declared facts and left writable —
+`audit_log`'s own DDL asserted "Append-only: no UPDATE, no DELETE, ever" with nothing enforcing
+it, which made the only forensic control in the design the one control an insider could edit.
+The guards below close that.
+
+**A fact table added by a later migration gets its triggers in the same migration, and a row in
+`FACT_TABLES` in `crates/pos-db/tests/fact_table_guards.rs`, in the same commit.** That list is
+the single source of truth; anything on it that lacks its guards fails the moment its migration
+ships. Enumerating it from the schema instead would be better, and is not possible while
+fact-ness is a design judgement rather than something the DDL records.
+
 **Conventions applied throughout:** UUIDv7 as 16-byte `BLOB` primary keys · money as `INTEGER` minor units named `*_minor` · quantity as `INTEGER` milli-units named `*_milli` · rates as `INTEGER` parts-per-million named `*_ppm` · timestamps as ISO-8601 UTC `TEXT` named `*_at` · store-local trading days as `YYYY-MM-DD` `TEXT` named `*_date` · booleans as `INTEGER` 0/1 named `is_*` · soft-delete tombstones (`deleted_at`) on **reference** data only, never on facts.
 
 | # | File | Adds | Phase |
@@ -371,6 +390,63 @@ CREATE TABLE sale_line_discount (
   percent_ppm    INTEGER            -- the percentage the fiscal builder emits (C-2)
 );
 CREATE INDEX idx_sale_line_discount_line ON sale_line_discount(sale_line_id);
+
+-- ── I-4 on the tax and discount detail ─────────────────────────────────────
+--
+-- These rows ARE the arithmetic of what the customer was charged. Change one
+-- after the fact and the receipt stops explaining its own total, while every
+-- report built from the detail silently disagrees with the sale it came from.
+-- Same rule as `sale_line` in 0002, one hop further out: the parent sale is
+-- reached through `sale_line`.
+
+CREATE TRIGGER sale_line_tax_no_insert_once_completed
+BEFORE INSERT ON sale_line_tax
+WHEN (SELECT s.status FROM sale s JOIN sale_line l ON l.sale_id = s.id
+       WHERE l.id = NEW.sale_line_id) = 'completed'
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: cannot add tax detail to a completed sale');
+END;
+
+CREATE TRIGGER sale_line_tax_no_update_once_completed
+BEFORE UPDATE ON sale_line_tax
+WHEN (SELECT s.status FROM sale s JOIN sale_line l ON l.sale_id = s.id
+       WHERE l.id = OLD.sale_line_id) = 'completed'
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: the tax detail of a completed sale is immutable');
+END;
+
+CREATE TRIGGER sale_line_tax_no_delete_once_completed
+BEFORE DELETE ON sale_line_tax
+WHEN (SELECT s.status FROM sale s JOIN sale_line l ON l.sale_id = s.id
+       WHERE l.id = OLD.sale_line_id) = 'completed'
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: the tax detail of a completed sale cannot be deleted');
+END;
+
+CREATE TRIGGER sale_line_discount_no_insert_once_completed
+BEFORE INSERT ON sale_line_discount
+WHEN (SELECT s.status FROM sale s JOIN sale_line l ON l.sale_id = s.id
+       WHERE l.id = NEW.sale_line_id) = 'completed'
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: cannot add a discount to a completed sale');
+END;
+
+CREATE TRIGGER sale_line_discount_no_update_once_completed
+BEFORE UPDATE ON sale_line_discount
+WHEN (SELECT s.status FROM sale s JOIN sale_line l ON l.sale_id = s.id
+       WHERE l.id = OLD.sale_line_id) = 'completed'
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: the discount on a completed sale is immutable');
+END;
+
+CREATE TRIGGER sale_line_discount_no_delete_once_completed
+BEFORE DELETE ON sale_line_discount
+WHEN (SELECT s.status FROM sale s JOIN sale_line l ON l.sale_id = s.id
+       WHERE l.id = OLD.sale_line_id) = 'completed'
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: the discount on a completed sale cannot be deleted');
+END;
+
 ```
 
 ---
@@ -443,6 +519,26 @@ CREATE TABLE audit_log (
 );
 CREATE INDEX idx_audit_action_at ON audit_log(action, at);
 CREATE INDEX idx_audit_actor_at  ON audit_log(actor_id, at);
+
+-- ── audit_log is append-only, and now says so in something other than prose ──
+--
+-- The DDL above already asserts "Append-only: no UPDATE, no DELETE, ever".
+-- Nothing enforced it, which made the only forensic control in the design the
+-- one control an insider could edit. The hash chain detects a modified row but
+-- cannot detect a deleted tail, so DELETE is the attack that matters most.
+
+CREATE TRIGGER audit_log_no_update
+BEFORE UPDATE ON audit_log
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: audit_log is append-only — no UPDATE, ever');
+END;
+
+CREATE TRIGGER audit_log_no_delete
+BEFORE DELETE ON audit_log
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: audit_log is append-only — no DELETE, ever');
+END;
+
 ```
 
 ---
@@ -518,6 +614,34 @@ CREATE TABLE doc_sequence (
   prefix       TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (register_id, kind)
 );
+
+-- ── I-4 on the per-sale tax summary ────────────────────────────────────────
+--
+-- This is the table the filing report reads. If it can move after the sale
+-- completes, the return and the receipts stop agreeing, and the exempt versus
+-- zero-rated distinction the whole tax design protects becomes editable.
+
+CREATE TRIGGER sale_tax_summary_no_insert_once_completed
+BEFORE INSERT ON sale_tax_summary
+WHEN (SELECT status FROM sale WHERE id = NEW.sale_id) = 'completed'
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: cannot add a tax summary row to a completed sale');
+END;
+
+CREATE TRIGGER sale_tax_summary_no_update_once_completed
+BEFORE UPDATE ON sale_tax_summary
+WHEN (SELECT status FROM sale WHERE id = OLD.sale_id) = 'completed'
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: the tax summary of a completed sale is immutable');
+END;
+
+CREATE TRIGGER sale_tax_summary_no_delete_once_completed
+BEFORE DELETE ON sale_tax_summary
+WHEN (SELECT status FROM sale WHERE id = OLD.sale_id) = 'completed'
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: the tax summary of a completed sale cannot be deleted');
+END;
+
 ```
 
 ---
@@ -556,6 +680,27 @@ CREATE TABLE stock_cache (
   PRIMARY KEY (product_id, store_id)
 );
 CREATE INDEX idx_stock_cache_negative ON stock_cache(store_id) WHERE on_hand_milli < 0;  -- C.7
+
+-- ── I-6: stock is a ledger, and a ledger is append-only ────────────────────
+--
+-- On-hand is SUM(qty_delta), cached and rebuildable. That only holds if the
+-- events are never edited: an UPDATE here changes history retroactively, and
+-- the cache rebuild "correctly" reproduces the altered past, so the two agree
+-- and nothing looks wrong. Corrections are new events, which is what a ledger
+-- is for.
+
+CREATE TRIGGER stock_ledger_no_update
+BEFORE UPDATE ON stock_ledger
+BEGIN
+  SELECT RAISE(ABORT, 'I-6: stock_ledger is append-only — post a correcting event');
+END;
+
+CREATE TRIGGER stock_ledger_no_delete
+BEFORE DELETE ON stock_ledger
+BEGIN
+  SELECT RAISE(ABORT, 'I-6: stock_ledger is append-only — post a correcting event');
+END;
+
 ```
 
 ---
@@ -776,6 +921,50 @@ CREATE TABLE drawer_event (              -- no-sale opens are the classic theft 
   reason       TEXT,
   occurred_at  TEXT NOT NULL
 );
+
+-- ── The cash trail is append-only ──────────────────────────────────────────
+--
+-- Every fraud tell the X/Z design produces — over/short, no-sale opens, the
+-- movement history behind expected cash — is only evidence if the rows cannot
+-- be tidied up afterwards by the person they incriminate. A Z report is the
+-- immutable end-of-day summary by definition; re-running one is a new row.
+
+CREATE TRIGGER cash_movement_no_update
+BEFORE UPDATE ON cash_movement
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: cash_movement is append-only — post a correcting movement');
+END;
+
+CREATE TRIGGER cash_movement_no_delete
+BEFORE DELETE ON cash_movement
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: cash_movement is append-only — post a correcting movement');
+END;
+
+CREATE TRIGGER z_report_no_update
+BEFORE UPDATE ON z_report
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: a Z report is immutable once taken');
+END;
+
+CREATE TRIGGER z_report_no_delete
+BEFORE DELETE ON z_report
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: a Z report cannot be deleted');
+END;
+
+CREATE TRIGGER drawer_event_no_update
+BEFORE UPDATE ON drawer_event
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: drawer_event is append-only — the no-sale trail is evidence');
+END;
+
+CREATE TRIGGER drawer_event_no_delete
+BEFORE DELETE ON drawer_event
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: drawer_event is append-only — the no-sale trail is evidence');
+END;
+
 ```
 
 ---
