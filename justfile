@@ -180,6 +180,11 @@ logical-css:
 prop-names:
     {{ python }} ./scripts/check-prop-test-names.py
 
+# The Phase-5 coverage matrix is executable evidence, not a typed total: every
+# named case must reconcile with its runner, owner microstep and phase gate.
+test-catalog:
+    {{ python }} ./scripts/check-test-catalog.py
+
 # Both clippy invocations pass no lint flags of their own, so the workspace lint
 # table is the entire lint scope of every gate — and it is inert in any member
 # that does not opt in with `[lints] workspace = true`.
@@ -237,6 +242,7 @@ lint: node-version-check
     {{ python }} ./scripts/verify-pg-migrations.py --mapping-only
     bash ./scripts/check-logical-css.sh
     {{ python }} ./scripts/check-prop-test-names.py
+    {{ python }} ./scripts/check-test-catalog.py
     pnpm biome ci --error-on-warnings .
     bash ./scripts/check-doc-links.sh
     bash ./scripts/lint-scripts.sh
@@ -261,6 +267,7 @@ guards:
     {{ python }} ./scripts/verify-pg-migrations.py --self-test
     bash ./scripts/check-logical-css.sh --self-test
     {{ python }} ./scripts/check-prop-test-names.py --self-test
+    {{ python }} ./scripts/check-test-catalog.py --self-test
     {{ python }} ./scripts/check-domain-purity.py --self-test
     {{ python }} ./scripts/check-workspace-lints.py --self-test
     {{ python }} ./scripts/check-node-version.py --self-test
