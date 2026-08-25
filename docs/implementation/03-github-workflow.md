@@ -202,6 +202,10 @@ gh run watch "$final_release" --exit-status
 gh release view "$final_tag"       # a DRAFT — inspect every artifact before publishing
 ```
 
+`notes/` is local scratch for the filled-in promotion bodies. It is not in `.gitignore`, so it will
+show in `git status` — do not `git add` it. The evidence that matters is in the pull request, not in
+a file on your disk.
+
 The explicit identifiers are load-bearing. `gh run watch` without an id may attach to an unrelated
 run, and `gh pr merge` without a PR argument may act on whichever branch the CLI happens to infer.
 The shared PR watcher derives the exact workflow/job set from the PR's base, head, and complete
@@ -249,6 +253,8 @@ Branch protection **and** rulesets are both gated. Neither is available. So:
 | Sensitive paths, oversized staged blobs, and Git inspection failures are refused | [`.githooks/pre-commit`](../../.githooks/pre-commit) with NUL-safe staged-index inspection | local only |
 | Secret-like content is detected independently of its filename | Gitleaks in pre-commit, pre-push, CI commit-range scanning, and the weekly security workflow | GitHub-native scanning/push protection remains unavailable; local scans can be skipped |
 | Tests, lint, domain purity, schema parity, real PostgreSQL, web build, docs, guards and supply-chain policy run | `ci.yml` | visible and logged, but not a required-check wall on this plan |
+| The coverage matrix reconciles with the suite, the phase files, normative reference names, and its own arithmetic | [`scripts/check-test-catalog.py`](../../scripts/check-test-catalog.py): `just lint` runs the real reconciliation; `just guards` runs `--self-test` | **local only.** Neither invocation has a step in `ci.yml`, and adding one is a change to the frozen workflow surface that needs its own reviewed edit. It is the only checker in the local lint gate with no CI step, so a push that skipped `just lint` is not caught |
+| The release signing key is never on a step that compiles third-party code | **nothing yet.** `release.yml` passes `TAURI_SIGNING_PRIVATE_KEY` and its password to the same step that builds the frontend and the Rust binary | this row is a **requirement, not a control**. [`ref/security-compliance.md`](ref/security-compliance.md) §6b specifies the split — an unsigned job that compiles and reaches the network, then a signing step that receives artifact digests and holds the key with no checkout, no dependency installation and no compilation. Until it lands, any build script or proc macro in the dependency graph can read the key. It is one reason the first external release is deliberately blocked |
 | Workflow syntax and Actions security are audited | `security.yml` using actionlint and zizmor | findings are annotations/check failures, not protected-branch requirements |
 | Third-party Actions are immutable | every `uses:` is a complete commit SHA; the post-merge policy script enables repository SHA pinning only after a local allowlist/default-head preflight | exact selected-action allow patterns are unavailable for this private user-owned repository, so `allowed_actions` remains the repository's existing mode |
 | A release identifies the exact validated branch tip | `release.yml` validates SemVer/RC grammar, annotated tag object, branch tip, versions and successful CI for the same SHA | release signing secrets and OS signing still have to be provisioned before an external release |
@@ -493,6 +499,12 @@ separate publisher has the minimal `contents: write` token and no signing secret
 stays draft while the workflow attaches an SPDX JSON SBOM and a SHA-256 manifest over every
 application asset and the SBOM.
 
+**Build and sign are still the same step, and that is the one release control this file cannot yet
+call done.** A step that compiles a Cargo and pnpm dependency graph runs third-party build scripts
+and proc macros by design, and any one of them can read the environment holding the updater key.
+The required shape is in §3 and specified in [`ref/security-compliance.md`](ref/security-compliance.md)
+§6b.
+
 GitHub release immutability is enabled on the live repository. Once a draft is published, its tag
 and assets cannot be silently replaced; a bad build is a **new patch**, never a moved tag.
 Drafts do not have that atomic tag/asset binding. The workflow rechecks the exact annotated tag
@@ -507,8 +519,8 @@ different attempts. The exact command and publication gate are in
 
 The pipeline is intentionally not ready to publish an external installer yet. It remains blocked
 until a human configures verified tag signing, the repository updater-signing secrets and updater
-public configuration, OS code signing/notarisation (5.5.1), and a restore path that has actually
-been exercised. See [workflow §15](02-development-workflow.md) and
+public configuration, OS code signing/notarisation (5.5.1), the signing/build split above, and a
+restore path that has actually been exercised. See [workflow §15](02-development-workflow.md) and
 [`../../SECURITY.md`](../../SECURITY.md).
 
 ### A hotfix
@@ -637,6 +649,23 @@ What is already done about it:
 What to watch: tag deliberately. `-rc` tags are for candidates that will actually be installed,
 not for every merge to `staging`.
 
+Whether that is *enough* is not known, and estimating it from Linux timings is worthless when one
+platform costs ten times another:
+
+> ⚠️ **OPEN — blocks `5.5.1`.** Does the promotion-and-release cadence in this document fit inside
+> this plan's monthly Actions allowance once every release runs three real platform builds? Nothing
+> here has measured a full release, and the figure above is GitHub's published Free-plan allowance
+> rather than an observed bill. Default until answered: the cadence in this section — `-rc` tags
+> only for candidates that will actually be installed, `concurrency` cancellation on work branches
+> but never on `staging` or `main`, and the release `guard` job ahead of every platform build.
+> Owner: `5.5.1`, the first microstep that must ship signed installers on a schedule.
+> Source that settles it: this repository's own Actions usage report for the first month that runs
+> a complete three-platform release, read against the plan's current included-minutes figure.
+
+The consequence if it does not fit is not a broken build, it is a **stalled release in the last week
+of a month** — which is exactly when a merchant-facing fix wants to ship. Read the usage page after
+the first three-platform promotion, before planning the second.
+
 ---
 
 ## 9 · Jira — free, worth connecting, not worth centring
@@ -725,8 +754,10 @@ successful agent continuation until the link is corrected. A doc set is only wor
 cross-references.
 
 If a shareable, browsable page is genuinely needed — for a partner or an investor —
-`status-page.html` is the checked-in local view to share. No publication workflow or stable hosted
-URL is configured. It is a *view* of the doc set, never the source.
+[`status-page.html`](status-page.html) is the checked-in local view to share. No publication
+workflow or stable hosted URL is configured. It is a *view* of the doc set, never the source: when
+the spine changes, the page is corrected from [`00-master-plan.md`](00-master-plan.md), never the
+other way round.
 
 ---
 
@@ -744,6 +775,7 @@ Honest list, same spirit as [workflow §17](02-development-workflow.md).
 | Jira | free and connectable, deliberately deferred until someone outside engineering needs it — §9 |
 | Protected release environment | excluded with the other paid-plan controls. Release jobs instead separate read-only signing from the minimal write-only publisher |
 | Release signing material | verified signed tags, updater secrets/public configuration, and platform signing/notarisation must be configured before the intentionally blocked first external release |
+| The signing/build split | the updater key currently reaches the step that compiles third-party code. [`ref/security-compliance.md`](ref/security-compliance.md) §6b specifies the two-job shape that fixes it; it is a workflow change with its own reviewed edit, and it lands before any external release — §3 |
 | Signed ordinary commits | optional before external contributors; release tags are a separate required policy |
 | GitHub-native secret scanning / push protection | unavailable. Independent Gitleaks scanning runs staged, pre-push, in CI, and weekly; it does not claim to be the native product |
 | Exact selected-Action allowlisting | unavailable for this private non-enterprise repository. Full-SHA references and the local repository allowlist apply now; the live SHA-only setting remains pending the required post-merge activation |

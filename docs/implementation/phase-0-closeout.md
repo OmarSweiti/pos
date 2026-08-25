@@ -6,6 +6,13 @@
 > for current local commands and [`03-github-workflow.md`](03-github-workflow.md) for current branch,
 > CI, and release procedures. Commands and counts below are dated evidence unless a section says it
 > has been reconciled.
+>
+> **Superseded on 25 August 2026** by the audit remediation. This file is an authority on nothing
+> current: the engineering law is [`01-conventions.md`](01-conventions.md) §1, the ledger of every
+> correction to the source plans is [`00-master-plan.md`](00-master-plan.md) §4a, and the shipped
+> migration chain is [`ref/schema.md`](ref/schema.md). Where this file and any of those three
+> disagree, this file is the older document and loses. Individual dated notes below mark the two
+> places where a line here would otherwise read as a live instruction.
 
 **Goal:** turn a working scaffold into a foundation you can build on for two years without tripping over it.
 **Effort:** 1–2 days.
@@ -269,6 +276,12 @@ git commit -m "docs: consolidate plans under docs/plan; add implementation set  
 
 **Done when:** `docs/plan/` holds all three, the repository root holds no loose plan files, and every link in `docs/implementation/` resolves (`just docs-links`, added in 0.4.3).
 
+> **Note, 25 August 2026 — the third command was deliberately not run.**
+> [`docs/phase-0-remaining-setup.md`](../phase-0-remaining-setup.md) is still in the tree, because
+> the sections above cite its dated evidence and a copy under `docs/plan/` is immutable and cannot
+> carry a warning banner. It keeps its own "do not execute" banner instead. Do not delete it to
+> close this step.
+
 ### 0.4.2 — `CLAUDE.md` / `CONTRIBUTING.md`
 
 A short file at the root pointing at [`01-conventions.md`](01-conventions.md) and stating the nine invariants in one screen. Anyone — human or agent — landing in this repository should hit the money rule before they hit a keyboard.
@@ -308,5 +321,10 @@ Recorded so nobody adds it here and delays the gate:
 - **No `pos-fiscal` crate.** Phase 2.
 - **No schema beyond `0001`.** Phase 1 opens with `0002`, and `0002` includes the `sale_line.qty` fix (gap G-12) — which is why no sale row may exist yet.
 - **No UI beyond the smoke panel.** The sale screen is Phase 1, and it is built RTL-first from its first commit, not retrofitted.
+
+> **Note, 25 August 2026.** The third bullet is spent: `0002_sale_integrity.sql` has since shipped
+> under microstep 1.1.7, so the chain now continues at `0003`. Derive the current chain from the
+> migration directory and the Rust `MIGRATIONS` array — [`ref/schema.md`](ref/schema.md) is
+> authoritative for every migration number, and no committed migration is ever edited.
 
 → **Next:** [`phase-1-sellable-mvp.md`](phase-1-sellable-mvp.md)
