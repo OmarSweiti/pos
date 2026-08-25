@@ -2,13 +2,22 @@
 
 `0001_init.sql` and `0002_sale_integrity.sql` exist and are committed. Everything below them is new, appended in order, **never edited once committed** (conventions §9).
 
+**Every table below is `STRICT`** — 56 of them, against six that cannot be (below) plus
+the FTS5 virtual table, which must not be. A previous revision of this note said 55 and four
+shadow tables; the count was produced by a script that classified the real table
+`product_fts_map` as an FTS shadow because its name starts with `product_fts`. The correct
+split is 56 strict, 6 loose, 1 virtual, 4 shadow.
+
 **Every table below is `STRICT`.** SQLite's default is that a declared type is a
 suggestion: `INTEGER NOT NULL` accepts `'ten point five'`, and a `REAL` lands in a
 `*_minor` column without complaint — which is invariant I-1 defeated by the storage
 engine rather than by anyone's mistake. `STRICT` makes the declared type the rule.
 
 It also closes the NULL-identity hole for free: **in a `STRICT` table the primary key
-columns are implicitly `NOT NULL`**, composite keys included. Before this, two rows with
+columns are implicitly `NOT NULL`**, composite keys included — which is a fix for the
+forty-odd identity columns where a NULL was never meaningful, and a *break* anywhere a
+nullable column sits in a key on purpose. `user_role.store_id` was the one such column
+in this schema; see the note on that table. Before this, two rows with
 a NULL `id` inserted cleanly into any table here. There is deliberately no separate
 `NOT NULL` sweep over the id columns, because `STRICT` already states it once per table
 instead of 57 times, and because `INTEGER PRIMARY KEY` rowid aliases (`audit_log.seq`,
@@ -567,12 +576,29 @@ CREATE TABLE role_capability (
   PRIMARY KEY (role_id, capability)
 ) STRICT;
 
+-- `store_id` is NULL for an org-wide grant, and that NULL is load-bearing: it is
+-- how an owner or an area manager holds a role across every store.
+--
+-- It therefore cannot be part of the PRIMARY KEY of a STRICT table. SQLite makes
+-- every primary-key component of a STRICT table implicitly NOT NULL — composite
+-- keys included — so `PRIMARY KEY (user_id, role_id, store_id)` under STRICT
+-- makes an org-wide grant impossible to insert. That is exactly what happened
+-- when STRICT was applied here, and it is why the key is gone.
+--
+-- Two partial unique indexes give back what the key was for, without forbidding
+-- the NULL: one grant per (user, role, store), and one org-wide grant per
+-- (user, role). A plain unique index over the triple would not do, because SQLite
+-- treats NULLs as distinct and would allow the same org-wide grant twice. Same
+-- idiom as `idx_barcode_code_live` and `idx_shift_one_open` above.
 CREATE TABLE user_role (
   user_id   BLOB NOT NULL REFERENCES app_user(id),
   role_id   BLOB NOT NULL REFERENCES role(id),
-  store_id  BLOB REFERENCES store(id),     -- NULL = org-wide
-  PRIMARY KEY (user_id, role_id, store_id)
+  store_id  BLOB REFERENCES store(id)      -- NULL = org-wide
 ) STRICT;
+CREATE UNIQUE INDEX idx_user_role_scoped ON user_role(user_id, role_id, store_id)
+  WHERE store_id IS NOT NULL;
+CREATE UNIQUE INDEX idx_user_role_org_wide ON user_role(user_id, role_id)
+  WHERE store_id IS NULL;
 
 CREATE TABLE user_session (
   id           BLOB PRIMARY KEY,
