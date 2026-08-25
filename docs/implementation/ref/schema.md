@@ -24,9 +24,11 @@ twelve-step table rebuild in a migration of their own — the shape 0002 already
 real remaining gap, recorded rather than rounded off; it is cheap now and dearer with every
 register in the field.
 
-**The eleven fact tables, and the rule that keeps them facts.** `sale`, `sale_line`,
+<!-- fact-tables: sale, sale_line, sale_tender, sale_line_tax, sale_line_discount, sale_tax_summary, audit_log, stock_ledger, cash_movement, z_report, drawer_event, loyalty_ledger -->
+
+**The twelve fact tables, and the rule that keeps them facts.** `sale`, `sale_line`,
 `sale_tender`, `sale_line_tax`, `sale_line_discount`, `sale_tax_summary`, `audit_log`,
-`stock_ledger`, `cash_movement`, `z_report`, `drawer_event`. Each one refuses `UPDATE` and
+`stock_ledger`, `cash_movement`, `z_report`, `drawer_event`, `loyalty_ledger`. Each one refuses `UPDATE` and
 `DELETE` through a `BEFORE` trigger that `RAISE(ABORT)`s — the sale-scoped ones once the
 parent sale is `completed`, the append-only ones unconditionally. `sale_tender` is the single
 deliberate exception on `UPDATE`: a semi-integrated card capture settles asynchronously, so
@@ -413,6 +415,53 @@ CREATE TABLE sale_line_discount (
 ) STRICT;
 CREATE INDEX idx_sale_line_discount_line ON sale_line_discount(sale_line_id);
 
+-- ── Superseding two 0002 triggers that guard the wrong direction ───────────
+--
+-- 0002's UPDATE guards on `sale_line` and `sale_tender` test the OLD parent
+-- only. That refuses an edit to a row already on a completed sale, and permits
+-- the inbound move: take a row belonging to a PARKED sale and re-point its
+-- `sale_id` at a completed one. The completed document grows a line, or gains a
+-- tender, without a single protected row being edited. Reproduced against the
+-- shipped chain: a completed sale went from one line to two.
+--
+-- `sale_tender` looks protected because its guard already compares
+-- `NEW.sale_id <> OLD.sale_id`, but that comparison sits behind the same
+-- OLD-parent WHEN, so it only blocks moves OUT of a completed sale.
+--
+-- 0002 is committed and is never edited (conventions §9). Forward-only means
+-- DROP and recreate here, which is why these two live in 0003 rather than
+-- beside the triggers they replace.
+
+DROP TRIGGER sale_line_no_update_once_completed;
+CREATE TRIGGER sale_line_no_update_once_completed
+BEFORE UPDATE ON sale_line
+WHEN (SELECT status FROM sale WHERE id = OLD.sale_id) = 'completed'
+  OR (SELECT status FROM sale WHERE id = NEW.sale_id) = 'completed'
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: a line of a completed sale is immutable');
+END;
+
+DROP TRIGGER sale_tender_amount_frozen_once_completed;
+CREATE TRIGGER sale_tender_amount_frozen_once_completed
+BEFORE UPDATE ON sale_tender
+-- The settlement columns stay open on a completed sale (a semi-integrated
+-- capture settles asynchronously; 0005 adds tender_state/captured_at). The
+-- money, the method and the parent do not move — in either direction.
+WHEN ((SELECT status FROM sale WHERE id = OLD.sale_id) = 'completed'
+      AND (NEW.amount_minor <> OLD.amount_minor
+        OR NEW.change_minor <> OLD.change_minor
+        OR NEW.method       <> OLD.method
+        OR NEW.sale_id      <> OLD.sale_id))
+-- The inbound half must require the parent to have actually CHANGED. Without
+-- `NEW.sale_id <> OLD.sale_id` this clause fires on every update to a tender
+-- already sitting on a completed sale, which is exactly the settlement path the
+-- exception above exists to keep open.
+   OR (NEW.sale_id <> OLD.sale_id
+       AND (SELECT status FROM sale WHERE id = NEW.sale_id) = 'completed')
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: the amount of a tender on a completed sale is immutable');
+END;
+
 -- ── I-4 on the tax and discount detail ─────────────────────────────────────
 --
 -- These rows ARE the arithmetic of what the customer was charged. Change one
@@ -431,8 +480,14 @@ END;
 
 CREATE TRIGGER sale_line_tax_no_update_once_completed
 BEFORE UPDATE ON sale_line_tax
+-- BOTH parents, not just the old one. Checking OLD alone stops an edit to a row
+-- that already belongs to a completed sale, and lets a row be MOVED onto one
+-- from a parked sale — which changes what a closed document says by re-pointing
+-- a foreign key rather than by editing a protected row.
 WHEN (SELECT s.status FROM sale s JOIN sale_line l ON l.sale_id = s.id
        WHERE l.id = OLD.sale_line_id) = 'completed'
+  OR (SELECT s.status FROM sale s JOIN sale_line l ON l.sale_id = s.id
+       WHERE l.id = NEW.sale_line_id) = 'completed'
 BEGIN
   SELECT RAISE(ABORT, 'I-4: the tax detail of a completed sale is immutable');
 END;
@@ -455,8 +510,14 @@ END;
 
 CREATE TRIGGER sale_line_discount_no_update_once_completed
 BEFORE UPDATE ON sale_line_discount
+-- BOTH parents, not just the old one. Checking OLD alone stops an edit to a row
+-- that already belongs to a completed sale, and lets a row be MOVED onto one
+-- from a parked sale — which changes what a closed document says by re-pointing
+-- a foreign key rather than by editing a protected row.
 WHEN (SELECT s.status FROM sale s JOIN sale_line l ON l.sale_id = s.id
        WHERE l.id = OLD.sale_line_id) = 'completed'
+  OR (SELECT s.status FROM sale s JOIN sale_line l ON l.sale_id = s.id
+       WHERE l.id = NEW.sale_line_id) = 'completed'
 BEGIN
   SELECT RAISE(ABORT, 'I-4: the discount on a completed sale is immutable');
 END;
@@ -652,7 +713,9 @@ END;
 
 CREATE TRIGGER sale_tax_summary_no_update_once_completed
 BEFORE UPDATE ON sale_tax_summary
+-- BOTH parents — see the note on sale_line_tax above.
 WHEN (SELECT status FROM sale WHERE id = OLD.sale_id) = 'completed'
+  OR (SELECT status FROM sale WHERE id = NEW.sale_id) = 'completed'
 BEGIN
   SELECT RAISE(ABORT, 'I-4: the tax summary of a completed sale is immutable');
 END;
@@ -1160,6 +1223,27 @@ CREATE TABLE loyalty_ledger (
   occurred_at   TEXT NOT NULL
 ) STRICT;
 CREATE INDEX idx_loyalty_customer ON loyalty_ledger(customer_id, occurred_at);
+
+-- ── loyalty_ledger is a ledger, so it is append-only too ───────────────────
+--
+-- Missed in the first pass over the fact tables, and caught by the Postgres
+-- mirror further down this file, which already REVOKEs UPDATE and DELETE on it.
+-- A points balance is SUM(points_delta) over this table; editing an event
+-- rewrites a customer's entitlement retroactively and the balance cache then
+-- faithfully reproduces the altered past. Corrections are 'adjust' rows, which
+-- is why 'adjust' is in the kind CHECK.
+
+CREATE TRIGGER loyalty_ledger_no_update
+BEFORE UPDATE ON loyalty_ledger
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: loyalty_ledger is append-only — post an adjust row');
+END;
+
+CREATE TRIGGER loyalty_ledger_no_delete
+BEFORE DELETE ON loyalty_ledger
+BEGIN
+  SELECT RAISE(ABORT, 'I-4: loyalty_ledger is append-only — post an adjust row');
+END;
 
 CREATE TABLE loyalty_balance_cache (        -- rebuildable, like stock_cache
   customer_id BLOB PRIMARY KEY REFERENCES customer(id),
