@@ -29,6 +29,11 @@ pub enum DbError {
          sale must survive a power cut, which requires synchronous=FULL (2)"
     )]
     DurabilityRefused { found: i64 },
+    #[error(
+        "refusing to open a register database in {found} journal mode: the durability \
+         guarantee this build makes holds in WAL, and nowhere else"
+    )]
+    JournalModeRefused { found: String },
     #[error("refusing to open a register database with foreign keys disabled")]
     ForeignKeysRefused,
 }
@@ -60,7 +65,19 @@ pub fn open(path: &Path, key: &str) -> Result<Connection, DbError> {
         .map_err(|_| DbError::BadKey)?;
 
     // Durability + concurrency settings for a register (blueprint appendix: WAL).
-    let _mode: String = conn.query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))?;
+    //
+    // The returned mode is checked, not discarded. `PRAGMA journal_mode` answers
+    // with the mode now in force, and SQLite returns the PREVIOUS one when the
+    // transition cannot be made — a read-only directory, or an open connection
+    // holding the old mode. Ignoring the answer matters here because the
+    // durability guarantee below is mode-dependent: `synchronous = FULL` is
+    // last-commit-durable in WAL, and in rollback-journal mode FULL is weaker
+    // than the EXTRA that mode would need. Refusing on the wrong mode is what
+    // stops `DurabilityRefused` from passing on a connection that is not durable.
+    let mode: String = conn.query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))?;
+    if !mode.eq_ignore_ascii_case("wal") {
+        return Err(DbError::JournalModeRefused { found: mode });
+    }
 
     // FULL, not NORMAL. In WAL mode SQLite documents `synchronous = NORMAL` as
     // losing the most recent commits after a power loss — the WAL is not fsynced
