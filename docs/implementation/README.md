@@ -21,10 +21,11 @@ keys, which is still `⬜` in [`phase-0-closeout.md`](phase-0-closeout.md) and n
 password plus repository secrets. Phase 1 has started. Group 1.1 has landed `1.1.0` (the shared
 property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
-parts-per-million), `1.1.2b` (`Money` arithmetic and formatting) and `1.1.7` (migration `0002`,
-shipped earlier). **The next product microstep is `1.1.5 — Money property suite` in**
+parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
+shipped earlier) and `1.1.5` (the complete money property suite). **The next product microstep is
+`1.1.8 — Typed ids and the Clock / IdSource ports` in**
 [`phase-1-sellable-mvp.md`](phase-1-sellable-mvp.md), following §1.1's build-order table rather
-than step order — after it, `1.1.8`, `1.1.9`, and then the migration spine from `0003`.
+than step order — after it, `1.1.9`, and then the migration spine from `0003`.
 Repository-hardening and documentation work may land between numbered product steps, but it does
 not advance that frontier.
 

@@ -1,0 +1,56 @@
+name: proptest-scheduled
+
+on:
+  schedule:
+    # Weekly high-count coverage without putting the metered full CI matrix on a cron.
+    - cron: "37 2 * * 6"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: proptest-scheduled-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  money-properties:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # rust-toolchain.toml is the single source of the compiler pin. Read it
+      # exactly as ci.yml's rust job does instead of hardcoding the channel.
+      - name: Read the pinned toolchain
+        id: pin
+        run: |
+          set -uo pipefail
+          channel=$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml | head -1)
+          [ -n "$channel" ] || { echo "::error::no channel in rust-toolchain.toml"; exit 1; }
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "pinned toolchain: $channel"
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: ${{ steps.pin.outputs.channel }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Install the pinned cargo-nextest release
+        uses: taiki-e/install-action@6cd13508893c0e7eab5f273c2575d3859bd7229a # v2.86.6
+        with:
+          tool: nextest@0.9.143
+          fallback: none
+
+      - name: Run the high-count money properties
+        env:
+          # Unique per workflow run, stable across rerun attempts, and printed below.
+          PROPTEST_RNG_SEED: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          printf 'Replayable seed: PROPTEST_RNG_SEED=%s\n' "$PROPTEST_RNG_SEED"
+          printf 'Replay: PROPTEST_RNG_SEED=%s PROPTEST_CASES=100000 cargo nextest run -p pos-domain money::tests::prop_\n' "$PROPTEST_RNG_SEED"
+          PROPTEST_CASES=100000 cargo nextest run -p pos-domain money::tests::prop_

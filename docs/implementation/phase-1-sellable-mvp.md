@@ -128,7 +128,8 @@ precision and excess magnitude are refused, never rounded.
 **Done when:** `Percent::from_percent_decimal(Decimal::new(125, 3)) == Ok(Percent::from_ppm(1_250))`, `Percent::from_ppm(1_250).format() == "0.125%"` and `Percent::from_ppm(160_000).to_decimal() == Decimal::new(16, 2)` — the 0.125% rate basis points cannot hold, rendered without the four trailing zeros the representation carries, and the fraction `to_decimal` answers rather than the percentage the rate was built from.
 
 ### 1.1.5 — Money property suite
-**Files:** `crates/pos-domain/src/money.rs`, `crates/pos-domain/Cargo.toml`, `.github/workflows/ci.yml`
+**Files:** `crates/pos-domain/src/money.rs`, `crates/pos-domain/Cargo.toml`, `.github/workflows/proptest-scheduled.yml` (new)
+The high-count property lane stays separate because Actions minutes are metered and `ci.yml` deliberately has no `schedule:` trigger.
 Every property from API reference §1.6 uses 1.1.0's shared helper and names the strategy it attacks. The scheduled domain lane runs `PROPTEST_CASES=100000` and prints its replayable seed. This is the layer that finds what you did not imagine; do not replace a listed property with a smaller example suite.
 Microstep 1.1.2a owns `prop_add_sub_roundtrip`, `prop_split_preserves_total` and `prop_currency_mismatch_never_silently_coerces`; 1.1.2b owns the proportional, quantity, exact-format and truncation properties.
 **Tests:** `prop_round_to_step_is_idempotent` · `prop_round_to_step_within_half_step`
