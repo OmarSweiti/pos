@@ -381,7 +381,7 @@ post-merge activation succeeds. These limitations are stated, never presented as
 | `pos-test-support` | the shared proptest configuration and named strategies — **created at microstep 1.1.0** |
 | `pos-fiscal` | UBL builder, the pinned code tables, the clearance queue, and the conformance harness — **created in group 2.7** |
 
-The last two do not exist on disk yet. `pos-fiscal` is a separate crate on purpose: everything
+`pos-fiscal` does not exist on disk yet. It is a separate crate on purpose: everything
 reconstructed from the ISTD specification lives in one module, so an official change is one diff plus
 its goldens.
 

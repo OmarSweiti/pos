@@ -1,0 +1,26 @@
+[package]
+name = "pos-test-support"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# `proptest` is a NORMAL dependency here on purpose: `ProptestConfig` is this
+# crate's return type, so it is part of the public signature and not just a test
+# detail. That does not weaken invariant I-8 — this crate is consumed only from
+# a `[dev-dependencies]` table, so nothing it pulls in reaches a register. Its
+# own dependency direction is one-way: it must never depend on pos-domain, or a
+# property test could be written against a value the harness itself produced.
+proptest.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# The persistence proof in tests/config.rs writes a real regression file and
+# then reads it back. It must not write that file into the repository, so the
+# only failing property in this workspace lives inside a temporary directory.
+tempfile.workspace = true

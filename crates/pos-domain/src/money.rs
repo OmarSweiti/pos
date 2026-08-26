@@ -179,6 +179,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+    use pos_test_support::domain_proptest_config;
     use proptest::prelude::*;
 
     // These exact wire fixtures are review tripwires. Microstep 1.1.2a will
@@ -318,6 +319,14 @@ mod tests {
     }
 
     proptest! {
+        // One shared configuration for every property in this crate: 4,096 cases,
+        // the repository's recorded seed, and a minimized failing case persisted
+        // under crates/pos-domain/proptest-regressions/money.txt to be committed.
+        // `PROPTEST_CASES` raises the count and can never lower it, which is what
+        // makes the scheduled PROPTEST_CASES=100000 lane mean what it says.
+        // Owned by microstep 1.1.0; conventions §5.1 is the rule.
+        #![proptest_config(domain_proptest_config())]
+
         /// Blueprint §8: "splitting a tender never changes the total."
         #[test]
         fn prop_split_preserves_total(minor in 0i64..=1_000_000_000_000, parts in 1u32..=64) {
