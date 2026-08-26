@@ -7,11 +7,21 @@
 # or an em dash when the work has no implementation-plan step. Dependabot and
 # other repository automation use the same grammar and `[—]`; automation is not
 # a reason to make repository history less searchable.
+#
+# A microstep's last component may carry one lowercase letter, because the plan
+# splits a step whose numbered form cannot compile in numbered order: Phase 1's
+# §1.1 keeps `1.1.2` as a concordance heading and requires implementation commits
+# to read `[1.1.2a]` and `[1.1.2b]` "so the two independently green changes stay
+# distinguishable". Phase 1 alone has 13 lettered microsteps. Refusing the letter
+# forced that work under the unlettered parent, which is a heading the plan calls
+# non-executable — so the tag claimed a step nobody implements, and bisecting to
+# one half of a split became a body-text search. Absent sorts before `a`, so
+# `1.1.2 < 1.1.2a < 1.1.2b < 1.1.3` and a range spanning a split stays ordered.
 set -euo pipefail
 
 types='feat|fix|test|docs|chore|refactor|perf'
 scopes='domain|db|sync|hardware|fiscal|terminal|server|backoffice|repo|impl'
-step='—|[0-9]+\.[0-9]+\.[0-9]+(–[0-9]+\.[0-9]+\.[0-9]+)?'
+step='—|[0-9]+\.[0-9]+\.[0-9]+[a-z]?(–[0-9]+\.[0-9]+\.[0-9]+[a-z]?)?'
 grammar="^($types)\\(($scopes)\\): ([^[:space:]].*[^[:space:]]|[^[:space:]])[[:space:]]+\\[($step)\\][[:space:]]*$"
 
 usage() {
@@ -26,7 +36,7 @@ fail() {
   echo "  <type>(<scope>): <summary>   [<step>]" >&2
   echo "  type  ∈ $types" >&2
   echo "  scope ∈ $scopes" >&2
-  echo "  step  = N.N.N, N.N.N–N.N.N, or —" >&2
+  echo "  step  = N.N.N, N.N.Nx, N.N.N–N.N.N, or —" >&2
   echo >&2
   echo "  got: ${title:-<none>}" >&2
   return 1
@@ -38,8 +48,35 @@ component_number() {
   printf '%d' "$((10#$1))"
 }
 
+suffix_ordinal() {
+  # A microstep's optional lowercase letter, as a sortable ordinal: absent is 0
+  # and sorts first, `a` is 1, `b` is 2. That is the order the phase files use —
+  # the unlettered form is the concordance heading and the letters implement it.
+  # Passing the letter through Bash arithmetic directly is what this exists to
+  # avoid: `$((10#2a))` is a fatal arithmetic error, not a comparison.
+  local letter="$1"
+  if [ -z "$letter" ]; then
+    printf '0'
+    return 0
+  fi
+  printf '%d' "$(( $(printf '%d' "'$letter") - 96 ))"
+}
+
+split_component() {
+  # Echo a last component's digits and its letter ordinal, space separated.
+  local value="$1"
+  if [[ "$value" =~ ^([0-9]+)([a-z]?)$ ]]; then
+    printf '%s %s' "$(component_number "${BASH_REMATCH[1]}")" \
+      "$(suffix_ordinal "${BASH_REMATCH[2]}")"
+    return 0
+  fi
+  # The grammar already refused anything else; be loud rather than compare zeros.
+  echo "title-policy: internal — unparseable step component '$value'" >&2
+  return 1
+}
+
 range_is_ordered() {
-  local value="$1" start end sa sb sc ea eb ec
+  local value="$1" start end sa sb sc ea eb ec sc_n sc_x ec_n ec_x
   case "$value" in
     *–*) ;;
     *) return 0 ;;
@@ -49,14 +86,18 @@ range_is_ordered() {
   end="${value#*–}"
   IFS=. read -r sa sb sc <<< "$start"
   IFS=. read -r ea eb ec <<< "$end"
-  sa=$(component_number "$sa"); sb=$(component_number "$sb"); sc=$(component_number "$sc")
-  ea=$(component_number "$ea"); eb=$(component_number "$eb"); ec=$(component_number "$ec")
+  sa=$(component_number "$sa"); sb=$(component_number "$sb")
+  ea=$(component_number "$ea"); eb=$(component_number "$eb")
+  read -r sc_n sc_x <<< "$(split_component "$sc")"
+  read -r ec_n ec_x <<< "$(split_component "$ec")"
 
   (( sa < ea )) && return 0
   (( sa > ea )) && return 1
   (( sb < eb )) && return 0
   (( sb > eb )) && return 1
-  (( sc <= ec ))
+  (( sc_n < ec_n )) && return 0
+  (( sc_n > ec_n )) && return 1
+  (( sc_x <= ec_x ))
 }
 
 validate() {
@@ -108,6 +149,11 @@ self_test() {
   case_is 0 "an ordered range" 'chore(repo): close the phase-zero guards   [0.1.1–0.4.3]'
   case_is 0 "work without a plan step" 'docs(impl): explain release evidence   [—]'
   case_is 0 "repository automation uses the same grammar" 'chore(repo): bump the Rust patch group   [—]'
+  case_is 0 "a lettered split microstep" 'feat(domain): Money carries its currency   [1.1.2a]'
+  case_is 0 "the second half of a split" 'feat(domain): complete Money arithmetic   [1.1.2b]'
+  case_is 0 "a range across one split" 'chore(repo): land both halves   [1.1.2a–1.1.2b]'
+  case_is 0 "an unlettered start into a lettered end" 'chore(repo): land the split   [1.1.2–1.1.2b]'
+  case_is 0 "a lettered start into a later number" 'chore(repo): finish the group   [1.1.2a–1.1.9]'
 
   echo "change-title policy — malformed tags and subjects are refused"
   case_is 1 "a missing tag" 'feat(domain): exact inclusive tax extraction'
@@ -115,6 +161,12 @@ self_test() {
   case_is 1 "an incomplete number" 'feat(domain): exact inclusive tax extraction   [1.3]'
   case_is 1 "an ASCII-hyphen range" 'feat(domain): exact inclusive tax extraction   [1.3.4-1.3.5]'
   case_is 1 "a reversed range" 'feat(domain): exact inclusive tax extraction   [2.1.1–1.9.9]'
+  case_is 1 "a reversed lettered range" 'chore(repo): land both halves   [1.1.2b–1.1.2a]'
+  case_is 1 "a lettered end before an unlettered start" 'chore(repo): land it   [1.1.2a–1.1.2]'
+  case_is 1 "an uppercase suffix" 'feat(domain): Money carries its currency   [1.1.2A]'
+  case_is 1 "two suffix letters" 'feat(domain): Money carries its currency   [1.1.2ab]'
+  case_is 1 "a digit after the suffix" 'feat(domain): Money carries its currency   [1.1.2a1]'
+  case_is 1 "a suffix on a middle component" 'feat(domain): Money carries its currency   [1.1a.2]'
   case_is 1 "an empty summary" 'feat(domain):    [1.3.4]'
   case_is 1 "a trailing period" 'feat(domain): exact inclusive tax extraction.   [1.3.4]'
   case_is 1 "an unknown type" 'build(domain): exact inclusive tax extraction   [1.3.4]'
