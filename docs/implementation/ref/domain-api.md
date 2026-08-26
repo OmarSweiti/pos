@@ -510,8 +510,23 @@ pub trait Clock { fn now(&self) -> Timestamp; }   // UTC
 pub struct FixedClock { … }
 
 impl Timestamp {
+    pub const MIN: Timestamp;
+    pub const MAX: Timestamp;
+    /// The accepted range is the range Jiff can resolve in the shell. The
+    /// constructor and Deserialize both validate it, so formatting and zone
+    /// conversion stay total.
+    pub fn from_epoch_milliseconds(ms: i64) -> Result<Timestamp, TimeError>;
+    pub fn epoch_milliseconds(self) -> i64;
     pub fn to_iso8601(self) -> String;                 // 2026-08-20T07:15:22.418Z
     pub fn parse_iso8601(s: &str) -> Result<Timestamp, TimeError>;
+}
+
+impl Display for Timestamp { … }                            // canonical UTC form
+impl From<Timestamp> for i64 { … }                          // epoch milliseconds
+
+impl FixedClock {
+    pub fn new(now: Timestamp) -> FixedClock;
+    pub fn set(&mut self, now: Timestamp);
 }
 
 /// A store-local trading day. NOT a wall-clock date.
@@ -519,6 +534,10 @@ impl Timestamp {
 pub struct BusinessDate { y: i16, m: u8, d: u8 }
 
 impl BusinessDate {
+    pub fn new(y: i16, m: u8, d: u8) -> Result<BusinessDate, TimeError>;
+    pub fn year(self) -> i16;
+    pub fn month(self) -> u8;
+    pub fn day(self) -> u8;
     pub fn to_iso(self) -> String;                     // 2026-08-20
     pub fn parse(s: &str) -> Result<BusinessDate, TimeError>;
     pub fn succ(self) -> BusinessDate;
@@ -529,8 +548,16 @@ pub struct DayBoundary {
     /// Resolved BY THE SHELL, from the store's IANA zone id, FOR THE INSTANT
     /// being converted. Not a configured constant, and not a configured DST
     /// rule — see the note below.
-    pub utc_offset_minutes: i16,
-    pub cutover_minutes: u16,        // minutes past local midnight; default 240 = 04:00
+    utc_offset_minutes: i16,
+    cutover_minutes: u16,        // minutes past local midnight; default 240 = 04:00
+}
+
+impl DayBoundary {
+    pub const DEFAULT_CUTOVER_MINUTES: u16 = 240;
+    pub fn new(utc_offset_minutes: i16, cutover_minutes: u16)
+        -> Result<DayBoundary, TimeError>;
+    pub fn utc_offset_minutes(self) -> i16;
+    pub fn cutover_minutes(self) -> u16;
 }
 
 /// A shift opened at 00:30 local belongs to YESTERDAY's trading day.
@@ -539,6 +566,9 @@ pub fn business_date_of(opened_at: Timestamp, b: DayBoundary) -> BusinessDate;
 /// Monotonic guard (E.6): never emit a timestamp before the last one seen.
 pub struct MonotonicClock<C: Clock> { … }
 impl<C: Clock> MonotonicClock<C> {
+    pub fn new(source: C) -> MonotonicClock<C>;
+    pub fn with_high_water(source: C, high_water: Timestamp) -> MonotonicClock<C>;
+    pub fn source_mut(&mut self) -> &mut C;
     pub fn now(&mut self) -> (Timestamp, Option<ClockAnomaly>);
 }
 
@@ -562,8 +592,17 @@ pub enum TimeError {
 
 `TimeError` is exhaustive and carries what a UI needs to say what was wrong. Note `NotACalendarDate`
 and `BadOffset`/`BadCutover`: a `BusinessDate` is three integers and a `DayBoundary` is two, so both
-are constructible with nonsense unless construction is validated. 31 February and an offset of 4 000
-minutes are the kind of input that arrives from a corrupted settings row, not from a keyboard.
+are constructible with nonsense unless construction is validated. Their fields are private and their
+constructors validate; `BusinessDate` deserialisation also goes through `new` rather than letting a
+derive bypass it. 31 February and an offset of 4 000 minutes are the kind of input that arrives from
+a corrupted settings row, not from a keyboard. `Timestamp` construction and deserialisation likewise
+enforce the range the shell's Jiff instant can represent, keeping its infallible formatter and the
+shell conversion on one definition of valid time.
+
+`BusinessDate::succ` is total because the business-date API is used in invariant checks: at the
+constructible `i16::MAX-12-31` ceiling, which no bounded `Timestamp` can reach, it saturates at that
+date rather than wrapping or panicking. `DayBoundary::new` accepts Jiff's complete whole-minute
+offset range; historical second-granularity offsets are rejected by the shell before construction.
 
 ### 3.1 The store keeps a zone, not an offset — [1.1.9]
 
@@ -581,7 +620,11 @@ also means every future government decision to change it is a release. Storing t
 a `tzdata` update, which the shell already ships.
 
 The offset is resolved per instant, not per store, so a shift that spans a transition in some future
-zone still converts each timestamp with the offset in force at that timestamp.
+zone still converts each timestamp with the offset in force at that timestamp. The terminal enables
+Jiff's bundled IANA database and addresses that database explicitly, so registers on different host
+operating systems use the shipped rules rather than whichever tzdata revision the host happens to
+carry. Jiff offsets have second precision; an historical offset that is not an exact minute is a
+named shell error, never silently truncated into the `i16` minute value.
 
 Tests: `business_date_uses_the_offset_in_force_at_the_instant` · `a_january_sale_and_a_july_sale_agree_in_asia_amman` ·
 `resolving_an_unknown_zone_id_is_a_named_error_not_a_default_offset`.
@@ -602,15 +645,22 @@ pub struct ClockState {
     /// The last instant a server authenticated its clock to this register:
     /// a sync response [3.x], or provisioning. `None` before first contact.
     pub last_trusted_at: Option<Timestamp>,
-    /// The device clock's own reading at that same instant, so skew is a
-    /// subtraction rather than a guess.
+    /// The device clock's own reading at that same instant, retained for
+    /// initial-skew audit and to make a partial anchor detectable.
     pub device_at_trust: Option<Timestamp>,
-    /// Boot-monotonic milliseconds elapsed since `last_trusted_at`. A cashier
-    /// can set the wall clock; they cannot set this.
+    /// The boot-monotonic counter reading captured at the same trusted instant.
+    /// `monotonic_now_ms - monotonic_since_trust_ms` is elapsed trusted time;
+    /// a smaller current reading proves that boot continuity was lost. A
+    /// cashier can set the wall clock; they cannot set this counter.
     pub monotonic_since_trust_ms: Option<i64>,
     /// The largest timestamp this register has ever issued (E.6).
     pub high_water: Timestamp,
     pub anomaly: Option<ClockAnomaly>,
+}
+
+impl ClockState {
+    /// Called when the shell observes that the boot identity changed.
+    pub fn note_monotonic_reset(&mut self, at: Timestamp);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -624,6 +674,15 @@ pub enum ClockConfidence {
     Suspect { skew_ms: i64 },
     /// Never contacted a server. A register provisioned offline this morning.
     Untrusted,
+}
+
+impl ClockConfidence {
+    pub fn permits_sale(self) -> bool;                 // true for every variant
+    pub fn permits_shift_open(self) -> bool;            // true for every variant
+    pub fn requires_business_date_confirmation(self) -> bool;
+    pub fn raises_time_alarm(self) -> bool;
+    /// The current 2.7.0-owned default, not a settled fiscal claim.
+    pub fn defers_fiscal_issue_date(self) -> bool;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -640,6 +699,26 @@ pub fn clock_confidence(state: &ClockState, device_now: Timestamp,
 pub fn effective_now(state: &ClockState, device_now: Timestamp,
                      monotonic_now_ms: i64) -> Timestamp;
 ```
+
+The three trust-anchor readings are captured together. With a continuous boot counter, elapsed time
+is `monotonic_now_ms - monotonic_since_trust_ms`, and authenticated UTC projects from
+`last_trusted_at`. Confidence compares the supplied device reading with that authenticated
+projection. `device_at_trust` preserves the wall-clock reading that accompanied the authentication
+for audit and makes a partial anchor detectable; it is not a substitute UTC baseline that could make
+an already-wrong device appear trusted.
+
+A numeric monotonic counter alone cannot identify its boot: after a reboot, a new counter can
+eventually exceed an old anchor. The shell must therefore call `note_monotonic_reset` when its boot
+identity changes; the deferred 1.9.1 integration persists and compares the shell-owned continuity
+token beside this domain value. The transition clears the monotonic anchor and retains
+`MonotonicReset` for audit.
+A current reading below the captured counter is also a reset. Either reset, a missing component of a
+previously established anchor, or another retained anomaly is `Suspect`. With no authenticated
+instant at all the result is `Untrusted`. A consistent projection older than
+`max_trust_age_ms` is `Stale`; skew outside `tolerance_ms` takes precedence and is `Suspect`.
+`effective_now` uses the trusted projection whenever boot continuity exists, otherwise device time,
+and clamps either candidate at `high_water`. That high water is an E.6 timestamp guard, never a
+substitute for the owned sequences required by I-7.
 
 **What each confidence permits.** The first column is the one that matters: a register with a wrong
 clock is still a register, and a shop with a queue does not care what the clock thinks.

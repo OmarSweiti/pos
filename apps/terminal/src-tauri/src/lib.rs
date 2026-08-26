@@ -1,6 +1,8 @@
 //! Tauri shell: the UI → IPC → pure-domain boundary.
 //! Business rules live in `pos-domain`; this crate only marshals.
 
+pub mod time;
+
 /// First proof of the blueprint's core boundary: UI → Tauri IPC → pure Rust domain.
 #[tauri::command]
 fn split_tender(total_minor: i64, parts: u32) -> Result<Vec<i64>, String> {
