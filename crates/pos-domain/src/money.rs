@@ -135,6 +135,15 @@ pub enum MoneyError {
     CurrencyMismatch(&'static str, &'static str),
     #[error("unknown currency code {0}")]
     UnknownCurrency(String),
+    /// Carries the value as written and the decimal places that were available,
+    /// because "not exact" is unactionable without both. `Percent` reports its
+    /// four; `Money::format` (1.1.2b) reports the store's.
+    #[error("{0} is not exact at {1} decimals")]
+    NotRepresentableAtPrecision(String, u8),
+    /// A conversion whose input cannot be held at all, as opposed to `Overflow`
+    /// on an arithmetic step between two values that could.
+    #[error("value out of representable range")]
+    OutOfRange,
 }
 
 impl Money {
@@ -301,6 +310,131 @@ impl Qty {
     }
 }
 
+/// A rate in signed integer parts-per-million.
+///
+/// **16% is `160_000`, 4% is `40_000`, 0.5% is `5_000`** (conventions §2). The
+/// source blueprint says basis points and `rate_bp`; parts-per-million
+/// supersedes it (`00-master-plan.md` §4a.2), because Jordan's reduced rates
+/// already include 1% and 2% and nothing guarantees the next decree lands on a
+/// whole basis point. The extra factor of a hundred costs nothing and ends the
+/// "we cannot represent 0.125%" conversation permanently.
+///
+/// Used for tax rates, discount percentages and margin floors. Like `Qty` and
+/// unlike `Money`, a rate carries no external dimension that could make two
+/// values incomparable, so the derived ordering is the honest numeric ordering
+/// of the underlying ppm, and `ZERO` is a rate rather than an invented default.
+///
+/// **The two decimal projections point in opposite directions, on purpose.**
+/// `to_percent_decimal` is the percentage a human reads and types — `160_000`
+/// is `16` — and `from_percent_decimal` is its exact inverse. `to_decimal` is
+/// the fraction the arithmetic multiplies by — `160_000` is `0.16` — because
+/// `net × r` and `gross / (1 + r)` (`ref/tax-jordan.md`) need `r`, not `100 r`.
+/// Collapsing the two would hide a ÷100 at every tax site, and a rate wrong by
+/// two orders of magnitude is not a rate anyone notices in a code review.
+///
+/// **A negative rate is representable, and nothing here forbids one.**
+/// `from_ppm` is `const` and infallible by specification, so a refusal written
+/// here would be a comment rather than a rule. The sign restriction on a *tax*
+/// rate belongs where one is built and stored — `CHECK (rate_ppm >= 0)` in
+/// `ref/schema.md` and group 1.3's rate resolution — and a discount stays a
+/// positive rate with the direction living at the call site, which is how
+/// `Money::mul_percent` (1.1.2b) reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Percent(i64);
+
+impl Percent {
+    pub const ZERO: Percent = Percent(0);
+
+    /// One whole percent, in ppm — and therefore the factor between the two
+    /// decimal projections below. It exists once so that nothing else in the
+    /// crate has a reason to spell `10_000`.
+    const PPM_PER_PERCENT: i64 = 10_000;
+
+    /// Decimal places of a *percentage* that ppm represents exactly: 1 ppm is
+    /// `0.0001%`. It is what `NotRepresentableAtPrecision` reports, because the
+    /// caller typed a percentage and needs to be told about that rather than
+    /// about the integer underneath it.
+    const PERCENT_DECIMALS: u8 = 4;
+
+    /// Decimal places of the *fraction*: 1 ppm is `0.000001`.
+    const FRACTION_DECIMALS: u8 = 6;
+
+    pub const fn from_ppm(ppm: i64) -> Percent {
+        Percent(ppm)
+    }
+
+    pub const fn ppm(self) -> i64 {
+        self.0
+    }
+
+    /// Read a rate the way a decree, a settings row or a cashier writes one:
+    /// as a **percentage**. `16` is 16%, and `0.5` is half a percent.
+    ///
+    /// The inverse is `to_percent_decimal`, not `to_decimal` — see the type's
+    /// note on the two directions.
+    ///
+    /// Two ways to fail, and neither of them is a rounding:
+    ///
+    /// * A value finer than one ppm — `0.00001%` — is
+    ///   `NotRepresentableAtPrecision`, carrying the value and the four decimal
+    ///   places a caller may use. There is no `RoundingRule` argument here, and
+    ///   I-1 puts rounding only where a rule was passed in, so quietly keeping
+    ///   `0.0000%` of a rate is not on offer: a truncated rate is a mispriced
+    ///   line on every sale that uses it, for as long as nobody notices.
+    /// * A value beyond ±`i64` ppm is `OutOfRange`, which also covers one so
+    ///   large that scaling it to ppm overflows `Decimal` itself.
+    ///   `checked_mul` is what keeps that a handled error: plain `Decimal`
+    ///   multiplication panics with "Multiplication overflowed", and
+    ///   `Decimal::MAX` scaled to ppm does overflow.
+    ///
+    /// The exactness test runs first, so a value that is both imprecise and out
+    /// of range reports the precision error. Either answer is a refusal and
+    /// neither is a number, which is the property that matters; a caller
+    /// branching on which one has a rate problem this type cannot fix.
+    ///
+    /// Exactness is the test, not scale: `16.000000` carries six decimal places
+    /// and is exactly 16%, so it is accepted.
+    pub fn from_percent_decimal(percent: Decimal) -> Result<Percent, MoneyError> {
+        let ppm = percent
+            .checked_mul(Decimal::from(Self::PPM_PER_PERCENT))
+            .ok_or(MoneyError::OutOfRange)?;
+        if ppm.fract() != Decimal::ZERO {
+            return Err(MoneyError::NotRepresentableAtPrecision(
+                percent.to_string(),
+                Self::PERCENT_DECIMALS,
+            ));
+        }
+        ppm.to_i64().map(Percent).ok_or(MoneyError::OutOfRange)
+    }
+
+    /// The rate as the **fraction** the arithmetic multiplies by: `160_000`
+    /// becomes `0.16`. Exact, at a fixed scale of six, with no division and no
+    /// float — the same integer-mantissa construction as `Qty::to_decimal`.
+    pub fn to_decimal(self) -> Decimal {
+        Decimal::new(self.0, u32::from(Self::FRACTION_DECIMALS))
+    }
+
+    /// The rate as the **percentage** a human reads: `160_000` becomes `16`.
+    /// The exact inverse of `from_percent_decimal` over every representable
+    /// rate, which is the pair `prop_percent_decimal_roundtrip` attacks.
+    pub fn to_percent_decimal(self) -> Decimal {
+        Decimal::new(self.0, u32::from(Self::PERCENT_DECIMALS))
+    }
+
+    /// `"16%"`, `"0.5%"`, `"0%"` — the percentage, with its trailing zeros
+    /// removed and nothing else changed.
+    ///
+    /// The four decimal places of `to_percent_decimal` belong to the
+    /// representation, not to the rate: rendered literally, every whole percent
+    /// reads `"16.0000%"`. `Decimal::normalize` drops trailing zeros only, so
+    /// `0.5%` and `0.0001%` keep every digit they have and nothing here rounds.
+    /// A rate display that rounds is a rate display that lies — `0.0001%` shown
+    /// as `0%` is a charge a merchant would swear was not being made.
+    pub fn format(self) -> String {
+        format!("{}%", self.to_percent_decimal().normalize())
+    }
+}
+
 /// How an exact intermediate value becomes a whole number of units — the tie
 /// rule for tax arithmetic.
 ///
@@ -403,6 +537,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+    use core::str::FromStr;
     use pos_test_support::domain_proptest_config;
     use proptest::prelude::*;
 
@@ -494,6 +629,34 @@ mod tests {
             every_rounding_rule(),
         )
             .prop_map(|(mantissa, scale, rule)| (Decimal::new(mantissa, scale), rule))
+    }
+
+    // Covers the round trip from both ends. `ppm` sweeps the ENTIRE signed i64
+    // ppm space, so every rate a `Percent` can hold is generated, i64::MIN,
+    // i64::MAX and zero included. `percent` builds the other end: every
+    // percentage expressible at 0 through 4 decimal places — four is the finest
+    // ppm holds, since 1 ppm is 0.0001% — with the mantissa bounded to ±10^14
+    // so the exact ppm value it denotes stays inside i64. Deliberately
+    // excluded: percentages finer than one ppm and magnitudes past ±i64 ppm.
+    // Those are the constructor's two error branches, pinned by
+    // `a_rate_finer_than_one_ppm_is_refused_not_rounded` and
+    // `a_rate_beyond_i64_ppm_is_out_of_range`; no conservation claim can be made
+    // about a value the type refuses to hold.
+    fn percent_decimal_roundtrip_cases() -> impl Strategy<Value = (i64, Decimal)> {
+        (
+            any::<i64>(),
+            -100_000_000_000_000i64..=100_000_000_000_000,
+            0u32..=4,
+        )
+            .prop_map(|(ppm, mantissa, places)| (ppm, Decimal::new(mantissa, places)))
+    }
+
+    // Covers every rate the type can hold and nothing else: both properties
+    // below are claims about all of them, so the whole i64 ppm space is exactly
+    // the input space. Nothing is excluded — neither projection nor the render
+    // has a failure mode to carve out.
+    fn every_representable_rate() -> impl Strategy<Value = i64> {
+        any::<i64>()
     }
 
     // Covers the full i64 amount range and every ordered pair of distinct
@@ -821,6 +984,250 @@ mod tests {
     }
 
     #[test]
+    fn sixteen_percent_is_160000_ppm() {
+        // The rate on the front of every Jordanian receipt, and the first
+        // number a reader checks. 16% is 160_000 ppm — not 1_600 basis points,
+        // which is what the superseded `rate_bp` would have held.
+        assert_eq!(Percent::from_ppm(160_000).ppm(), 160_000);
+        assert_eq!(
+            Percent::from_percent_decimal(Decimal::from(16)),
+            Ok(Percent::from_ppm(160_000))
+        );
+        assert_eq!(Percent::from_ppm(160_000).format(), "16%");
+
+        // The rates that made ppm rather than basis points the choice
+        // (conventions §2): the reduced rates already in Jordanian law, and one
+        // no whole number of basis points can hold.
+        for (percentage, ppm) in [(4, 40_000), (2, 20_000), (1, 10_000), (0, 0)] {
+            assert_eq!(
+                Percent::from_percent_decimal(Decimal::from(percentage)),
+                Ok(Percent::from_ppm(ppm))
+            );
+        }
+        assert_eq!(
+            Percent::from_percent_decimal(Decimal::new(5, 1)),
+            Ok(Percent::from_ppm(5_000)),
+            "0.5% is 5_000 ppm"
+        );
+        assert_eq!(
+            Percent::from_percent_decimal(Decimal::new(125, 3)),
+            Ok(Percent::from_ppm(1_250)),
+            "0.125% is 1_250 ppm, and 12.5 basis points"
+        );
+        assert_eq!(Percent::ZERO, Percent::from_ppm(0));
+    }
+
+    #[test]
+    fn percent_to_decimal_is_the_fraction_not_the_percentage() {
+        // The one ambiguity in this type, pinned in both directions. A rate
+        // entered as the percentage 16 multiplies as 0.16; an implementation
+        // that answered 16 here would multiply every taxed line by a hundred,
+        // and one that answered 0.16 from `to_percent_decimal` would print a
+        // receipt claiming a sixth of a percent of tax.
+        let standard = Percent::from_ppm(160_000);
+        assert_eq!(standard.to_decimal(), Decimal::new(16, 2));
+        assert_eq!(standard.to_percent_decimal(), Decimal::from(16));
+
+        // Exact at a fixed scale, like `Qty::to_decimal`: no division, no float.
+        assert_eq!(standard.to_decimal().scale(), 6);
+        assert_eq!(standard.to_percent_decimal().scale(), 4);
+
+        assert_eq!(Percent::from_ppm(5_000).to_decimal(), Decimal::new(5, 3));
+        assert_eq!(
+            Percent::from_ppm(5_000).to_percent_decimal(),
+            Decimal::new(5, 1)
+        );
+        // One ppm: the smallest representable rate, in both forms.
+        assert_eq!(Percent::from_ppm(1).to_decimal(), Decimal::new(1, 6));
+        assert_eq!(
+            Percent::from_ppm(1).to_percent_decimal(),
+            Decimal::new(1, 4)
+        );
+        assert_eq!(Percent::ZERO.to_decimal(), Decimal::ZERO);
+    }
+
+    #[test]
+    fn percent_format_trims_trailing_zeros_without_rounding() {
+        // 160_000 ppm carries four trailing zeros the rate does not have, so a
+        // literal render says "16.0000%". Trimming them is presentation;
+        // rounding them away would be a different rate.
+        assert_eq!(Percent::ZERO.format(), "0%");
+        assert_eq!(Percent::from_ppm(1_000_000).format(), "100%");
+        assert_eq!(Percent::from_ppm(160_000).format(), "16%");
+        assert_eq!(Percent::from_ppm(5_000).format(), "0.5%");
+        assert_eq!(Percent::from_ppm(1_250).format(), "0.125%");
+        // The smallest representable rate keeps all four places. Showing it as
+        // "0%" would deny a charge that is being made.
+        assert_eq!(Percent::from_ppm(1).format(), "0.0001%");
+        assert_eq!(Percent::from_ppm(10).format(), "0.001%");
+        // Negative rates keep their sign, and both extremes stay exact.
+        assert_eq!(Percent::from_ppm(-50_000).format(), "-5%");
+        assert_eq!(Percent::from_ppm(-1).format(), "-0.0001%");
+        assert_eq!(
+            Percent::from_ppm(i64::MAX).format(),
+            "922337203685477.5807%"
+        );
+        assert_eq!(
+            Percent::from_ppm(i64::MIN).format(),
+            "-922337203685477.5808%"
+        );
+    }
+
+    #[test]
+    fn a_rate_finer_than_one_ppm_is_refused_not_rounded() {
+        // 0.00001% is a tenth of a ppm. This constructor takes no
+        // `RoundingRule`, and I-1 puts rounding only where a rule was passed
+        // in, so the only honest answers are the exact rate or a named error.
+        assert_eq!(
+            Percent::from_percent_decimal(Decimal::new(1, 5)),
+            Err(MoneyError::NotRepresentableAtPrecision(
+                "0.00001".to_owned(),
+                4
+            ))
+        );
+        // A long fraction is refused whole rather than rounded to the nearest
+        // ppm: 0.166667% would otherwise silently become 0.1667%.
+        assert_eq!(
+            Percent::from_percent_decimal(Decimal::new(166_667, 6)),
+            Err(MoneyError::NotRepresentableAtPrecision(
+                "0.166667".to_owned(),
+                4
+            ))
+        );
+
+        // One ppm exactly is fine, on both sides of zero.
+        assert_eq!(
+            Percent::from_percent_decimal(Decimal::new(1, 4)),
+            Ok(Percent::from_ppm(1))
+        );
+        assert_eq!(
+            Percent::from_percent_decimal(Decimal::new(-1, 4)),
+            Ok(Percent::from_ppm(-1))
+        );
+
+        // Exactness is the test, not scale. Trailing zeros are not precision,
+        // and a `scale() <= 4` implementation refuses both of these — which is
+        // exactly what a JSON number or a SQL decimal arrives looking like.
+        assert_eq!(
+            Percent::from_percent_decimal(Decimal::new(16_000_000, 6)),
+            Ok(Percent::from_ppm(160_000)),
+            "16.000000% is 16%"
+        );
+        assert_eq!(
+            Percent::from_percent_decimal(Decimal::new(5_000, 4)),
+            Ok(Percent::from_ppm(5_000)),
+            "0.5000% is 0.5%"
+        );
+    }
+
+    #[test]
+    fn a_rate_beyond_i64_ppm_is_out_of_range() {
+        // The last rate that fits and the first that does not. A saturating
+        // cast here would answer with a rate nobody asked for, and a panic
+        // would take the register down over a settings row.
+        let one_ppm = Decimal::new(1, 4);
+        let max_percentage = Decimal::new(i64::MAX, 4);
+        let min_percentage = Decimal::new(i64::MIN, 4);
+
+        assert_eq!(
+            Percent::from_percent_decimal(max_percentage),
+            Ok(Percent::from_ppm(i64::MAX))
+        );
+        assert_eq!(
+            Percent::from_percent_decimal(min_percentage),
+            Ok(Percent::from_ppm(i64::MIN))
+        );
+        assert_eq!(
+            Percent::from_percent_decimal(max_percentage + one_ppm),
+            Err(MoneyError::OutOfRange)
+        );
+        assert_eq!(
+            Percent::from_percent_decimal(min_percentage - one_ppm),
+            Err(MoneyError::OutOfRange)
+        );
+
+        // Decimal reaches ~7.9e28, so scaling either extreme to ppm overflows
+        // the representation itself. `checked_mul` is what makes that the same
+        // handled error rather than the panic `Decimal * Decimal` raises.
+        assert_eq!(
+            Percent::from_percent_decimal(Decimal::MAX),
+            Err(MoneyError::OutOfRange)
+        );
+        assert_eq!(
+            Percent::from_percent_decimal(Decimal::MIN),
+            Err(MoneyError::OutOfRange)
+        );
+
+        // Both wrong at once: past i64 ppm AND finer than a ppm. The exactness
+        // test runs first, so this is the precision error. Documented rather
+        // than incidental — both answers are a refusal, which is the part a
+        // caller may rely on.
+        assert_eq!(
+            Percent::from_percent_decimal(max_percentage + Decimal::new(1, 5)),
+            Err(MoneyError::NotRepresentableAtPrecision(
+                "922337203685477.58071".to_owned(),
+                4
+            ))
+        );
+    }
+
+    #[test]
+    fn a_negative_rate_is_representable_and_keeps_its_sign() {
+        // `Percent` is a signed carrier, like `Qty`. `from_ppm` is const and
+        // infallible by specification, so refusing a negative here would be a
+        // comment rather than a rule; the sign restriction on a TAX rate lives
+        // where one is built and stored — CHECK (rate_ppm >= 0) in
+        // ref/schema.md, and group 1.3's rate resolution.
+        let adjustment = Percent::from_ppm(-50_000);
+        assert_eq!(adjustment.to_decimal(), Decimal::new(-5, 2));
+        assert_eq!(adjustment.to_percent_decimal(), Decimal::from(-5));
+        assert_eq!(
+            Percent::from_percent_decimal(Decimal::from(-5)),
+            Ok(adjustment)
+        );
+        assert_eq!(adjustment.format(), "-5%");
+    }
+
+    #[test]
+    fn percent_order_follows_signed_ppm() {
+        let mut rates = [
+            Percent::from_ppm(160_000),
+            Percent::from_ppm(-1),
+            Percent::ZERO,
+            Percent::from_ppm(-50_000),
+            Percent::from_ppm(1),
+        ];
+        rates.sort();
+
+        assert_eq!(
+            rates,
+            [
+                Percent::from_ppm(-50_000),
+                Percent::from_ppm(-1),
+                Percent::ZERO,
+                Percent::from_ppm(1),
+                Percent::from_ppm(160_000),
+            ]
+        );
+        assert!(Percent::from_ppm(-1) < Percent::ZERO);
+        assert!(Percent::from_ppm(40_000) < Percent::from_ppm(160_000));
+    }
+
+    #[test]
+    fn percent_serialises_as_ppm() {
+        // ppm is the wire form, exactly as milli-units are for `Qty`. A rate
+        // that travelled as 0.16 or as "16%" would need a parser at the other
+        // end, and the two ends would eventually disagree about which one it is.
+        let standard = Percent::from_ppm(160_000);
+        assert_eq!(serde_json::to_string(&standard).unwrap(), "160000");
+        assert_eq!(serde_json::from_str::<Percent>("160000").unwrap(), standard);
+        assert_eq!(
+            serde_json::from_str::<Percent>("-5000").unwrap(),
+            Percent::from_ppm(-5_000)
+        );
+    }
+
+    #[test]
     fn the_rule_table_lists_every_variant_exactly_once() {
         // ALL_RULES drives the generator and every table below, so a rule that
         // never reaches it would be untested behind green tests. The exhaustive
@@ -1063,6 +1470,67 @@ mod tests {
         fn prop_rounding_moves_less_than_one_whole_unit((value, rule) in fractional_cases()) {
             let rounded = rule.round_to_i64(value).unwrap();
             prop_assert!((Decimal::from(rounded) - value).abs() < Decimal::ONE);
+        }
+
+        /// A rate survives the trip through its decimal percentage form, from
+        /// either end: every representable ppm renders to a percentage that
+        /// reads back as the same ppm, and every percentage a `Percent` can
+        /// hold reads in and renders back to the same number.
+        #[test]
+        fn prop_percent_decimal_roundtrip((ppm, percentage) in percent_decimal_roundtrip_cases()) {
+            // Percent → percentage → Percent, over every rate the type holds.
+            let rate = Percent::from_ppm(ppm);
+            prop_assert_eq!(
+                Percent::from_percent_decimal(rate.to_percent_decimal()),
+                Ok(rate)
+            );
+
+            // And back the other way, from a percentage a decree or a settings
+            // row could carry. Decimal equality is numeric rather than textual:
+            // `to_percent_decimal` always answers at scale 4, so 16 returns as
+            // 16.0000 and the two are the same number.
+            prop_assert_eq!(
+                Percent::from_percent_decimal(percentage).map(Percent::to_percent_decimal),
+                Ok(percentage)
+            );
+        }
+
+        /// The fraction and the percentage are one rate a hundred apart, at
+        /// every representable value — so arithmetic that multiplies by
+        /// `to_decimal` and a receipt that prints `to_percent_decimal` can never
+        /// disagree by two orders of magnitude.
+        #[test]
+        fn prop_percent_fraction_is_the_percentage_over_one_hundred(
+            ppm in every_representable_rate()
+        ) {
+            let rate = Percent::from_ppm(ppm);
+            prop_assert_eq!(
+                rate.to_decimal() * Decimal::ONE_HUNDRED,
+                rate.to_percent_decimal()
+            );
+        }
+
+        /// Rendering a rate loses no digits: the string, read back as a decimal,
+        /// is the exact percentage it came from. Trailing zeros are the only
+        /// thing `format` is allowed to remove, because a rate display that
+        /// rounds is a rate display that lies.
+        #[test]
+        fn prop_percent_format_loses_no_digits(ppm in every_representable_rate()) {
+            let rate = Percent::from_ppm(ppm);
+            let rendered = rate.format();
+
+            let digits = rendered.strip_suffix('%');
+            prop_assert!(digits.is_some(), "a rendered rate ends in a per-cent sign");
+            let digits = digits.unwrap();
+            prop_assert!(
+                !digits.ends_with('0') || !digits.contains('.'),
+                "a fractional render must not keep a trailing zero: {}",
+                rendered
+            );
+            prop_assert_eq!(
+                Decimal::from_str(digits).ok(),
+                Some(rate.to_percent_decimal())
+            );
         }
 
         /// Mixed-currency arithmetic and comparison always return a mismatch;

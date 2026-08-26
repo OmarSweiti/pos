@@ -118,7 +118,14 @@ Per §1.3 of the API reference. `Qty::ONE == 1000`.
 
 ### 1.1.4 — `Percent` in parts-per-million
 **Files:** `crates/pos-domain/src/money.rs`
+Per §1.4 of the API reference, whose two decimal projections run in opposite directions:
+`from_percent_decimal` reads the **percentage** a decree or a settings row carries, and
+`to_decimal` returns the **fraction** the tax arithmetic multiplies by. `to_percent_decimal` is the
+inverse of the constructor, and the reason the named round-trip can be written at all. Excess
+precision and excess magnitude are refused, never rounded.
 **Tests:** `sixteen_percent_is_160000_ppm` · `prop_percent_decimal_roundtrip`
+**Verify:** `cargo nextest run -p pos-domain money::`
+**Done when:** `Percent::from_percent_decimal(Decimal::new(125, 3)) == Ok(Percent::from_ppm(1_250))`, `Percent::from_ppm(1_250).format() == "0.125%"` and `Percent::from_ppm(160_000).to_decimal() == Decimal::new(16, 2)` — the 0.125% rate basis points cannot hold, rendered without the four trailing zeros the representation carries, and the fraction `to_decimal` answers rather than the percentage the rate was built from.
 
 ### 1.1.5 — Money property suite
 **Files:** `crates/pos-domain/src/money.rs`, `crates/pos-domain/Cargo.toml`, `.github/workflows/ci.yml`

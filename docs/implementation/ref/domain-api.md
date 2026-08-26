@@ -311,11 +311,50 @@ impl Percent {
     pub const ZERO: Percent;
     pub const fn from_ppm(ppm: i64) -> Percent;
     pub const fn ppm(self) -> i64;
-    pub fn from_percent_decimal(d: Decimal) -> Result<Percent, MoneyError>;
-    pub fn to_decimal(self) -> Decimal;      // 160_000 -> 0.16
-    pub fn format(self) -> String;           // "16%", "0.5%"
+
+    /// Reads a PERCENTAGE, not a fraction: `16` is 16% and `0.5` is 0.5%.
+    /// `to_percent_decimal` is the exact inverse; `to_decimal` is not.
+    pub fn from_percent_decimal(percent: Decimal) -> Result<Percent, MoneyError>;
+
+    /// The FRACTION the arithmetic multiplies by:  160_000 -> 0.16 (scale 6)
+    pub fn to_decimal(self) -> Decimal;
+
+    /// The PERCENTAGE a human reads and types:     160_000 -> 16   (scale 4)
+    pub fn to_percent_decimal(self) -> Decimal;
+
+    pub fn format(self) -> String;           // "16%", "0.5%", "0.0001%"
 }
 ```
+
+**The two decimal projections point in opposite directions, on purpose, and `to_percent_decimal`
+is 1.1.4's one addition to this signature list.** `to_decimal` is the fraction because `net × r`
+and `gross / (1 + r)` (§5) need `r` and not `100 r`, so collapsing the two would hide a ÷100 at
+every tax site. `from_percent_decimal` reads the percentage because that is what a Cabinet decree, a
+settings row and a cashier all write — the method name says *percent* decimal and means it. Those
+two are therefore **not** inverses, and the round-trip property 1.1.4 owes cannot be stated over
+them at all. `to_percent_decimal` is the inverse, and the property is the claim that this pair round
+trips over every representable rate, from either end.
+
+**`from_percent_decimal` refuses rather than rounds**, with the two `MoneyError` variants §1.5
+already carries. A value finer than one ppm — `0.00001%` — is
+`NotRepresentableAtPrecision(value, 4)`: there is no `RoundingRule` argument here, and I-1 puts
+rounding only where a rule was passed in, so a silently truncated rate is not on offer. A value
+beyond ±`i64` ppm — or one so large that scaling it to ppm overflows `Decimal` — is `OutOfRange`.
+Exactness is the test rather than scale, so `16.000000` is accepted as 16%, which is what a JSON
+number or a SQL decimal arrives looking like; and because that test runs first, a value that is both
+imprecise and out of range reports the precision error. Both answers are a refusal, which is the
+part a caller may rely on.
+
+**A negative rate is representable and nothing in this type forbids one.** `from_ppm` is `const`
+and infallible, so a refusal here would be a comment rather than a rule; the sign restriction on a
+*tax* rate lives where one is built and stored — `CHECK (rate_ppm >= 0)` in
+[`schema.md`](schema.md), and §5's rate resolution — and a discount stays a positive rate with the
+direction at the call site, which is how `mul_percent` reads. `format` keeps the sign, and the
+derived `Ord` is the signed numeric order of the ppm.
+
+`format` trims trailing zeros and changes nothing else: 160_000 ppm carries four zeros the rate does
+not have, so a literal render reads `"16.0000%"`, while `0.0001%` — the smallest representable rate
+— keeps all four places. A rate display that rounds is a rate display that lies.
 
 ### 1.5 `MoneyError` — extended [1.1.2]
 
@@ -334,6 +373,11 @@ pub enum MoneyError {
     #[error("value out of representable range")]          OutOfRange,
 }
 ```
+
+The last two variants landed early, at **[1.1.4]**, because `Percent::from_percent_decimal` refuses
+both an inexact and an unrepresentable rate and neither is `Overflow`. The heading keeps `[1.1.2]`
+because that is where the rest of the enum arrives; `Parse`, `ZeroWeights` and `NegativeWeight` are
+still 1.1.2b's.
 
 ### 1.6 Properties — [1.1.5]
 
