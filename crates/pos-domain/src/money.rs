@@ -181,6 +181,12 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
+    // These exact wire fixtures are review tripwires. Microstep 1.1.2a will
+    // deliberately change the Money fixture to include `"currency":"JOD"`;
+    // changing either fixture must be an intentional, reviewed act.
+    const GOLDEN_CURRENCY_JSON: &str = r#""JOD""#;
+    const GOLDEN_MONEY_JSON: &str = r#"{"minor":1250}"#;
+
     #[test]
     fn jod_exponent_is_three() {
         // I-2, and the whole reason this type exists: one dinar is 1000 fils,
@@ -236,21 +242,60 @@ mod tests {
     }
 
     #[test]
-    fn currency_serialises_as_a_bare_iso_string() {
-        // Not {"code":[74,79,68],"exponent":3}: sending the exponent would put a
-        // second source of truth on the wire.
-        let json = serde_json::to_string(&Currency::JOD).unwrap();
-        assert_eq!(json, "\"JOD\"");
+    fn currency_serialises_as_its_iso_code() {
         assert_eq!(
-            serde_json::from_str::<Currency>("\"JOD\"").unwrap(),
+            serde_json::to_string(&Currency::JOD).unwrap(),
+            GOLDEN_CURRENCY_JSON
+        );
+        assert_eq!(
+            serde_json::from_str::<Currency>(GOLDEN_CURRENCY_JSON).unwrap(),
             Currency::JOD
         );
-        // An unknown code is a deserialisation error, not a default.
-        assert!(serde_json::from_str::<Currency>("\"ZZZ\"").is_err());
         // Escapes force serde down the owned-String path; it must still work.
         assert_eq!(
             serde_json::from_str::<Currency>("\"\\u004aOD\"").unwrap(),
             Currency::JOD
+        );
+    }
+
+    #[test]
+    fn unknown_currency_code_is_a_deserialisation_error() {
+        // An unknown code is a deserialisation error, not a default.
+        assert!(serde_json::from_str::<Currency>("\"ZZZ\"").is_err());
+        // Case folding must not rescue an unknown code either.
+        assert!(serde_json::from_str::<Currency>("\"zzz\"").is_err());
+        // A wrong JSON type takes a different serde path than a wrong string:
+        // `Cow<str>` refuses it before `from_code` is ever consulted, and a
+        // number is exactly what a client sending a raw exponent would emit.
+        assert!(serde_json::from_str::<Currency>("3").is_err());
+        assert!(serde_json::from_str::<Currency>("null").is_err());
+        assert!(
+            serde_json::from_str::<Currency>(r#"{"code":"JOD","exponent":3}"#).is_err(),
+            "the derived struct form must never deserialise"
+        );
+    }
+
+    #[test]
+    fn the_exponent_never_appears_on_the_wire() {
+        // Not {"code":[74,79,68],"exponent":3}: the ISO string is the only
+        // source of truth sent over the wire.
+        for currency in CURRENCIES {
+            assert_eq!(
+                serde_json::to_value(currency).unwrap(),
+                serde_json::Value::String(currency.code().to_owned())
+            );
+        }
+    }
+
+    #[test]
+    fn golden_money_json_is_stable() {
+        assert_eq!(
+            serde_json::to_string(&Currency::JOD).unwrap(),
+            GOLDEN_CURRENCY_JSON
+        );
+        assert_eq!(
+            serde_json::to_string(&Money::from_minor(1250)).unwrap(),
+            GOLDEN_MONEY_JSON
         );
     }
 
