@@ -63,9 +63,21 @@ Print this. Sit with the merchant. Fill it in. Date it. A decision made by a dev
 | 2.2 | Rounding direction | **nearest** | | `.cash_round_direction` | 1.5.3 |
 | 2.3 | Shelf prices shown to 2 or 3 decimals? | **3** | | `.money_decimals` | 1.1.2 |
 | 2.4 | Tax-inclusive or tax-exclusive shelf prices? | **inclusive** | | `.price_mode` | 1.3.4 |
-| 2.5 | Rounding rule for tax | **half away from zero** | | `.rounding_rule` | 1.1.6 |
+| 2.5 | Rounding rule for tax ⚖ | **half away from zero**, as jurisdiction policy v1 | | `.rounding_rule` | 1.1.6 |
 
 > **Verify 2.1 against the store's actual coin drawer.** Some accept 5 fils; some round to 25. The default reflects that 5-fils pieces are rare in everyday circulation, not that they do not exist.
+>
+> **2.5 is not a merchant preference, and a blank Answer column here invites the wrong build.** The
+> tie rule changes tax facts rather than presentation: a 13-fil 4%-inclusive line has an exact net of
+> 12.5 fils, so half-away records net 13 and tax 0 while half-even records net 12 and tax 1. Two
+> registers under one taxpayer that disagree file inconsistent returns and nothing diagnoses it. It
+> therefore belongs to a **versioned jurisdiction policy** pinned per store — [`domain-api.md`](domain-api.md)
+> §1.2 says in terms that it "does not offer four options to a settings screen", and
+> [`tax-jordan.md`](tax-jordan.md) §4 makes it policy with an effective period. Once fiscal issuance is
+> enabled for a store it may not change without a new policy version and a recorded reason, because a
+> mid-year change makes the merchant's own filing history internally inconsistent. What the advisor
+> confirms is *which policy applies*; the tie rule ISTD's validator actually applies is still the
+> `⚠️ OPEN` owned by `2.7.0`, and the default is provisional until it answers.
 
 ---
 

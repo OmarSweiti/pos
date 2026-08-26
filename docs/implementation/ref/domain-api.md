@@ -198,13 +198,49 @@ impl Money {
 }
 ```
 
+Both enums, and the one rounding primitive they exist to parameterise, arrive at **[1.1.6]** —
+before the arithmetic above, because rounding is an argument to it.
+
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RoundingRule { HalfAwayFromZero, HalfEven, Floor, Ceil }
 
+impl RoundingRule {
+    /// THE rounding point (I-1): one exact `Decimal` in, one whole `i64` out.
+    ///
+    /// `mul_qty`, `mul_percent` and `from_decimal` all end by reducing a
+    /// `rust_decimal` intermediate to integer units, so that reduction exists
+    /// exactly once. "Rounds once" is only a claim about the system if there is
+    /// one place to round in; four callers each spelling their own conversion is
+    /// how two of them come to disagree by a fil.
+    ///
+    /// The caller passes the value already in the units it wants back — minor
+    /// units for money, milli-units for a quantity. That is why the name says
+    /// `i64` and not `minor`: the primitive carries no currency and must not
+    /// imply one. Out of `i64` range is `MoneyError::Overflow`, never a panic
+    /// and never a saturating cast.
+    pub fn round_to_i64(self, value: Decimal) -> Result<i64, MoneyError>;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RoundingDirection { Nearest, Up, Down }
 ```
+
+`RoundingRule` maps onto `rust_decimal::RoundingStrategy` — `MidpointAwayFromZero`,
+`MidpointNearestEven`, `ToNegativeInfinity`, `ToPositiveInfinity`, in declaration order — rather
+than hand-rolling four roundings, so the mapping is the only thing in `round_to_i64` that can be
+wrong, and a wrong one misprices every line in the system.
+
+**There is no `Default` impl, deliberately.** `HalfAwayFromZero` is the jurisdiction default, not a
+type-level fallback: `unwrap_or_default()` is precisely how an unapproved tax rule would reach a
+real sale, and microstep `1.3.4` exists to block a finalization that has no approved policy behind
+it. The rule is threaded from the policy or it does not arrive.
+
+**`RoundingDirection` carries no primitive until [1.5.3].** It is the *cash* axis, and
+`Money::round_to_step` is where what `Up` and `Down` mean below zero — toward the infinities, or
+away from and toward zero — is decided, beside the still-open question of which direction a cash
+refund payout takes ([`tax-jordan.md`](tax-jordan.md) §5). Answering that here, in a microstep
+reviewed for the tie rule, would answer it by accident.
 
 > **Default is `HalfAwayFromZero`, not banker's rounding.** The blueprint suggests banker's; the
 > arithmetic a merchant's accountant does by hand expects half-away-from-zero, and the default a

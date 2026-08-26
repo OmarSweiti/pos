@@ -129,8 +129,16 @@ Microstep 1.1.2a owns `prop_add_sub_roundtrip`, `prop_split_preserves_total` and
 
 ### 1.1.6 — `RoundingRule` and `RoundingDirection`
 **Files:** `crates/pos-domain/src/money.rs`
-Default `HalfAwayFromZero`, not banker's — see [`ref/tax-jordan.md`](ref/tax-jordan.md) §4 for why.
+Both enums from [`ref/domain-api.md`](ref/domain-api.md) §1.2, **and the one rounding primitive
+`RoundingRule::round_to_i64`** that 1.1.2b's arithmetic calls. Two bare enums have no behaviour, and
+I-1's "rounds once" needs exactly one implementation rather than one per caller, so the primitive
+belongs to the step that introduces the parameter. `RoundingDirection` stays behaviourless until
+1.5.3 builds `round_to_step`. Default `HalfAwayFromZero`, not banker's — see
+[`ref/tax-jordan.md`](ref/tax-jordan.md) §4 for why, and note it is a jurisdiction default rather
+than a `Default` impl.
 **Tests:** `half_away_from_zero_rounds_1_5_to_2_and_neg_1_5_to_neg_2` · `half_even_rounds_1_5_and_2_5_both_to_2`
+**Verify:** `cargo nextest run -p pos-domain money::`
+**Done when:** `RoundingRule::HalfAwayFromZero.round_to_i64(Decimal::new(-15, 1)) == Ok(-2)` and `RoundingRule::Floor.round_to_i64(Decimal::new(-12, 1)) == Ok(-2)` — the two below-zero answers a plausible implementation gets wrong.
 
 ### 1.1.7 — Migration `0002`: the qty fix — **SHIPPED**
 *Gap G-12. **Must land before any sale row exists**, which is why it went first.*
