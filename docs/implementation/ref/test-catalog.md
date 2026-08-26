@@ -211,7 +211,7 @@ Every row names a `Strategy`, and the strategy lives beside the property with a 
 |---|---|---|
 | `prop_split_preserves_total` *(exists)* | splitting a tender never changes the total | 0 |
 | `prop_split_proportional_preserves_total` | proration conserves to the fil, for any weights | 1 |
-| `prop_currency_mismatch_never_silently_coerces` | a JOD amount can never become a USD one | 1 |
+| `prop_currency_mismatch_never_silently_coerces` *(exists)* | a JOD amount can never become a USD one | 1 |
 | `prop_sql_and_rust_folding_agree` | the fold in the 0003 generated column and the fold the query path applies produce the same string, for any input — two implementations of one rule, so they will drift unless something holds them together | 1 |
 | `prop_no_query_string_produces_a_database_error` | a cashier's keystrokes reach an FTS5 `MATCH` expression; none of them may throw | 1 |
 | `prop_inclusive_net_plus_tax_equals_gross` | inclusive extraction is exact, at every rate | 1 |

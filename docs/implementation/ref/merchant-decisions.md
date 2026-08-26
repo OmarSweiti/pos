@@ -177,7 +177,7 @@ Print this. Sit with the merchant. Fill it in. Date it. A decision made by a dev
 | 7.4 | Return-policy wording (ar/en) | — | | receipt template | 1.7.4 |
 | 7.5 | Footer text and logo | — | | receipt template | 1.7.4 |
 | 7.6 | Printer width: 80 mm / 58 mm | **80 mm** | | `setting printer.width` | 1.7.3 |
-| 7.7 | **Printer dead or absent at shift open — block sales, or sell and queue the receipt?** ⚖ | **sell; queue the artifact; raise an alarm** | | `setting printer.absent_policy` | 1.7.x |
+| 7.7 | **Printer dead or absent at shift open — block sales, or sell and queue the receipt?** ⚖ | **sell; queue the artifact; raise an alarm** | | `setting printer.absent_policy` | 1.7.6b |
 | 7.8 | The supported hardware list: printer models per width, scanner, drawer, terminal, label printer | — | | `docs/compliance/` per store | 2.9.4 |
 
 > 7.1 and 7.2 must match the merchant's ISTD registration **exactly**. A mismatch is a fiscal rejection and, before that, an invalid tax receipt.
@@ -205,6 +205,10 @@ Print this. Sit with the merchant. Fill it in. Date it. A decision made by a dev
 > **8.6 decides whether "over/short by cashier" means anything.** Over/short is a shift-level fact and cannot be apportioned between two people who shared the drawer, so with sharing allowed the Phase-4 report is by *shift and its opener* and must say so. The till/shift/register collapse is a good simplification; its accountability consequence is the part that has to be written down.
 >
 > **8.9 is a reconciliation trap.** A carried float declared twice is counted twice; the answer has to be one declaration reconciling across both shifts.
+
+---
+
+## I · Users and authentication
 
 | # | Question | Default | Answer | Lives in | Step |
 |---|---|---|---|---|---|
