@@ -59,6 +59,10 @@ serde_json   = "1"
 thiserror    = "2"
 uuid         = { version = "1", default-features = false, features = ["serde"] }
 rust_decimal = "1"
+# Shell-only IANA time-zone resolution. The always-bundled database makes
+# business-date conversion use the same shipped rules on every register OS;
+# this dependency must never be added to pure `pos-domain` (I-8).
+jiff = { version = "0.2", features = ["tzdb-bundle-always"] }
 
 # ── data ────────────────────────────────────────────────────────────────
 rusqlite = { version = "0.39", features = ["bundled-sqlcipher-vendored-openssl"] }

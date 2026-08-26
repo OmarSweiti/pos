@@ -3,13 +3,20 @@
 
 pub mod ids;
 pub mod money;
+pub mod time;
 
-// The module graph points one way (ref/domain-api.md §15): `ids` depends on
-// nothing, `money` depends on nothing but `rust_decimal`, and neither depends on
-// the other. `just acyclic` is what establishes that, not this comment.
+// The module graph points one way (ref/domain-api.md §15): `ids`, `money` and
+// `time` have no cross-module edges. `money`'s external arithmetic dependency
+// is `rust_decimal`; `time` performs only integer calendar arithmetic. `just
+// acyclic` is what establishes the graph, not this comment.
 pub use ids::{
     ApprovalId, CategoryId, CustomerId, IdSource, OrgId, ProductId, PromotionId, RegisterId,
     SaleId, SaleLineId, SeqIdSource, ShiftId, StockEventId, StoreId, TaxCategoryId, TenderId,
     UserId,
 };
 pub use money::{Currency, Money, MoneyError, Percent, Qty, RoundingDirection, RoundingRule};
+pub use time::{
+    BusinessDate, Clock, ClockAnomaly, ClockConfidence, ClockPolicy, ClockState, DayBoundary,
+    FixedClock, MonotonicClock, TimeError, Timestamp, business_date_of, clock_confidence,
+    effective_now,
+};

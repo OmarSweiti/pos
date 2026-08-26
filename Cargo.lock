@@ -2210,6 +2210,7 @@ dependencies = [
  "defmt",
  "jiff-core",
  "jiff-static",
+ "jiff-tzdb",
  "jiff-tzdb-platform",
  "log",
  "portable-atomic",
@@ -4883,11 +4884,13 @@ dependencies = [
 name = "terminal"
 version = "0.1.0"
 dependencies = [
+ "jiff",
  "pos-domain",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

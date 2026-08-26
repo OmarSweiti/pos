@@ -16,26 +16,23 @@ The buildable plan for this POS: what to type, in what order, and how you will k
 
 Then work the phase you are in, consulting `ref/` as the microsteps point you there.
 
-**Current implementation frontier (26 August 2026):** Phase 0 is closed except `0.3.2`, updater
+**Current implementation frontier (27 August 2026):** Phase 0 is closed except `0.3.2`, updater
 keys, which is still `⬜` in [`phase-0-closeout.md`](phase-0-closeout.md) and needs an interactive
 password plus repository secrets. Phase 1 has started. Group 1.1 has landed `1.1.0` (the shared
 property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
 shipped earlier), `1.1.5` (the complete money property suite) and `1.1.8` (the fifteen typed ids,
-the `IdSource` port and `SeqIdSource`). **The next product microstep is
-`1.1.9 — Timestamp, BusinessDate, DayBoundary, and the Clock port` in**
-[`phase-1-sellable-mvp.md`](phase-1-sellable-mvp.md), following §1.1's build-order table rather
-than step order — it now also carries the `Clock` port and `FixedClock`, which cannot compile before
-the `Timestamp` they return — and then the migration spine from `0003`.
+the `IdSource` port and `SeqIdSource`). Group 1.1 now closes with 1.1.9's pure-domain time values,
+clock policy and terminal IANA-zone resolution. Its database persistence half remains deferred until
+1.9.1 creates `trusted_time_state`, including `clock_state_survives_restart`; this frontier advance
+does not claim that the whole 1.1.9 microstep is complete. **The next product microstep is
+`1.2.0 — Benchmark gate harness` in**
+[`phase-1-sellable-mvp.md`](phase-1-sellable-mvp.md): §1.1's build-order table ends at 1.1.9, the
+group dependency graph advances from 1.1 to 1.2, and the harness must exist before a later
+`just bench-gate` completion command. `1.2.1` then starts the migration spine with `0003`.
 Repository-hardening and documentation work may land between numbered product steps, but it does
 not advance that frontier.
-
-> `1.1.8` has one piece outstanding: the `trybuild` compile-fail lane
-> (`typed_ids_do_not_interconvert`, its `tests/typed_ids_ui.rs` harness and the `.stderr` golden)
-> needs the `trybuild` dev-dependency, which could not be fetched in the environment the rest of the
-> step was built in. The typed ids themselves, `IdSource` and `SeqIdSource` are landed and green.
-> Delete this note when that lane is in.
 
 **This pointer is maintained by station 13 of the feature lifecycle** — the documentation loop in
 [`02-development-workflow.md`](02-development-workflow.md) §4.13 — and by nothing else. It is a
