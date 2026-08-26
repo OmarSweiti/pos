@@ -3163,6 +3163,7 @@ dependencies = [
 name = "pos-domain"
 version = "0.1.0"
 dependencies = [
+ "pos-test-support",
  "proptest",
  "rust_decimal",
  "serde",
@@ -3200,6 +3201,15 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+]
+
+[[package]]
+name = "pos-test-support"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "tempfile",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

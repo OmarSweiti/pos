@@ -6,14 +6,15 @@ This document is the **target shape**, assembled across Phases 1–4. Each item 
 
 **Purity is enforced mechanically.** `pos-domain/Cargo.toml` may depend only on `serde`,
 `thiserror`, `uuid`, `rust_decimal`, and (dev) `proptest`, `criterion`, `trybuild`,
-`serde_json`. `uuid` is an identity/serialization type here: its default and
+`serde_json`, `pos-test-support`. `uuid` is an identity/serialization type here: its default and
 version-generation features stay disabled, and generated IDs are injected by the shell.
 Adding anything capable of I/O, clock access, or randomness is a design review, not a commit.
 `scripts/check-domain-purity.py` audits the resolved normal dependency features and direct
 call sites.
 
-> `trybuild` and `serde_json` are dev-dependencies and ship nothing, which is why they are
-> allowed: purity governs what reaches a register, and a `[dev-dependencies]` entry never does.
+> `trybuild`, `serde_json` and `pos-test-support` are dev-dependencies and ship nothing, which is
+> why they are allowed: purity governs what reaches a register, and a `[dev-dependencies]` entry
+> never does.
 >
 > `trybuild` is here because 1.1.8's claim — that two id types cannot be interchanged — is only
 > provable by code that **fails** to compile, and `cargo nextest` does not run doctests, so a
@@ -22,6 +23,13 @@ call sites.
 >
 > `serde_json` is here because `Currency` hand-writes `Serialize`/`Deserialize` to keep the
 > minor-unit exponent off the wire (§1.1), and an encoding cannot be tested without an encoder.
+>
+> `pos-test-support` is here because [`01-conventions.md`](../01-conventions.md) §5.1 requires
+> every property in this crate to take its case count, seed and regression-persistence policy from
+> one shared helper (microstep 1.1.0). That helper reads `PROPTEST_CASES`, which this crate may not
+> do — so it lives in its own crate on the dev side of the boundary rather than in a module here.
+> It never depends on `pos-domain`, so a property can never be checked against a value the harness
+> produced.
 
 ```
 crates/pos-domain/src/

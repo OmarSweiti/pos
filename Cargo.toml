@@ -5,6 +5,7 @@ members = [
   "crates/pos-db",
   "crates/pos-sync",
   "crates/pos-hardware",
+  "crates/pos-test-support",
   "apps/server",
   "apps/terminal/src-tauri",
 ]
@@ -48,6 +49,9 @@ pos-domain   = { path = "crates/pos-domain" }
 pos-db       = { path = "crates/pos-db" }
 pos-sync     = { path = "crates/pos-sync" }
 pos-hardware = { path = "crates/pos-hardware" }
+# Test support only. It reads the environment and returns a proptest config, so
+# it belongs in a [dev-dependencies] table and nowhere else — see conventions §5.1.
+pos-test-support = { path = "crates/pos-test-support" }
 
 # ── core ────────────────────────────────────────────────────────────────
 serde        = { version = "1", features = ["derive"] }
