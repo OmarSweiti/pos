@@ -111,11 +111,14 @@ impl<'de> Deserialize<'de> for Currency {
     }
 }
 
-/// An amount in integer minor units (cents / fils / pence).
-/// Currency is tracked at the document level, not per amount, in Phase 0.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+/// An amount in signed integer minor units, tagged with its currency.
+///
+/// `PartialOrd` and `Ord` are deliberately absent: comparing different
+/// currencies requires an explicit, fallible check through `checked_cmp`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Money {
     minor: i64,
+    currency: Currency,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -126,33 +129,71 @@ pub enum MoneyError {
     ZeroParts,
     #[error("negative amount not allowed here")]
     Negative,
+    #[error("currency mismatch: {0} vs {1}")]
+    CurrencyMismatch(&'static str, &'static str),
     #[error("unknown currency code {0}")]
     UnknownCurrency(String),
 }
 
 impl Money {
-    pub const ZERO: Money = Money { minor: 0 };
+    pub const fn from_minor(minor: i64, currency: Currency) -> Self {
+        Self { minor, currency }
+    }
 
-    pub const fn from_minor(minor: i64) -> Self {
-        Self { minor }
+    pub fn zero(currency: Currency) -> Self {
+        Self::from_minor(0, currency)
     }
 
     pub const fn minor(self) -> i64 {
         self.minor
     }
 
+    pub const fn currency(self) -> Currency {
+        self.currency
+    }
+
+    pub const fn is_zero(self) -> bool {
+        self.minor == 0
+    }
+
+    pub const fn is_negative(self) -> bool {
+        self.minor < 0
+    }
+
     pub fn checked_add(self, other: Money) -> Result<Money, MoneyError> {
+        self.ensure_same_currency(other)?;
         self.minor
             .checked_add(other.minor)
-            .map(Money::from_minor)
+            .map(|minor| Money::from_minor(minor, self.currency))
             .ok_or(MoneyError::Overflow)
     }
 
     pub fn checked_sub(self, other: Money) -> Result<Money, MoneyError> {
+        self.ensure_same_currency(other)?;
         self.minor
             .checked_sub(other.minor)
-            .map(Money::from_minor)
+            .map(|minor| Money::from_minor(minor, self.currency))
             .ok_or(MoneyError::Overflow)
+    }
+
+    pub fn checked_neg(self) -> Result<Money, MoneyError> {
+        self.minor
+            .checked_neg()
+            .map(|minor| Money::from_minor(minor, self.currency))
+            .ok_or(MoneyError::Overflow)
+    }
+
+    pub fn sum<I: IntoIterator<Item = Money>>(
+        iter: I,
+        currency: Currency,
+    ) -> Result<Money, MoneyError> {
+        iter.into_iter()
+            .try_fold(Money::zero(currency), Money::checked_add)
+    }
+
+    pub fn checked_cmp(self, other: Money) -> Result<core::cmp::Ordering, MoneyError> {
+        self.ensure_same_currency(other)?;
+        Ok(self.minor.cmp(&other.minor))
     }
 
     /// Split a non-negative amount into `parts` pieces that differ by at most
@@ -169,8 +210,19 @@ impl Money {
         let base = self.minor / parts_i;
         let remainder = self.minor % parts_i;
         Ok((0..parts_i)
-            .map(|i| Money::from_minor(base + i64::from(i < remainder)))
+            .map(|i| Money::from_minor(base + i64::from(i < remainder), self.currency))
             .collect())
+    }
+
+    fn ensure_same_currency(self, other: Money) -> Result<(), MoneyError> {
+        if self.currency == other.currency {
+            Ok(())
+        } else {
+            Err(MoneyError::CurrencyMismatch(
+                self.currency.code(),
+                other.currency.code(),
+            ))
+        }
     }
 }
 
@@ -182,11 +234,62 @@ mod tests {
     use pos_test_support::domain_proptest_config;
     use proptest::prelude::*;
 
-    // These exact wire fixtures are review tripwires. Microstep 1.1.2a will
-    // deliberately change the Money fixture to include `"currency":"JOD"`;
-    // changing either fixture must be an intentional, reviewed act.
+    // These exact wire fixtures are review tripwires. Money gained its currency
+    // in microstep 1.1.2a; changing either fixture remains an intentional,
+    // reviewed act rather than an incidental serde refactor.
     const GOLDEN_CURRENCY_JSON: &str = r#""JOD""#;
-    const GOLDEN_MONEY_JSON: &str = r#"{"minor":1250}"#;
+    const GOLDEN_MONEY_JSON: &str = r#"{"minor":1250,"currency":"JOD"}"#;
+
+    // Covers every known currency. It deliberately excludes no currency that
+    // callers can construct through the public API.
+    fn known_currency() -> impl Strategy<Value = Currency> {
+        prop_oneof![
+            Just(Currency::JOD),
+            Just(Currency::USD),
+            Just(Currency::EUR),
+        ]
+    }
+
+    // Covers non-negative amounts through one trillion minor units, every
+    // split size from 1 through 64, and every known currency. Negative amounts
+    // and zero parts are excluded because they are explicit error branches,
+    // not conservation cases.
+    fn split_cases() -> impl Strategy<Value = (i64, u32, Currency)> {
+        (0i64..=1_000_000_000_000, 1u32..=64, known_currency())
+    }
+
+    // Covers positive, zero, and negative operands through one trillion minor
+    // units in every known currency. Values near i64 overflow are deliberately
+    // excluded because this property proves the algebraic round-trip, while
+    // overflow remains its own error branch.
+    fn add_sub_cases() -> impl Strategy<Value = (i64, i64, Currency)> {
+        (
+            -1_000_000_000_000i64..=1_000_000_000_000,
+            -1_000_000_000_000i64..=1_000_000_000_000,
+            known_currency(),
+        )
+    }
+
+    // Covers the full i64 amount range and every ordered pair of distinct
+    // known currencies. Same-currency pairs are deliberately excluded because
+    // this property proves that a mismatch is always refused.
+    fn mixed_currency_cases() -> impl Strategy<Value = (i64, i64, Currency, Currency)> {
+        (
+            any::<i64>(),
+            any::<i64>(),
+            prop_oneof![
+                Just((Currency::JOD, Currency::USD)),
+                Just((Currency::JOD, Currency::EUR)),
+                Just((Currency::USD, Currency::JOD)),
+                Just((Currency::USD, Currency::EUR)),
+                Just((Currency::EUR, Currency::JOD)),
+                Just((Currency::EUR, Currency::USD)),
+            ],
+        )
+            .prop_map(|(left, right, (left_currency, right_currency))| {
+                (left, right, left_currency, right_currency)
+            })
+    }
 
     #[test]
     fn jod_exponent_is_three() {
@@ -295,26 +398,77 @@ mod tests {
             GOLDEN_CURRENCY_JSON
         );
         assert_eq!(
-            serde_json::to_string(&Money::from_minor(1250)).unwrap(),
+            serde_json::to_string(&Money::from_minor(1250, Currency::JOD)).unwrap(),
             GOLDEN_MONEY_JSON
         );
     }
 
     #[test]
     fn split_examples() {
-        let parts = Money::from_minor(100).split_evenly(3).unwrap();
+        let parts = Money::from_minor(100, Currency::JOD)
+            .split_evenly(3)
+            .unwrap();
         assert_eq!(
             parts,
             vec![
-                Money::from_minor(34),
-                Money::from_minor(33),
-                Money::from_minor(33)
+                Money::from_minor(34, Currency::JOD),
+                Money::from_minor(33, Currency::JOD),
+                Money::from_minor(33, Currency::JOD)
             ]
         );
-        assert_eq!(Money::from_minor(0).split_evenly(5).unwrap().len(), 5);
+        assert_eq!(Money::zero(Currency::JOD).split_evenly(5).unwrap().len(), 5);
         assert_eq!(
-            Money::from_minor(10).split_evenly(0),
+            Money::from_minor(10, Currency::JOD).split_evenly(0),
             Err(MoneyError::ZeroParts)
+        );
+    }
+
+    #[test]
+    fn money_core_operations_preserve_currency() {
+        // A zero, a negation, and a sum must keep the currency the caller
+        // supplied; no operation may invent a default currency.
+        let zero = Money::zero(Currency::EUR);
+        assert!(zero.is_zero());
+        assert!(!zero.is_negative());
+        assert_eq!(zero.currency(), Currency::EUR);
+
+        let negative = Money::from_minor(-7, Currency::EUR);
+        assert!(negative.is_negative());
+        assert_eq!(
+            negative.checked_neg(),
+            Ok(Money::from_minor(7, Currency::EUR))
+        );
+        assert_eq!(
+            Money::from_minor(i64::MIN, Currency::EUR).checked_neg(),
+            Err(MoneyError::Overflow)
+        );
+
+        assert_eq!(Money::sum([], Currency::EUR), Ok(zero));
+        assert_eq!(
+            Money::sum(
+                [
+                    Money::from_minor(4, Currency::EUR),
+                    Money::from_minor(6, Currency::EUR),
+                ],
+                Currency::EUR,
+            ),
+            Ok(Money::from_minor(10, Currency::EUR))
+        );
+    }
+
+    #[test]
+    fn mixed_currency_comparison_is_refused() {
+        // A JOD amount and a USD amount have no meaningful ordering until a
+        // caller performs an explicit conversion, so comparison must fail.
+        let jod = Money::from_minor(1, Currency::JOD);
+        let usd = Money::from_minor(1, Currency::USD);
+        assert_eq!(
+            jod.checked_cmp(usd),
+            Err(MoneyError::CurrencyMismatch("JOD", "USD"))
+        );
+        assert_eq!(
+            Money::from_minor(1, Currency::JOD).checked_cmp(Money::from_minor(2, Currency::JOD)),
+            Ok(core::cmp::Ordering::Less)
         );
     }
 
@@ -327,12 +481,14 @@ mod tests {
         // Owned by microstep 1.1.0; conventions §5.1 is the rule.
         #![proptest_config(domain_proptest_config())]
 
-        /// Blueprint §8: "splitting a tender never changes the total."
+        /// Splitting a tender never changes its total or its currency, and no
+        /// two pieces differ by more than one minor unit.
         #[test]
-        fn prop_split_preserves_total(minor in 0i64..=1_000_000_000_000, parts in 1u32..=64) {
-            let m = Money::from_minor(minor);
+        fn prop_split_preserves_total((minor, parts, currency) in split_cases()) {
+            let m = Money::from_minor(minor, currency);
             let pieces = m.split_evenly(parts).unwrap();
             prop_assert_eq!(pieces.len(), parts as usize);
+            prop_assert!(pieces.iter().all(|piece| piece.currency() == currency));
 
             let sum: i64 = pieces.iter().map(|p| p.minor()).sum();
             prop_assert_eq!(sum, minor);
@@ -344,12 +500,53 @@ mod tests {
 
         /// Addition round-trips: (a + b) - b == a whenever a + b doesn't overflow.
         #[test]
-        fn prop_add_sub_roundtrip(a in -1_000_000_000_000i64..=1_000_000_000_000,
-                             b in -1_000_000_000_000i64..=1_000_000_000_000) {
-            let (ma, mb) = (Money::from_minor(a), Money::from_minor(b));
+        fn prop_add_sub_roundtrip((a, b, currency) in add_sub_cases()) {
+            let (ma, mb) = (
+                Money::from_minor(a, currency),
+                Money::from_minor(b, currency),
+            );
             if let Ok(sum) = ma.checked_add(mb) {
                 prop_assert_eq!(sum.checked_sub(mb).unwrap(), ma);
             }
+        }
+
+        /// Mixed-currency arithmetic and comparison always return a mismatch;
+        /// they never silently relabel or combine the minor-unit integers.
+        #[test]
+        fn prop_currency_mismatch_never_silently_coerces(
+            (left_minor, right_minor, left_currency, right_currency) in mixed_currency_cases()
+        ) {
+            let left = Money::from_minor(left_minor, left_currency);
+            let right = Money::from_minor(right_minor, right_currency);
+
+            prop_assert_eq!(
+                left.checked_add(right),
+                Err(MoneyError::CurrencyMismatch(
+                    left_currency.code(),
+                    right_currency.code(),
+                ))
+            );
+            prop_assert_eq!(
+                left.checked_sub(right),
+                Err(MoneyError::CurrencyMismatch(
+                    left_currency.code(),
+                    right_currency.code(),
+                ))
+            );
+            prop_assert_eq!(
+                left.checked_cmp(right),
+                Err(MoneyError::CurrencyMismatch(
+                    left_currency.code(),
+                    right_currency.code(),
+                ))
+            );
+            prop_assert_eq!(
+                Money::sum([left, right], left_currency),
+                Err(MoneyError::CurrencyMismatch(
+                    left_currency.code(),
+                    right_currency.code(),
+                ))
+            );
         }
     }
 }

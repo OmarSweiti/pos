@@ -122,7 +122,7 @@ future refactor that reinstates the derive fails on the golden rather than on a 
 
 ### 1.2 `Money` — extended [1.1.2]
 
-Existing methods (`from_minor`, `minor`, `checked_add`, `checked_sub`, `split_evenly`, `ZERO`) keep their behaviour but gain currency. `split_evenly`'s largest-remainder implementation and its property test are already correct — do not rewrite them, only thread `Currency` through.
+Existing methods (`from_minor`, `minor`, `checked_add`, `checked_sub`, `split_evenly`) keep their behaviour but gain currency. **The `ZERO` associated constant does not survive.** There is no currency to give it, and inventing a default currency to keep it is exactly the silent coercion this type exists to prevent, so `zero(currency)` replaces it; microstep 1.1.2a removed the constant. `split_evenly`'s largest-remainder implementation and its property test are already correct — do not rewrite them, only thread `Currency` through.
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -2126,7 +2126,7 @@ pub struct StockEvent {
     /// in June and the merchant cannot reconcile their own gross margin. This is
     /// I-5 applied to cost, and the ledger is append-only, so there is no second
     /// chance to add it.
-    /// `None` means no cost basis existed. A real zero is `Some(Money::ZERO)`;
+    /// `None` means no cost basis existed. A real zero is `Some(Money::zero(c))`;
     /// collapsing the two would make an unknown margin look exact.
     pub unit_cost: Option<Money>,
     /// The cost was projected rather than observed, or no basis existed. It is
