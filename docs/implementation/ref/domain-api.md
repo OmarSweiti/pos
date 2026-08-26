@@ -231,6 +231,20 @@ pub enum RoundingDirection { Nearest, Up, Down }
 than hand-rolling four roundings, so the mapping is the only thing in `round_to_i64` that can be
 wrong, and a wrong one misprices every line in the system.
 
+> **The derive is the IPC spelling, not the storage spelling — and that is a decision, not an
+> oversight.** A bare `Serialize` emits `"HalfAwayFromZero"` and `"Nearest"`, while
+> [`schema.md`](schema.md) §0003 persists the same values as
+> `CHECK (rounding_rule IN ('half_away_from_zero','half_even','floor','ceil'))` and
+> `cash_round_direction IN ('nearest','up','down')`. The two do not match, on purpose: `pos-domain`
+> is pure and never touches SQL, so serde here describes the IPC wire and nothing else. **The
+> `pos-db` layer converts to the schema's snake_case explicitly**, as a visible mapping with its own
+> test, rather than by adding `#[serde(rename_all = "snake_case")]` and making a derive silently
+> responsible for a `CHECK` constraint. No domain enum in this document carries `rename_all`
+> — `BarcodeKind`, `ApprovalRequirement` and `ScanLookup` included — and this is the convention for
+> every persisted enum that follows: **one explicit mapping per enum in `pos-db`, never a derive
+> attribute that couples the JSON wire format to a column constraint.** Whoever writes the first such
+> mapping (group 1.3) owns establishing the pattern.
+
 **There is no `Default` impl, deliberately.** `HalfAwayFromZero` is the jurisdiction default, not a
 type-level fallback: `unwrap_or_default()` is precisely how an unapproved tax rule would reach a
 real sale, and microstep `1.3.4` exists to block a finalization that has no approved policy behind
@@ -329,7 +343,7 @@ pub enum MoneyError {
 | `prop_split_proportional_preserves_total` | Σ parts == original for **any** weights; a zero weight gets zero |
 | `prop_split_proportional_by_preserves_total` | the same over integer weights, so the value-weighted and quantity-weighted callers cannot drift |
 | `prop_add_sub_roundtrip` | *(exists)* `(a+b)-b == a` |
-| `prop_currency_mismatch_never_silently_coerces` | Mixed-currency ops always `Err`, never a wrong number |
+| `prop_currency_mismatch_never_silently_coerces` | *(exists)* Mixed-currency ops always `Err`, never a wrong number |
 | `prop_round_to_step_is_idempotent` | Rounding an already-rounded amount changes nothing |
 | `prop_round_to_step_within_half_step` | `\|rounded − original\| ≤ step/2` for `Nearest` |
 | `prop_format_exact_parse_roundtrip` | `parse(format_exact(m)) == m` at the currency's own exponent |

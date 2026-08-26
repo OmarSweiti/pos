@@ -16,10 +16,15 @@ The buildable plan for this POS: what to type, in what order, and how you will k
 
 Then work the phase you are in, consulting `ref/` as the microsteps point you there.
 
-**Current implementation frontier (25 August 2026):** Phase 0 is closed and the product build has
-not started; the next product microstep is `1.1.1 — Currency` in
-[`phase-1-sellable-mvp.md`](phase-1-sellable-mvp.md). Repository-hardening and documentation work
-may land between numbered product steps, but it does not advance that frontier.
+**Current implementation frontier (26 August 2026):** Phase 0 is closed except `0.3.2`, updater
+keys, which is still `⬜` in [`phase-0-closeout.md`](phase-0-closeout.md) and needs an interactive
+password plus repository secrets. Phase 1 has started. Group 1.1 has landed `1.1.0` (the shared
+property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
+(`RoundingRule` and the one rounding point) and `1.1.7` (migration `0002`, shipped earlier). **The
+next product microstep is `1.1.3 — Qty` in** [`phase-1-sellable-mvp.md`](phase-1-sellable-mvp.md),
+following §1.1's build-order table rather than step order — after it, `1.1.4`, `1.1.2b`, `1.1.5`,
+`1.1.8`, `1.1.9`, and then the migration spine from `0003`. Repository-hardening and documentation
+work may land between numbered product steps, but it does not advance that frontier.
 
 **This pointer is maintained by station 13 of the feature lifecycle** — the documentation loop in
 [`02-development-workflow.md`](02-development-workflow.md) §4.13 — and by nothing else. It is a
