@@ -4,7 +4,9 @@
 /// First proof of the blueprint's core boundary: UI → Tauri IPC → pure Rust domain.
 #[tauri::command]
 fn split_tender(total_minor: i64, parts: u32) -> Result<Vec<i64>, String> {
-    pos_domain::Money::from_minor(total_minor)
+    // This Phase-0 smoke command proves the existing UI → IPC → domain boundary.
+    // Use the product's home currency explicitly without widening that boundary.
+    pos_domain::Money::from_minor(total_minor, pos_domain::Currency::JOD)
         .split_evenly(parts)
         .map(|v| v.into_iter().map(|m| m.minor()).collect())
         .map_err(|e| e.to_string())
