@@ -1,3 +1,5 @@
+use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::{Decimal, RoundingStrategy};
 use serde::{Deserialize, Serialize};
 
 /// An ISO 4217 currency, together with its minor-unit exponent.
@@ -226,6 +228,103 @@ impl Money {
     }
 }
 
+/// How an exact intermediate value becomes a whole number of units — the tie
+/// rule for tax arithmetic.
+///
+/// **Not a merchant preference.** The tie rule changes tax *facts*, not
+/// presentation: a 13-fil 4%-inclusive line has an exact net of 12.5 fils, so
+/// half-away records net 13 and tax 0 while half-even records net 12 and tax 1.
+/// Two registers under one taxpayer that disagree file inconsistent returns and
+/// nothing diagnoses it, so the rule belongs to a versioned jurisdiction policy
+/// pinned per store — `ref/tax-jordan.md` §4 and conventions §2 — and not to a
+/// settings screen offering four options.
+///
+/// `HalfAwayFromZero` is the provisional Jordan default. It is provisional
+/// because the scale and tie rule ISTD's own validator applies are still an open
+/// question owned by microstep 2.7.0, which is also why there is deliberately no
+/// `Default` impl: `unwrap_or_default()` is exactly how an unapproved tax rule
+/// would reach a real sale, and 1.3.4 exists to block that.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RoundingRule {
+    /// 1.5 → 2 and −1.5 → −2. Symmetric about zero, which is what a merchant's
+    /// accountant checking the till by hand expects. The provisional default.
+    HalfAwayFromZero,
+    /// Banker's rounding: a tie goes to the even neighbour, so 1.5 → 2 and
+    /// 2.5 → 2. Offered because a jurisdiction policy may require it, and never
+    /// the default here — `00-master-plan.md` §4a records that the source
+    /// blueprint's banker's-rounding default was superseded.
+    HalfEven,
+    /// Toward negative infinity, on both sides of zero: −1.2 → −2, not −1.
+    /// This is not truncation.
+    Floor,
+    /// Toward positive infinity, on both sides of zero: 1.2 → 2 and −1.2 → −1.
+    Ceil,
+}
+
+impl RoundingRule {
+    /// **The** rounding point (I-1): one exact `Decimal` in, one whole `i64`
+    /// out.
+    ///
+    /// Every consumer performs this same last step — `mul_qty`, `mul_percent`
+    /// and `from_decimal` all reduce an exact `rust_decimal` intermediate to
+    /// integer units — so it exists once. "Rounds once" is only a meaningful
+    /// claim if there is exactly one place to round in; four callers each
+    /// spelling their own conversion is how two of them come to disagree by a
+    /// fil on the one document where they must not.
+    ///
+    /// The caller passes the value already expressed in the units it wants
+    /// back: minor units for money, milli-units for a quantity. The name says
+    /// `i64` rather than `minor` for that reason — this primitive carries no
+    /// currency and must not imply one.
+    ///
+    /// A result outside `i64` is `MoneyError::Overflow`, never a panic and never
+    /// a saturating cast. A saturated total is a wrong price wearing the shape
+    /// of a right one, and rounding itself can be what leaves the range.
+    pub fn round_to_i64(self, value: Decimal) -> Result<i64, MoneyError> {
+        value
+            .round_dp_with_strategy(0, self.strategy())
+            .to_i64()
+            .ok_or(MoneyError::Overflow)
+    }
+
+    /// The `rust_decimal` strategy each rule *is*.
+    ///
+    /// Hand-rolling four roundings would be four chances to get a tie or a sign
+    /// wrong, and a wrong one misprices every line in the system. Delegating
+    /// leaves the mapping as the only thing that can be wrong here, which is
+    /// why `each_rounding_rule_maps_to_its_own_decimal_strategy` pins all four
+    /// against vectors that separate them from each other *and* from the three
+    /// strategies none of them may map to.
+    const fn strategy(self) -> RoundingStrategy {
+        match self {
+            RoundingRule::HalfAwayFromZero => RoundingStrategy::MidpointAwayFromZero,
+            RoundingRule::HalfEven => RoundingStrategy::MidpointNearestEven,
+            RoundingRule::Floor => RoundingStrategy::ToNegativeInfinity,
+            RoundingRule::Ceil => RoundingStrategy::ToPositiveInfinity,
+        }
+    }
+}
+
+/// Which way a *cash* settlement amount moves to reach a payable coin step.
+///
+/// A different axis from `RoundingRule`, and the distinction is load-bearing:
+/// tax rounding decides immutable line facts, while cash rounding is a signed
+/// tender-level adjustment that leaves those facts alone
+/// (`ref/tax-jordan.md` §5).
+///
+/// It carries no primitive yet, deliberately. `Money::round_to_step` is
+/// microstep 1.5.3, and what `Up` and `Down` mean below zero — toward the
+/// infinities, or away from and toward zero — is decided there, next to the
+/// still-open question of which direction a cash *refund payout* takes so a
+/// drawer cannot retain an unrecorded remainder. A primitive written here would
+/// answer that question by accident, in a microstep nobody reviewed for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RoundingDirection {
+    Nearest,
+    Up,
+    Down,
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -239,6 +338,25 @@ mod tests {
     // reviewed act rather than an incidental serde refactor.
     const GOLDEN_CURRENCY_JSON: &str = r#""JOD""#;
     const GOLDEN_MONEY_JSON: &str = r#"{"minor":1250,"currency":"JOD"}"#;
+
+    // Every rounding rule, listed once. It drives `every_rounding_rule()`, the
+    // overflow sweep and the strategy-distinctness check, so
+    // `the_rule_table_lists_every_variant_exactly_once` is what stops a fifth
+    // variant from slipping past all three at the same time.
+    const ALL_RULES: [RoundingRule; 4] = [
+        RoundingRule::HalfAwayFromZero,
+        RoundingRule::HalfEven,
+        RoundingRule::Floor,
+        RoundingRule::Ceil,
+    ];
+
+    // A rounding vector, built from integer parts. `1.5_f64` in a money test is
+    // the exact defect I-1 exists to prevent, and `clippy::float_arithmetic`
+    // does not see a bare literal, so every fractional value in this file goes
+    // through here.
+    fn tenths(value: i64) -> Decimal {
+        Decimal::new(value, 1)
+    }
 
     // Covers every known currency. It deliberately excludes no currency that
     // callers can construct through the public API.
@@ -268,6 +386,33 @@ mod tests {
             -1_000_000_000_000i64..=1_000_000_000_000,
             known_currency(),
         )
+    }
+
+    // Covers every rounding rule and nothing else. It reads `ALL_RULES` rather
+    // than restating the variants, so a fifth rule reaches the properties below
+    // the moment it reaches that list.
+    fn every_rounding_rule() -> impl Strategy<Value = RoundingRule> {
+        proptest::sample::select(ALL_RULES.to_vec())
+    }
+
+    // Covers the ENTIRE i64 range — every value the primitive can legally
+    // return — against every rule. Fractional inputs are deliberately excluded:
+    // this property is about the values that must not move at all.
+    fn whole_value_cases() -> impl Strategy<Value = (i64, RoundingRule)> {
+        (any::<i64>(), every_rounding_rule())
+    }
+
+    // Covers values carrying zero through three decimal places — the finest
+    // scale a JOD amount or a milli-unit quantity can hold — over ±10^15 units,
+    // against every rule. Magnitudes near the i64 boundary are deliberately
+    // excluded because overflow is its own error branch, not a distance claim.
+    fn fractional_cases() -> impl Strategy<Value = (Decimal, RoundingRule)> {
+        (
+            -1_000_000_000_000_000i64..=1_000_000_000_000_000,
+            0u32..=3,
+            every_rounding_rule(),
+        )
+            .prop_map(|(mantissa, scale, rule)| (Decimal::new(mantissa, scale), rule))
     }
 
     // Covers the full i64 amount range and every ordered pair of distinct
@@ -457,6 +602,160 @@ mod tests {
     }
 
     #[test]
+    fn the_rule_table_lists_every_variant_exactly_once() {
+        // ALL_RULES drives the generator and every table below, so a rule that
+        // never reaches it would be untested behind green tests. The exhaustive
+        // match is the compiler's half of the proof — add a variant and this
+        // stops compiling; the pairwise check is the other half, because a list
+        // that names one rule twice still matches exhaustively.
+        for rule in ALL_RULES {
+            match rule {
+                RoundingRule::HalfAwayFromZero
+                | RoundingRule::HalfEven
+                | RoundingRule::Floor
+                | RoundingRule::Ceil => {}
+            }
+        }
+        for (index, left) in ALL_RULES.iter().enumerate() {
+            for right in ALL_RULES.iter().skip(index + 1) {
+                assert_ne!(left, right, "ALL_RULES names {left:?} twice");
+            }
+        }
+    }
+
+    #[test]
+    fn half_away_from_zero_rounds_1_5_to_2_and_neg_1_5_to_neg_2() {
+        // The provisional Jordan default, and the only rule symmetric about
+        // zero: a merchant's accountant checking the till by hand sends 1.5 up
+        // and -1.5 down, landing the same distance from zero either way.
+        let rule = RoundingRule::HalfAwayFromZero;
+        assert_eq!(rule.round_to_i64(tenths(15)), Ok(2));
+        assert_eq!(rule.round_to_i64(tenths(-15)), Ok(-2));
+        // 2.5 is where it parts company with banker's rounding.
+        assert_eq!(rule.round_to_i64(tenths(25)), Ok(3));
+        assert_eq!(rule.round_to_i64(tenths(-25)), Ok(-3));
+        // Away from a tie it is ordinary nearest-value rounding.
+        assert_eq!(rule.round_to_i64(tenths(14)), Ok(1));
+        assert_eq!(rule.round_to_i64(tenths(-14)), Ok(-1));
+    }
+
+    #[test]
+    fn half_even_rounds_1_5_and_2_5_both_to_2() {
+        // Banker's rounding: a tie goes to the even neighbour, so 1.5 rises and
+        // 2.5 falls. Present because a jurisdiction policy may require it, and
+        // deliberately not the default.
+        let rule = RoundingRule::HalfEven;
+        assert_eq!(rule.round_to_i64(tenths(15)), Ok(2));
+        assert_eq!(rule.round_to_i64(tenths(25)), Ok(2));
+        // Below zero it still seeks the even neighbour rather than fleeing zero.
+        assert_eq!(rule.round_to_i64(tenths(-15)), Ok(-2));
+        assert_eq!(rule.round_to_i64(tenths(-25)), Ok(-2));
+    }
+
+    #[test]
+    fn floor_and_ceil_round_toward_their_own_infinity_below_zero() {
+        // Below zero is where a plausible-looking implementation is usually
+        // wrong. Floor is not truncation: -1.2 floors to -2, while truncating
+        // toward zero answers -1 and quietly moves a fil to whoever the sign
+        // belongs to.
+        assert_eq!(RoundingRule::Floor.round_to_i64(tenths(-12)), Ok(-2));
+        assert_eq!(RoundingRule::Ceil.round_to_i64(tenths(-12)), Ok(-1));
+        assert_eq!(RoundingRule::Floor.round_to_i64(tenths(12)), Ok(1));
+        assert_eq!(RoundingRule::Ceil.round_to_i64(tenths(12)), Ok(2));
+        // Neither rule has a tie case: to them a half is just another fraction.
+        assert_eq!(RoundingRule::Floor.round_to_i64(tenths(-15)), Ok(-2));
+        assert_eq!(RoundingRule::Ceil.round_to_i64(tenths(-15)), Ok(-1));
+        assert_eq!(RoundingRule::Floor.round_to_i64(tenths(15)), Ok(1));
+        assert_eq!(RoundingRule::Ceil.round_to_i64(tenths(15)), Ok(2));
+        // A whole value is left alone even by the two directional rules.
+        assert_eq!(RoundingRule::Floor.round_to_i64(tenths(-20)), Ok(-2));
+        assert_eq!(RoundingRule::Ceil.round_to_i64(tenths(-20)), Ok(-2));
+    }
+
+    #[test]
+    fn each_rounding_rule_maps_to_its_own_decimal_strategy() {
+        // The mapping onto `rust_decimal::RoundingStrategy` is the only thing
+        // that can be wrong in `round_to_i64`, and a pasted match arm is the
+        // cheapest way to get it wrong. These eight vectors separate the four
+        // rules from each other AND from the three strategies none of them may
+        // map to — MidpointTowardZero, ToZero and AwayFromZero each answer this
+        // table differently from all four rows below.
+        const VECTORS: [i64; 8] = [15, 25, -15, -25, 12, -12, 18, -18];
+        let answers = |rule: RoundingRule| {
+            VECTORS
+                .iter()
+                .map(|&value| rule.round_to_i64(tenths(value)))
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            answers(RoundingRule::HalfAwayFromZero),
+            [Ok(2), Ok(3), Ok(-2), Ok(-3), Ok(1), Ok(-1), Ok(2), Ok(-2)]
+        );
+        assert_eq!(
+            answers(RoundingRule::HalfEven),
+            [Ok(2), Ok(2), Ok(-2), Ok(-2), Ok(1), Ok(-1), Ok(2), Ok(-2)]
+        );
+        assert_eq!(
+            answers(RoundingRule::Floor),
+            [Ok(1), Ok(2), Ok(-2), Ok(-3), Ok(1), Ok(-2), Ok(1), Ok(-2)]
+        );
+        assert_eq!(
+            answers(RoundingRule::Ceil),
+            [Ok(2), Ok(3), Ok(-1), Ok(-2), Ok(2), Ok(-1), Ok(2), Ok(-1)]
+        );
+
+        // And no two rules are the same strategy under another name.
+        let tables: Vec<Vec<Result<i64, MoneyError>>> =
+            ALL_RULES.iter().copied().map(answers).collect();
+        for (index, left) in tables.iter().enumerate() {
+            for right in tables.iter().skip(index + 1) {
+                assert_ne!(left, right, "two rules answer identically everywhere");
+            }
+        }
+    }
+
+    #[test]
+    fn a_value_outside_i64_is_an_error_not_a_saturating_cast() {
+        // Decimal reaches ~7.9e28 and i64 stops at ~9.2e18. A saturating cast
+        // here would turn an unrepresentable amount into a plausible one, and a
+        // panic would lose the sale; both are worse than a handled error.
+        for rule in ALL_RULES {
+            assert_eq!(rule.round_to_i64(Decimal::MAX), Err(MoneyError::Overflow));
+            assert_eq!(rule.round_to_i64(Decimal::MIN), Err(MoneyError::Overflow));
+            // The last representable value at each end still converts.
+            assert_eq!(rule.round_to_i64(Decimal::from(i64::MAX)), Ok(i64::MAX));
+            assert_eq!(rule.round_to_i64(Decimal::from(i64::MIN)), Ok(i64::MIN));
+            // One step past each end does not.
+            assert_eq!(
+                rule.round_to_i64(Decimal::from(i64::MAX) + Decimal::ONE),
+                Err(MoneyError::Overflow)
+            );
+            assert_eq!(
+                rule.round_to_i64(Decimal::from(i64::MIN) - Decimal::ONE),
+                Err(MoneyError::Overflow)
+            );
+        }
+
+        // Rounding itself can be what leaves the range: i64::MAX + 0.5 is an
+        // exact Decimal, and only the rules that move it upward overflow.
+        let just_over = Decimal::from(i64::MAX) + tenths(5);
+        assert_eq!(
+            RoundingRule::HalfAwayFromZero.round_to_i64(just_over),
+            Err(MoneyError::Overflow)
+        );
+        assert_eq!(
+            RoundingRule::HalfEven.round_to_i64(just_over),
+            Err(MoneyError::Overflow)
+        );
+        assert_eq!(
+            RoundingRule::Ceil.round_to_i64(just_over),
+            Err(MoneyError::Overflow)
+        );
+        assert_eq!(RoundingRule::Floor.round_to_i64(just_over), Ok(i64::MAX));
+    }
+
+    #[test]
     fn mixed_currency_comparison_is_refused() {
         // A JOD amount and a USD amount have no meaningful ordering until a
         // caller performs an explicit conversion, so comparison must fail.
@@ -508,6 +807,25 @@ mod tests {
             if let Ok(sum) = ma.checked_add(mb) {
                 prop_assert_eq!(sum.checked_sub(mb).unwrap(), ma);
             }
+        }
+
+        /// Rounding a value that is already whole leaves it exactly where it
+        /// was, under every rule — including the two that always travel in one
+        /// direction. A rule that moves an exact amount charges a fil for the
+        /// arithmetic.
+        #[test]
+        fn prop_rounding_a_whole_value_is_the_identity((units, rule) in whole_value_cases()) {
+            prop_assert_eq!(rule.round_to_i64(Decimal::from(units)), Ok(units));
+        }
+
+        /// Rounding reaches a neighbouring whole number and never further: the
+        /// correction it applies is always smaller than one whole unit,
+        /// whichever rule asked for it. A larger correction means a decimal
+        /// place went missing on the way in.
+        #[test]
+        fn prop_rounding_moves_less_than_one_whole_unit((value, rule) in fractional_cases()) {
+            let rounded = rule.round_to_i64(value).unwrap();
+            prop_assert!((Decimal::from(rounded) - value).abs() < Decimal::ONE);
         }
 
         /// Mixed-currency arithmetic and comparison always return a mismatch;

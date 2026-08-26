@@ -3,4 +3,4 @@
 
 pub mod money;
 
-pub use money::{Currency, Money, MoneyError};
+pub use money::{Currency, Money, MoneyError, RoundingDirection, RoundingRule};
