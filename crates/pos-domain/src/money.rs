@@ -228,6 +228,79 @@ impl Money {
     }
 }
 
+/// A quantity in signed integer milli-units.
+///
+/// **One unit is 1000 milli-units (I-3).** Discrete and weighed goods share
+/// this representation — two items are `2000`, and 0.347 kg is `347` — so
+/// quantity arithmetic never branches on which kind of product it belongs to.
+///
+/// Unlike `Money`, a `Qty` has no currency or other external dimension that
+/// could make two values incomparable. Its derived ordering is therefore the
+/// honest numeric ordering of the underlying milli-units.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Qty(i64);
+
+impl Qty {
+    pub const ZERO: Qty = Qty(0);
+    pub const ONE: Qty = Qty(1_000);
+
+    pub const fn from_milli(milli: i64) -> Qty {
+        Qty(milli)
+    }
+
+    pub const fn milli(self) -> i64 {
+        self.0
+    }
+
+    /// Construct a whole-unit quantity without overflowing the milli-unit
+    /// representation.
+    pub fn from_units(units: i64) -> Result<Qty, MoneyError> {
+        units
+            .checked_mul(Qty::ONE.0)
+            .map(Qty::from_milli)
+            .ok_or(MoneyError::Overflow)
+    }
+
+    pub fn checked_add(self, other: Qty) -> Result<Qty, MoneyError> {
+        self.0
+            .checked_add(other.0)
+            .map(Qty::from_milli)
+            .ok_or(MoneyError::Overflow)
+    }
+
+    pub fn checked_sub(self, other: Qty) -> Result<Qty, MoneyError> {
+        self.0
+            .checked_sub(other.0)
+            .map(Qty::from_milli)
+            .ok_or(MoneyError::Overflow)
+    }
+
+    pub fn is_whole_units(self) -> bool {
+        self.0 % Qty::ONE.0 == 0
+    }
+
+    /// Convert exactly for decimal arithmetic. The integer mantissa and fixed
+    /// scale avoid both division and any float intermediate.
+    pub fn to_decimal(self) -> Decimal {
+        Decimal::new(self.0, 3)
+    }
+
+    /// Render weighed quantities at the representation's fixed three-decimal
+    /// precision. Whole discrete quantities omit the decimal point.
+    ///
+    /// `weighed` is a display hint, not permission to discard data: if a value
+    /// marked discrete is fractional, this falls back to the exact three-place
+    /// form instead of rounding a real quantity away. Signed quantities retain
+    /// their sign, including refund and correction values.
+    pub fn format(self, weighed: bool) -> String {
+        if weighed || !self.is_whole_units() {
+            self.to_decimal().to_string()
+        } else {
+            (self.0 / Qty::ONE.0).to_string()
+        }
+    }
+}
+
 /// How an exact intermediate value becomes a whole number of units — the tie
 /// rule for tax arithmetic.
 ///
@@ -386,6 +459,14 @@ mod tests {
             -1_000_000_000_000i64..=1_000_000_000_000,
             known_currency(),
         )
+    }
+
+    // Covers every ordered pair across the full signed i64 milli-unit space,
+    // including zero, refunds, and pairs whose sum overflows. It deliberately
+    // excludes nothing: overflow must be a named error, while every
+    // representable sum must subtract back to its original left operand.
+    fn qty_add_sub_cases() -> impl Strategy<Value = (i64, i64)> {
+        (any::<i64>(), any::<i64>())
     }
 
     // Covers every rounding rule and nothing else. It reads `ALL_RULES` rather
@@ -602,6 +683,144 @@ mod tests {
     }
 
     #[test]
+    fn weighed_formats_three_decimals() {
+        assert_eq!(Qty::from_milli(347).format(true), "0.347");
+        assert_eq!(Qty::from_units(2).unwrap().format(true), "2.000");
+        assert_eq!(Qty::ZERO.format(true), "0.000");
+    }
+
+    #[test]
+    fn whole_units_format_without_decimals() {
+        assert_eq!(Qty::ONE.milli(), 1_000);
+        assert_eq!(Qty::ONE.format(false), "1");
+        assert_eq!(Qty::from_units(2).unwrap().format(false), "2");
+        assert_eq!(Qty::ZERO.format(false), "0");
+    }
+
+    #[test]
+    fn discrete_format_preserves_fractional_quantities() {
+        // The product-kind flag cannot make a real quantity disappear. A
+        // fractional value on a discrete product is anomalous but still exact.
+        assert_eq!(Qty::from_milli(347).format(false), "0.347");
+        assert_eq!(Qty::from_milli(1_001).format(false), "1.001");
+        assert_eq!(Qty::from_milli(-347).format(false), "-0.347");
+        assert_eq!(Qty::from_milli(-1_001).format(false), "-1.001");
+    }
+
+    #[test]
+    fn negative_quantities_preserve_their_sign() {
+        let whole = Qty::from_units(-2).unwrap();
+        let fractional = Qty::from_milli(-347);
+
+        assert_eq!(whole.format(false), "-2");
+        assert_eq!(whole.format(true), "-2.000");
+        assert_eq!(fractional.format(false), "-0.347");
+        assert_eq!(fractional.format(true), "-0.347");
+    }
+
+    #[test]
+    fn from_units_reports_overflow() {
+        let max_units = i64::MAX / Qty::ONE.milli();
+        let min_units = i64::MIN / Qty::ONE.milli();
+
+        assert_eq!(
+            Qty::from_units(max_units),
+            Ok(Qty::from_milli(max_units * Qty::ONE.milli()))
+        );
+        assert_eq!(
+            Qty::from_units(min_units),
+            Ok(Qty::from_milli(min_units * Qty::ONE.milli()))
+        );
+        assert_eq!(Qty::from_units(max_units + 1), Err(MoneyError::Overflow));
+        assert_eq!(Qty::from_units(min_units - 1), Err(MoneyError::Overflow));
+    }
+
+    #[test]
+    fn qty_checked_arithmetic_reports_overflow() {
+        let one_milli = Qty::from_milli(1);
+        let negative_one_milli = Qty::from_milli(-1);
+
+        assert_eq!(
+            Qty::from_milli(i64::MAX).checked_add(one_milli),
+            Err(MoneyError::Overflow)
+        );
+        assert_eq!(
+            Qty::from_milli(i64::MIN).checked_add(negative_one_milli),
+            Err(MoneyError::Overflow)
+        );
+        assert_eq!(
+            Qty::from_milli(i64::MAX).checked_sub(negative_one_milli),
+            Err(MoneyError::Overflow)
+        );
+        assert_eq!(
+            Qty::from_milli(i64::MIN).checked_sub(one_milli),
+            Err(MoneyError::Overflow)
+        );
+        assert_eq!(
+            Qty::ZERO.checked_sub(Qty::ONE),
+            Ok(Qty::from_units(-1).unwrap())
+        );
+    }
+
+    #[test]
+    fn whole_unit_detection_handles_sign_and_fraction_boundaries() {
+        for milli in [-2_000, -1_000, 0, 1_000, 2_000] {
+            assert!(Qty::from_milli(milli).is_whole_units());
+        }
+        for milli in [i64::MIN, -1_001, -999, -1, 1, 999, 1_001, i64::MAX] {
+            assert!(!Qty::from_milli(milli).is_whole_units());
+        }
+    }
+
+    #[test]
+    fn qty_to_decimal_is_exact() {
+        for milli in [i64::MIN, -1_001, -347, 0, 347, 1_001, i64::MAX] {
+            let decimal = Qty::from_milli(milli).to_decimal();
+            assert_eq!(decimal, Decimal::new(milli, 3));
+            assert_eq!(decimal.scale(), 3);
+        }
+        assert_eq!(
+            Qty::from_milli(i64::MIN).to_decimal().to_string(),
+            "-9223372036854775.808"
+        );
+        assert_eq!(
+            Qty::from_milli(i64::MAX).to_decimal().to_string(),
+            "9223372036854775.807"
+        );
+    }
+
+    #[test]
+    fn qty_order_follows_signed_milli_units() {
+        let mut quantities = [
+            Qty::from_milli(347),
+            Qty::ONE,
+            Qty::from_milli(-347),
+            Qty::ZERO,
+            Qty::from_units(-1).unwrap(),
+        ];
+        quantities.sort();
+
+        assert_eq!(
+            quantities,
+            [
+                Qty::from_units(-1).unwrap(),
+                Qty::from_milli(-347),
+                Qty::ZERO,
+                Qty::from_milli(347),
+                Qty::ONE,
+            ]
+        );
+        assert!(Qty::from_milli(-1) < Qty::ZERO);
+    }
+
+    #[test]
+    fn qty_serialises_as_milli_units() {
+        let qty = Qty::from_milli(-347);
+        assert_eq!(serde_json::to_string(&qty).unwrap(), "-347");
+        assert_eq!(serde_json::from_str::<Qty>("-347").unwrap(), qty);
+    }
+
+    #[test]
     fn the_rule_table_lists_every_variant_exactly_once() {
         // ALL_RULES drives the generator and every table below, so a rule that
         // never reaches it would be untested behind green tests. The exhaustive
@@ -806,6 +1025,24 @@ mod tests {
             );
             if let Ok(sum) = ma.checked_add(mb) {
                 prop_assert_eq!(sum.checked_sub(mb).unwrap(), ma);
+            }
+        }
+
+        /// Quantity arithmetic is reversible at milli-unit precision: adding
+        /// a signed quantity and then removing that same quantity returns the
+        /// exact starting value whenever the sum is representable.
+        #[test]
+        fn prop_qty_add_sub_roundtrip((left_milli, right_milli) in qty_add_sub_cases()) {
+            let left = Qty::from_milli(left_milli);
+            let right = Qty::from_milli(right_milli);
+
+            match left_milli.checked_add(right_milli) {
+                Some(expected_sum) => {
+                    let sum = left.checked_add(right).unwrap();
+                    prop_assert_eq!(sum.milli(), expected_sum);
+                    prop_assert_eq!(sum.checked_sub(right).unwrap(), left);
+                }
+                None => prop_assert_eq!(left.checked_add(right), Err(MoneyError::Overflow)),
             }
         }
 
