@@ -199,7 +199,7 @@ crates/pos-domain/        pure rules: Money, tax, cart machine   ← the crown j
 crates/pos-db/            SQLite schema, migrations, repositories
 crates/pos-sync/          outbox/cursor protocol (client + server)
 crates/pos-hardware/      printer/scanner/terminal traits + simulator
-crates/pos-test-support/  the shared proptest configuration and strategies       → 1.1.0
+crates/pos-test-support/  the shared proptest configuration and strategies (dev-only)
 crates/pos-fiscal/        UBL builder, pinned code tables, queue, conformance    → group 2.7
 apps/terminal/            the register (Tauri 2): src/ = React, src-tauri/ = Rust shell
 apps/server/              Axum: sync, auth, reporting
@@ -208,9 +208,12 @@ packages/money/           the minor-unit rule, shared by both front ends
 packages/ui/              shared React components, and packages/api-types/ shared DTOs — both scaffolds
 ```
 
-The two arrowed rows **do not exist on disk yet**; the arrow is the microstep that creates each.
-They are named here because the reference documents already specify their contents and because
-`pos-fiscal` must stay its own crate: everything reconstructed from the ISTD specification lives in
+The one arrowed row **does not exist on disk yet**; the arrow is the microstep that creates it.
+`pos-test-support` landed at microstep 1.1.0 and is a `[dev-dependencies]` entry in every crate that
+uses it — it reads the environment, which no crate that ships to a register may do, and the
+dependency table is the boundary that keeps that harmless.
+`pos-fiscal` is named before it exists because the reference documents already specify its contents
+and because it must stay its own crate: everything reconstructed from the ISTD specification lives in
 one module, `pos-fiscal/src/codes.rs`, so an official code change is one diff in one file and its
 goldens rather than conditionals leaking through the builder. Its layout is
 [`ref/fiscal-jofotara.md`](docs/implementation/ref/fiscal-jofotara.md) §9.

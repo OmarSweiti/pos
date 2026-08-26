@@ -16,8 +16,10 @@ when that member's own manifest opts in:
 Two lines. Omit them in a new crate and it silently loses every deny in this
 file — the float ban included — while `cargo clippy -D warnings`, `just lint`,
 `just pre-push` and CI all stay green, because nothing anywhere compares the
-member list against the opt-in list. All six members opt in today. The seventh
-is the one this check exists for.
+member list against the opt-in list. All seven members opt in today. The eighth
+is the one this check exists for — and the seventh already proved the point:
+`pos-test-support` arrived at microstep 1.1.0, and this check is what required
+its two lines rather than leaving them to whoever noticed.
 
 The complementary failure is quieter still: an entry demoted from `deny` to
 `warn` keeps the lint listed, keeps it visibly "configured", and stops it
