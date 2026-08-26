@@ -79,3 +79,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # ── testing ─────────────────────────────────────────────────────────────
 proptest = "1"
 tempfile = "3"
+# Compile-fail testing. A typed id whose whole purpose is that the compiler
+# refuses `f(line_id, sale_id)` can only be proved by a test that fails to
+# compile, and an ordinary #[test] cannot express that. Dev-only, so it reaches
+# no register: purity (I-8) governs what ships, and a dev-dependency never does.
+trybuild = "1"

@@ -22,12 +22,20 @@ password plus repository secrets. Phase 1 has started. Group 1.1 has landed `1.1
 property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
-shipped earlier) and `1.1.5` (the complete money property suite). **The next product microstep is
-`1.1.8 — Typed ids and the Clock / IdSource ports` in**
+shipped earlier), `1.1.5` (the complete money property suite) and `1.1.8` (the fifteen typed ids,
+the `IdSource` port and `SeqIdSource`). **The next product microstep is
+`1.1.9 — Timestamp, BusinessDate, DayBoundary, and the Clock port` in**
 [`phase-1-sellable-mvp.md`](phase-1-sellable-mvp.md), following §1.1's build-order table rather
-than step order — after it, `1.1.9`, and then the migration spine from `0003`.
+than step order — it now also carries the `Clock` port and `FixedClock`, which cannot compile before
+the `Timestamp` they return — and then the migration spine from `0003`.
 Repository-hardening and documentation work may land between numbered product steps, but it does
 not advance that frontier.
+
+> `1.1.8` has one piece outstanding: the `trybuild` compile-fail lane
+> (`typed_ids_do_not_interconvert`, its `tests/typed_ids_ui.rs` harness and the `.stderr` golden)
+> needs the `trybuild` dev-dependency, which could not be fetched in the environment the rest of the
+> step was built in. The typed ids themselves, `IdSource` and `SeqIdSource` are landed and green.
+> Delete this note when that lane is in.
 
 **This pointer is maintained by station 13 of the feature lifecycle** — the documentation loop in
 [`02-development-workflow.md`](02-development-workflow.md) §4.13 — and by nothing else. It is a
