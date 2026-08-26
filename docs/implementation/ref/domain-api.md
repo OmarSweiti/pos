@@ -250,11 +250,13 @@ type-level fallback: `unwrap_or_default()` is precisely how an unapproved tax ru
 real sale, and microstep `1.3.4` exists to block a finalization that has no approved policy behind
 it. The rule is threaded from the policy or it does not arrive.
 
-**`RoundingDirection` carries no primitive until [1.5.3].** It is the *cash* axis, and
-`Money::round_to_step` is where what `Up` and `Down` mean below zero — toward the infinities, or
-away from and toward zero — is decided, beside the still-open question of which direction a cash
-refund payout takes ([`tax-jordan.md`](tax-jordan.md) §5). Answering that here, in a microstep
-reviewed for the tie rule, would answer it by accident.
+**`Money::round_to_step` lands in [1.1.2b].** It is the primitive on the *cash* axis, with mechanics
+defined by numeric order: `Up` means toward positive infinity and `Down` toward negative infinity,
+so below zero `Up` moves toward zero and `Down` away from it. `Nearest` chooses the closer multiple
+and breaks an exact half-step tie away from zero. Microstep [1.5.3] owns `compute_cash_rounding`,
+the policy that applies this primitive only to a final cash tender's remaining amount, using the
+selected direction. The direction for a cash refund payout remains the separate open question in
+[`tax-jordan.md`](tax-jordan.md) §5; defining honest primitive mechanics here does not decide it.
 
 > **Default is `HalfAwayFromZero`, not banker's rounding.** The blueprint suggests banker's; the
 > arithmetic a merchant's accountant does by hand expects half-away-from-zero, and the default a
@@ -369,6 +371,7 @@ pub enum MoneyError {
     #[error("cannot parse {0:?} as an amount")]           Parse(String),
     #[error("weights sum to zero; cannot prorate")]       ZeroWeights,
     #[error("negative weight in a proration")]            NegativeWeight,
+    #[error("rounding step must be positive, got {0}")]   InvalidStep(i64),
     #[error("{0} is not exact at {1} decimals")]          NotRepresentableAtPrecision(String, u8),
     #[error("value out of representable range")]          OutOfRange,
 }
@@ -376,8 +379,8 @@ pub enum MoneyError {
 
 The last two variants landed early, at **[1.1.4]**, because `Percent::from_percent_decimal` refuses
 both an inexact and an unrepresentable rate and neither is `Overflow`. The heading keeps `[1.1.2]`
-because that is where the rest of the enum arrives; `Parse`, `ZeroWeights` and `NegativeWeight` are
-still 1.1.2b's.
+because that is where the rest of the enum arrives; `Parse`, `ZeroWeights`, `NegativeWeight` and
+`InvalidStep` are still 1.1.2b's.
 
 ### 1.6 Properties — [1.1.5]
 

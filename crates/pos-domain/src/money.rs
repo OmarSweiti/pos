@@ -135,6 +135,14 @@ pub enum MoneyError {
     CurrencyMismatch(&'static str, &'static str),
     #[error("unknown currency code {0}")]
     UnknownCurrency(String),
+    #[error("cannot parse {0:?} as an amount")]
+    Parse(String),
+    #[error("weights sum to zero; cannot prorate")]
+    ZeroWeights,
+    #[error("negative weight in a proration")]
+    NegativeWeight,
+    #[error("rounding step must be positive, got {0}")]
+    InvalidStep(i64),
     /// Carries the value as written and the decimal places that were available,
     /// because "not exact" is unactionable without both. `Percent` reports its
     /// four; `Money::format` (1.1.2b) reports the store's.
@@ -207,6 +215,31 @@ impl Money {
         Ok(self.minor.cmp(&other.minor))
     }
 
+    /// Multiply a unit price by a signed quantity in milli-units.
+    ///
+    /// The product remains an exact `Decimal` until the one reduction through
+    /// `RoundingRule::round_to_i64`. A checked decimal product turns magnitudes
+    /// outside `Decimal` into `Overflow` rather than panicking.
+    pub fn mul_qty(self, qty: Qty, rule: RoundingRule) -> Result<Money, MoneyError> {
+        let exact_minor = Decimal::from(self.minor)
+            .checked_mul(qty.to_decimal())
+            .ok_or(MoneyError::Overflow)?;
+        rule.round_to_i64(exact_minor)
+            .map(|minor| Money::from_minor(minor, self.currency))
+    }
+
+    /// Apply a signed parts-per-million rate to this amount.
+    ///
+    /// `Percent::to_decimal` supplies the exact fractional rate. As with
+    /// quantity multiplication, the final call is the sole rounding point.
+    pub fn mul_percent(self, pct: Percent, rule: RoundingRule) -> Result<Money, MoneyError> {
+        let exact_minor = Decimal::from(self.minor)
+            .checked_mul(pct.to_decimal())
+            .ok_or(MoneyError::Overflow)?;
+        rule.round_to_i64(exact_minor)
+            .map(|minor| Money::from_minor(minor, self.currency))
+    }
+
     /// Split a non-negative amount into `parts` pieces that differ by at most
     /// one minor unit and sum EXACTLY to the original (largest-remainder).
     /// This is the primitive under split tenders and per-line proration.
@@ -225,6 +258,260 @@ impl Money {
             .collect())
     }
 
+    /// Split proportionally by same-currency money values.
+    ///
+    /// This entry point owns only the currency check and the projection to
+    /// integer minor-unit weights. All allocation mechanics live in
+    /// `split_proportional_by`, so value and quantity proration cannot drift.
+    pub fn split_proportional(self, weights: &[Money]) -> Result<Vec<Money>, MoneyError> {
+        let integer_weights = weights
+            .iter()
+            .map(|weight| {
+                self.ensure_same_currency(*weight)?;
+                Ok(weight.minor())
+            })
+            .collect::<Result<Vec<_>, MoneyError>>()?;
+
+        self.split_proportional_by(&integer_weights)
+    }
+
+    /// Split proportionally by arbitrary non-negative integer weights.
+    ///
+    /// Exact integer quotients form the base allocation. Remaining minor units
+    /// go to the first positive weights in original index order, exactly as
+    /// `split_evenly` awards its first N pieces. Inputs and outputs never move,
+    /// and the primitive learns no identity. Signed totals use the same
+    /// magnitude allocation and apply their sign at the end, including the
+    /// full `i64::MIN` magnitude.
+    pub fn split_proportional_by(self, weights: &[i64]) -> Result<Vec<Money>, MoneyError> {
+        if weights.iter().any(|weight| *weight < 0) {
+            return Err(MoneyError::NegativeWeight);
+        }
+
+        let total_weight = weights.iter().try_fold(0_u128, |sum, weight| {
+            let weight = u128::try_from(*weight).map_err(|_| MoneyError::NegativeWeight)?;
+            sum.checked_add(weight).ok_or(MoneyError::Overflow)
+        })?;
+        if total_weight == 0 {
+            return Err(MoneyError::ZeroWeights);
+        }
+
+        let magnitude = u128::from(self.minor.unsigned_abs());
+        let mut allocated = 0_u128;
+        let mut shares = Vec::with_capacity(weights.len());
+
+        for weight in weights.iter().copied() {
+            let weight = u128::try_from(weight).map_err(|_| MoneyError::NegativeWeight)?;
+            let numerator = magnitude.checked_mul(weight).ok_or(MoneyError::Overflow)?;
+            let base = numerator / total_weight;
+
+            allocated = allocated.checked_add(base).ok_or(MoneyError::Overflow)?;
+            shares.push(base);
+        }
+
+        let mut undistributed = magnitude
+            .checked_sub(allocated)
+            .ok_or(MoneyError::Overflow)?;
+        for (share, weight) in shares.iter_mut().zip(weights) {
+            if undistributed == 0 {
+                break;
+            }
+            if *weight > 0 {
+                *share = share.checked_add(1).ok_or(MoneyError::Overflow)?;
+                undistributed -= 1;
+            }
+        }
+        if undistributed != 0 {
+            return Err(MoneyError::Overflow);
+        }
+
+        shares
+            .into_iter()
+            .map(|share| {
+                let magnitude = i128::try_from(share).map_err(|_| MoneyError::Overflow)?;
+                let signed = if self.minor < 0 {
+                    magnitude.checked_neg().ok_or(MoneyError::Overflow)?
+                } else {
+                    magnitude
+                };
+                let minor = i64::try_from(signed).map_err(|_| MoneyError::Overflow)?;
+                Ok(Money::from_minor(minor, self.currency))
+            })
+            .collect()
+    }
+
+    /// Round to a positive minor-unit step using numeric-order directions.
+    ///
+    /// `Up` is toward positive infinity and `Down` toward negative infinity,
+    /// so below zero `Up` moves toward zero while `Down` moves away from it.
+    /// `Nearest` chooses the closer multiple and breaks an exact half-step tie
+    /// away from zero. Which direction a cash collection or refund *selects*
+    /// is policy outside this primitive.
+    pub fn round_to_step(
+        self,
+        step_minor: i64,
+        dir: RoundingDirection,
+    ) -> Result<Money, MoneyError> {
+        if step_minor <= 0 {
+            return Err(MoneyError::InvalidStep(step_minor));
+        }
+
+        let amount = i128::from(self.minor);
+        let step = i128::from(step_minor);
+        let lower = amount
+            .div_euclid(step)
+            .checked_mul(step)
+            .ok_or(MoneyError::Overflow)?;
+        let lower_distance = amount.rem_euclid(step);
+        let upper = if lower_distance == 0 {
+            lower
+        } else {
+            lower.checked_add(step).ok_or(MoneyError::Overflow)?
+        };
+        let upper_distance = upper.checked_sub(amount).ok_or(MoneyError::Overflow)?;
+
+        let rounded = match dir {
+            RoundingDirection::Down => lower,
+            RoundingDirection::Up => upper,
+            RoundingDirection::Nearest => match lower_distance.cmp(&upper_distance) {
+                core::cmp::Ordering::Less => lower,
+                core::cmp::Ordering::Greater => upper,
+                core::cmp::Ordering::Equal if amount < 0 => lower,
+                core::cmp::Ordering::Equal => upper,
+            },
+        };
+        let minor = i64::try_from(rounded).map_err(|_| MoneyError::Overflow)?;
+        Ok(Money::from_minor(minor, self.currency))
+    }
+
+    /// Convert exactly from stored minor units to major-unit decimal form.
+    pub fn to_decimal(self) -> Decimal {
+        Decimal::new(self.minor, u32::from(self.currency.exponent()))
+    }
+
+    /// Convert a major-unit decimal into money, rounding exactly once.
+    pub fn from_decimal(
+        decimal: Decimal,
+        currency: Currency,
+        rule: RoundingRule,
+    ) -> Result<Money, MoneyError> {
+        let exact_minor = decimal
+            .checked_mul(Decimal::from(currency.minor_per_major()))
+            .ok_or(MoneyError::Overflow)?;
+        rule.round_to_i64(exact_minor)
+            .map(|minor| Money::from_minor(minor, currency))
+    }
+
+    /// Render a catalogue amount at `decimals`, refusing hidden minor units.
+    ///
+    /// More decimal places append zeros and fewer are accepted only when the
+    /// omitted places are all zero. No rounding rule is accepted here, so an
+    /// inexact shorter display is a named error rather than a rounded price.
+    pub fn format(self, decimals: u8) -> Result<String, MoneyError> {
+        let exponent = self.currency.exponent();
+        if decimals >= exponent {
+            let mut rendered = self.format_exact();
+            if decimals > exponent {
+                if exponent == 0 {
+                    rendered.push('.');
+                }
+                rendered.extend(core::iter::repeat_n('0', usize::from(decimals - exponent)));
+            }
+            return Ok(rendered);
+        }
+
+        let divisor = 10_i64
+            .checked_pow(u32::from(exponent - decimals))
+            .ok_or(MoneyError::OutOfRange)?;
+        if self.minor % divisor != 0 {
+            return Err(MoneyError::NotRepresentableAtPrecision(
+                self.format_exact(),
+                decimals,
+            ));
+        }
+
+        Ok(format_fixed(self.minor / divisor, decimals))
+    }
+
+    /// Render at the currency's own exponent, always and without a setting.
+    pub fn format_exact(self) -> String {
+        format_fixed(self.minor, self.currency.exponent())
+    }
+
+    /// Parse an exact major-unit amount for `currency` without rounding.
+    ///
+    /// The grammar is ASCII decimal: an optional leading sign, at least one
+    /// integer digit, and an optional non-empty fractional part. Fewer digits
+    /// than the currency exponent are padded; extra trailing zeros are accepted
+    /// because they carry no extra value, while any excess non-zero precision
+    /// is refused. Whitespace, grouping separators and exponent notation are
+    /// not part of the grammar.
+    pub fn parse(input: &str, currency: Currency) -> Result<Money, MoneyError> {
+        let (negative, unsigned) = if let Some(rest) = input.strip_prefix('-') {
+            (true, rest)
+        } else if let Some(rest) = input.strip_prefix('+') {
+            (false, rest)
+        } else {
+            (false, input)
+        };
+
+        if unsigned.is_empty() {
+            return Err(MoneyError::Parse(input.to_owned()));
+        }
+
+        let (whole, fraction, has_decimal_point) =
+            if let Some((whole, fraction)) = unsigned.split_once('.') {
+                (whole, fraction, true)
+            } else {
+                (unsigned, "", false)
+            };
+        if whole.is_empty()
+            || (has_decimal_point && fraction.is_empty())
+            || whole.bytes().any(|byte| !byte.is_ascii_digit())
+            || fraction.bytes().any(|byte| !byte.is_ascii_digit())
+        {
+            return Err(MoneyError::Parse(input.to_owned()));
+        }
+
+        let exponent = usize::from(currency.exponent());
+        if fraction.bytes().skip(exponent).any(|digit| digit != b'0') {
+            return Err(MoneyError::NotRepresentableAtPrecision(
+                input.to_owned(),
+                currency.exponent(),
+            ));
+        }
+
+        let carried_fraction = fraction.bytes().take(exponent);
+        let padding = exponent.saturating_sub(fraction.len().min(exponent));
+        let digits = whole
+            .bytes()
+            .chain(carried_fraction)
+            .chain(core::iter::repeat_n(b'0', padding));
+        let limit = if negative {
+            i64::MIN.unsigned_abs()
+        } else {
+            i64::MAX.unsigned_abs()
+        };
+        let mut magnitude = 0_u64;
+        for digit in digits {
+            magnitude = magnitude
+                .checked_mul(10)
+                .and_then(|value| value.checked_add(u64::from(digit - b'0')))
+                .ok_or(MoneyError::OutOfRange)?;
+            if magnitude > limit {
+                return Err(MoneyError::OutOfRange);
+            }
+        }
+
+        let minor = if negative && magnitude == i64::MIN.unsigned_abs() {
+            i64::MIN
+        } else {
+            let magnitude = i64::try_from(magnitude).map_err(|_| MoneyError::OutOfRange)?;
+            if negative { -magnitude } else { magnitude }
+        };
+        Ok(Money::from_minor(minor, currency))
+    }
+
     fn ensure_same_currency(self, other: Money) -> Result<(), MoneyError> {
         if self.currency == other.currency {
             Ok(())
@@ -235,6 +522,37 @@ impl Money {
             ))
         }
     }
+}
+
+/// Render a signed integer at a fixed decimal scale without negating
+/// `i64::MIN` and without relying on decimal formatting to round nothing.
+fn format_fixed(value: i64, decimals: u8) -> String {
+    let digits = value.unsigned_abs().to_string();
+    let decimals = usize::from(decimals);
+    let mut rendered = String::new();
+
+    if value < 0 {
+        rendered.push('-');
+    }
+    if decimals == 0 {
+        rendered.push_str(&digits);
+        return rendered;
+    }
+    if digits.len() <= decimals {
+        rendered.push_str("0.");
+        rendered.extend(core::iter::repeat_n('0', decimals - digits.len()));
+        rendered.push_str(&digits);
+        return rendered;
+    }
+
+    let decimal_index = digits.len() - decimals;
+    for (index, digit) in digits.chars().enumerate() {
+        if index == decimal_index {
+            rendered.push('.');
+        }
+        rendered.push(digit);
+    }
+    rendered
 }
 
 /// A quantity in signed integer milli-units.
@@ -519,12 +837,14 @@ impl RoundingRule {
 /// tender-level adjustment that leaves those facts alone
 /// (`ref/tax-jordan.md` §5).
 ///
-/// It carries no primitive yet, deliberately. `Money::round_to_step` is
-/// microstep 1.5.3, and what `Up` and `Down` mean below zero — toward the
-/// infinities, or away from and toward zero — is decided there, next to the
-/// still-open question of which direction a cash *refund payout* takes so a
-/// drawer cannot retain an unrecorded remainder. A primitive written here would
-/// answer that question by accident, in a microstep nobody reviewed for it.
+/// `Money::round_to_step` lands in microstep 1.1.2b. Its mechanics use numeric
+/// order: `Up` means positive infinity and `Down` negative infinity, so below
+/// zero `Up` moves toward zero and `Down` away from it; `Nearest` breaks exact
+/// half-step ties away from zero. Microstep 1.5.3 owns `compute_cash_rounding`,
+/// the policy that applies this primitive only to a final cash tender's
+/// remaining amount, using the selected direction. The direction for a cash
+/// refund payout remains the separate open question in `ref/tax-jordan.md` §5;
+/// these mechanics do not decide it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RoundingDirection {
     Nearest,
@@ -678,6 +998,88 @@ mod tests {
             .prop_map(|(left, right, (left_currency, right_currency))| {
                 (left, right, left_currency, right_currency)
             })
+    }
+
+    // Covers the full signed i64 amount space, every known currency, and
+    // non-empty weight vectors of length 1 through 16 containing deliberately
+    // frequent zeros and positive values across the full i64 range. Negative
+    // and all-zero weights are deliberately excluded because they are named
+    // error branches rather than conservation cases.
+    fn proportional_integer_cases() -> impl Strategy<Value = (i64, Vec<i64>, Currency)> {
+        (
+            any::<i64>(),
+            prop::collection::vec(prop_oneof![1 => Just(0_i64), 3 => 1_i64..=i64::MAX], 1..17)
+                .prop_filter("at least one weight is positive", |weights| {
+                    weights.iter().any(|weight| *weight > 0)
+                }),
+            known_currency(),
+        )
+    }
+
+    // Covers the same signed totals and non-negative, non-zero aggregate
+    // weights as `proportional_integer_cases`, projected into same-currency
+    // `Money` values. Mixed currencies and negative money weights are excluded
+    // here because their dedicated examples pin those refusal paths.
+    fn proportional_money_cases() -> impl Strategy<Value = (i64, Vec<Money>, Currency)> {
+        proportional_integer_cases().prop_map(|(minor, weights, currency)| {
+            let weights = weights
+                .into_iter()
+                .map(|weight| Money::from_minor(weight, currency))
+                .collect();
+            (minor, weights, currency)
+        })
+    }
+
+    // Covers signed prices through one trillion minor units, zero through 64
+    // whole units, every known currency and every rounding rule. Larger counts
+    // and magnitudes that could overflow repeated addition are deliberately
+    // excluded; explicit examples own the overflow branches.
+    fn mul_qty_whole_unit_cases() -> impl Strategy<Value = (i64, u8, Currency, RoundingRule)> {
+        (
+            -1_000_000_000_000_i64..=1_000_000_000_000,
+            0_u8..=64,
+            known_currency(),
+            every_rounding_rule(),
+        )
+    }
+
+    // Covers the entire stored amount space in every known currency. Nothing
+    // is excluded: `format_exact` and `parse` are total over every `Money`.
+    fn money_exact_roundtrip_cases() -> impl Strategy<Value = (i64, Currency)> {
+        (any::<i64>(), known_currency())
+    }
+
+    // Covers each cash direction and nothing else. It is separate from tax's
+    // `every_rounding_rule` because the two axes must never be conflated.
+    fn every_rounding_direction() -> impl Strategy<Value = RoundingDirection> {
+        prop_oneof![
+            Just(RoundingDirection::Nearest),
+            Just(RoundingDirection::Up),
+            Just(RoundingDirection::Down),
+        ]
+    }
+
+    // Covers positive and negative amounts through 10^15 minor units, steps 1
+    // through one million, and all three directions. Values close enough to an
+    // i64 edge for the selected multiple to overflow are deliberately excluded;
+    // the boundary example owns those handled errors.
+    fn round_to_step_cases() -> impl Strategy<Value = (i64, i64, RoundingDirection)> {
+        (
+            -1_000_000_000_000_000_i64..=1_000_000_000_000_000,
+            1_i64..=1_000_000,
+            every_rounding_direction(),
+        )
+    }
+
+    // Covers the same signed amounts and positive steps as
+    // `round_to_step_cases`, restricted to `Nearest` because the half-step
+    // distance bound is not a claim about directional rounding. Boundary
+    // overflow remains deliberately excluded and separately tested.
+    fn nearest_step_cases() -> impl Strategy<Value = (i64, i64)> {
+        (
+            -1_000_000_000_000_000_i64..=1_000_000_000_000_000,
+            1_i64..=1_000_000,
+        )
     }
 
     #[test]
@@ -842,6 +1244,369 @@ mod tests {
                 Currency::EUR,
             ),
             Ok(Money::from_minor(10, Currency::EUR))
+        );
+    }
+
+    #[test]
+    fn money_decimal_arithmetic_uses_the_selected_rounding_rule() {
+        // All three paths carry an exact half-minor intermediate into the one
+        // shared rounding primitive. The separating vectors prove the rule is
+        // actually threaded rather than a caller rounding or truncating first.
+        let one_fil = Money::from_minor(1, Currency::JOD);
+        let half_unit = Qty::from_milli(500);
+        assert_eq!(
+            one_fil.mul_qty(half_unit, RoundingRule::HalfAwayFromZero),
+            Ok(one_fil)
+        );
+        assert_eq!(
+            one_fil.mul_qty(half_unit, RoundingRule::HalfEven),
+            Ok(Money::zero(Currency::JOD))
+        );
+        assert_eq!(
+            one_fil.mul_qty(Qty::from_milli(-500), RoundingRule::HalfAwayFromZero),
+            Ok(Money::from_minor(-1, Currency::JOD))
+        );
+        assert_eq!(
+            one_fil.mul_qty(Qty::from_milli(-500), RoundingRule::Ceil),
+            Ok(Money::zero(Currency::JOD))
+        );
+
+        let five_fils = Money::from_minor(5, Currency::JOD);
+        let ten_percent = Percent::from_ppm(100_000);
+        assert_eq!(
+            five_fils.mul_percent(ten_percent, RoundingRule::HalfAwayFromZero),
+            Ok(one_fil)
+        );
+        assert_eq!(
+            five_fils.mul_percent(ten_percent, RoundingRule::HalfEven),
+            Ok(Money::zero(Currency::JOD))
+        );
+        assert_eq!(
+            five_fils.mul_percent(Percent::from_ppm(-100_000), RoundingRule::Floor),
+            Ok(Money::from_minor(-1, Currency::JOD))
+        );
+
+        let one_point_2585 = Decimal::new(12_585, 4);
+        assert_eq!(
+            Money::from_decimal(
+                one_point_2585,
+                Currency::JOD,
+                RoundingRule::HalfAwayFromZero,
+            ),
+            Ok(Money::from_minor(1_259, Currency::JOD))
+        );
+        assert_eq!(
+            Money::from_decimal(one_point_2585, Currency::JOD, RoundingRule::HalfEven),
+            Ok(Money::from_minor(1_258, Currency::JOD))
+        );
+    }
+
+    #[test]
+    fn money_to_decimal_uses_each_currency_exponent_exactly() {
+        let jod = Money::from_minor(1_259, Currency::JOD).to_decimal();
+        assert_eq!(jod, Decimal::new(1_259, 3));
+        assert_eq!(jod.scale(), 3);
+
+        let usd = Money::from_minor(1_259, Currency::USD).to_decimal();
+        assert_eq!(usd, Decimal::new(1_259, 2));
+        assert_eq!(usd.scale(), 2);
+
+        assert_eq!(
+            Money::from_minor(i64::MIN, Currency::JOD).to_decimal(),
+            Decimal::new(i64::MIN, 3)
+        );
+        assert_eq!(
+            Money::from_minor(i64::MAX, Currency::JOD).to_decimal(),
+            Decimal::new(i64::MAX, 3)
+        );
+    }
+
+    #[test]
+    fn money_decimal_arithmetic_reports_every_overflow() {
+        let max = Money::from_minor(i64::MAX, Currency::JOD);
+        assert_eq!(
+            max.mul_qty(Qty::from_units(2).unwrap(), RoundingRule::HalfAwayFromZero),
+            Err(MoneyError::Overflow)
+        );
+        assert_eq!(
+            max.mul_qty(Qty::from_milli(i64::MAX), RoundingRule::HalfAwayFromZero,),
+            Err(MoneyError::Overflow)
+        );
+        assert_eq!(
+            max.mul_percent(Percent::from_ppm(i64::MAX), RoundingRule::HalfAwayFromZero,),
+            Err(MoneyError::Overflow)
+        );
+        assert_eq!(
+            Money::from_decimal(Decimal::MAX, Currency::JOD, RoundingRule::HalfAwayFromZero,),
+            Err(MoneyError::Overflow)
+        );
+    }
+
+    #[test]
+    fn proportional_split_distributes_remainders_by_input_index() {
+        let amount = Money::from_minor(5, Currency::JOD);
+        assert_eq!(
+            amount.split_proportional_by(&[1, 2, 4]),
+            Ok(vec![
+                Money::from_minor(1, Currency::JOD),
+                Money::from_minor(2, Currency::JOD),
+                Money::from_minor(2, Currency::JOD),
+            ])
+        );
+
+        // Original indices zero and one get the two residual fils; no product
+        // identity or internal reordering enters the primitive.
+        assert_eq!(
+            Money::from_minor(2, Currency::JOD).split_proportional_by(&[1, 1, 1]),
+            Ok(vec![
+                Money::from_minor(1, Currency::JOD),
+                Money::from_minor(1, Currency::JOD),
+                Money::zero(Currency::JOD),
+            ])
+        );
+        assert_eq!(
+            Money::from_minor(-2, Currency::JOD).split_proportional_by(&[1, 1, 1]),
+            Ok(vec![
+                Money::from_minor(-1, Currency::JOD),
+                Money::from_minor(-1, Currency::JOD),
+                Money::zero(Currency::JOD),
+            ])
+        );
+
+        // Zero weights remain zero even when they appear before the recipients
+        // of residual units.
+        assert_eq!(
+            Money::from_minor(7, Currency::JOD).split_proportional_by(&[0, 3, 0, 1]),
+            Ok(vec![
+                Money::zero(Currency::JOD),
+                Money::from_minor(6, Currency::JOD),
+                Money::zero(Currency::JOD),
+                Money::from_minor(1, Currency::JOD),
+            ])
+        );
+    }
+
+    #[test]
+    fn proportional_split_refuses_invalid_weights_and_currency() {
+        let amount = Money::from_minor(10, Currency::JOD);
+        assert_eq!(
+            amount.split_proportional_by(&[]),
+            Err(MoneyError::ZeroWeights)
+        );
+        assert_eq!(
+            Money::zero(Currency::JOD).split_proportional_by(&[0, 0]),
+            Err(MoneyError::ZeroWeights),
+            "a zero total does not create a proportion where none exists"
+        );
+        assert_eq!(
+            amount.split_proportional_by(&[1, -1]),
+            Err(MoneyError::NegativeWeight)
+        );
+        assert_eq!(
+            amount.split_proportional(&[
+                Money::from_minor(1, Currency::JOD),
+                Money::from_minor(1, Currency::USD),
+            ]),
+            Err(MoneyError::CurrencyMismatch("JOD", "USD"))
+        );
+        assert_eq!(
+            amount.split_proportional(&[Money::from_minor(-1, Currency::JOD)]),
+            Err(MoneyError::NegativeWeight)
+        );
+    }
+
+    #[test]
+    fn proportional_split_handles_the_full_signed_range() {
+        assert_eq!(
+            Money::from_minor(i64::MIN, Currency::JOD).split_proportional_by(&[1]),
+            Ok(vec![Money::from_minor(i64::MIN, Currency::JOD)])
+        );
+        assert_eq!(
+            Money::from_minor(i64::MAX, Currency::JOD).split_proportional_by(&[1]),
+            Ok(vec![Money::from_minor(i64::MAX, Currency::JOD)])
+        );
+
+        for minor in [i64::MIN, i64::MAX] {
+            let pieces = Money::from_minor(minor, Currency::JOD)
+                .split_proportional_by(&[i64::MAX, i64::MAX])
+                .unwrap();
+            assert_eq!(
+                pieces
+                    .iter()
+                    .map(|piece| i128::from(piece.minor()))
+                    .sum::<i128>(),
+                i128::from(minor)
+            );
+        }
+    }
+
+    #[test]
+    fn format_truncating_a_fil_is_refused() {
+        let amount = Money::from_minor(1_259, Currency::JOD);
+        assert_eq!(
+            amount.format(2),
+            Err(MoneyError::NotRepresentableAtPrecision(
+                "1.259".to_owned(),
+                2,
+            ))
+        );
+        assert_eq!(amount.format_exact(), "1.259");
+
+        // A three-fil cash adjustment must never be displayed as zero.
+        let adjustment = Money::from_minor(3, Currency::JOD);
+        assert!(matches!(
+            adjustment.format(2),
+            Err(MoneyError::NotRepresentableAtPrecision(..))
+        ));
+        assert_eq!(adjustment.format_exact(), "0.003");
+    }
+
+    #[test]
+    fn exact_catalogue_precision_formats_without_hiding_value() {
+        let amount = Money::from_minor(1_250, Currency::JOD);
+        assert_eq!(
+            amount.format(0),
+            Err(MoneyError::NotRepresentableAtPrecision(
+                "1.250".to_owned(),
+                0
+            ))
+        );
+        assert_eq!(amount.format(2), Ok("1.25".to_owned()));
+        assert_eq!(amount.format(3), Ok("1.250".to_owned()));
+        assert_eq!(amount.format(4), Ok("1.2500".to_owned()));
+        assert_eq!(Money::zero(Currency::JOD).format(2), Ok("0.00".to_owned()));
+        assert_eq!(
+            Money::from_minor(-1_200, Currency::JOD).format(2),
+            Ok("-1.20".to_owned())
+        );
+        assert_eq!(
+            Money::from_minor(i64::MIN, Currency::JOD).format_exact(),
+            "-9223372036854775.808"
+        );
+        assert_eq!(
+            Money::from_minor(i64::MAX, Currency::JOD).format_exact(),
+            "9223372036854775.807"
+        );
+    }
+
+    #[test]
+    fn parse_accepts_exact_decimal_forms_without_rounding() {
+        let jod = Currency::JOD;
+        assert_eq!(Money::parse("1", jod), Ok(Money::from_minor(1_000, jod)));
+        assert_eq!(Money::parse("1.2", jod), Ok(Money::from_minor(1_200, jod)));
+        assert_eq!(
+            Money::parse("+1.259", jod),
+            Ok(Money::from_minor(1_259, jod))
+        );
+        assert_eq!(Money::parse("-0.001", jod), Ok(Money::from_minor(-1, jod)));
+        assert_eq!(
+            Money::parse("1.259000", jod),
+            Ok(Money::from_minor(1_259, jod)),
+            "extra trailing zeros carry no additional precision"
+        );
+        assert_eq!(
+            Money::parse("1.2591", jod),
+            Err(MoneyError::NotRepresentableAtPrecision(
+                "1.2591".to_owned(),
+                3,
+            ))
+        );
+        assert_eq!(
+            Money::parse("9223372036854775.807", jod),
+            Ok(Money::from_minor(i64::MAX, jod))
+        );
+        assert_eq!(
+            Money::parse("-9223372036854775.808", jod),
+            Ok(Money::from_minor(i64::MIN, jod))
+        );
+        assert_eq!(
+            Money::parse("9223372036854775.808", jod),
+            Err(MoneyError::OutOfRange)
+        );
+    }
+
+    #[test]
+    fn parse_rejects_non_decimal_syntax_and_lone_signs() {
+        for input in [
+            "", "-", "+", " 1.259", "1.259 ", "1,259", "1e3", ".5", "1.", "--1", "+-1", "1.2.3",
+        ] {
+            assert_eq!(
+                Money::parse(input, Currency::JOD),
+                Err(MoneyError::Parse(input.to_owned())),
+                "{input:?} is outside the amount grammar"
+            );
+        }
+    }
+
+    #[test]
+    fn round_to_step_defines_every_direction_below_zero() {
+        let negative = Money::from_minor(-1_245, Currency::JOD);
+        assert_eq!(
+            negative.round_to_step(10, RoundingDirection::Nearest),
+            Ok(Money::from_minor(-1_250, Currency::JOD))
+        );
+        assert_eq!(
+            negative.round_to_step(10, RoundingDirection::Up),
+            Ok(Money::from_minor(-1_240, Currency::JOD))
+        );
+        assert_eq!(
+            negative.round_to_step(10, RoundingDirection::Down),
+            Ok(Money::from_minor(-1_250, Currency::JOD))
+        );
+
+        let positive = Money::from_minor(1_245, Currency::JOD);
+        assert_eq!(
+            positive.round_to_step(10, RoundingDirection::Nearest),
+            Ok(Money::from_minor(1_250, Currency::JOD))
+        );
+        assert_eq!(
+            positive.round_to_step(10, RoundingDirection::Up),
+            Ok(Money::from_minor(1_250, Currency::JOD))
+        );
+        assert_eq!(
+            positive.round_to_step(10, RoundingDirection::Down),
+            Ok(Money::from_minor(1_240, Currency::JOD))
+        );
+    }
+
+    #[test]
+    fn round_to_step_refuses_invalid_steps_and_reports_boundary_overflow() {
+        let amount = Money::from_minor(7, Currency::JOD);
+        assert_eq!(
+            amount.round_to_step(0, RoundingDirection::Nearest),
+            Err(MoneyError::InvalidStep(0))
+        );
+        assert_eq!(
+            amount.round_to_step(-10, RoundingDirection::Nearest),
+            Err(MoneyError::InvalidStep(-10))
+        );
+
+        let max = Money::from_minor(i64::MAX, Currency::JOD);
+        assert_eq!(
+            max.round_to_step(10, RoundingDirection::Nearest),
+            Err(MoneyError::Overflow)
+        );
+        assert_eq!(
+            max.round_to_step(10, RoundingDirection::Up),
+            Err(MoneyError::Overflow)
+        );
+        assert_eq!(
+            max.round_to_step(10, RoundingDirection::Down),
+            Ok(Money::from_minor(9_223_372_036_854_775_800, Currency::JOD))
+        );
+
+        let min = Money::from_minor(i64::MIN, Currency::JOD);
+        assert_eq!(
+            min.round_to_step(10, RoundingDirection::Nearest),
+            Err(MoneyError::Overflow)
+        );
+        assert_eq!(
+            min.round_to_step(10, RoundingDirection::Down),
+            Err(MoneyError::Overflow)
+        );
+        assert_eq!(
+            min.round_to_step(10, RoundingDirection::Up),
+            Ok(Money::from_minor(-9_223_372_036_854_775_800, Currency::JOD))
         );
     }
 
@@ -1421,6 +2186,107 @@ mod tests {
             let min = pieces.iter().map(|p| p.minor()).min().unwrap();
             let max = pieces.iter().map(|p| p.minor()).max().unwrap();
             prop_assert!(max - min <= 1, "pieces must differ by at most one minor unit");
+        }
+
+        /// Value-weighted proration never creates or destroys a minor unit,
+        /// never changes currency, and gives every zero-valued weight zero.
+        #[test]
+        fn prop_split_proportional_preserves_total(
+            (minor, weights, currency) in proportional_money_cases()
+        ) {
+            let amount = Money::from_minor(minor, currency);
+            let raw_weights = weights.iter().map(|weight| weight.minor()).collect::<Vec<_>>();
+            let pieces = amount.split_proportional(&weights).unwrap();
+
+            prop_assert_eq!(pieces.len(), weights.len());
+            prop_assert!(pieces.iter().all(|piece| piece.currency() == currency));
+            prop_assert_eq!(
+                pieces.iter().map(|piece| i128::from(piece.minor())).sum::<i128>(),
+                i128::from(minor)
+            );
+            let zero_weights_are_zero = pieces.iter().zip(&weights).all(|(piece, weight)| {
+                weight.minor() != 0 || piece.is_zero()
+            });
+            prop_assert!(zero_weights_are_zero);
+            prop_assert_eq!(
+                pieces,
+                amount.split_proportional_by(&raw_weights).unwrap(),
+                "the Money entry point must delegate to the integer algorithm"
+            );
+        }
+
+        /// Integer-weighted proration conserves the signed total exactly over
+        /// every generated weight vector, and a zero weight always gets zero.
+        #[test]
+        fn prop_split_proportional_by_preserves_total(
+            (minor, weights, currency) in proportional_integer_cases()
+        ) {
+            let pieces = Money::from_minor(minor, currency)
+                .split_proportional_by(&weights)
+                .unwrap();
+
+            prop_assert_eq!(pieces.len(), weights.len());
+            prop_assert!(pieces.iter().all(|piece| piece.currency() == currency));
+            prop_assert_eq!(
+                pieces.iter().map(|piece| i128::from(piece.minor())).sum::<i128>(),
+                i128::from(minor)
+            );
+            let zero_weights_are_zero = pieces.iter().zip(&weights).all(|(piece, weight)| {
+                *weight != 0 || piece.is_zero()
+            });
+            prop_assert!(zero_weights_are_zero);
+        }
+
+        /// A whole-unit quantity costs exactly the same as adding that unit
+        /// price once per unit, under every rounding rule.
+        #[test]
+        fn prop_mul_qty_whole_units_is_repeated_add(
+            (minor, units, currency, rule) in mul_qty_whole_unit_cases()
+        ) {
+            let price = Money::from_minor(minor, currency);
+            let repeated = (0..units)
+                .try_fold(Money::zero(currency), |sum, _| sum.checked_add(price))
+                .unwrap();
+            let qty = Qty::from_units(i64::from(units)).unwrap();
+
+            prop_assert_eq!(price.mul_qty(qty, rule), Ok(repeated));
+        }
+
+        /// Rounding to a step is idempotent: once an amount is a multiple of
+        /// the step, applying the same direction cannot move it again.
+        #[test]
+        fn prop_round_to_step_is_idempotent(
+            (minor, step, direction) in round_to_step_cases()
+        ) {
+            let amount = Money::from_minor(minor, Currency::JOD);
+            let rounded = amount.round_to_step(step, direction).unwrap();
+            prop_assert_eq!(rounded.round_to_step(step, direction), Ok(rounded));
+        }
+
+        /// Nearest step rounding never moves an amount by more than half of
+        /// one step, with exact half-step ties included on both sides of zero.
+        #[test]
+        fn prop_round_to_step_within_half_step((minor, step) in nearest_step_cases()) {
+            let amount = Money::from_minor(minor, Currency::JOD);
+            let rounded = amount
+                .round_to_step(step, RoundingDirection::Nearest)
+                .unwrap();
+            let distance = (i128::from(rounded.minor()) - i128::from(minor)).abs();
+
+            prop_assert!(
+                distance * 2 <= i128::from(step),
+                "nearest moved {distance} minor units for step {step}"
+            );
+        }
+
+        /// Exact rendering is a lossless representation of every stored amount
+        /// at every known currency exponent, including both i64 boundaries.
+        #[test]
+        fn prop_format_exact_parse_roundtrip(
+            (minor, currency) in money_exact_roundtrip_cases()
+        ) {
+            let amount = Money::from_minor(minor, currency);
+            prop_assert_eq!(Money::parse(&amount.format_exact(), currency), Ok(amount));
         }
 
         /// Addition round-trips: (a + b) - b == a whenever a + b doesn't overflow.
