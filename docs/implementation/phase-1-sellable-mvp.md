@@ -50,11 +50,15 @@
 > | 6 | 1.1.4 | `Percent` |
 > | 7 | 1.1.2b | `Money`'s arithmetic — `mul_qty`, `mul_percent`, `split_proportional`, `split_proportional_by`, `round_to_step`, `to_decimal`, `from_decimal`, fallible `format`, `format_exact`, `parse` |
 > | 8 | 1.1.5 | the complete money property suite |
-> | 9 | 1.1.8 | typed ids, `Clock`, `IdSource` |
-> | 10 | 1.1.9 | `Timestamp`, `BusinessDate`, `DayBoundary`, `MonotonicClock` |
+> | 9 | 1.1.8 | typed ids, `IdSource`, `SeqIdSource` |
+> | 10 | 1.1.9 | `Timestamp`, `BusinessDate`, `DayBoundary`, `MonotonicClock`, **and the `Clock` port with `FixedClock`** |
 >
 > The original 1.1.2 heading remains as the concordance heading; implementation commits use
 > `[1.1.2a]` and `[1.1.2b]` so the two independently green changes stay distinguishable.
+>
+> **The same argument moves `Clock` out of 1.1.8.** `Clock::now` returns `Timestamp`, `Timestamp` is
+> 1.1.9's, and a `Clock` written at position 9 does not compile for exactly the reason 1.1.2 was
+> split. It travels with the type it returns, and so does `FixedClock`.
 
 ### 1.1.0 — Shared property-test harness
 **Files:** `Cargo.toml`, `Cargo.lock`, `crates/pos-domain/Cargo.toml`, `crates/pos-test-support/Cargo.toml` (new), `crates/pos-test-support/src/lib.rs` (new), `crates/pos-test-support/src/proptest.rs` (new), `crates/pos-test-support/tests/config.rs` (new)
@@ -166,17 +170,21 @@ proves the rebuild did not drop them. `crates/pos-db/tests/sale_immutability.rs`
 > second rebuild — and `0003` must drop and recreate the three `sale_line` triggers around its
 > backfill, since an `UPDATE` on a completed sale's line is exactly what they refuse.
 
-### 1.1.8 — Typed ids and the `Clock` / `IdSource` ports
+### 1.1.8 — Typed ids and the `IdSource` port
 **Files:** `Cargo.toml`, `Cargo.lock`, `crates/pos-domain/Cargo.toml`, `crates/pos-domain/src/ids.rs` (new), `crates/pos-domain/src/lib.rs`, `crates/pos-domain/tests/typed_ids_ui.rs` (new), `crates/pos-domain/tests/ui/typed_ids_do_not_interconvert.rs` (new), `crates/pos-domain/tests/ui/typed_ids_do_not_interconvert.stderr` (new)
-The `typed_id!` macro and fifteen id types from API reference §2, including `ApprovalId`, plus the two traits and their deterministic doubles (`SeqIdSource`, `FixedClock`).
-**Tests:** `typed_ids_do_not_interconvert` (a compile-fail test via `trybuild`) · `seq_id_source_is_reproducible`
+The `typed_id!` macro and fifteen id types from API reference §2, including `ApprovalId`, plus `IdSource` and its deterministic double `SeqIdSource`. Count the types: the reference records a revision that declared thirteen while this file said fourteen, and `OrgId` and `CategoryId` are the two a reader skips.
+**`Clock` and `FixedClock` are not here; they land with 1.1.9.** `Clock::now` returns `Timestamp`, which `time.rs` defines one microstep later, so a `Clock` written here does not compile — the same dependency that split 1.1.2, and the reason this step's `Done when` names neither of them. Do not invent a placeholder `Timestamp` to make the trait compile early: a second definition of time is worse than a deferred trait.
+`SeqIdSource` is **not** behind `#[cfg(test)]` — the server and the cross-crate integration tests construct the same id stream a domain property did. It is v7-*shaped*: the layout is RFC 9562's, while the millisecond field is a caller-supplied anchor plus the call index and `rand_a`/`rand_b` hold a stream tag and the sequence number. Purity (I-8) is what forces that: the crate may not add a `uuid` version feature, so the bytes are composed by hand and handed to `Uuid::from_u128`, and `scripts/check-domain-purity.py` refuses both the feature and the generating constructor by name.
+**Tests:** `typed_ids_do_not_interconvert` (a compile-fail test via `trybuild`) · `seq_id_source_is_reproducible` · `seq_ids_carry_the_v7_layout` · `the_stream_tag_and_the_sequence_occupy_their_own_fields` · `all_fifteen_typed_ids_round_trip_through_json` · `a_typed_id_displays_as_the_plain_uuid` · `a_typed_id_costs_nothing_over_its_uuid` · `typed_ids_order_by_their_bytes_and_never_by_causality` · `prop_seq_id_sources_agree_when_constructed_alike` · `prop_seq_ids_never_collide` · `prop_seq_ids_keep_the_v7_layout`
 **Done when:** `cargo nextest run -p pos-domain --test typed_ids_ui && cargo nextest run -p pos-domain seq_id_source_is_reproducible` exits zero; the `trybuild` fixture rejects `fn f(s: SaleId, l: SaleLineId)` when its arguments are swapped.
+> The `.stderr` golden is rustc-version-sensitive: a compiler release can reword E0308. `rust-toolchain.toml` pins the compiler, so it is stable today, and whoever bumps that pin regenerates the golden in the same change with `TRYBUILD=overwrite cargo test -p pos-domain --test typed_ids_ui`. Keep the fixture minimal for the same reason — every diagnostic it emits lands in the golden.
 
-### 1.1.9 — `Timestamp`, `BusinessDate`, `DayBoundary`
+### 1.1.9 — `Timestamp`, `BusinessDate`, `DayBoundary`, and the `Clock` port
 *Gap G-4.*
 **Scheduled in:** build the pure time types at 1.1.9; add `ClockState` persistence after 1.9.1 creates `trusted_time_state`
 **Files:** `Cargo.toml`, `Cargo.lock`, `apps/terminal/src-tauri/Cargo.toml`, `crates/pos-domain/src/time.rs` (new), `apps/terminal/src-tauri/src/time.rs` (new), `crates/pos-db/src/repo/clock.rs` (new)
 Per API reference §3, including `business_date_of`, `MonotonicClock`, persisted `ClockState`, `clock_confidence` and `effective_now`. The store persists the IANA zone id `Asia/Amman`; the shell resolves its offset for each instant with `jiff` and passes that value into pure `pos-domain`. Do not encode a seasonal Jordan rule: Jordan is year-round UTC+3, and the old rule moves winter sales across the 04:00 cutover.
+**This step also owns the `Clock` port and `FixedClock`**, which API reference §2 originally placed in 1.1.8: `pub trait Clock { fn now(&self) -> Timestamp; }` cannot exist before the `Timestamp` this file defines, and `MonotonicClock<C: Clock>` needs the trait anyway. `IdSource` and `SeqIdSource` stayed at 1.1.8, where they compile.
 **Tests:** `shift_opened_at_0030_belongs_to_previous_day` · `prop_business_date_stable_across_shift` · `prop_cutover_boundary_never_skips_a_day` · `prop_monotonic_clock_never_decreases` · `prop_effective_now_never_precedes_high_water` · `prop_clock_confidence_is_monotone_in_skew` · `clock_jump_back_reports_anomaly` · `a_never_synced_register_is_untrusted_not_trusted` · `wall_clock_moved_forward_a_year_is_suspect` · `a_reboot_without_an_anchor_is_a_monotonic_reset` · `clock_state_survives_restart` · `no_clock_confidence_refuses_a_sale` · `business_date_uses_the_offset_in_force_at_the_instant` · `a_january_sale_and_a_july_sale_agree_in_asia_amman` · `resolving_an_unknown_zone_id_is_a_named_error_not_a_default_offset`
 **Done when:** `cargo nextest run -p pos-domain time:: && cargo nextest run -p pos-db clock:: && cargo nextest run -p terminal time::tests::` passes, including a shift opened at `2026-08-21T00:30` local with a `04:00` cutover resolving to business date `2026-08-20` and both January and July resolving through `Asia/Amman`.
 

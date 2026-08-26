@@ -1,0 +1,18 @@
+error[E0308]: arguments to this function are incorrect
+  --> tests/ui/typed_ids_do_not_interconvert.rs:28:5
+   |
+28 |     refund(line, sale);
+   |     ^^^^^^ ----  ---- expected `SaleLineId`, found `SaleId`
+   |            |
+   |            expected `SaleId`, found `SaleLineId`
+   |
+note: function defined here
+  --> tests/ui/typed_ids_do_not_interconvert.rs:21:4
+   |
+21 | fn refund(_sale: SaleId, _line: SaleLineId) {}
+   |    ^^^^^^
+help: swap these arguments
+   |
+28 -     refund(line, sale);
+28 +     refund(sale, line);
+   |

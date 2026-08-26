@@ -30,3 +30,9 @@ pos-test-support.workspace = true
 # nothing: purity (I-8) governs what reaches a register, and a dev-dependency
 # never does. See ref/domain-api.md's dependency allowlist.
 serde_json.workspace = true
+# Tests only. The typed ids exist so that `refund(line_id, sale_id)` does not
+# compile, and nothing but a compile-fail test can assert that. The golden in
+# tests/ui/ captures rustc's own diagnostic, so it is coupled to the compiler
+# pinned in rust-toolchain.toml — regenerate it with TRYBUILD=overwrite when that
+# pin moves, and read the diff rather than accepting it.
+trybuild.workspace = true

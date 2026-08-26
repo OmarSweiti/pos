@@ -35,8 +35,8 @@ call sites.
 crates/pos-domain/src/
 ├── lib.rs           module tree + re-exports
 ├── money.rs         Money, Currency, Qty, Percent      [exists, extended 1.1.x]
-├── ids.rs           typed ids, Clock & IdSource ports  [1.1.8]
-├── time.rs          BusinessDate, day cutover, ClockState [1.1.9]
+├── ids.rs           typed ids, the IdSource port       [1.1.8]
+├── time.rs          BusinessDate, day cutover, ClockState, the Clock port [1.1.9]
 ├── catalog.rs       Product, Barcode, PriceSource, ScanLookup [1.2.x]
 ├── tax.rs           categories, rates, extraction      [1.3.x]
 ├── cart.rs          the state machine, in-flight state [1.4.x]
@@ -399,26 +399,49 @@ because that is where the rest of the enum arrives; `Parse`, `ZeroWeights`, `Neg
 
 ---
 
-## 2 · `ids.rs` — typed ids and the two ports — [1.1.8]
+## 2 · `ids.rs` — typed ids and the `IdSource` port — [1.1.8]
 
 Purity means `pos-domain` cannot call `Uuid::now_v7()` or read a clock. Both are injected.
 
+**There are two ports, and they land one microstep apart.** `IdSource` is 1.1.8's, in `ids.rs`.
+`Clock` is **1.1.9's, in `time.rs`** (§3), with `FixedClock`: `Clock::now` returns `Timestamp`,
+`Timestamp` is defined by that microstep, and a `Clock` written into `ids.rs` at 1.1.8 does not
+compile — the same dependency that made the phase file split 1.1.2 into a and b. This section
+described both as 1.1.8's until the ids landed and it read as one step's work; the marker on each
+declaration below is now the authority.
+
 ```rust
-macro_rules! typed_id { … }   // newtype over Uuid, Copy, Serialize, Display
+macro_rules! typed_id { … }
+// A newtype over Uuid, one per id kind. Derives, in full, and each one load-bearing:
+//   Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize
+// plus #[serde(transparent)] and a hand-written Display that renders the plain UUID.
 
 typed_id!(OrgId); typed_id!(SaleId); typed_id!(SaleLineId); typed_id!(ProductId);
 typed_id!(StoreId); typed_id!(RegisterId); typed_id!(UserId); typed_id!(ShiftId);
 typed_id!(CustomerId); typed_id!(TenderId); typed_id!(CategoryId); typed_id!(TaxCategoryId);
 typed_id!(PromotionId); typed_id!(StockEventId); typed_id!(ApprovalId);
 
-/// Injected so domain functions stay pure and tests stay deterministic.
-pub trait IdSource { fn next(&self) -> Uuid; }        // UUIDv7 in production
-pub trait Clock     { fn now(&self) -> Timestamp; }   // UTC
+impl SaleId {                                    // and every other id, from the macro
+    pub const fn from_uuid(id: Uuid) -> SaleId;  // adopt a UUID minted elsewhere
+    pub fn next_from(source: &impl IdSource) -> SaleId;
+    pub const fn as_uuid(self) -> Uuid;          // for the storage and wire boundaries
+}
 
-/// Deterministic test doubles — live in the crate, not behind #[cfg(test)],
-/// so the server and integration tests can use them too.
+/// Injected so domain functions stay pure and tests stay deterministic.  [1.1.8]
+pub trait IdSource { fn next(&self) -> Uuid; }   // UUIDv7 in production, minted by the shell
+
+/// Deterministic test double — lives in the crate, not behind #[cfg(test)],
+/// so the server and integration tests can use it too.                    [1.1.8]
 pub struct SeqIdSource { … }    // v7-shaped, counter-driven, reproducible
-pub struct FixedClock  { … }
+impl SeqIdSource {
+    /// `origin_millis` is a caller-supplied anchor, never a clock reading;
+    /// `stream` separates two sources anchored at the same millisecond.
+    pub const fn new(origin_millis: u64, stream: u16) -> SeqIdSource;
+    pub fn issued(&self) -> u64;                 // ids handed out so far
+}
+
+// pub trait Clock { fn now(&self) -> Timestamp; }   →  §3, [1.1.9]
+// pub struct FixedClock { … }                       →  §3, [1.1.9]
 ```
 
 **Why typed ids.** `fn refund(sale: SaleId, line: SaleLineId)` cannot be called with the arguments swapped. Over a schema with fifteen id columns, that is worth the boilerplate.
@@ -430,13 +453,61 @@ schema §0003 — and an earlier revision of this section omitted both while the
 privileged command consumes; it is a typed id and not a bare `Uuid` for the same reason as the rest —
 `consume(approval: ApprovalId, sale: SaleId)` cannot be called with its arguments swapped.
 
+**`Ord` is on the derive list, and it is not chronology.** Ids are `BTreeMap` keys and sort keys, and
+a report or a proration input has to order the same way on every machine, so the derive stays — but it
+orders the UUID's sixteen bytes and nothing else. A UUIDv7 embeds a device timestamp, so that order
+*resembles* time and I-7 says the resemblance is never the authority: causal order comes from owned
+sequences, the server's `version` and `sync_outbox.seq`. This is the opposite call from `Money`
+(§1.2), which lost `Ord` because a derived comparison over two currencies answers *wrongly*; a
+derived comparison over two ids answers correctly and can only be *misread*.
+
+**`SeqIdSource` is v7-shaped, which is a narrower claim than v7.** The layout is RFC 9562 §5.7's — a
+big-endian 48-bit millisecond field, version nibble `7`, variant bits `0b10`, so `get_version_num()`
+answers 7 and an index sees production's key distribution — while the content is a counter:
+
+```text
+│ 48 bits unix_ts_ms │ 7 │ 12 bits rand_a │ 10 │ 62 bits rand_b │
+  origin + sequence        stream tag           stream tag ▸ 4, sequence ▸ 58
+```
+
+The millisecond field is the caller's anchor plus the call index, one simulated millisecond per id, so
+the prefix advances the way a real stream's does rather than freezing and hiding an ordering defect.
+`rand_a` and `rand_b` carry the stream tag and the sequence number, not entropy — RFC 9562 permits a
+counter in `rand_a`, so the shape is conformant and the content is deliberately not random. Two
+consequences, both stated rather than discovered: the ids are **predictable**, so nothing that ships
+to a register may mint them here; and they are **readable** —
+`019b76da-a801-7000-8000-000000000001` is "second id, stream 0" at a glance.
+
+Purity is what forces the construction. `pos-domain` may not add a `uuid` `v1`–`v8`, `rng`,
+`fast-rng` or `js` feature and may not call a generating constructor — `scripts/check-domain-purity.py`
+refuses both by name, including through an alias — so `SeqIdSource` composes the bytes itself and
+hands them to `Uuid::from_u128`. The step adds no `uuid` feature and no runtime dependency at all;
+its one manifest addition is the dev-dependency in the allowlist at the top of this file.
+
+Tests — [1.1.8]: `typed_ids_do_not_interconvert` (compile-fail, via trybuild) ·
+`seq_id_source_is_reproducible` · `seq_ids_carry_the_v7_layout` ·
+`the_stream_tag_and_the_sequence_occupy_their_own_fields` ·
+`all_fifteen_typed_ids_round_trip_through_json` · `a_typed_id_displays_as_the_plain_uuid` ·
+`a_typed_id_costs_nothing_over_its_uuid` · `typed_ids_order_by_their_bytes_and_never_by_causality` ·
+`prop_seq_id_sources_agree_when_constructed_alike` · `prop_seq_ids_never_collide` ·
+`prop_seq_ids_keep_the_v7_layout`
+
 ---
 
-## 3 · `time.rs` — business date — [1.1.9] *(gap G-4)*
+## 3 · `time.rs` — business date and the `Clock` port — [1.1.9] *(gap G-4)*
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Timestamp(i64);      // UTC milliseconds since epoch
+
+/// The second injected port. It lives here, beside the type it returns, rather
+/// than in `ids.rs` with `IdSource`: `Timestamp` is this microstep's, so a
+/// `Clock` declared at 1.1.8 has no return type. [moved from §2]
+pub trait Clock { fn now(&self) -> Timestamp; }   // UTC
+
+/// The deterministic double, for the same reason `SeqIdSource` exists: not
+/// behind #[cfg(test)], so the server and integration tests share it.
+pub struct FixedClock { … }
 
 impl Timestamp {
     pub fn to_iso8601(self) -> String;                 // 2026-08-20T07:15:22.418Z
