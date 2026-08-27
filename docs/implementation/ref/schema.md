@@ -175,7 +175,7 @@ catches it.
 
 ---
 
-## 0003 — strict rebuild and catalog depth  ·  Phase 1, microsteps 1.2.1–1.2.3
+## 0003 — strict rebuild and catalog depth  ·  Phase 1, microsteps 1.2.1–1.2.3  ·  SHIPPED
 
 Introduces the organisational spine the whole schema hangs from. `store` and `register` must exist in Phase 1 even though multi-store is Phase 4 — retrofitting a `store_id` onto a live stock ledger is a data migration nobody enjoys.
 
@@ -1053,7 +1053,7 @@ CREATE TABLE setting (
 > ⚠️ **OPEN — blocks 1.3.7.** Which current effective-dated tax categories, percentage/fixed components and jurisdiction packs apply to the merchant's actual assortment? Default until answered: `0003` contains no guessed regulatory rate rows, no `tax_rule_pack` is approved, and unknown or unconfigured categories fail closed.
 > Owner: 1.3.7. Source that settles it: the current official ISTD tax-rate catalogue plus the merchant's accountant-approved product classification.
 
-### Filling out `sale_line` — the capture-time columns
+### Filling out `sale_line` — the capture-time columns  ·  SHIPPED
 
 G-12 is already fixed: `0002_sale_integrity.sql` rebuilt the table and
 `qty_milli` has been correct since. What is left is the columns this migration's
