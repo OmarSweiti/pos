@@ -23,14 +23,20 @@ property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), 
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
 shipped earlier), `1.1.5` (the complete money property suite) and `1.1.8` (the fifteen typed ids,
-the `IdSource` port and `SeqIdSource`). Group 1.1 now closes with 1.1.9's pure-domain time values,
-clock policy and terminal IANA-zone resolution. Its database persistence half remains deferred until
-1.9.1 creates `trusted_time_state`, including `clock_state_survives_restart`; this frontier advance
-does not claim that the whole 1.1.9 microstep is complete. **The next product microstep is
-`1.2.0 — Benchmark gate harness` in**
-[`phase-1-sellable-mvp.md`](phase-1-sellable-mvp.md): §1.1's build-order table ends at 1.1.9, the
-group dependency graph advances from 1.1 to 1.2, and the harness must exist before a later
-`just bench-gate` completion command. `1.2.1` then starts the migration spine with `0003`.
+the `IdSource` port and `SeqIdSource`). Group 1.1 closed with 1.1.9's pure-domain time values,
+clock policy and terminal IANA-zone resolution; its database persistence half remains deferred until
+1.9.1 creates `trusted_time_state`, including `clock_state_survives_restart`, so the whole 1.1.9
+microstep is not claimed complete. Group 1.2 now opens with `1.2.0`, the benchmark gate: `just
+bench-gate`, `scripts/bench-gate.py`, its fourteen refusal-path tests, and
+`benchmarks/reference-register.toml` committed with **every identity value deliberately blank**
+beside §6a.1's empty register-hardware table. `python3 scripts/bench-gate.py --check-profile`
+therefore exits **non-zero**, which is conventions §7.1 working rather than failing; filling both
+records is 1.2.0's deferred half and waits on hardware nobody has bought
+([`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6a: order it before group 1.7
+starts). This frontier advance does not claim that the whole 1.2.0 microstep is complete either.
+**The next product microstep is `1.2.1 — Migration 0003` in**
+[`phase-1-sellable-mvp.md`](phase-1-sellable-mvp.md), which starts the migration spine with the
+STRICT rebuild; §1.2's own build order then runs 1.2.2 and 1.2.4 before 1.2.3 and 1.2.5.
 Repository-hardening and documentation work may land between numbered product steps, but it does
 not advance that frontier.
 

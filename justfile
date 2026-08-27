@@ -211,6 +211,36 @@ verify-schema:
 verify-pg:
     {{ python }} ./scripts/verify-pg-migrations.py
 
+# Conventions §7 carries five absolute performance budgets and §7.1 the rule
+# that makes one real. `cargo bench` prints a number and exits 0 whatever that
+# number is, so this is the command that exits non-zero: an absolute limit
+# breached, or a median more than 20% AND more than three baseline median
+# absolute deviations slower — both conditions, because either alone is a flake
+# generator.
+#
+#   just bench-gate                every budget implemented at this gate
+#   just bench-gate search         search | price-cart | pin-verify | scan-to-line
+#
+# It refuses today, deliberately. No reference register has been bought, so §6a.1's
+# register-hardware matrix and benchmarks/reference-register.toml are both blank,
+# and §7.1 accepts no baseline while either record is blank. Filling both is the
+# deferred half of microstep 1.2.0; the budgets themselves arrive at 1.2.7, 1.4.9,
+# 1.6.2 and 1.11.13, and the self-hosted measurement job at 1.12.3.
+#
+# The exported parameter crosses into this script as an environment value and
+# reaches the gate as one quoted argv element. It is never substituted into this
+# script's source, so `$()`, backticks and `;` stay inert data — and because the
+# whole `--budget=` word is one argument, a hostile value cannot become a
+# different option either.
+
+# Conventions §7 budgets: non-zero on a breach, a real regression, or a blank profile
+bench-gate $budget='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    selection=()
+    [ -z "$budget" ] || selection=("--budget=$budget")
+    {{ python }} ./scripts/bench-gate.py ${selection[@]+"${selection[@]}"}
+
 # Advisories, licences and banned/duplicate crates. Same gate CI runs.
 #   cargo install cargo-deny --locked
 #
@@ -274,6 +304,7 @@ guards:
     {{ python }} ./scripts/check-web-build-coverage.py --self-test
     {{ python }} ./scripts/check-js-licenses.py --self-test
     {{ python }} ./scripts/check-justfile-policy.py
+    {{ python }} ./scripts/tests/bench_gate_test.py
     bash ./scripts/watch-pr-checks.sh --self-test
     bash ./scripts/validate-branch-flow.sh --self-test
     bash ./scripts/validate-change-title.sh --self-test

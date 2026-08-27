@@ -1,0 +1,62 @@
+# The reference register — the one machine every performance budget is measured on.
+#
+# docs/implementation/01-conventions.md §7 writes five absolute limits against
+# "the reference register", and §7.1 defines it as the LOWEST register-hardware
+# row of the supported-device matrix in
+# docs/implementation/ref/hardware-and-receipts.md §6a. This file mirrors that
+# row's identity so a committed baseline can name the machine it was taken on.
+#
+# EVERY IDENTITY VALUE BELOW IS DELIBERATELY BLANK, and so is the matrix row it
+# mirrors. No reference register has been bought, held or qualified. §6a is
+# explicit about why the matrix ships empty: "Filling it with model numbers
+# nobody has held would be the same defect as a compliance claim nobody
+# earned." A machine invented here would give every budget in §7 a referent
+# that does not exist — which is the exact failure §6a and §7.1 were written to
+# prevent.
+#
+# So `scripts/bench-gate.py --check-profile` REFUSES this file today, and that
+# refusal is the designed behaviour of microstep 1.2.0, not a defect in it.
+# §7.1: "no baseline is accepted while either record is blank or they disagree."
+#
+# Filling it in, when the hardware exists (§6a "order the hardware before group
+# 1.7 starts", and §6a's "Qualifying a new device" procedure):
+#
+#   1. Buy the machine, run §6a step 1-6 against it, and add its row to the
+#      register-hardware table between the `bench-gate:register-hardware-matrix`
+#      markers in §6a. Rows are ordered lowest-capability first; the FIRST row
+#      is the reference register.
+#   2. Copy that row's twelve cells into [identity] below, byte for byte.
+#      `scripts/bench-gate.py --check-profile` compares them exactly and names
+#      every field that differs.
+#   3. Commit both halves together. A profile that does not match a matrix row
+#      is a claim, and so is a matrix row with no qualifying commit.
+#
+# Every field is free text and is compared byte for byte with its matrix cell.
+# Units belong inside the value: a bare `8` could be GB or GiB, and a budget
+# that cannot say which was never measured on a known machine.
+
+schema_version = 1
+
+[identity]
+# What a support call is about, and what a baseline names.
+profile_id = ""
+maker = ""
+model = ""
+
+# What actually decides a latency number.
+cpu = ""
+ram = ""
+storage = ""
+os_version = ""
+# Mains vs battery, and the OS power profile. A laptop on battery downclocks,
+# so a budget measured there is a budget measured on a different machine.
+power_mode = ""
+# The build the numbers were taken from. Conventions §7.1 mirrors the
+# release-build profile here because a measurement is a property of a machine
+# AND a build: a debug build must never be able to claim this row's budget.
+release_profile = ""
+
+# §6a: "A profile with no qualifying commit is a claim."
+qualified_at = ""
+qualified_by = ""
+qualifying_commit = ""

@@ -262,6 +262,7 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just guards` | the write guards **and** the git hooks still refuse what they must |
 | `just build-web` | require a build script in all five workspace packages, then `pnpm -r build` — **the only place `tsc` runs** |
 | `just pre-push` | `lint` + `test` + `build-web` + `guards` + full-history secret scan |
+| `just bench-gate [budget]` | conventions §7's absolute limits and §7.1's regression rule. **Refuses today** — no reference register exists, so both hardware records are blank; deliberately not part of `pre-push` |
 | `just branch <name>` | fresh `development`, then a branch off it — **needs a clean tree** (§4.2) |
 | `just pr [title] [body-file] [milestone]` | gates → push → PR into `development` → watch CI. Pass the title on a branch with more than one commit (§4.12); the milestone is derived from a `phase-<0-5>/` branch name |
 | `just merge [pr]` | work PR only: validate route/state, watch exact checks, re-read both tips, atomically match the reviewed head, squash and delete the branch |
@@ -272,10 +273,11 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just gh-protect` | branch protection; refuses politely on the Free plan |
 | `just gh-project` | the delivery board and its fields |
 
-Not yet recipes, and the microstep that creates each: `just seed` (1.12.1) · `just bench-gate`
-(harness and recipe 1.2.0; budgets at 1.2.7, 1.4.9, 1.11.13 and 1.12.3) · `just fuzz` and its first
-target (1.2.8) · `just test-soak` and the `soak` nextest profile (2.9.6) · the TS type generation
-gate (conventions §13).
+Not yet recipes, and the microstep that creates each: `just seed` (1.12.1) · `just fuzz` and its
+first target (1.2.8) · `just test-soak` and the `soak` nextest profile (2.9.6) · the TS type
+generation gate (conventions §13). `just bench-gate` arrived with 1.2.0 and enforces nothing yet:
+its budgets land at 1.2.7, 1.4.9, 1.6.2 and 1.11.13, its measurement job at 1.12.3, and it refuses
+every run until 1.2.0's deferred half fills the reference-register records.
 
 After 2.9.6 lands, **`just test` has a runtime budget: under three minutes on the reference
 machine**, and suites that exceed it belong in the `soak` profile. Until then the default command
@@ -1212,9 +1214,12 @@ version you did not expect.
 
 ## 11 · Performance — measured, not asserted
 
-Four budgets, from conventions §7. Microsteps 1.2.0 and 1.12.3 create the recipe and the live
-reference-register CI job that **fails the build on regression**; neither exists in the current tree.
-A budget without that failing command is a wish, because `cargo bench` exits 0 whatever it measures.
+Four budgets, from conventions §7. Microstep 1.2.0 created the recipe that **fails the build on
+regression**, and 1.12.3 adds the live reference-register CI job, which does not exist yet. The
+recipe refuses every run today: no register has been bought, so §6a.1's matrix and
+`benchmarks/reference-register.toml` are both blank and §7.1 accepts no baseline against a blank
+record. A budget without that failing command is a wish, because `cargo bench` exits 0 whatever it
+measures — and a budget whose machine does not exist is not measured at all.
 
 | Budget | Limit | Tool | Measured on | Lands at |
 |---|---|---|---|---|
@@ -1236,7 +1241,7 @@ more than three baseline median absolute deviations outside the baseline's own n
 conditions, because either alone is a flake generator.
 
 ```bash
-just bench-gate                               # available after 1.2.0; exits non-zero on regression
+just bench-gate                               # exits non-zero on regression, and on a blank profile
 cargo bench -p pos-domain -- price_cart       # one benchmark, while iterating
 ```
 
@@ -1602,8 +1607,8 @@ it.
 | Gap | Closed by |
 |---|---|
 | `just seed` does not exist; there is no fixture, so every manual test is ad-hoc | 1.12.1 |
-| No benchmark, no committed baseline, and no `just bench-gate`; **no budget is enforced anywhere**, and `cargo bench` alone cannot enforce one | harness/recipe 1.2.0; budgets 1.2.7, 1.4.9, 1.11.13, 1.12.3 |
-| No reference register is named, so "the slowest supported hardware" has no machine behind it | conventions §7, with the hardware list at 2.9.4 |
+| `just bench-gate` exists and refuses, but there is still no benchmark and no committed baseline, so **no budget is enforced anywhere** and `cargo bench` alone cannot enforce one | budgets 1.2.7, 1.4.9, 1.6.2, 1.11.13; measurement job 1.12.3 |
+| **No reference register has been bought**, so "the slowest supported hardware" has no machine behind it, `ref/hardware-and-receipts.md` §6a.1's table has no row, `benchmarks/reference-register.toml` is blank, and the gate refuses every baseline | the deferred half of 1.2.0, on hardware ordered before group 1.7; the remaining device classes at 2.9.4 |
 | `pos-db` is not wired into the terminal yet, so `just db-local-reset` currently has nothing to delete | 1.8.x persistence |
 | TS types are hand-written in `packages/api-types`; no `ts-rs` generation into `src/ipc/`, no CI drift gate | conventions §13, with the first real IPC surface |
 | No i18n catalog lockstep test, and no message catalog to test | 1.11.1 |
