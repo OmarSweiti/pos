@@ -428,10 +428,10 @@ gh auth refresh -s project,read:project    # once — the default login lacks th
 just gh-project                            # creates missing fields; refuses schema drift
 ```
 
-**Live verification note — 27 August 2026:** the board could not be inspected because the current
-`gh` token lacks both `project` and `read:project`. The `gh auth refresh -s project,read:project`
-command above is the prerequisite; until it succeeds and `just gh-project` runs, the field and view
-contract below is not live evidence.
+**Live verification note — 27 August 2026:** `just gh-project` created project **#4 `POS delivery`**
+on the personal account, then stopped because field inspection also queried a non-existent
+organisation. The seven custom fields still await the reviewed re-run; the four views remain a
+manual step.
 
 The bootstrap validates exact field types, duplicate names, and every single-select option before
 it calls the board ready. A same-named but incompatible field is a blocking manual correction, not

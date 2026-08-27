@@ -93,34 +93,67 @@ if [ "${1:-}" = "api" ]; then
           *) echo "project-field query omitted required contract: $required" >&2; exit 96 ;;
         esac
       done
+      if [ "$MOCK_GH_SCENARIO" = "field_personal_owner" ]; then
+        case "$*" in
+          *"organization(login:"*)
+            printf '%s\n' '[{"data":{"user":{"projectV2":{"fields":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}},"organization":null},"errors":[{"type":"NOT_FOUND","path":["organization"],"message":"Could not resolve to an Organization with the login of '\''OmarSweiti'\''."}]}]'
+            echo "gh: Could not resolve to an Organization with the login of 'OmarSweiti'." >&2
+            exit 1
+            ;;
+        esac
+      fi
+      if [ "$MOCK_GH_SCENARIO" = "field_organization_owner" ]; then
+        case "$*" in
+          *"user(login:"*)
+            printf '%s\n' '[{"data":{"user":null,"organization":{"projectV2":{"fields":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}},"errors":[{"type":"NOT_FOUND","path":["user"],"message":"Could not resolve to a User with the login of '\''OmarSweiti'\''."}]}]'
+            echo "gh: Could not resolve to a User with the login of 'OmarSweiti'." >&2
+            exit 1
+            ;;
+        esac
+      fi
       if [ "$MOCK_GH_SCENARIO" = "field_schema_failure" ]; then
         echo "mock project-field schema failure" >&2
         exit 45
       fi
       case "$MOCK_GH_SCENARIO" in
+        field_personal_owner)
+          printf '%s\n' '[{"data":{"repositoryOwner":{"__typename":"User","projectV2":{"fields":{"nodes":[]}}}}}]'
+          ;;
+        field_organization_owner)
+          printf '%s\n' '[{"data":{"repositoryOwner":{"__typename":"Organization","projectV2":{"fields":{"nodes":[]}}}}}]'
+          ;;
+        field_owner_missing)
+          printf '%s\n' '[{"data":{"repositoryOwner":null}}]'
+          ;;
+        field_owner_unknown)
+          printf '%s\n' '[{"data":{"repositoryOwner":{"__typename":"Enterprise","projectV2":{"fields":{"nodes":[]}}}}}]'
+          ;;
+        field_project_missing)
+          printf '%s\n' '[{"data":{"repositoryOwner":{"__typename":"User"}}}]'
+          ;;
         project_happy)
-          printf '%s\n' '[{"data":{"user":{"projectV2":{"fields":{"nodes":[{"__typename":"ProjectV2SingleSelectField","dataType":"SINGLE_SELECT","name":"Phase","options":[{"name":"0 close-out"},{"name":"1 sellable MVP"},{"name":"2 money-grade"},{"name":"3 connected"},{"name":"4 depth"},{"name":"5 harden & launch"}]},{"__typename":"ProjectV2Field","name":"Group","dataType":"TEXT"},{"__typename":"ProjectV2Field","name":"Microstep","dataType":"TEXT"},{"__typename":"ProjectV2SingleSelectField","dataType":"SINGLE_SELECT","name":"Priority","options":[{"name":"P0"},{"name":"P1"},{"name":"P2"}]},{"__typename":"ProjectV2SingleSelectField","dataType":"SINGLE_SELECT","name":"Risk","options":[{"name":"money path"},{"name":"migration"},{"name":"security"},{"name":"compliance"},{"name":"immutable"},{"name":"none"}]},{"__typename":"ProjectV2SingleSelectField","dataType":"SINGLE_SELECT","name":"Blocked","options":[{"name":"merchant answer"},{"name":"decision"},{"name":"hardware"},{"name":"not blocked"}]},{"__typename":"ProjectV2Field","name":"Target","dataType":"DATE"}]}}},"organization":null}}]'
+          printf '%s\n' '[{"data":{"repositoryOwner":{"__typename":"User","projectV2":{"fields":{"nodes":[{"__typename":"ProjectV2SingleSelectField","dataType":"SINGLE_SELECT","name":"Phase","options":[{"name":"0 close-out"},{"name":"1 sellable MVP"},{"name":"2 money-grade"},{"name":"3 connected"},{"name":"4 depth"},{"name":"5 harden & launch"}]},{"__typename":"ProjectV2Field","name":"Group","dataType":"TEXT"},{"__typename":"ProjectV2Field","name":"Microstep","dataType":"TEXT"},{"__typename":"ProjectV2SingleSelectField","dataType":"SINGLE_SELECT","name":"Priority","options":[{"name":"P0"},{"name":"P1"},{"name":"P2"}]},{"__typename":"ProjectV2SingleSelectField","dataType":"SINGLE_SELECT","name":"Risk","options":[{"name":"money path"},{"name":"migration"},{"name":"security"},{"name":"compliance"},{"name":"immutable"},{"name":"none"}]},{"__typename":"ProjectV2SingleSelectField","dataType":"SINGLE_SELECT","name":"Blocked","options":[{"name":"merchant answer"},{"name":"decision"},{"name":"hardware"},{"name":"not blocked"}]},{"__typename":"ProjectV2Field","name":"Target","dataType":"DATE"}]}}}}}]'
           ;;
         field_wrong_type)
-          printf '%s\n' '[{"data":{"user":{"projectV2":{"fields":{"nodes":[{"__typename":"ProjectV2Field","name":"Phase","dataType":"TEXT"}]}}},"organization":null}}]'
+          printf '%s\n' '[{"data":{"repositoryOwner":{"__typename":"User","projectV2":{"fields":{"nodes":[{"__typename":"ProjectV2Field","name":"Phase","dataType":"TEXT"}]}}}}}]'
           ;;
         field_late_mismatch)
-          printf '%s\n' '[{"data":{"user":{"projectV2":{"fields":{"nodes":[{"__typename":"ProjectV2Field","name":"Group","dataType":"DATE"},{"__typename":"ProjectV2Field","name":"Risk","dataType":"TEXT"},{"__typename":"ProjectV2Field","name":"Target","dataType":"TEXT"}]}}},"organization":null}}]'
+          printf '%s\n' '[{"data":{"repositoryOwner":{"__typename":"User","projectV2":{"fields":{"nodes":[{"__typename":"ProjectV2Field","name":"Group","dataType":"DATE"},{"__typename":"ProjectV2Field","name":"Risk","dataType":"TEXT"},{"__typename":"ProjectV2Field","name":"Target","dataType":"TEXT"}]}}}}}]'
           ;;
         field_wrong_select_kind)
-          printf '%s\n' '[{"data":{"user":{"projectV2":{"fields":{"nodes":[{"__typename":"ProjectV2MultiSelectField","name":"Phase","dataType":"MULTI_SELECT"}]}}},"organization":null}}]'
+          printf '%s\n' '[{"data":{"repositoryOwner":{"__typename":"User","projectV2":{"fields":{"nodes":[{"__typename":"ProjectV2MultiSelectField","name":"Phase","dataType":"MULTI_SELECT"}]}}}}}]'
           ;;
         field_duplicate)
-          printf '%s\n' '[{"data":{"user":{"projectV2":{"fields":{"nodes":[{"__typename":"ProjectV2SingleSelectField","dataType":"SINGLE_SELECT","name":"Phase","options":[]},{"__typename":"ProjectV2SingleSelectField","dataType":"SINGLE_SELECT","name":"Phase","options":[]}]}}},"organization":null}}]'
+          printf '%s\n' '[{"data":{"repositoryOwner":{"__typename":"User","projectV2":{"fields":{"nodes":[{"__typename":"ProjectV2SingleSelectField","dataType":"SINGLE_SELECT","name":"Phase","options":[]},{"__typename":"ProjectV2SingleSelectField","dataType":"SINGLE_SELECT","name":"Phase","options":[]}]}}}}}]'
           ;;
         field_missing_option)
-          printf '%s\n' '[{"data":{"user":{"projectV2":{"fields":{"nodes":[{"__typename":"ProjectV2SingleSelectField","dataType":"SINGLE_SELECT","name":"Phase","options":[{"name":"0 close-out"},{"name":"1 sellable MVP"},{"name":"2 money-grade"},{"name":"3 connected"},{"name":"4 depth"}] }]}}},"organization":null}}]'
+          printf '%s\n' '[{"data":{"repositoryOwner":{"__typename":"User","projectV2":{"fields":{"nodes":[{"__typename":"ProjectV2SingleSelectField","dataType":"SINGLE_SELECT","name":"Phase","options":[{"name":"0 close-out"},{"name":"1 sellable MVP"},{"name":"2 money-grade"},{"name":"3 connected"},{"name":"4 depth"}] }]}}}}}]'
           ;;
         field_extra_option)
-          printf '%s\n' '[{"data":{"user":{"projectV2":{"fields":{"nodes":[{"__typename":"ProjectV2SingleSelectField","dataType":"SINGLE_SELECT","name":"Phase","options":[{"name":"0 close-out"},{"name":"1 sellable MVP"},{"name":"2 money-grade"},{"name":"3 connected"},{"name":"4 depth"},{"name":"5 harden & launch"},{"name":"6 unsupported"}]}]}}},"organization":null}}]'
+          printf '%s\n' '[{"data":{"repositoryOwner":{"__typename":"User","projectV2":{"fields":{"nodes":[{"__typename":"ProjectV2SingleSelectField","dataType":"SINGLE_SELECT","name":"Phase","options":[{"name":"0 close-out"},{"name":"1 sellable MVP"},{"name":"2 money-grade"},{"name":"3 connected"},{"name":"4 depth"},{"name":"5 harden & launch"},{"name":"6 unsupported"}]}]}}}}}]'
           ;;
         *)
-          printf '%s\n' '[{"data":{"user":{"projectV2":{"fields":{"nodes":[]}}},"organization":null}}]'
+          printf '%s\n' '[{"data":{"repositoryOwner":{"__typename":"User","projectV2":{"fields":{"nodes":[]}}}}}]'
           ;;
       esac
       exit 0
@@ -267,6 +300,31 @@ expect_failure "field-schema inspection failure is fatal"
 expect_no_call "failed field-schema inspection cannot create a field" "project field-create"
 expect_no_output "field-schema failure never prints ready" "Project ready:"
 
+run_case field_personal_owner scripts/gh-project.sh
+expect_success "a personal-account owner resolves through the repository-owner interface"
+expect_output "personal-account resolution reaches field creation" "  created Target"
+expect_output "personal-account resolution prints ready" "Project ready:"
+
+run_case field_organization_owner scripts/gh-project.sh
+expect_success "an organization owner resolves through the repository-owner interface"
+expect_output "organization-owner resolution reaches field creation" "  created Target"
+expect_output "organization-owner resolution prints ready" "Project ready:"
+
+run_case field_owner_missing scripts/gh-project.sh
+expect_failure "an unresolved repository owner is fatal"
+expect_output "an unresolved repository owner is explained" "project owner login did not resolve as a user or organization"
+expect_no_call "an unresolved repository owner cannot create a field" "project field-create"
+
+run_case field_owner_unknown scripts/gh-project.sh
+expect_failure "an unsupported repository-owner type is fatal"
+expect_output "an unsupported repository-owner type is explained" "project owner resolved with unsupported type 'Enterprise'"
+expect_no_call "an unsupported repository-owner type cannot create a field" "project field-create"
+
+run_case field_project_missing scripts/gh-project.sh
+expect_failure "a missing project under the resolved owner is fatal"
+expect_output "a missing project under the resolved owner is explained" "projectV2 did not resolve for the repository owner"
+expect_no_call "a missing project under the resolved owner cannot create a field" "project field-create"
+
 run_case field_wrong_type scripts/gh-project.sh
 expect_failure "an existing field with the wrong data type is fatal"
 expect_no_call "wrong-type fields are not duplicated or mutated" "project field-create"
@@ -303,6 +361,7 @@ expect_no_output "field create failure never prints ready" "Project ready:"
 
 run_case project_happy scripts/gh-project.sh
 expect_success "existing complete project is idempotent"
+expect_no_call "existing complete project is reused rather than duplicated" "project create"
 expect_no_call "complete project creates no duplicate fields" "project field-create"
 expect_output "successful project setup prints ready" "Project ready:"
 
