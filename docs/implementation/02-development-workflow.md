@@ -1116,7 +1116,7 @@ CI runs on every push to `development`, `staging` and `main`, and on every PR in
 | [`ci.yml`](../../.github/workflows/ci.yml) | `supply-chain` | trusted-range Gitleaks · Rust advisories/licences/bans/sources · reviewed JavaScript licences · npm advisories | `just secrets && just audit` |
 | [`ci.yml`](../../.github/workflows/ci.yml) | `cross-platform` | core tests and a real Tauri package build on Linux/macOS/Windows; the packaged-app WebDriver smoke suite is future work owned by 2.9.5 | run the platform tests and Tauri build on each supported OS |
 | [`branch-flow.yml`](../../.github/workflows/branch-flow.yml) | `protected-paths`, `topology` | exact-workflow-revision policy · verified data-only PR head · legal head/base/repository · title and attribution | relevant `just guards` self-tests |
-| [`labeler.yml`](../../.github/workflows/labeler.yml) | `label` | path-derived area/risk plus title-derived type, executing only trusted base code | — |
+| [`labeler.yml`](../../.github/workflows/labeler.yml) | `label` | path-derived area/risk plus title-derived type, executing only trusted base code | `bash scripts/validate-change-title.sh --self-test` for normalization and `bash scripts/pr-type-label.sh --self-test` for type selection; GitHub event, path labeling and mutations remain server-only |
 | [`security.yml`](../../.github/workflows/security.yml) | workflow analysis, scheduled advisories | actionlint · zizmor · weekly full-history secret and dependency scan | policy self-tests plus `just secrets && just audit` |
 | [`release.yml`](../../.github/workflows/release.yml) | guard, platform signing, publisher, metadata | verified signed exact-tip tag · exact-SHA CI · least-privilege publishing · SBOM/checksums | the release checklist in §15 |
 
