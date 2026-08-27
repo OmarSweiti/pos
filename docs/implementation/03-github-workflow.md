@@ -372,8 +372,13 @@ gh issue list --milestone "Phase 1 — sellable MVP" --state open
 gh issue list --label "meta: flake"                     # should always be empty
 ```
 
-Milestones are the six phase gates, and nothing else. A milestone's burndown is the honest answer
-to "how far is Phase 1", which a phase file cannot give you because it does not know what is done.
+Milestones collect the tracked delivery items for one of the six phase gates, and nothing else;
+their burndown is not a phase-completion percentage. A planned microstep earns its issue only when
+work starts (the rule above), while one work PR covers a whole group (§6 below), so unstarted work is absent
+from the denominator and tracked items have unequal scope. Phase 1 therefore reads **12 closed / 0
+open** while strict progress is **10 of 112 executable microsteps**. Compute Phase-1 progress against
+those 112 steps under [`01-conventions.md`](01-conventions.md) §6; use the milestone only to read the
+delivery items GitHub actually tracked.
 
 **`just pr` sets it, from the branch name.** A `phase-<0-5>/...` branch earns the milestone whose
 title starts `Phase <n> `, looked up from GitHub so the six titles live only in
@@ -381,13 +386,35 @@ title starts `Phase <n> `, looked up from GitHub so the six titles live only in
 paginates the complete milestone list and requires exactly one match, whether the milestone came
 from the phase name or the explicit third argument. An API failure, zero matches, or duplicate
 matches aborts before `just pre-push`; nothing is pushed and no PR is opened. This is not a nicety:
-nothing was setting milestones, so all six sat at **0 issues** while eleven PRs shipped, and the
-burndown said 0% of Phase 1 with microstep 1.1.1 done.
+nothing was setting milestones, so all six appeared empty while delivery shipped; even work GitHub
+should have tracked was missing.
 
 A branch naming no phase — `chore/`, `docs/`, `refactor/` — intentionally performs no milestone
 lookup and earns none; that is correct rather than a gap because a tooling PR is not something a
 phase gate waits on. For the exception, a `fix/` that genuinely blocks a gate, pass it:
 `just pr '<title>' '' 'Phase 1 — sellable MVP'`.
+
+**Closing and reopening are manual.** Before changing state, inspect every issue and PR assigned to
+the milestone, then run the owning phase file's exit gate in full — every command and numbered
+demonstration — and complete the per-phase evidence review in
+[`02-development-workflow.md`](02-development-workflow.md) §16. Only then attest or withdraw the
+gate:
+
+```bash
+phase_repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+gh api -X PATCH "repos/$phase_repo/milestones/<n>" -f state=closed
+```
+
+If later evidence invalidates that attestation, reopen it:
+
+```bash
+phase_repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+gh api -X PATCH "repos/$phase_repo/milestones/<n>" -f state=open
+```
+
+[`gh-bootstrap.sh`](../../scripts/gh-bootstrap.sh) must never auto-close a milestone: closure is an
+attestation that the exit gate passed, not something item counts can prove. Phase 0 is the worked
+example: its milestone is already closed with an adoption note recording closure by transfer.
 
 ---
 
@@ -400,6 +427,11 @@ and it is the one piece of GitHub's project machinery that is fully available on
 gh auth refresh -s project,read:project    # once — the default login lacks this scope
 just gh-project                            # creates missing fields; refuses schema drift
 ```
+
+**Live verification note — 27 August 2026:** the board could not be inspected because the current
+`gh` token lacks both `project` and `read:project`. The `gh auth refresh -s project,read:project`
+command above is the prerequisite; until it succeeds and `just gh-project` runs, the field and view
+contract below is not live evidence.
 
 The bootstrap validates exact field types, duplicate names, and every single-select option before
 it calls the board ready. A same-named but incompatible field is a blocking manual correction, not

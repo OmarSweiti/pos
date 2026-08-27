@@ -1,8 +1,9 @@
 # Phase 0 — close-out
 
 > **Historical record — not a current runbook.** This file preserves the repository snapshot and
-> decisions from 20 August 2026. Phase 0 is complete, the remote now exists, and the Git/GitHub
-> posture has since changed substantially. Use [`02-development-workflow.md`](02-development-workflow.md)
+> decisions from 20 August 2026. As reconciled on 27 August 2026, Phase 0 is closed by transfer;
+> the remote now exists, and the Git/GitHub posture has since changed substantially. Use
+> [`02-development-workflow.md`](02-development-workflow.md)
 > for current local commands and [`03-github-workflow.md`](03-github-workflow.md) for current branch,
 > CI, and release procedures. Commands and counts below are dated evidence unless a section says it
 > has been reconciled.
@@ -11,8 +12,8 @@
 > current: the engineering law is [`01-conventions.md`](01-conventions.md) §1, the ledger of every
 > correction to the source plans is [`00-master-plan.md`](00-master-plan.md) §4a, and the shipped
 > migration chain is [`ref/schema.md`](ref/schema.md). Where this file and any of those three
-> disagree, this file is the older document and loses. Individual dated notes below mark the two
-> places where a line here would otherwise read as a live instruction.
+> disagree, this file is the older document and loses. Individual dated notes below mark places
+> where a line here would otherwise read as a live instruction.
 
 **Goal:** turn a working scaffold into a foundation you can build on for two years without tripping over it.
 **Effort:** 1–2 days.
@@ -38,13 +39,15 @@ the live repository.
 | 0.2.2 `release.yml` drafted | ✅ | inert until a `v*` tag |
 | 0.2.3 branch renamed to `main` | ✅ | historical bootstrap; the live default branch is now `development` |
 | 0.3.1 `tauri.conf.json` | ✅ | POS Terminal, 1366×768, min-size guard, CSP locked down |
-| 0.3.2 updater keys | ⬜ | needs an interactive password + your GitHub secrets |
+| 0.3.2 updater keys | ↪ | **Reconciled 27 August 2026:** not completed in Phase 0; transferred to microstep `5.5.0` |
 | 0.3.3 biome migrated | ✅ | `rules.recommended` → `rules.preset` |
-| 0.4.1 plans consolidated | ◐ | `docs/plan/` populated; **deleting the root duplicates is yours** |
+| 0.4.1 plans consolidated | ✅ | **Reconciled 27 August 2026:** the root has no loose plan files, `docs/plan/` holds all three, and `just docs-links` passes; `docs/phase-0-remaining-setup.md` is the deliberate retained exception documented below |
 | 0.4.2 `CLAUDE.md` | ✅ | the nine invariants on one screen |
 | 0.4.3 doc link check | ✅ | `scripts/check-doc-links.sh`, folded into `just lint`, negative-tested |
 
-**Current note:** the remote exists and Phase 0 is complete. Do not use the dated gate count below
+**Current note — reconciled 27 August 2026:** 13 of 14 Phase-0 criteria are objectively met. Phase 0
+is closed by transfer: `0.3.2` is not complete here and is owned by microstep `5.5.0` in
+[`phase-5-harden-and-launch.md`](phase-5-harden-and-launch.md). Do not use the dated gate count below
 as live evidence; run the maintained recipes in `02-development-workflow.md` and inspect the exact
 PR/run identifiers described in `03-github-workflow.md`.
 
@@ -184,7 +187,7 @@ components = ["rustfmt", "clippy"]
 
 **Files:** `.github/workflows/release.yml` (new)
 
-Use §12.2 of the setup doc verbatim. It stays inert until a `v*` tag exists. Code-signing secrets are added before the first external pilot (Phase 5), not now — but the workflow being present means signing is a secrets change rather than a new build system under deadline.
+> **Superseded on 27 August 2026:** ~~Use §12.2 of the setup doc verbatim. It stays inert until a `v*` tag exists. Code-signing secrets are added before the first external pilot (Phase 5), not now — but the workflow being present means signing is a secrets change rather than a new build system under deadline.~~ Release signing is governed by [`phase-5-harden-and-launch.md`](phase-5-harden-and-launch.md) microsteps `5.5.0` and `5.5.1`; the historical setup-doc recipe is not current and must not be followed.
 
 **Done when:** the file is committed and GitHub lists it as a workflow.
 
@@ -235,15 +238,24 @@ Small, boring, and permanently annoying if skipped — every one of these leaks 
 
 **Verify:** `pnpm dev:terminal` · **Done when:** the window is titled POS Terminal, 1366×768, will not shrink below 1024×640, and the devtools console shows no CSP violation.
 
-### 0.3.2 — Updater keys, generated but unused
+### 0.3.2 — Updater keys, generated but unused *(historical target; not completed)*
+
+> **Superseded on 27 August 2026 — do not execute the historical command, custody instruction, or
+> done-when below.** Updater key generation and custody now belong to
+> [`phase-5-harden-and-launch.md`](phase-5-harden-and-launch.md) microstep `5.5.0`; release-step
+> isolation belongs to microstep `5.5.1` and
+> [`ref/security-compliance.md`](ref/security-compliance.md) §6b. Generate the keypair only on the
+> offline signing host, put only its public key in `tauri.conf.json`, and keep the private key on
+> that host. No updater private key or password goes into repository Actions secrets, and no signing
+> secret is available to a step that checks out, installs, or compiles third-party code.
 
 ```bash
 pnpm --filter terminal tauri signer generate -w ~/.tauri/pos-updater.key
 ```
 
-Public key into `tauri.conf.json` `plugins.updater.pubkey`; private key and password into GitHub secrets. The updater **endpoint stays empty** — auto-update is a Phase 5 feature and the product rule is *never apply an update while a shift is open* (E.56).
+~~Public key into `tauri.conf.json` `plugins.updater.pubkey`; private key and password into GitHub secrets.~~ The updater **endpoint stays empty** — auto-update is a Phase 5 feature and the product rule is *never apply an update while a shift is open* (E.56).
 
-**Done when:** keys exist, are in secrets, and the private key is **not** in the repository. Confirm with `git log -p | rg 'PRIVATE KEY'` returning nothing.
+~~**Done when:** keys exist, are in secrets, and the private key is **not** in the repository. Confirm with `git log -p | rg 'PRIVATE KEY'` returning nothing.~~
 
 ### 0.3.3 — Biome deprecation
 
