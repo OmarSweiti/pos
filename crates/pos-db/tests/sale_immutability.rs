@@ -15,8 +15,9 @@ fn id(value: u128) -> Uuid {
     Uuid::from_u128(value)
 }
 
-/// Every trigger 0002 installs. A rebuild of a guarded table silently takes its
-/// triggers with it, so the list is asserted rather than assumed.
+/// The eight base-sale I-4 triggers descended from 0002. A rebuild of a guarded
+/// table silently takes its triggers with it, so the list is asserted rather
+/// than assumed against the post-0003 chain.
 const REQUIRED_TRIGGERS: &[&str] = &[
     "sale_no_update_once_completed",
     "sale_no_delete_once_completed",
@@ -25,8 +26,11 @@ const REQUIRED_TRIGGERS: &[&str] = &[
     "sale_line_no_delete_once_completed",
     "sale_tender_no_insert_once_completed",
     "sale_tender_no_delete_once_completed",
-    "sale_tender_amount_frozen_once_completed",
+    "sale_tender_no_update_once_completed",
 ];
+
+const TENDER_IMMUTABLE_MESSAGE: &str =
+    "I-4: a tender on a completed sale is immutable — append a status event";
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -43,7 +47,8 @@ fn fixture() -> Fixture {
 
     let (product, sale, register) = (id(1), id(2), id(3));
     conn.execute(
-        "INSERT INTO product (id, sku, name, price_minor, currency) VALUES (?1,?2,?3,?4,?5)",
+        "INSERT INTO product (id, sku, name, price_minor, currency, is_active)
+         VALUES (?1,?2,?3,?4,?5,0)",
         params![
             product.as_bytes().as_slice(),
             "SKU-1",
@@ -189,36 +194,84 @@ fn the_lines_of_a_completed_sale_are_frozen() {
     );
 }
 
-/// The deliberate exception: a semi-integrated card capture settles after the
-/// sale closes, so 0004's tender_state/captured_at must remain writable. The
-/// money must not.
+fn assert_completed_tender_update_refused(error: rusqlite::Error) {
+    match error {
+        rusqlite::Error::SqliteFailure(_, Some(message)) => {
+            assert_eq!(message, TENDER_IMMUTABLE_MESSAGE);
+        }
+        other => panic!("completed-tender UPDATE failed for the wrong reason: {other:?}"),
+    }
+}
+
 #[test]
-fn a_tender_settles_after_completion_but_its_amount_does_not_move() {
+fn a_completed_tender_refuses_settlement_updates_and_reparenting() {
     let f = fixture();
     f.complete();
-    let sale = f.sale.as_bytes().to_vec();
 
-    f.conn
+    let error = f
+        .conn
         .execute(
             "UPDATE sale_tender SET psp_ref='PSP-9' WHERE sale_id=?1",
-            params![sale],
+            params![f.sale.as_bytes().as_slice()],
         )
-        .expect("settlement columns must stay writable — a capture confirms late");
+        .expect_err("settlement is an append-only status event, never a tender UPDATE");
+    assert_completed_tender_update_refused(error);
 
-    let sale = f.sale.as_bytes().to_vec();
+    let parked_sale = id(10);
+    let parked_tender = id(11);
+    f.conn
+        .execute(
+            "INSERT INTO sale (id, receipt_number, register_id, status, subtotal_minor,
+                               tax_minor, total_minor, currency, business_date, completed_at)
+             VALUES (?1,'000124',?2,'parked',100,0,100,'JOD','2026-08-20',
+                     '2026-08-20T10:05:00.000Z')",
+            params![
+                parked_sale.as_bytes().as_slice(),
+                f.register.as_bytes().as_slice()
+            ],
+        )
+        .unwrap();
+    f.conn
+        .execute(
+            "INSERT INTO sale_tender (id, sale_id, method, amount_minor)
+             VALUES (?1,?2,'cash',100)",
+            params![
+                parked_tender.as_bytes().as_slice(),
+                parked_sale.as_bytes().as_slice()
+            ],
+        )
+        .unwrap();
+
+    let error = f
+        .conn
+        .execute(
+            "UPDATE sale_tender SET sale_id=?1 WHERE id=?2",
+            params![
+                parked_sale.as_bytes().as_slice(),
+                id(5).as_bytes().as_slice()
+            ],
+        )
+        .expect_err("the OLD completed parent must freeze reparenting away from it");
+    assert_completed_tender_update_refused(error);
+
+    let error = f
+        .conn
+        .execute(
+            "UPDATE sale_tender SET sale_id=?1 WHERE id=?2",
+            params![
+                f.sale.as_bytes().as_slice(),
+                parked_tender.as_bytes().as_slice()
+            ],
+        )
+        .expect_err("the NEW completed parent must refuse an inbound parked tender");
+    assert_completed_tender_update_refused(error);
+
     assert!(
         f.conn
             .execute(
-                "UPDATE sale_tender SET amount_minor=1 WHERE sale_id=?1",
-                params![sale]
+                "DELETE FROM sale_tender WHERE sale_id=?1",
+                params![f.sale.as_bytes().as_slice()]
             )
-            .is_err(),
-        "I-4: the amount tendered is a fact"
-    );
-    let sale = f.sale.as_bytes().to_vec();
-    assert!(
-        f.conn
-            .execute("DELETE FROM sale_tender WHERE sale_id=?1", params![sale])
             .is_err(),
         "a payment cannot be removed from a completed sale"
     );

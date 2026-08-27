@@ -19,12 +19,36 @@
 
 mod common;
 
-use common::reference_blocks;
+use common::reference_blocks_after_v2 as reference_blocks;
 use rusqlite::Connection;
 
-/// Shipped chain only — the state a register is in before 0003 runs.
+/// Build v2 explicitly — the exact state a register is in before 0003 runs.
+/// Calling `pos_db::open` here would apply the current chain, including 0003,
+/// before these reference-SQL tests exercise the 0003 recipe.
 fn shipped(dir: &tempfile::TempDir, name: &str) -> Connection {
-    pos_db::open(&dir.path().join(name), "test-key").unwrap()
+    let conn = Connection::open(dir.path().join(name)).unwrap();
+    conn.pragma_update(None, "key", "test-key").unwrap();
+    conn.pragma_update(None, "foreign_keys", true).unwrap();
+
+    for (index, sql) in [
+        include_str!("../migrations/0001_init.sql"),
+        include_str!("../migrations/0002_sale_integrity.sql"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let tx = conn.unchecked_transaction().unwrap();
+        tx.execute_batch(sql).unwrap();
+        tx.pragma_update(None, "user_version", i64::try_from(index + 1).unwrap())
+            .unwrap();
+        tx.commit().unwrap();
+    }
+
+    let version: i64 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 2, "the reference rebuild fixture must stop at v2");
+    conn
 }
 
 fn apply_rebuild(conn: &Connection) {

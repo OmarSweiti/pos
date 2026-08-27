@@ -1,7 +1,7 @@
 //! Shared machinery for tests that need the *reference* schema, not just the
 //! shipped chain.
 //!
-//! `pos_db::open` applies migrations 0001 and 0002 — the only ones committed. Most
+//! `pos_db::open` applies committed migrations 0001 through 0003. Most
 //! of the schema, and therefore most of its constraints and triggers, exists only
 //! in `ref/schema.md` until those migrations are written. A test that opens the
 //! shipped chain alone silently skips all of it, which is how the first version of
@@ -31,11 +31,20 @@ pub fn declared_fact_tables() -> Vec<String> {
         .collect()
 }
 
-/// Every `” ```sql ”` block under a `## NNNN — ` heading numbered 0003 or above.
+/// Every `” ```sql ”` block under a `## NNNN — ` heading numbered 0004 or above.
 ///
-/// 0001 and 0002 are applied by `pos_db::open` from the committed migration
+/// 0001 through 0003 are applied by `pos_db::open` from the committed migration
 /// files, so replaying the reference's own copy of them would double-apply.
 pub fn reference_blocks() -> Vec<String> {
+    reference_blocks_at_or_after(4)
+}
+
+/// The reference schema from 0003 onward, for fixtures deliberately held at v2.
+pub fn reference_blocks_after_v2() -> Vec<String> {
+    reference_blocks_at_or_after(3)
+}
+
+fn reference_blocks_at_or_after(first_migration: u32) -> Vec<String> {
     let mut blocks = Vec::new();
     let mut current: Vec<&str> = Vec::new();
     let mut inside = false;
@@ -55,7 +64,7 @@ pub fn reference_blocks() -> Vec<String> {
         }
         if inside && line.trim() == "```" {
             inside = false;
-            if migration.is_some_and(|n| n >= 3) {
+            if migration.is_some_and(|n| n >= first_migration) {
                 blocks.push(current.join("\n"));
             }
             continue;

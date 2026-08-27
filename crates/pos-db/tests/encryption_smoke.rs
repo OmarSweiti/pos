@@ -13,8 +13,15 @@ fn encrypted_db_roundtrip_and_wrong_key_rejected() {
         let conn = pos_db::open(&path, "correct-key").unwrap();
         let id = Uuid::from_u128(1);
         conn.execute(
-            "INSERT INTO product (id, sku, name, price_minor, currency) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![id.as_bytes().as_slice(), "SKU-001", "Espresso", 250_i64, "JOD"],
+            "INSERT INTO product (id, sku, name, price_minor, currency, is_active)
+             VALUES (?1, ?2, ?3, ?4, ?5, 0)",
+            rusqlite::params![
+                id.as_bytes().as_slice(),
+                "SKU-001",
+                "Espresso",
+                250_i64,
+                "JOD"
+            ],
         )
         .unwrap();
     }

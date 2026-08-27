@@ -79,7 +79,6 @@ KNOWN_KINDS = RUST_KINDS | {"web", "fuzz", "drill"}
 # As tests land, delete their entries; never add one merely to silence an
 # absent-test failure.
 PLANNED: dict[str, tuple[str, ...]] = {
-    "1.2.1": ("a_pack_quantity_of_zero_is_refused_at_save",),
     "1.2.3": (
         "a_multipack_barcode_adds_its_pack_quantity",
         "a_second_live_barcode_claim_is_refused",
@@ -565,6 +564,7 @@ zero_due_tender_completes_and_issues_a_fiscal_doc
 # the initial ceiling into a monotonic history rather than a one-time maximum.
 PLANNED_RETIRED: frozenset[str] = frozenset(
     {
+        "a_pack_quantity_of_zero_is_refused_at_save",
         "clock_jump_back_reports_anomaly",
         "manager_self_approval_denied_when_policy_bans_it",
         "prop_monotonic_clock_never_decreases",

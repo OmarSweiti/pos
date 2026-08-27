@@ -223,10 +223,17 @@ Refusals, all of them non-zero and all of them naming the reason: a missing, bla
 
 ### 1.2.1 — Migration `0003`: org / store / register / taxonomy
 **Delivery-history correction:** commit `321c4f5` / PR #35 carried `[1.2.1]`, but delivered only staging-recipe tests and documentation; it did not add or register migration `0003`. This microstep remains open. `crates/pos-db/tests/strict_rebuild.rs` applies **reference SQL** through `crates/pos-db/tests/common/mod.rs`, not a registered migration, so a green run there is not evidence that `0003` exists.
-**Files:** `crates/pos-db/migrations/0003_strict_rebuild_and_catalog_depth.sql`
+**Files:** `crates/pos-db/migrations/0003_strict_rebuild_and_catalog_depth.sql` (new) · `crates/pos-db/src/lib.rs` (append to `MIGRATIONS`) · `apps/server/migrations/<ts>_product_catalog_depth.sql` (new mirror) · `crates/pos-db/tests/migration_0003.rs` (new) · [`ref/schema.md`](ref/schema.md) (the two §0003 `SHIPPED` markers) · `crates/pos-db/tests/{strict_rebuild,sale_immutability,encryption_smoke,common/mod}.rs` · `scripts/check-test-catalog.py`
+> **This list was one file until 1.2.1 was built.** Shipping a migration here also retires its
+> `PLANNED` catalogue entry, marks its `ref/schema.md` section `SHIPPED` so `verify-schema.py`
+> stops replaying it from the document — **both** the `##` heading and the `###` subheading that
+> owns the later fences — and repairs every fixture that encoded the pre-migration schema.
+> A later migration should expect the same shape of work rather than rediscover it.
 Per [`ref/schema.md`](ref/schema.md) §0003, **in that order**: the STRICT rebuild of the six tables 0001/0002 created loose, then the `org`, `store`, `register`, `category`, tax-rule-pack tables, `barcode`, `setting`, commit-envelope tables and the `product` `ALTER`s. `barcode.pack_qty_milli INTEGER NOT NULL DEFAULT 1000` makes a six-pack code add six units rather than one; `regulated_kind` and `sale_form` make a tobacco row a sealed pack rather than an individual-cigarette SKU.
 
 The rebuild goes first, and its statements are the most dangerous in the chain — they drop and recreate the tables holding every completed sale. Read the recipe before you type it: SQLite's twelve-step procedure begins by turning foreign keys off, which is a no-op inside a transaction, and `defer_foreign_keys` does not substitute. Staging tables are why this commits with foreign keys enforced.
+
+**Accepted transition window:** `0003` closes the completed-tender UPDATE path before `0005` adds append-only `tender_status_event`. No tender repository or register has shipped in that interval, so the safe result is temporarily no settlement path at all. Do not build a tender repository into the gap; settlement persistence begins at 1.9.1/0005.
 **Tests:** `migration_0003_creates_all_tables` · `barcode_live_uniqueness_allows_reissue_after_tombstone` · `barcode_pack_qty_defaults_to_1000_milli` · `a_pack_quantity_of_zero_is_refused_at_save` · `tobacco_product_must_be_a_sealed_pack` · `the_rebuild_keeps_every_row_of_a_completed_sale` · `the_rebuilt_tables_are_all_strict` · `the_rebuild_restores_the_immutability_triggers` · `no_staging_table_survives_the_rebuild` · `after_the_rebuild_the_six_tables_enforce_their_types`
 **Done when:** a tombstoned barcode code can be reassigned to a different product; two live rows with the same code cannot exist.
 
