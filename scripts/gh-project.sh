@@ -82,11 +82,14 @@ else
 fi
 
 FIELD_QUERY='query($owner: String!, $number: Int!, $endCursor: String) {
-  user(login: $owner) {
-    projectV2(number: $number) { ...ProjectFields }
-  }
-  organization(login: $owner) {
-    projectV2(number: $number) { ...ProjectFields }
+  repositoryOwner(login: $owner) {
+    __typename
+    ... on User {
+      projectV2(number: $number) { ...ProjectFields }
+    }
+    ... on Organization {
+      projectV2(number: $number) { ...ProjectFields }
+    }
   }
 }
 fragment ProjectFields on ProjectV2 {
@@ -119,10 +122,19 @@ for page in pages:
     data = page.get("data") if isinstance(page, dict) else None
     if not isinstance(data, dict):
         raise SystemExit("GitHub returned an invalid project-field response")
-    owners = [entry for entry in (data.get("user"), data.get("organization")) if entry is not None]
-    if len(owners) != 1:
-        raise SystemExit("project owner did not resolve uniquely as a user or organization")
-    project = owners[0].get("projectV2") if isinstance(owners[0], dict) else None
+    owner = data.get("repositoryOwner")
+    if owner is None:
+        raise SystemExit("project owner login did not resolve as a user or organization")
+    if not isinstance(owner, dict):
+        raise SystemExit("GitHub returned an invalid project owner response")
+    owner_type = owner.get("__typename")
+    if owner_type not in ("User", "Organization"):
+        raise SystemExit(f"project owner resolved with unsupported type {owner_type!r}")
+    project = owner.get("projectV2")
+    if project is None:
+        raise SystemExit("projectV2 did not resolve for the repository owner")
+    if not isinstance(project, dict):
+        raise SystemExit("GitHub returned an invalid project response")
     connection = project.get("fields") if isinstance(project, dict) else None
     nodes = connection.get("nodes") if isinstance(connection, dict) else None
     if not isinstance(nodes, list):
@@ -245,9 +257,24 @@ for field_index in "${!field_names[@]}"; do
   fi
 done
 
+# The canonical URL differs by owner type — /users/<login>/ for a user and
+# /orgs/<login>/ for an organization — and this script supports both, so ask
+# GitHub rather than hand-building one that 404s for half of them. Advisory
+# only: a failure here must not fail a run whose fields are already correct,
+# so fall back to the personal-account form this repository actually uses.
+PROJECT_URL=$(gh project view "$num" --owner "$OWNER" --format json 2>/dev/null \
+  | "$PYTHON" -c 'import json,sys
+try:
+    url = json.load(sys.stdin).get("url")
+except Exception:
+    url = None
+print(url if isinstance(url, str) and url.startswith("https://") else "")
+' 2>/dev/null) || PROJECT_URL=""
+[ -n "$PROJECT_URL" ] || PROJECT_URL="https://github.com/users/$OWNER/projects/$num"
+
 echo
 cat <<TXT
-Project ready: https://github.com/users/$OWNER/projects/$num
+Project ready: $PROJECT_URL
 
 Three things the API cannot do, so do them once by hand:
 
