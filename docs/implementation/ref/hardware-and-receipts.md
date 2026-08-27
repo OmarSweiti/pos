@@ -339,6 +339,41 @@ Full treatment in [`phase-2-money-grade.md`](../phase-2-money-grade.md) §2.1 an
 
 **The matrix ships empty except the simulator, and that is the honest state.** Filling it with model numbers nobody has held would be the same defect as a compliance claim nobody earned. Until a class has a row, this product supports no device in that class and says so.
 
+### 6a.1 · The register-hardware rows, and the reference register
+
+This is the one table in this document that a program reads. `just bench-gate`
+([`scripts/bench-gate.py`](../../../scripts/bench-gate.py), microstep 1.2.0) parses the rows between
+the two `bench-gate:register-hardware-matrix` markers and compares the **first** one, field for
+field, with [`benchmarks/reference-register.toml`](../../../benchmarks/reference-register.toml).
+Neither record is allowed to be the only one: [`../01-conventions.md`](../01-conventions.md) §7.1
+accepts no baseline "while either record is blank or they disagree", and the gate exits non-zero
+until both are filled and identical.
+
+**Rows are ordered lowest-capability first, and row 1 is the reference register** — that is what
+the table row above means by "the lowest row", made mechanical so a budget cannot be measured on
+whichever machine was nearest. The twelve columns are the identity §7.1 mirrors (CPU, RAM, storage,
+OS version, power mode, device-matrix identity, release-build profile) plus this section's
+qualification triple, because a profile with no qualifying commit is a claim. The release-build
+profile is a column because a measurement is a property of a machine **and** a build: without it a
+debug build could claim this row's budget. Every cell is compared as text, and a unit belongs
+inside the value — a bare `8` could be GB or GiB.
+
+<!-- bench-gate:register-hardware-matrix -->
+
+| `profile_id` | `maker` | `model` | `cpu` | `ram` | `storage` | `os_version` | `power_mode` | `release_profile` | `qualified_at` | `qualified_by` | `qualifying_commit` |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+
+<!-- /bench-gate:register-hardware-matrix -->
+
+**That table has no rows, and the mirror file's twelve values are blank to match.** No register has
+been bought, held or qualified, so there is nothing to write in it, and inventing a machine here
+would hand every performance budget in §7 a referent that does not exist. The consequence is
+deliberate and is the state of the repository today: `python3 scripts/bench-gate.py
+--check-profile` exits non-zero and names both blank records. **Order the hardware before group 1.7
+starts**, below — the register is on the same purchase order as the printers, and filling this row
+plus the mirror file is the second half of microstep 1.2.0 in
+[`../phase-1-sellable-mvp.md`](../phase-1-sellable-mvp.md).
+
 **The first printer row is written in Phase 1, not Phase 2.** Group 1.7's own acceptance is that Arabic letter joining is *"verified by eye once and by golden file forever"*, and an eye needs paper. So the 80 mm device, its profile and its qualification date exist before the first golden is frozen; the remaining classes and the full checklist arrive at microstep 2.9.4. **Order the hardware before group 1.7 starts** — a printer, a 58 mm printer and a scanner are a lead time, not a task, and the terminal in §6 has a longer one still.
 
 **The matrix is what the vendor supports; what a store owns is a different list.** The store's own devices are recorded on the questionnaire ([`merchant-decisions.md`](merchant-decisions.md) §G) — maker, model, firmware, and for a scale its serial and verification (§7). A store running a device with no matrix row is an unsupported deployment, and that is a sentence somebody has to be able to say before a pilot rather than after a support call.

@@ -42,6 +42,11 @@ _netrc
 .cargo/credentials.toml
 .docker/config.json
 
+# A benchmark run's own output. `benchmarks/baselines/` IS committed and reviewed;
+# a measurement is one machine's transient number, and a committed one would sit
+# beside the baselines looking like evidence nobody reviewed. conventions §7.1.
+benchmarks/measurements/
+
 # Databases & artifacts. SQLite writes its sidecars beside the database under
 # whichever extension the database itself carries, and journal mode decides the
 # suffix — so every (extension, sidecar) pair has to be listed, not just -wal.
