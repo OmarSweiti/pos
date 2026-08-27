@@ -53,11 +53,12 @@ jobs:
         run: |
           set -euo pipefail
           if ./scripts/validate-change-title.sh "$TITLE" >/dev/null 2>&1; then
-            echo "Dependabot title already conforms"
             exit 0
           fi
-          normalized="$TITLE   [—]"
-          ./scripts/validate-change-title.sh "$normalized"
+          if ! normalized=$(./scripts/validate-change-title.sh --normalize "$TITLE"); then
+            printf 'title-policy: REFUSED — could not normalize Dependabot title: %s\n' "$TITLE" >&2
+            exit 1
+          fi
           gh pr edit "$NUMBER" --title "$normalized"
           echo "normalized title: $normalized"
 
