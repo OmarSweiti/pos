@@ -26,6 +26,7 @@ grammar="^($types)\\(($scopes)\\): ([^[:space:]].*[^[:space:]]|[^[:space:]])[[:s
 
 usage() {
   echo "usage: $0 '<title>'" >&2
+  echo "       $0 --normalize '<title>'" >&2
   echo "       $0 --self-test" >&2
   exit 2
 }
@@ -129,6 +130,108 @@ validate() {
   fi
 }
 
+trim_truncated_summary() {
+  local value="$1" last_word last_word_lower
+
+  while [ -n "$value" ]; do
+    while [[ "$value" =~ [[:space:]]$ || "$value" =~ [[:punct:]]$ ]]; do
+      value="${value%?}"
+    done
+    [ -n "$value" ] || break
+
+    last_word="${value##* }"
+    last_word_lower=$(printf '%s' "$last_word" | LC_ALL=C tr '[:upper:]' '[:lower:]')
+    case "$last_word_lower" in
+      a|an|and|as|at|but|by|for|from|in|into|nor|of|on|onto|or|so|the|to|via|with|without|yet|across)
+        if [[ "$value" == *' '* ]]; then
+          value="${value% *}"
+        else
+          value=''
+        fi
+        ;;
+      *) break ;;
+    esac
+  done
+
+  printf '%s' "$value"
+}
+
+truncate_summary() {
+  local value="$1" limit="$2" word candidate truncated=''
+  local -a words
+  read -r -a words <<< "$value"
+
+  for word in "${words[@]}"; do
+    candidate="$word"
+    [ -z "$truncated" ] || candidate="$truncated $word"
+    [ "${#candidate}" -le "$limit" ] || break
+    truncated="$candidate"
+  done
+
+  truncated=$(trim_truncated_summary "$truncated")
+  [ -n "$truncated" ] || return 1
+  printf '%s' "$truncated"
+}
+
+normalize() {
+  local input="$1" candidate="$1" canonical_tag directory_suffix group_suffix
+  local type scope summary step_value prefix normalized max_summary
+
+  if validate "$input" >/dev/null 2>&1; then
+    printf '%s\n' "$input"
+    return 0
+  fi
+
+  case "$input" in
+    *$'\n'*|*$'\r'*) validate "$input"; return 1 ;;
+  esac
+
+  canonical_tag="[[:space:]]+\\[($step)\\][[:space:]]*$"
+  if [[ ! "$candidate" =~ $canonical_tag ]]; then
+    candidate="$candidate  [—]"
+  fi
+
+  if [[ ! "$candidate" =~ $grammar ]]; then
+    validate "$candidate"
+    return 1
+  fi
+  type="${BASH_REMATCH[1]}"
+  scope="${BASH_REMATCH[2]}"
+  summary="${BASH_REMATCH[3]}"
+  step_value="${BASH_REMATCH[4]}"
+  prefix="$type($scope): "
+
+  # Dependabot's directory suffix is generated transport detail, even when the
+  # remaining subject would already fit. The group name stays unless another
+  # reduction is needed.
+  directory_suffix='[[:space:]]+across[[:space:]]+[0-9]+[[:space:]]+director(y|ies)([[:space:]]+with[[:space:]]+[0-9]+[[:space:]]+updates?)?$'
+  if [[ "$summary" =~ $directory_suffix ]]; then
+    summary="${summary%"${BASH_REMATCH[0]}"}"
+  fi
+
+  if [ "$(( ${#prefix} + ${#summary} ))" -gt 72 ]; then
+    group_suffix='[[:space:]]+in[[:space:]]+the[[:space:]]+[^[:space:]]+[[:space:]]+group$'
+    if [[ "$summary" =~ $group_suffix ]]; then
+      summary="${summary%"${BASH_REMATCH[0]}"}"
+    fi
+  fi
+
+  if [ "$(( ${#prefix} + ${#summary} ))" -gt 72 ]; then
+    max_summary=$((72 - ${#prefix}))
+    summary=$(truncate_summary "$summary" "$max_summary") || {
+      title="$input"
+      fail "the summary cannot be truncated to 72 characters at a word boundary."
+      return 1
+    }
+  fi
+
+  normalized="$prefix$summary  [$step_value]"
+  if ! validate "$normalized"; then
+    return 1
+  fi
+  printf '%s\n' "$normalized"
+}
+
 self_test() {
   local pass=0 fail_count=0
 
@@ -140,6 +243,52 @@ self_test() {
       pass=$((pass + 1))
     else
       printf '  FAILED  %s (wanted exit %s, got %s)\n' "$label" "$want" "$got"
+      fail_count=$((fail_count + 1))
+    fi
+  }
+
+  normalize_is() {
+    local want="$1" label="$2" candidate="$3" got='' status=0
+    got=$(normalize "$candidate" 2>/dev/null) || status=$?
+    if [ "$status" -eq 0 ] && [ "$got" = "$want" ] && \
+      validate "$got" >/dev/null 2>&1; then
+      printf '  ok      %s\n' "$label"
+      pass=$((pass + 1))
+    else
+      printf '  FAILED  %s (wanted "%s", got "%s", exit %s)\n' \
+        "$label" "$want" "$got" "$status"
+      fail_count=$((fail_count + 1))
+    fi
+  }
+
+  normalize_is_idempotent() {
+    local label="$1" candidate="$2" once='' twice='' first_status=0 second_status=0
+    once=$(normalize "$candidate" 2>/dev/null) || first_status=$?
+    if [ "$first_status" -eq 0 ]; then
+      twice=$(normalize "$once" 2>/dev/null) || second_status=$?
+    else
+      second_status="$first_status"
+    fi
+    if [ "$first_status" -eq 0 ] && [ "$second_status" -eq 0 ] && \
+      [ "$once" = "$twice" ] && validate "$once" >/dev/null 2>&1; then
+      printf '  ok      %s\n' "$label"
+      pass=$((pass + 1))
+    else
+      printf '  FAILED  %s (first exit %s, second exit %s)\n' \
+        "$label" "$first_status" "$second_status"
+      fail_count=$((fail_count + 1))
+    fi
+  }
+
+  normalize_refuses() {
+    local label="$1" candidate="$2" got='' status=0
+    got=$(normalize "$candidate" 2>/dev/null) || status=$?
+    if [ "$status" -ne 0 ] && [ -z "$got" ]; then
+      printf '  ok      %s\n' "$label"
+      pass=$((pass + 1))
+    else
+      printf '  FAILED  %s (wanted refusal with no output, got exit %s and "%s")\n' \
+        "$label" "$status" "$got"
       fail_count=$((fail_count + 1))
     fi
   }
@@ -173,6 +322,42 @@ self_test() {
   case_is 1 "an unknown scope" 'feat(agent): exact inclusive tax extraction   [1.3.4]'
   case_is 1 "a multi-line title" $'feat(domain): exact tax   [1.3.4]\nsecond line'
 
+  echo "change-title policy — Dependabot normalization"
+  normalize_is \
+    'chore(repo): bump @vitejs/plugin-react from 6.0.5 to 6.1.0  [—]' \
+    "an overlong package-group title loses generated suffixes" \
+    'chore(repo): bump @vitejs/plugin-react from 6.0.5 to 6.1.0 in the js-minor group across 1 directory'
+  normalize_is \
+    'chore(repo): bump the actions group  [—]' \
+    "a directory-and-update suffix is removed" \
+    'chore(repo): bump the actions group across 1 directory with 5 updates'
+  normalize_is \
+    'chore(repo): bump alpha beta gamma delta epsilon zeta eta theta  [—]' \
+    "a group suffix is removed rather than truncated mid-name" \
+    'chore(repo): bump alpha beta gamma delta epsilon zeta eta theta in the g group'
+  normalize_is_idempotent \
+    "normalizing twice is the same as normalizing once" \
+    'chore(repo): bump @vitejs/plugin-react from 6.0.5 to 6.1.0 in the js-minor group across 1 directory'
+  normalize_is \
+    'chore(repo): bump the Rust patch group [—]' \
+    "an already-conforming title is byte-identical" \
+    'chore(repo): bump the Rust patch group [—]'
+  normalize_is \
+    'chore(repo): bump vite from 8.2.1 to 8.2.2 in the js-patch group  [—]' \
+    "a title needing only a step tag keeps its summary" \
+    'chore(repo): bump vite from 8.2.1 to 8.2.2 in the js-patch group'
+  normalize_is \
+    'chore(repo): bump a deliberately verbose dependency package update  [—]' \
+    "truncation ends on a clean complete word" \
+    'chore(repo): bump a deliberately verbose dependency package update, from 1.2.3 to 4.5.6'
+  normalize_is \
+    'chore(repo): keep group and directory words in the middle  [—]' \
+    "suffix words in the middle are not removed" \
+    'chore(repo): keep group and directory words in the middle'
+  normalize_refuses \
+    "normalization cannot discard a second line while truncating" \
+    $'chore(repo): bump a deliberately verbose dependency package update from 1.2.3 to 4.5.6\nmalicious continuation'
+
   printf '\n%s passed, %s failed\n' "$pass" "$fail_count"
   [ "$fail_count" -eq 0 ]
 }
@@ -180,6 +365,12 @@ self_test() {
 if [ "${1:-}" = "--self-test" ]; then
   [ "$#" -eq 1 ] || usage
   self_test
+  exit $?
+fi
+
+if [ "${1:-}" = "--normalize" ]; then
+  [ "$#" -eq 2 ] || usage
+  normalize "$2"
   exit $?
 fi
 

@@ -351,11 +351,15 @@ path-derived, where a glob genuinely is the better evidence: touching
 `crates/pos-domain/src/money*` **is** the money path, whatever the title says.
 
 Dependabot cannot be configured to add the repository's step suffix. The trusted-base labeler
-therefore validates its title and, when needed, appends `[—]`; the resulting edit retriggers title
-validation and type labeling. This is not a grammar exemption. A commit with the exact Dependabot
-author name/email may retain the exact GitHub-generated trailer, but that locally configurable
-metadata is a compatibility signal, not authenticated App provenance. Coding assistants are tools
-and never receive co-author or generated-by attribution.
+therefore passes a conforming title unchanged and sends any other title through the shared
+validator's tested normalizer. That mode adds `[—]` when no canonical tag is present, removes an
+anchored generated directory suffix, then removes an anchored generated group suffix only if the
+subject is still overlength. As a last resort it truncates at a clean word boundary, and it validates
+its own output before the resulting edit retriggers title validation and type labeling. This is not
+a grammar exemption. A commit with the exact Dependabot author name/email may retain the exact
+GitHub-generated trailer, but that locally configurable metadata is a compatibility signal, not
+authenticated App provenance. Coding assistants are tools and never receive co-author or
+generated-by attribution.
 
 The `risk:` family is the one that changes behaviour rather than describing it. `risk: money path`
 means the PR needs a property test, not an example test. `risk: migration` means a Postgres
@@ -428,10 +432,10 @@ gh auth refresh -s project,read:project    # once — the default login lacks th
 just gh-project                            # creates missing fields; refuses schema drift
 ```
 
-**Live verification note — 27 August 2026:** the board could not be inspected because the current
-`gh` token lacks both `project` and `read:project`. The `gh auth refresh -s project,read:project`
-command above is the prerequisite; until it succeeds and `just gh-project` runs, the field and view
-contract below is not live evidence.
+**Live verification note — 27 August 2026:** `just gh-project` created project **#4 `POS delivery`**
+on the personal account, then stopped because field inspection also queried a non-existent
+organisation. The seven custom fields still await the reviewed re-run; the four views remain a
+manual step.
 
 The bootstrap validates exact field types, duplicate names, and every single-select option before
 it calls the board ready. A same-named but incompatible field is a blocking manual correction, not
