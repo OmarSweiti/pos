@@ -222,6 +222,7 @@ Refusals, all of them non-zero and all of them naming the reason: a missing, bla
 **Full-step status:** 1.2.0 is not complete until a reference register exists, its §6a.1 row is filled, `benchmarks/reference-register.toml` mirrors it, and `--check-profile` exits zero. The gate, the recipe and the refusal paths are complete and enforced now; the budgets they will enforce arrive at 1.2.7, 1.4.9, 1.6.2 and 1.11.13, and the self-hosted measurement job at 1.12.3.
 
 ### 1.2.1 — Migration `0003`: org / store / register / taxonomy
+**Delivery-history correction:** commit `321c4f5` / PR #35 carried `[1.2.1]`, but delivered only staging-recipe tests and documentation; it did not add or register migration `0003`. This microstep remains open. `crates/pos-db/tests/strict_rebuild.rs` applies **reference SQL** through `crates/pos-db/tests/common/mod.rs`, not a registered migration, so a green run there is not evidence that `0003` exists.
 **Files:** `crates/pos-db/migrations/0003_strict_rebuild_and_catalog_depth.sql`
 Per [`ref/schema.md`](ref/schema.md) §0003, **in that order**: the STRICT rebuild of the six tables 0001/0002 created loose, then the `org`, `store`, `register`, `category`, tax-rule-pack tables, `barcode`, `setting`, commit-envelope tables and the `product` `ALTER`s. `barcode.pack_qty_milli INTEGER NOT NULL DEFAULT 1000` makes a six-pack code add six units rather than one; `regulated_kind` and `sale_form` make a tobacco row a sealed pack rather than an individual-cigarette SKU.
 

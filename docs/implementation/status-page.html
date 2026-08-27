@@ -326,7 +326,7 @@
     <div class="eyebrow">
       <span class="label">Implementation plan &amp; status</span>
       <span class="pill alert">4 corrections · 2 superseded</span>
-      <span class="pill pass">Phase 0 complete</span>
+      <span class="pill">Phase 0 closed · updater signing → 5.5.0</span>
     </div>
     <h1>Jordan POS Build Plan</h1>
     <p class="lede">A verdict on the business master plan, four compliance claims that turned out to be wrong — two of whose corrections turned out to be wrong in turn — and the phased build order from a bare scaffold to a product someone else can sell.</p>
@@ -451,7 +451,7 @@
       <div class="phase is-done">
         <span class="num">0</span>
         <div class="phase-body">
-          <div class="phase-top"><h3>Close-out</h3><span class="pill pass">Complete</span><span class="effort">1–2 days</span></div>
+          <div class="phase-top"><h3>Close-out</h3><span class="pill">Closed · updater signing → 5.5.0</span><span class="effort">1–2 days</span></div>
           <p class="could">Nothing. It compiles and it ships.</p>
           <p class="adds">Workspace hygiene, CI, panic lints, product identity, and negative-tested repository guards.</p>
         </div>
@@ -522,8 +522,8 @@
       <div class="gate-row ok"><span class="n">CI</span><span>Locked Rust/web/schema/guard checks, Gitleaks, static workflow analysis, advisory scans, and promotion-only cross-platform Tauri builds are defined</span><span class="pill pass">Configured</span></div>
       <div class="gate-row ok"><span class="n">Flow</span><span><code>development → staging → main</code>, with exact PR-head and post-merge workflow-SHA evidence required by the human procedure</span><span class="pill pass">Documented</span></div>
       <div class="gate-row block"><span class="n">Free</span><span>Branch protection/rulesets, required reviews, CODEOWNERS enforcement, and native secret-scanning enforcement are unavailable; CI cannot block an administrator merge</span><span class="pill">Unavailable</span></div>
-      <div class="gate-row block"><span class="n">Actions</span><span>Workflow dependencies are full-SHA pinned in this change; the live SHA-only Actions setting remains unchanged until the hardened files merge and the post-merge preflight succeeds</span><span class="pill">Pending merge</span></div>
-      <div class="gate-row block"><span class="n">Release</span><span>Published-release immutability is enabled, but releases intentionally fail until verified tag signing, repository updater secrets, updater public configuration, and platform signing are configured — and the updater key must first be moved off the step that compiles third-party code</span><span class="pill">Blocked safely</span></div>
+      <div class="gate-row ok"><span class="n">Actions</span><span>Full-SHA enforcement is active for workflow dependencies; exact selected-action patterns remain unavailable on this private non-enterprise plan, so Actions remain allowed from all sources</span><span class="pill pass">Enforced</span></div>
+      <div class="gate-row block"><span class="n">Release</span><span>Published-release immutability is enabled, but releases intentionally fail until verified tag signing, an updater keypair generated on the offline signing host, its public key in <code>tauri.conf.json</code>, and platform signing are configured — the private key stays on that host and never reaches a step that compiles third-party code (microsteps 5.5.0 and 5.5.1)</span><span class="pill">Blocked safely</span></div>
       <div class="gate-row block"><span class="n">Coverage</span><span>The catalogue reconciliation runs in the local <code>just lint</code> gate; no CI step runs it yet, because adding one is a change to the frozen workflow surface and needs its own reviewed edit</span><span class="pill">Local only</span></div>
     </div>
     <p class="gate-note">Phase-0 lessons remain useful historical context, but they are not live gate evidence:</p>

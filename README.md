@@ -8,8 +8,9 @@ connection — never the other way round. Money is integer minor units end to en
 Arabic is the default language rather than a translation layer, and completed
 sales are immutable facts that corrections reference rather than overwrite.
 
-**Status: Phase 0 complete.** The skeleton, the toolchain, the quality gates and
-the schema are in place; the selling starts in Phase 1. See
+**Status: Phase 0 closed by transfer; microstep `5.5.0` owns the remaining updater-signing
+work.** The skeleton, the toolchain, the quality gates and the schema are in place, and selling
+starts in Phase 1. See
 [`docs/implementation/00-master-plan.md`](docs/implementation/00-master-plan.md)
 for what lands when.
 

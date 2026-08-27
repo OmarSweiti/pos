@@ -2,7 +2,7 @@
 
 Master plan Parts H and J.5, turned into a form you fill in **with the merchant, before coding the feature that depends on it.**
 
-Every row has a **default** you can ship with, so no decision blocks the build. Every row also names **where the answer lives** — almost always a `setting` row, occasionally a column — and **which microstep consumes it**.
+This questionnaire contains **117 questions**. **17 have no default** — `1.3`, `1.7`, `5.2b`, `5.4`, `7.1`, `7.2`, `7.4`, `7.5`, `7.8`, `10.5`, `10.6`, `11.1`, `11.2`, `11.6`, `11.7`, `12.2b`, and `13.5` — and must be answered before their consuming gate. Every other row ships with a **default**, so no other decision blocks the build. Every row names **where the answer lives** — almost always a `setting` row, occasionally a column — and **which gate consumes it**.
 
 Print this. Sit with the merchant. Fill it in. Date it. A decision made by a developer at 2 a.m. is a decision the merchant will dispute in month three.
 
@@ -171,8 +171,8 @@ Print this. Sit with the merchant. Fill it in. Date it. A decision made by a dev
 
 | # | Question | Default | Answer | Lives in | Step |
 |---|---|---|---|---|---|
-| 7.1 | Merchant legal name exactly as registered ⚖ | — | | `org.legal_name` | 1.2.1 |
-| 7.2 | TIN ⚖ | — | | `org.tin` | 1.2.1 |
+| 7.1 | Merchant legal name exactly as registered ⚖ | — | | `org.legal_name` | store provisioning / valid tax receipt |
+| 7.2 | TIN ⚖ | — | | `org.tin` | store provisioning / valid tax receipt |
 | 7.3 | Receipt language: Arabic / bilingual? | **Arabic** | | `store.receipt_locale` | 1.7.1 |
 | 7.4 | Return-policy wording (ar/en) | — | | receipt template | 1.7.4 |
 | 7.5 | Footer text and logo | — | | receipt template | 1.7.4 |
@@ -180,7 +180,7 @@ Print this. Sit with the merchant. Fill it in. Date it. A decision made by a dev
 | 7.7 | **Printer dead or absent at shift open — block sales, or sell and queue the receipt?** ⚖ | **sell; queue the artifact; raise an alarm** | | `setting printer.absent_policy` | 1.7.6b |
 | 7.8 | The supported hardware list: printer models per width, scanner, drawer, terminal, label printer | — | | `docs/compliance/` per store | 2.9.4 |
 
-> 7.1 and 7.2 must match the merchant's ISTD registration **exactly**. A mismatch is a fiscal rejection and, before that, an invalid tax receipt.
+> **7.1 and 7.2 gate store provisioning and the issuing of a valid tax receipt; they do not gate migration `0003`.** Both must match the merchant's ISTD registration **exactly**. A mismatch is a fiscal rejection and, before that, an invalid tax receipt.
 >
 > **7.7 is the 9 a.m. Saturday support call, and the plan had no answer.** Paper running out mid-receipt was handled; the printer being unplugged was not. The default sells, because blocking closes the shop — but a fiscal QR is meant to appear on the document handed to the customer, so where the store is fiscally enabled the ⚖ matters: ask the advisor whether a queued artifact is acceptable, and record it beside 6.7.
 >
