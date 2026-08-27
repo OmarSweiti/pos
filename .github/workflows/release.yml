@@ -241,8 +241,16 @@ jobs:
       - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         id: tauri
         env:
-          # Updater artifact signing (generate once, phase-0-closeout.md 0.3.2):
-          #   pnpm --filter terminal tauri signer generate
+          # Updater artifact signing. The keypair is microstep 5.5.0's, generated
+          # on the offline signing host — NOT by phase-0-closeout.md 0.3.2, whose
+          # recipe is superseded and must not be followed.
+          #
+          # KNOWN DEFECT, owned by microstep 5.5.1: these two secrets are `env` on
+          # a step that checks out and compiles third-party code, so any build
+          # script or proc macro can read them. Splitting this into an unsigned
+          # build job plus a signing step that receives only artifact digests is
+          # 5.5.1's work; see ref/security-compliance.md §6b. Do not add the real
+          # signing key to this repository until that split has landed.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # OS code signing (Windows Authenticode cert, Apple Developer ID +

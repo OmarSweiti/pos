@@ -132,12 +132,22 @@ print(matches[0] if matches else "")
     printf '  created %s\n' "$1"
   fi
 }
-milestone "Phase 0 — close-out"      "Finish what is started; make the repository a foundation. 1–2 days."
-milestone "Phase 1 — sellable MVP"   "Cash, tax, Arabic receipts. 8–12 weeks."
-milestone "Phase 2 — money-grade"    "Cards, refunds, fiscal. 8–10 weeks. Gate blocked by C-1: JoFotara has no sandbox."
-milestone "Phase 3 — connected"      "Sync, back office, CRM. 8–10 weeks."
-milestone "Phase 4 — depth"          "Promotions, supply, reports. 8–10 weeks."
-milestone "Phase 5 — harden & launch" "Certification, signing, launch. 6–10 weeks."
+# Descriptions carry no week range on purpose. An estimate written here is a
+# second copy that drifts silently: every one of these understated its phase
+# file by up to eight weeks before anything compared them. The phase file owns
+# the estimate; this text owns the exit, and points at the file.
+#
+# A milestone's item count is not a phase-completion percentage — an unstarted
+# microstep has no issue, and one PR covers a whole group. See
+# docs/implementation/03-github-workflow.md §4. Closing is a human attestation
+# that the exit gate passed; this script must never set `state`, and its PATCH
+# deliberately sends `description` alone.
+milestone "Phase 0 — close-out"      "Historical phase, completed before milestone tracking existed; no retrospective burndown exists. Closed by transfer: updater signing (0.3.2) is owned by microstep 5.5.0. Record: docs/implementation/phase-0-closeout.md."
+milestone "Phase 1 — sellable MVP"   "Exit: sell for cash, all day, fully offline, in Arabic, with correct GST and a printed receipt — ten demonstrations with the cable unplugged. Plan and estimate: docs/implementation/phase-1-sellable-mvp.md."
+milestone "Phase 2 — money-grade"    "Exit: cards that reconcile, returns that resist fraud, a shift that balances — fourteen demonstrations plus drills. Gate constrained by C-1: JoFotara has no sandbox, so 2.7.0 pins the ISTD specification first. Plan and estimate: docs/implementation/phase-2-money-grade.md."
+milestone "Phase 3 — connected"      "Exit: many registers and a back office converge on one truth, and a conflict resolves without a human. Plan and estimate: docs/implementation/phase-3-connected.md."
+milestone "Phase 4 — depth"          "Exit: promotions, purchasing and stock counts that survive a real assortment, with reports a merchant trusts. Plan and estimate: docs/implementation/phase-4-depth.md."
+milestone "Phase 5 — harden & launch" "Exit: signed installers, a restored backup, a staged rollout with rollback, and certification evidence on file. Plan and estimate: docs/implementation/phase-5-harden-and-launch.md."
 
 # ── merge behaviour ───────────────────────────────────────────────────────
 # Squash for work branches: one commit per group on development, microsteps in

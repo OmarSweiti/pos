@@ -40,6 +40,16 @@ updates:
       js-minor:
         applies-to: version-updates
         update-types: ["minor"]
+    ignore:
+      # @types/node's major must equal the pinned Node runtime major: .nvmrc and
+      # package.json pin the runtime, pnpm-workspace.yaml pins the override, and
+      # scripts/check-node-version.py refuses a mismatch. A major bump here can
+      # never go green, so proposing one only manufactures work that policy must
+      # reject — PR #24 was closed red on four checks for exactly this. The Node
+      # runtime moves deliberately, and the typings follow it in that same change.
+      # Same-major updates are not ignored and still flow normally.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: "/"
