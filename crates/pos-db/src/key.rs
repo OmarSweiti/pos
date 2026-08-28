@@ -165,7 +165,11 @@ mod tests {
     #[test]
     fn a_debug_build_reads_the_env_key_but_treats_empty_as_absent() {
         assert_eq!(env_key_from(Some("deadbeef")).as_deref(), Some("deadbeef"));
-        assert_eq!(env_key_from(Some("")), None, "an empty variable is not a key");
+        assert_eq!(
+            env_key_from(Some("")),
+            None,
+            "an empty variable is not a key"
+        );
         assert_eq!(env_key_from(None), None);
     }
 
