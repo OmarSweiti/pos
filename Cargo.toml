@@ -38,8 +38,15 @@ unwrap_used      = "deny"
 expect_used      = "deny"
 panic            = "deny"
 indexing_slicing = "warn"
-# conventions I-1: no float ever touches money.
-float_arithmetic = "deny"
+# conventions I-1: no float ever touches money. `forbid` rather than `deny` for
+# the same reason as `unsafe_code` above: `deny` is lifted by two words in a
+# crate root, and this lint is the *only* machine enforcement I-1 has, because
+# both `cargo clippy` invocations in this repository pass `-D warnings` and no
+# lint flags of their own. Under `forbid` an `#[allow]` is not ignored, it is
+# E0453 — a compile error naming the attribute. rustc applies that to attributes
+# a macro generated and to code behind `include!`, which no source scanner can
+# reach.
+float_arithmetic = "forbid"
 todo             = "warn"
 dbg_macro        = "deny"
 

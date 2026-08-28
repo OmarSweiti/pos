@@ -2,7 +2,8 @@
 """The workspace lint contract is real for every member, not just declared once.
 
 Invariant 1 says no float ever touches money. The *only* machine that enforces
-that is `float_arithmetic = "deny"` in the root `[workspace.lints.clippy]` table:
+that is `float_arithmetic = "forbid"` in the root `[workspace.lints.clippy]`
+table:
 both `cargo clippy` invocations in this repository (justfile and ci.yml) pass
 `-D warnings` and no lint flags of their own, so the entire lint scope of every
 gate comes from that one table.
@@ -25,6 +26,15 @@ The complementary failure is quieter still: an entry demoted from `deny` to
 `warn` keeps the lint listed, keeps it visibly "configured", and stops it
 failing a build. So the required levels are asserted exactly, not merely
 present.
+
+`float_arithmetic` is required at `forbid`, not `deny`, and the difference is
+the whole of I-1's enforcement. `deny` is lifted by `#![allow(...)]` in a crate
+root -- two words, no diff anywhere near a money path, every gate still green.
+`forbid` cannot be lifted: rustc answers E0453 and names the attribute. It also
+reaches what a source scanner cannot -- an attribute a macro generated, or code
+behind `include!` -- which is why the control is the level in this table rather
+than a checker that reads Rust source. This file's job is to prove the level has
+not been demoted.
 
 This is deliberately a checker rather than a byte-pin in
 check-branch-workflow-policy.rb. That file's exact-content boundary is right for
@@ -61,7 +71,7 @@ REQUIRED_CLIPPY = {
     "expect_used": "deny",
     "panic": "deny",
     # Invariant 1: no float ever touches money.
-    "float_arithmetic": "deny",
+    "float_arithmetic": "forbid",
     # A committed dbg! prints whatever it was handed, which in this codebase is
     # routinely a value the security rules forbid logging.
     "dbg_macro": "deny",
@@ -224,7 +234,7 @@ def self_test() -> int:
 
     priority_form = json.loads(json.dumps(full))
     priority_form["workspace"]["lints"]["clippy"]["float_arithmetic"] = {
-        "level": "deny",
+        "level": "forbid",
         "priority": -1,
     }
     cases.append(
@@ -241,6 +251,20 @@ def self_test() -> int:
         (
             "demoting the float ban to warn is refused",
             check_workspace_table(demoted),
+            True,
+        ),
+    )
+
+    # The demotion this checker exists for after I-1's enforcement moved to
+    # `forbid`. `deny` still fails a build and still reads as "configured", so
+    # nothing downstream looks wrong -- but it restores the two-word crate-root
+    # `#![allow]` escape that `forbid` answers with E0453.
+    softened = json.loads(json.dumps(full))
+    softened["workspace"]["lints"]["clippy"]["float_arithmetic"] = "deny"
+    cases.append(
+        (
+            "softening the float ban from forbid to deny is refused",
+            check_workspace_table(softened),
             True,
         ),
     )
