@@ -16,14 +16,15 @@ The buildable plan for this POS: what to type, in what order, and how you will k
 
 Then work the phase you are in, consulting `ref/` as the microsteps point you there.
 
-**Current implementation frontier (27 August 2026):** Phase 0 is closed by transfer: `0.3.2`
+**Current implementation frontier (28 August 2026):** Phase 0 is closed by transfer: `0.3.2`
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
-microstep `5.5.0`. Phase 1 has **10 of 112 executable microsteps fully complete (~9%)**: `1.1.0`
+microstep `5.5.0`. Phase 1 has **11 of 112 executable microsteps fully complete (~10%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
-shipped earlier), `1.1.5` (the complete money property suite), and `1.1.8` (the fifteen typed ids,
-the `IdSource` port and `SeqIdSource`). Group 1.1 has **no immediately buildable work remaining**:
+shipped earlier), `1.1.5` (the complete money property suite), `1.1.8` (the fifteen typed ids,
+the `IdSource` port and `SeqIdSource`), and `1.2.1` (migration `0003`, the STRICT rebuild and the
+org / store / register / taxonomy tables). Group 1.1 has **no immediately buildable work remaining**:
 `1.1.9`'s pure-domain time values, clock policy, and terminal IANA-zone resolution have landed, but
 its database persistence half remains deferred until `1.9.1` creates `trusted_time_state`, including
 `clock_state_survives_restart`. The `1.1.9` microstep is therefore **partially delivered**, not
@@ -34,11 +35,13 @@ beside §6a.1's empty register-hardware table. `python3 scripts/bench-gate.py --
 therefore exits **non-zero**, which is conventions §7.1 working rather than failing; filling both
 records is `1.2.0`'s deferred half and waits on hardware nobody has bought
 ([`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6a: order it before group 1.7
-starts). **The next product microstep is still `1.2.1 — Migration 0003` in**
-[`phase-1-sellable-mvp.md`](phase-1-sellable-mvp.md), which starts the migration spine with the
-STRICT rebuild; it is **not blocked on the merchant legal name or TIN**, which instead gate store
-provisioning and the issuing of a valid tax receipt. §1.2's own build order then runs 1.2.2 and
-1.2.4 before 1.2.3 and 1.2.5.
+starts). **Two microsteps now have every dependency met, and the plan names both.** `1.8.9 —
+Outbox writer` is scheduled "immediately after migration `0003`", and the group graph forbids any
+1.6, shift or stock repository writing an append-only fact before it, so it gates groups 1.6, 1.9
+and 1.10; `1.2.2 — Product and UnitOfMeasure` is the next step in §1.2's own build order and is one
+pure file that cannot conflict with it. **Build `1.8.9` first and `1.2.2` beside it.** Neither is
+**blocked on the merchant legal name or TIN**, which instead gate store provisioning and the issuing
+of a valid tax receipt. §1.2's build order then runs 1.2.4 before 1.2.3 and 1.2.5.
 Repository-hardening and documentation work may land between numbered product steps, but it does
 not advance that frontier.
 
