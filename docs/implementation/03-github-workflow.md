@@ -379,8 +379,8 @@ gh issue list --label "meta: flake"                     # should always be empty
 Milestones collect the tracked delivery items for one of the six phase gates, and nothing else;
 their burndown is not a phase-completion percentage. A planned microstep earns its issue only when
 work starts (the rule above), while one work PR covers a whole group (§6 below), so unstarted work is absent
-from the denominator and tracked items have unequal scope. Phase 1 therefore reads **12 closed / 0
-open** while strict progress is **10 of 112 executable microsteps**. Compute Phase-1 progress against
+from the denominator and tracked items have unequal scope. Phase 1 therefore reads **13 closed / 0
+open** while strict progress is **11 of 112 executable microsteps**. Compute Phase-1 progress against
 those 112 steps under [`01-conventions.md`](01-conventions.md) §6; use the milestone only to read the
 delivery items GitHub actually tracked.
 
