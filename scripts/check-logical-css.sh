@@ -12,7 +12,11 @@
 # reviewing the English build will catch it. It is a correctness check.
 #
 # Escape hatch, for the rare thing that really is physical (a raster coordinate, a
-# hardware offset): put `physical-ok:` and a reason on the line.
+# hardware offset): put `physical-ok:` and a reason on the line. The REASON is
+# required and is checked -- a bare `physical-ok:`, or one followed only by a
+# comment terminator, is refused. An unexplained exception is how the RTL
+# regression path reopens, and a marker with nothing after it is cheaper to type
+# than the fix it avoids.
 #
 #   ./scripts/check-logical-css.sh
 #   ./scripts/check-logical-css.sh --self-test   # prove the checks still fire
@@ -45,8 +49,29 @@ scan() {                    # scan <root-dir>  -> prints violations, returns cou
   local root="$1" found=0 f
   while IFS= read -r f; do
     while IFS= read -r hit; do
-      # A documented physical case is allowed; an undocumented one is not.
-      case "$hit" in *physical-ok:*) continue ;; esac
+      # A DOCUMENTED physical case is allowed; a bare marker is not. Microstep
+      # 1.11.2: "a bare suppression is refused because unexplained exceptions
+      # become the RTL regression path." The header above has always asked for
+      # `physical-ok:` AND a reason; until this check existed, the marker alone
+      # silenced the line, which made the escape hatch the cheapest way past the
+      # gate rather than the most expensive.
+      case "$hit" in
+        *physical-ok:*)
+          reason=${hit#*physical-ok:}
+          # A comment terminator is not a reason. Strip what a language puts
+          # after the text -- `*/`, `-->`, `}` -- then the surrounding space.
+          reason=${reason%%\*/*}
+          reason=${reason%%--\>*}
+          reason=${reason%%\}*}
+          reason=$(printf '%s' "$reason" | tr -d '[:space:]')
+          # Three characters, so a reason is a word rather than a punctuation
+          # mark someone typed to get through.
+          [ "${#reason}" -ge 3 ] && continue
+          printf 'BARE-OK   %s:%s\n' "$f" "$hit"
+          found=$((found + 1))
+          continue
+          ;;
+      esac
       printf 'PHYSICAL  %s:%s\n' "$f" "$hit"
       found=$((found + 1))
     done < <(grep -nE "$TW|$CSS" "$f" 2>/dev/null)
@@ -77,7 +102,9 @@ self_test() {
   }
 
   echo "check-logical-css.sh — catches a physical side"
-  case_is dirty "Tailwind pl-"            '<div className="pl-4" />'
+  # 1.11.2's named test. The label is the identifier the phase file names, so the
+  # microstep's Tests: line points at something that exists and can be grepped.
+  case_is dirty "physical_direction_utility_is_rejected" '<div className="pl-4" />'
   case_is dirty "Tailwind mr- with a bp"  '<div className="md:mr-2" />'
   case_is dirty "Tailwind left-0"         '<div className="absolute left-0" />'
   case_is dirty "Tailwind text-right"     '<div className="text-right" />'
@@ -105,6 +132,14 @@ self_test() {
   case_is clean "rounded-lg is not rounded-l" '<div className="rounded-lg" />'
   case_is clean "a documented exception"  '.a { left: 0; /* physical-ok: raster origin */ }'
 
+  echo "check-logical-css.sh — the escape hatch needs its reason (1.11.2)"
+  case_is dirty "a bare marker"           '.a { left: 0; /* physical-ok: */ }'
+  case_is dirty "a marker with only space" '.a { left: 0; /* physical-ok:    */ }'
+  case_is dirty "a marker then a bare }"  '.a { left: 0; } /* physical-ok: */'
+  case_is dirty "punctuation is no reason" '.a { left: 0; /* physical-ok: - */ }'
+  case_is clean "a JSX comment reason"    '<div className="pl-4" /> {/* physical-ok: printer raster offset */}'
+  case_is clean "a reason with an HTML close" '<span style="left:0"><!-- physical-ok: hardware coordinate --></span>'
+
   printf '\n%s passed, %s failed\n' "$pass" "$fail"
   [ "$fail" -eq 0 ]
 }
@@ -130,6 +165,8 @@ if [ "$total" -ne 0 ]; then
   echo "  left-/right- -> start-/end-           text-left/right -> text-start/end"
   echo "  margin-left -> margin-inline-start    right: -> inset-inline-end:"
   echo "If a case really is physical, say so on the line: physical-ok: <reason>"
+  echo "A BARE-OK line means the marker is there and the reason is not; the reason is"
+  echo "the part a later reader needs, so it is required."
   exit 1
 fi
 echo "CSS logical properties only (conventions §10)"
