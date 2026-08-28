@@ -11,6 +11,8 @@ These are not style preferences. Each one, violated, produces a class of bug tha
 **I-1 · Money is `i64` minor units. Always.**
 No `f64` touches money, ever, in Rust, TypeScript, SQL, or JSON. Intermediate math (tax extraction, proration, percentages) happens in `rust_decimal`, rounds **once**, and returns to `i64`. A float in a money path is a rejected PR with no discussion.
 
+The machine behind that sentence is one line: `float_arithmetic = "forbid"` in the root `[workspace.lints.clippy]` table. **`forbid`, not `deny`**, and the difference is the invariant. Both `cargo clippy` invocations in this repository pass `-D warnings` and no lint flags of their own, so that table is the entire lint scope of every gate — and a `deny` is lifted by `#![allow(clippy::float_arithmetic)]` in a crate root, two words in a file nowhere near a money path, with every gate still green. Under `forbid`, rustc answers that attribute with `E0453` and names it, including when a macro generated the attribute or the code arrived through `include!`. `scripts/check-workspace-lints.py` proves the level has not been demoted and that every member still opts in with `[lints] workspace = true`; the level is the control, and the checker is what keeps the level honest.
+
 **I-2 · The minor-unit exponent is per-currency data.**
 JOD = 3 (1 dinar = 1000 fils). USD/EUR = 2. It is a column and a `Currency` field, never a constant, never `100`.
 
