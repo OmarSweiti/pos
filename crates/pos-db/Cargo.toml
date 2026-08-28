@@ -10,6 +10,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+blake3.workspace = true
 rusqlite.workspace = true
 keyring.workspace = true
 getrandom.workspace = true

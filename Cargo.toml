@@ -66,6 +66,13 @@ jiff = { version = "0.2", features = ["tzdb-bundle-always"] }
 
 # ── data ────────────────────────────────────────────────────────────────
 rusqlite = { version = "0.39", features = ["bundled-sqlcipher-vendored-openssl"] }
+# The one hash in the system. `ref/sync-protocol.md` specifies `commit_hash` as
+# "blake3 of the commit's canonical members", and the audit chain in
+# `ref/security-compliance.md` §4 is BLAKE3 for the reason recorded there:
+# faster on the low-end CPUs registers actually run, and 32 bytes either way.
+# One algorithm, one crate — a second hash in a money system is a second answer
+# to "are these the same bytes?".
+blake3 = "1.8"
 # The OS CSPRNG, for the SQLCipher key. Not `rand`: this needs one call and no
 # distributions, and a key generator should have the shortest path to the OS.
 getrandom = "0.4"
