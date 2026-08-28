@@ -6,6 +6,7 @@ use std::path::Path;
 use std::time::Duration;
 
 pub mod key;
+pub mod repo;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
@@ -36,6 +37,26 @@ pub enum DbError {
     JournalModeRefused { found: String },
     #[error("refusing to open a register database with foreign keys disabled")]
     ForeignKeysRefused,
+    #[error(
+        "refusing to write a delivery envelope with no members: a business \
+         transaction that produced no fact has nothing to deliver (I-9)"
+    )]
+    EmptyCommitRefused,
+    #[error(
+        "delivery envelope is incomplete: commit_size {commit_size}, but \
+         {members} manifest rows and {delivery_rows} delivery rows"
+    )]
+    CommitEnvelopeIncomplete {
+        commit_size: i64,
+        members: i64,
+        delivery_rows: i64,
+    },
+    #[error("{table}.{column} holds a {found}-byte id; ids are BLOB(16) (conventions §2)")]
+    IdWidthInvalid {
+        table: &'static str,
+        column: &'static str,
+        found: usize,
+    },
 }
 
 /// `PRAGMA synchronous = FULL`, as SQLite reports it back. The pragma accepts a
