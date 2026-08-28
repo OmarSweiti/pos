@@ -244,7 +244,7 @@ Per API reference §4. Include `min_age`, `max_price_minor`, `is_service`, `regu
 **Done when:** `cargo nextest run -p pos-domain catalog::` passes with the same product resolving to `Qty::ONE` and `Qty::from_units(6)` through two different barcode records.
 
 ### 1.2.3 — `ProductRepository`
-**Files:** `crates/pos-db/src/repo/product.rs` (new), `crates/pos-db/src/repo/mod.rs` (new)
+**Files:** `crates/pos-db/src/repo/product.rs` (new), `crates/pos-db/src/repo/mod.rs` (one `pub mod` line; 1.8.9 created the module and its `lib.rs` declaration)
 ```rust
 impl<'c> ProductRepository<'c> {
     pub fn by_id(&self, id: ProductId) -> Result<Option<Product>, DbError>;
@@ -942,7 +942,22 @@ Below a threshold, refuse new sales with a clear alarm. A POS that "sells" witho
 
 ### 1.8.9 — Outbox writer
 **Scheduled in:** Phase 1A, immediately after migration `0003` and before any 1.6, shift or stock fact repository
-**Files:** `crates/pos-db/src/repo/outbox.rs` (new)
+**Files:** `crates/pos-db/src/repo/outbox.rs` (new) · `crates/pos-db/src/repo/mod.rs` (new) · `crates/pos-db/src/lib.rs` (`pub mod repo;`, and `DbError::{EmptyCommitRefused, CommitEnvelopeIncomplete, IdWidthInvalid}`) · `crates/pos-db/tests/outbox.rs` (new) · `Cargo.toml` (`blake3` in `[workspace.dependencies]`) · `crates/pos-db/Cargo.toml` (`blake3.workspace = true`) · `Cargo.lock`
+> **This list was one file until 1.8.9 was built**, which is the shape 1.2.1 predicted. Two
+> reasons, both structural rather than incidental. This is the crate's **first repository**, so it
+> creates `repo/mod.rs` and the `pub mod repo;` that carries it — 1.2.3 no longer creates either.
+> And `commit_hash` is the workspace's **first hash**: [`ref/sync-protocol.md`](ref/sync-protocol.md)
+> specifies BLAKE3, [`ref/security-compliance.md`](ref/security-compliance.md) §4 records why, and
+> no BLAKE3 crate was in the graph, so `blake3` joins `[workspace.dependencies]` and the lockfile
+> moves with it. The reference pins the algorithm and the subject and leaves the byte layout open;
+> the layout chosen — version byte, domain separator, then length-prefixed members — is documented
+> at `canonical_commit_bytes` in `repo/outbox.rs`, beside the named constants that pin it.
+>
+> What this step does **not** create is `crates/pos-sync/src/canonical.rs`, and `pos-db` does not
+> gain a dependency on `pos-sync`. The shared canonical projection arrives with the sync engine;
+> until then the writer hashes exactly the canonical bytes its caller hands it, which is what keeps
+> `payload_hash` incapable of describing a different payload from the one stored beside it.
+
 One business transaction creates one immutable `sync_commit`, a permanent `fact_commit_member` row for every constituent fact, and corresponding `sync_outbox` delivery rows in the same transaction (I-9). The manifest survives delivery-row pruning, so the server can validate the complete sale graph as one atomic commit in Phase 3. No pusher exists yet, but complete envelopes accumulate from the first sale.
 **Tests:** `a_completed_sale_has_one_ready_sync_commit` · `every_fact_member_is_in_the_commit_manifest` · `delivery_rows_can_be_pruned_without_losing_the_manifest` · `outbox_commit_rolls_back_with_the_fact_graph`
 **Done when:** `cargo nextest run -p pos-db outbox::` passes after pruning acknowledged delivery rows and reconstructing the original commit membership unchanged.
