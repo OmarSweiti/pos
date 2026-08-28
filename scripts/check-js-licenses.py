@@ -5,12 +5,17 @@
 repository-owned policy records each accepted SPDX expression and its review
 rationale; unknown, malformed, empty, or command-error inventories are fatal.
 
+A missing pnpm store index file is reported with the remedy that actually
+works, because pnpm's own suggestion for it does not — see
+`pnpm_failure_detail`.
+
 Usage: ./scripts/check-js-licenses.py [--self-test]
 """
 
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -108,6 +113,43 @@ def audit_inventory(inventory: Any, allowed: dict[str, str]) -> tuple[int, list[
     return packages, used
 
 
+# pnpm's own remedy for a missing store index file is "please consider running
+# 'pnpm install'", and that advice does not work. Observed 2026-08-28 after two
+# Dependabot bumps (vite 8.2.2, @vitejs/plugin-react 6.1.0) landed in the
+# lockfile: `pnpm install`, `pnpm install --frozen-lockfile` and
+# `pnpm install --force` all report "Already up to date" and leave the index
+# file missing, because node_modules is complete — it is the *store* that is
+# incomplete, and only `pnpm licenses list` reads that part of it.
+#
+# Relaying a remedy that cannot work costs the reader the whole debugging path,
+# so this checker names the one that does. The package is reported per run
+# because pnpm stops at the first missing entry: repairing one reveals the next.
+MISSING_INDEX_CODE = "ERR_PNPM_MISSING_PACKAGE_INDEX_FILE"
+
+
+def pnpm_failure_detail(stderr: str, stdout: str) -> str:
+    """Describe a failed `pnpm licenses list`, correcting pnpm's bad advice."""
+    detail = stderr.strip() or stdout.strip() or "no diagnostic"
+    if MISSING_INDEX_CODE not in detail:
+        return f"pnpm licenses list failed: {detail}"
+    match = re.search(r"index file for (\S+)", detail)
+    package = match.group(1) if match else "the package named above"
+    return (
+        f"the pnpm store has no index file for {package}, so the licence "
+        "inventory cannot be read.\n"
+        f"  Repair it with:  pnpm store add {package}\n"
+        "  Then re-run this check. pnpm stops at the first missing entry, so "
+        "repeat until it passes.\n"
+        "  Ignore pnpm's own suggestion to run `pnpm install` — plain, "
+        "--frozen-lockfile and --force all report\n"
+        "  \"Already up to date\" and leave the store unrepaired. This happens "
+        "when a dependency bump lands in\n"
+        "  the lockfile without its store entry ever being fetched on this "
+        "machine.\n"
+        f"  pnpm said: {detail}"
+    )
+
+
 def pnpm_inventory(root: Path) -> Any:
     try:
         done = subprocess.run(
@@ -122,8 +164,7 @@ def pnpm_inventory(root: Path) -> Any:
     except (OSError, subprocess.SubprocessError) as exc:
         raise LicenseError(f"could not run pnpm licenses list: {exc}") from exc
     if done.returncode != 0:
-        detail = done.stderr.strip() or done.stdout.strip() or "no diagnostic"
-        raise LicenseError(f"pnpm licenses list failed: {detail}")
+        raise LicenseError(pnpm_failure_detail(done.stderr, done.stdout))
     if done.stderr.strip():
         raise LicenseError(f"pnpm licenses list wrote to stderr: {done.stderr.strip()}")
     try:
@@ -216,7 +257,47 @@ def self_test() -> int:
         print(f"  {'ok  ' if passed else 'FAIL'}  a rationale-free policy is refused")
         failures += not passed
 
-    total = len(cases) + 2
+    # The store-index remedy. A wrong remedy is worse than no remedy, so these
+    # assert both halves: the working advice is present, and pnpm's own advice
+    # is not repeated as if it were the fix.
+    missing_index = (
+        'ERROR  \u2009ERR_PNPM_MISSING_PACKAGE_INDEX_FILE  Failed to find package '
+        'index file for vite@8.2.2 (at sha512-abc\tvite@8.2.2), please consider '
+        "running 'pnpm install'"
+    )
+    described = pnpm_failure_detail(missing_index, "")
+    index_cases = [
+        (
+            "a missing store index names the package",
+            "vite@8.2.2" in described,
+        ),
+        (
+            "a missing store index gives the remedy that works",
+            "pnpm store add vite@8.2.2" in described,
+        ),
+        (
+            "a missing store index contradicts pnpm's own advice",
+            "Ignore pnpm's own suggestion" in described,
+        ),
+        (
+            "a missing store index says to repeat until it passes",
+            "repeat until it passes" in described,
+        ),
+        (
+            "an unrelated pnpm failure is passed through unchanged",
+            pnpm_failure_detail("EACCES: permission denied", "")
+            == "pnpm licenses list failed: EACCES: permission denied",
+        ),
+        (
+            "an empty diagnostic still produces a message",
+            "no diagnostic" in pnpm_failure_detail("", ""),
+        ),
+    ]
+    for label, ok in index_cases:
+        print(f"  {'ok  ' if ok else 'FAIL'}  {label}")
+        failures += not ok
+
+    total = len(cases) + len(index_cases) + 2
     if failures:
         print(f"\ncheck-js-licenses self-test: {failures}/{total} case(s) FAILED")
         return 1
