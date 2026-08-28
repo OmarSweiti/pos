@@ -1,6 +1,8 @@
 import { formatMinor, JOD } from "@pos/money";
 import { invoke } from "@tauri-apps/api/core";
+import { useState } from "react";
 import { directionFor, toggleLabel } from "./lib/direction";
+import { parseCountInput, parseMinorInput } from "./lib/minorInput";
 import { useCart } from "./store/cart";
 import { useLocale } from "./store/locale";
 
@@ -8,6 +10,35 @@ export default function App() {
   const { totalMinor, parts, splits, setTotalMinor, setParts, setSplits } =
     useCart();
   const { locale, toggle } = useLocale();
+
+  // The draft is what the person typed; the store only ever holds a value the
+  // money guard accepted. Keeping both is what lets a half-typed "1." stay on
+  // screen without ever reaching an i64.
+  const [totalDraft, setTotalDraft] = useState(String(totalMinor));
+  const [partsDraft, setPartsDraft] = useState(String(parts));
+  const [refusal, setRefusal] = useState<string | null>(null);
+
+  function onTotalChange(raw: string) {
+    setTotalDraft(raw);
+    const parsed = parseMinorInput(raw);
+    if (parsed.ok) {
+      setTotalMinor(parsed.value);
+      setRefusal(null);
+    } else {
+      setRefusal(`total: ${parsed.reason}`);
+    }
+  }
+
+  function onPartsChange(raw: string) {
+    setPartsDraft(raw);
+    const parsed = parseCountInput(raw);
+    if (parsed.ok) {
+      setParts(parsed.value);
+      setRefusal(null);
+    } else {
+      setRefusal(`split into: ${parsed.reason}`);
+    }
+  }
 
   async function split() {
     const result = await invoke<number[]>("split_tender", {
@@ -42,8 +73,8 @@ export default function App() {
           Total (minor units)
           <input
             type="number"
-            value={totalMinor}
-            onChange={(e) => setTotalMinor(Number(e.target.value))}
+            value={totalDraft}
+            onChange={(e) => onTotalChange(e.target.value)}
             className="w-40 rounded bg-zinc-800 px-3 py-3 text-lg"
           />
         </label>
@@ -52,8 +83,8 @@ export default function App() {
           <input
             type="number"
             min={1}
-            value={parts}
-            onChange={(e) => setParts(Number(e.target.value))}
+            value={partsDraft}
+            onChange={(e) => onPartsChange(e.target.value)}
             className="w-24 rounded bg-zinc-800 px-3 py-3 text-lg"
           />
         </label>
@@ -65,6 +96,13 @@ export default function App() {
           Split via Rust
         </button>
       </div>
+
+      {refusal !== null && (
+        <p role="alert" className="mt-4 font-mono text-sm text-amber-400">
+          refused — {refusal}. Sending {formatMinor(totalMinor, JOD)} JOD in{" "}
+          {parts}.
+        </p>
+      )}
 
       {splits.length > 0 && (
         <ul className="mt-6 space-y-1 font-mono">
