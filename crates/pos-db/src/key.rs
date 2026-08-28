@@ -49,11 +49,31 @@ pub fn get_or_create() -> Result<String, crate::DbError> {
     Ok(get_or_create_with_source()?.0)
 }
 
+/// The environment key, if this build is allowed one and one is set.
+///
+/// `None` means **continue to the credential store**, and it is the only way
+/// this function declines — it has no error case. That is the whole of the
+/// ignore-and-continue rule in one signature: a release build, or an unset or
+/// empty variable, all produce "keep going" rather than "stop". A register whose
+/// shell happened to export `POS_DB_KEY` must still open its till.
+///
+/// It exists as a separate function so the release-build behaviour is testable
+/// without a credential store. `get_or_create_with_source` cannot be called in a
+/// test without touching the machine's real Keychain and, on a clean machine,
+/// writing a key into it.
+fn env_key_from(raw: Option<&str>) -> Option<String> {
+    if !honours_env_key() {
+        return None;
+    }
+    raw.filter(|key| !key.is_empty()).map(str::to_owned)
+}
+
+fn env_key() -> Option<String> {
+    env_key_from(std::env::var("POS_DB_KEY").ok().as_deref())
+}
+
 pub fn get_or_create_with_source() -> Result<(String, KeySource), crate::DbError> {
-    if honours_env_key()
-        && let Ok(key) = std::env::var("POS_DB_KEY")
-        && !key.is_empty()
-    {
+    if let Some(key) = env_key() {
         return Ok((key, KeySource::Environment));
     }
 
@@ -100,6 +120,53 @@ mod tests {
     fn a_release_build_refuses_the_environment_key() {
         assert!(!env_key_permitted(false), "release must ignore POS_DB_KEY");
         assert!(env_key_permitted(true), "debug/CI must still honour it");
+    }
+
+    /// Microstep 1.8.5's named test, and the only one that runs in the profile
+    /// the rule is about. `#[cfg(not(debug_assertions))]` is why its `Done when`
+    /// command carries `--release`: in a debug build this test does not exist.
+    ///
+    /// It asserts both halves of *ignore-and-continue*. Ignore: with
+    /// `POS_DB_KEY` set to a sentinel, a release build does not read it.
+    /// Continue: the decline is `None` rather than an error, so the caller falls
+    /// through to the credential store instead of refusing to open.
+    ///
+    /// What it deliberately does not do is call `get_or_create_with_source`.
+    /// That would reach the machine's real credential store and, on a clean
+    /// machine, write a key into it — a test that provisions a Keychain entry is
+    /// worse than the gap it closes. The keyring lookup itself is covered by the
+    /// key-custody work at 1.8.5b.
+    ///
+    /// The value is a parameter rather than a real environment variable because
+    /// `std::env::set_var` is `unsafe` in edition 2024 and `unsafe_code` is
+    /// **forbid** workspace-wide — deliberately, so it cannot be lifted by a
+    /// local attribute. A test may not mutate the process environment here, so
+    /// the rule is a pure function of the build profile and the raw value, which
+    /// is the shape `env_key_permitted` already uses one line above.
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn release_build_ignores_env_key_and_falls_through() {
+        const SENTINEL: &str = "release-build-must-not-read-this";
+
+        assert!(
+            !honours_env_key(),
+            "a release build must not honour POS_DB_KEY"
+        );
+        assert_eq!(
+            env_key_from(Some(SENTINEL)),
+            None,
+            "a release build read POS_DB_KEY instead of ignoring it"
+        );
+    }
+
+    /// The debug half of the same seam: the dev/CI path still works, and an
+    /// empty variable is treated as absent rather than as a key.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_debug_build_reads_the_env_key_but_treats_empty_as_absent() {
+        assert_eq!(env_key_from(Some("deadbeef")).as_deref(), Some("deadbeef"));
+        assert_eq!(env_key_from(Some("")), None, "an empty variable is not a key");
+        assert_eq!(env_key_from(None), None);
     }
 
     #[test]
