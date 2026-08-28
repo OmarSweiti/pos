@@ -781,9 +781,22 @@ pub struct Product {
     pub min_age: Option<u8>,       // age-restricted (J.1, E.69)
     pub max_price: Option<Money>,  // ministry price ceiling (J.3, E.71)
     pub reorder_point: Option<Qty>,
+    /// The regulated class and the sale form, as ONE value that cannot express
+    /// an unlawful pair — see §4.0. The two column names stay addressable
+    /// through the accessors below.
+    pub regulated_sale_form: RegulatedSaleForm,
+}
+
+impl Product {
+    /// What `product.regulated_kind` holds.
+    pub const fn regulated_kind(&self) -> Option<RegulatedKind>;
+    /// What `product.sale_form` holds. `SealedPack` for a regulated product,
+    /// and no other answer is representable.
+    pub const fn sale_form(&self) -> SaleForm;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum UnitOfMeasure { Each, Kilogram, Gram, Litre, Millilitre, Metre, Package }
 
 impl UnitOfMeasure {
@@ -793,6 +806,7 @@ impl UnitOfMeasure {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BarcodeKind { Ean13, Ean8, Upca, Code128, Internal, PriceEmbedded, WeightEmbedded }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -810,6 +824,107 @@ pub struct Barcode {
     pub pack_qty: Qty,
 }
 ```
+
+**A domain field never carries a `_minor` or `_milli` suffix.** The phase file's 1.2.2 prose says
+`max_price_minor`; the field is `max_price: Option<Money>`, and `reorder_point` is a `Qty`. The
+suffix is how a SQLite `INTEGER` column says what it counts (conventions §2), and a type that
+already says it does not need the reminder — this file wins, as its header states. The same rule is
+why `barcode.pack_qty_milli` is `pack_qty: Qty` above.
+
+Tests: `a_barcode_pack_quantity_is_a_qty` ·
+`the_same_product_sells_by_unit_and_by_case_through_two_barcodes` ·
+`every_unit_of_measure_declares_whether_it_divides` · `golden_catalog_json_is_stable`.
+
+The last of those pins the wire form of a `Product` and a `Barcode` as a review tripwire, in the
+shape §1's money goldens established. The one before it is 1.2.2's "done when": one `ProductId`, two
+`Barcode` records, `Qty::ONE` and `Qty::from_units(6)`.
+
+### 4.0 The regulated sale form — [1.2.2]
+
+Jordanian tobacco rules forbid selling single cigarettes (`ref/merchant-decisions.md` 5.3b), and the
+**age gate is a different control**: refusing to sell to a seventeen-year-old does not make an
+individual-cigarette SKU lawful. So the rule belongs beside the product type — and as a type, not as
+a check somebody remembers to call.
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegulatedKind { Tobacco }          // 0003: CHECK (regulated_kind IN ('tobacco'))
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SaleForm { SealedPack, Bulk, Service }
+//                 0003: CHECK (sale_form IN ('sealed_pack','bulk','service'))
+
+impl RegulatedKind { pub const fn as_str(self) -> &'static str; }   // the stored token
+impl SaleForm      { pub const fn as_str(self) -> &'static str; }   // and this enum's wire form
+
+/// The regulated class and the sale form it permits, as one value. `Tobacco`
+/// carries NO sale form, because tobacco has exactly one lawful one — so no
+/// value of this type means "tobacco sold loose".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(into = "SaleFormColumns", try_from = "SaleFormColumns")]
+pub enum RegulatedSaleForm { Unregulated(SaleForm), Tobacco }
+
+impl RegulatedSaleForm {
+    pub const UNREGULATED_SEALED_PACK: RegulatedSaleForm;   // the schema's DEFAULT
+
+    /// The single funnel for a pair that arrived as two loose values — a
+    /// `product` row, a sync payload, an import, the deserializer. It REFUSES
+    /// the unlawful pair rather than coercing it: reading bulk tobacco as a
+    /// sealed pack silences exactly the SKU the rule exists to prevent.
+    pub const fn from_parts(regulated_kind: Option<RegulatedKind>, sale_form: SaleForm)
+        -> Result<RegulatedSaleForm, CatalogError>;
+
+    pub const fn regulated_kind(self) -> Option<RegulatedKind>;
+    pub const fn sale_form(self) -> SaleForm;               // total, never omitted
+}
+
+/// PRIVATE. The two columns `product` stores, and the wire form of the pair:
+/// `{"regulated_kind":null,"sale_form":"sealed_pack"}` rather than the enum's
+/// own tagging, so a row, a payload and the domain use one vocabulary. Routing
+/// serde through `from_parts` is what makes an unlawful pair a deserialization
+/// refusal instead of something that silently became lawful.
+struct SaleFormColumns { regulated_kind: Option<RegulatedKind>, sale_form: SaleForm }
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum CatalogError {
+    #[error("a {} product cannot be sold as {}", .0.as_str(), .1.as_str())]
+    UnlawfulSaleForm(RegulatedKind, SaleForm),
+}
+```
+
+**Why one field and not two.** Two public fields — `regulated_kind: Option<RegulatedKind>` and
+`sale_form: SaleForm` — can express the forbidden SKU in six combinations, and a `Product::new` that
+refused it is bypassed by the first `Product { .. }` literal a later microstep writes. Private
+fields would buy the guarantee back at the price of a sixteen-argument constructor or a duplicate
+sixteen-field draft struct. The enum costs one type and leaves nothing to remember, which is why
+`Product` keeps its public fields while this pair does not exist as a pair. `0003`'s
+`product_regulated_sale_form_insert`/`_update` triggers refuse the same combination in the storage
+engine; that is defence in depth against a hand-typed `sqlite3` session, not the control.
+
+**The `unit` column and `UnitOfMeasure` do not correspond one for one, and 1.2.2 does not close
+that.** `0003` stores `product.unit` as `'each'`, `'package'`, `'weight'`, `'volume'` or `'length'`
+beside `qty_step_milli`, so `Kilogram` and `Gram` both store as `'weight'` and a round trip through
+the database cannot tell them apart. `product.is_weighed` is likewise derivable from the unit — the
+`product_quantity_kind_*` triggers tie `'each'`/`'package'` to `is_weighed = 0` and the three
+measures to `is_weighed = 1` — yet this struct and the sale-line snapshot both carry it. This is an
+engineering gap, not one of the `⚠️ OPEN` questions ([`00-master-plan.md`](../00-master-plan.md)
+§4a.3) that only an outside authority can answer: closing it needs a finer column or a coarser enum,
+and **microstep
+1.2.3 owns the choice** because its repository is the first code that has to map the column. Until
+then the enum above is normative for Rust and the column is normative for storage, and neither
+pretends the other does not exist.
+
+Tests: `tobacco_product_requires_a_sealed_pack_sale_form` ·
+`the_regulated_pair_round_trips_through_its_two_columns` ·
+`an_unlawful_regulated_pair_is_refused_on_the_wire` · `each_stored_token_is_spelled_once`.
+
+The round-trip is exhaustive over all six column pairs rather than generated: a bounded universal
+claim is checked by exhaustion when the loop is feasible (conventions §5.1), and six cases is
+feasible. There is no `prop_` property in this module for the same reason — every claim it makes is
+over a finite set of values the types can hold, so a generator would be weaker evidence with more
+machinery.
 
 ### 4.1 Price-embedded barcode parsing — [1.2.4]
 
