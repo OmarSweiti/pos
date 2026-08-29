@@ -160,6 +160,20 @@ A microstep is done when **all** of these hold. Not most.
 6. Nothing outside the step's `Files:` list changed, except imports and module declarations.
 7. It is committed with the step number in the message (§8).
 
+**When rule 5 has nothing to check.** Twenty executable Phase-1 microsteps carry no `Done when` line
+at all, which makes rule 5 unsatisfiable and quietly turns "done" back into an opinion — the one thing
+this section exists to prevent. So: **a microstep that reaches implementation without a `Done when`
+line gets one written in the pull request that builds it**, together with the `Tests:` line if that is
+missing too, in the phase file, in that file's voice. Author it *before* writing the code, not after —
+a completion condition written to match what you happened to build is a description, not a test of it.
+
+The condition must be a runnable command plus an objectively checkable outcome. "It compiles" and
+"the types exist" are not conditions; they are restatements of rule 1.
+
+Migration microsteps are the exception that does not wait for its turn. A migration is forward-only,
+so a seed or a guard omitted because nobody had written down what "done" meant cannot be added later
+without a second migration. Those lines are written ahead of the build.
+
 ---
 
 ## 7. Performance budgets — measured, not asserted
