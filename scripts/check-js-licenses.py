@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -150,17 +152,40 @@ def pnpm_failure_detail(stderr: str, stdout: str) -> str:
     )
 
 
+def resolve_pnpm(which: Callable[[str], str | None] = shutil.which) -> str:
+    """Resolve `pnpm` to a real executable path before running it.
+
+    On Windows pnpm installs as `pnpm.CMD`, and `subprocess.run(["pnpm", ...])`
+    does **not** search `PATHEXT` — so a perfectly installed pnpm raises
+    `FileNotFoundError` and this checker reported "pnpm is not installed", which
+    is both wrong and the least useful thing it could have said. `shutil.which`
+    does search `PATHEXT`, and returns the path `subprocess` can actually spawn.
+
+    Found by the first cross-platform CI run this repository ever performed, on
+    2026-08-29. The job only runs on promotion pull requests, and there had never
+    been one, so a checker that could not run on one of the three release
+    platforms had been sitting in the workflow unexercised.
+    """
+    found = which("pnpm")
+    if found is None:
+        raise LicenseError(
+            "pnpm was not found on PATH (searched PATHEXT too, so this is a real "
+            "absence rather than the Windows .CMD resolution problem)"
+        )
+    return found
+
+
 def pnpm_inventory(root: Path) -> Any:
     try:
         done = subprocess.run(
-            ["pnpm", "licenses", "list", "--json"],
+            [resolve_pnpm(), "licenses", "list", "--json"],
             cwd=root,
             capture_output=True,
             text=True,
             timeout=120,
         )
     except FileNotFoundError:
-        raise LicenseError("pnpm is not installed") from None
+        raise LicenseError("pnpm resolved to a path that could not be spawned") from None
     except (OSError, subprocess.SubprocessError) as exc:
         raise LicenseError(f"could not run pnpm licenses list: {exc}") from exc
     if done.returncode != 0:
@@ -257,6 +282,34 @@ def self_test() -> int:
         print(f"  {'ok  ' if passed else 'FAIL'}  a rationale-free policy is refused")
         failures += not passed
 
+    # Windows resolution. The checker reported "pnpm is not installed" on a
+    # runner where pnpm was installed and working, because pnpm is pnpm.CMD there
+    # and subprocess does not search PATHEXT.
+    resolution_cases = [
+        (
+            "a Windows .CMD shim resolves to its real path",
+            resolve_pnpm(lambda _: r"C:\\npm\\prefix\\pnpm.CMD") == r"C:\\npm\\prefix\\pnpm.CMD",
+        ),
+        (
+            "a POSIX pnpm resolves to its real path",
+            resolve_pnpm(lambda _: "/usr/local/bin/pnpm") == "/usr/local/bin/pnpm",
+        ),
+    ]
+    try:
+        resolve_pnpm(lambda _: None)
+    except LicenseError as exc:
+        resolution_cases.append(
+            (
+                "a genuine absence says so, and says PATHEXT was searched",
+                "PATHEXT" in str(exc),
+            )
+        )
+    else:
+        resolution_cases.append(("a genuine absence says so, and says PATHEXT was searched", False))
+    for label, ok in resolution_cases:
+        print(f"  {'ok  ' if ok else 'FAIL'}  {label}")
+        failures += not ok
+
     # The store-index remedy. A wrong remedy is worse than no remedy, so these
     # assert both halves: the working advice is present, and pnpm's own advice
     # is not repeated as if it were the fix.
@@ -297,7 +350,7 @@ def self_test() -> int:
         print(f"  {'ok  ' if ok else 'FAIL'}  {label}")
         failures += not ok
 
-    total = len(cases) + len(index_cases) + 2
+    total = len(cases) + len(index_cases) + len(resolution_cases) + 2
     if failures:
         print(f"\ncheck-js-licenses self-test: {failures}/{total} case(s) FAILED")
         return 1
