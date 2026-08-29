@@ -130,7 +130,6 @@ PLANNED: dict[str, tuple[str, ...]] = {
         "an_expired_handle_is_refused",
         "the_effect_and_the_consumption_commit_together_or_not_at_all",
     ),
-    "1.6.5": ("mutating_an_identity_column_breaks_the_chain",),
     "1.6.6b": ("tail_deletion_is_detected_against_the_last_anchor",),
     "1.7.3": ("narrow_profile_reflows_rather_than_truncates",),
     "1.7.5": (
@@ -567,6 +566,7 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "a_pack_quantity_of_zero_is_refused_at_save",
         "clock_jump_back_reports_anomaly",
         "manager_self_approval_denied_when_policy_bans_it",
+        "mutating_an_identity_column_breaks_the_chain",
         "prop_monotonic_clock_never_decreases",
     }
 )
