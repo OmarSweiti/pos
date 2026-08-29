@@ -32,7 +32,10 @@ Group 1.1 has **no immediately buildable work remaining**:
 `1.1.9`'s pure-domain time values, clock policy, and terminal IANA-zone resolution have landed, but
 its database persistence half remains deferred until `1.9.1` creates `trusted_time_state`, including
 `clock_state_survives_restart`. The `1.1.9` microstep is therefore **partially delivered**, not
-complete. Group 1.2 begins with the **partially delivered** `1.2.0` benchmark gate: `just
+complete. `1.6.3` is **partially delivered** on the same terms: its domain grid, limits and shape
+rules are complete and enforced, but the seed comparison it also names cannot run until `1.6.1`
+commits migration `0004` and creates the `role` and `role_capability` tables it would query.
+Group 1.2 begins with the **partially delivered** `1.2.0` benchmark gate: `just
 bench-gate`, `scripts/bench-gate.py`, its fourteen refusal-path tests, and
 `benchmarks/reference-register.toml` are committed with **every identity value deliberately blank**
 beside §6a.1's empty register-hardware table. `python3 scripts/bench-gate.py --check-profile`
