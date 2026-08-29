@@ -233,8 +233,11 @@ jobs:
         run: ./scripts/pr-type-label.sh --self-test
       - name: The test-catalogue check's own checks still fire
         run: ./scripts/check-test-catalog.py --self-test
+      # Invoked through the interpreter, exactly as `just guards` does. The file
+      # is not mode +x — running it directly is exit 126, which is how this step
+      # failed the first time it ran.
       - name: The benchmark gate still refuses every unqualified run
-        run: ./scripts/tests/bench_gate_test.py
+        run: python3 ./scripts/tests/bench_gate_test.py
       - name: Every local gate command has a CI step
         run: ./scripts/check-ci-gate-parity.py
 
