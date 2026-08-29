@@ -316,6 +316,8 @@ guards:
     bash ./scripts/gh-actions-policy.sh --self-test
     bash ./scripts/test-gh-setup.sh
     bash ./scripts/pr-type-label.sh --self-test
+    {{ python }} ./scripts/check-ci-gate-parity.py
+    {{ python }} ./scripts/check-ci-gate-parity.py --self-test
 
 # `lint` is biome (style) and `test` is vitest, so a TypeScript type error passes
 # both and fails CI's `web` job instead. Mirrors that job's build step.
