@@ -18,7 +18,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 
 **Current implementation frontier (28 August 2026):** Phase 0 is closed by transfer: `0.3.2`
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
-microstep `5.5.0`. Phase 1 has **15 of 112 executable microsteps fully complete (~13%)**: `1.1.0`
+microstep `5.5.0`. Phase 1 has **16 of 112 executable microsteps fully complete (~14%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -26,8 +26,9 @@ shipped earlier), `1.1.5` (the complete money property suite), `1.1.8` (the fift
 the `IdSource` port and `SeqIdSource`), `1.2.1` (migration `0003`, the STRICT rebuild and the
 org / store / register / taxonomy tables), `1.2.2` (`Product`, `UnitOfMeasure` and the regulated
 pair), `1.8.9` (the outbox writer, so every fact graph commits with its delivery envelope), and
-`1.8.5` (the release build's key policy, proven in a release build), and `1.11.2` (the RTL lint,
-whose escape hatch now requires its reason).
+`1.8.5` (the release build's key policy, proven in a release build), `1.11.2` (the RTL lint,
+whose escape hatch now requires its reason), and `1.6.5` (the audit hash chain, and the external
+anchor that closes what a chain alone cannot detect).
 Group 1.1 has **no immediately buildable work remaining**:
 `1.1.9`'s pure-domain time values, clock policy, and terminal IANA-zone resolution have landed, but
 its database persistence half remains deferred until `1.9.1` creates `trusted_time_state`, including
