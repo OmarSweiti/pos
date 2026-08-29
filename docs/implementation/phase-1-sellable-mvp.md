@@ -358,8 +358,10 @@ The target feeds arbitrary bytes and lengths through the scanner boundary and as
 *Everything in [`ref/tax-jordan.md`](ref/tax-jordan.md). Right before the first real sale, or never.*
 
 ### 1.3.1 — Tax types
-**Files:** `crates/pos-domain/src/tax.rs` (new)
-`TaxTreatment`, `TaxBasis`, `TaxBase`, `TaxComponent`, `PriceMode`, `StoreTaxProfile`, `SupplyTaxContext`, `LineTax`, `ComponentTax`, `TaxSummaryRow`, `TaxRateRule` and `TaxError` per API reference §5. Fixed and ad-valorem components, dependency order, charge unit and immutable supply evidence are types rather than optional comments, because GST-on-SST and a supply-specific zero rate cannot be reconstructed from one percentage later.
+**Files:** `crates/pos-domain/src/tax.rs` (new) · `crates/pos-domain/src/lib.rs` (module declaration and re-exports) · [`README.md`](README.md) (implementation frontier) · [`ref/domain-api.md`](ref/domain-api.md) (§15 dependency correction) · this file (this microstep's `Files:`, `Tests:` and `Done when:` lines)
+`TaxTreatment`, `TaxBasis`, `TaxBase`, `TaxComponent`, `PriceMode`, `StoreTaxProfile`, `SupplyTaxContext`, `SupplyDestination`, `ZeroRatingReason`, `LineTax`, `ComponentTax`, `TaxSummaryRow`, `TaxRateRule` and `TaxError` per API reference §5. Fixed and ad-valorem components, dependency order, charge unit and immutable supply evidence are types rather than optional comments, because GST-on-SST and a supply-specific zero rate cannot be reconstructed from one percentage later.
+**Tests:** `compound_tax_basis_round_trips_without_loss` · `tax_base_preserves_named_component_dependency_order` · `supply_tax_context_carries_destination_reason_and_evidence` · `tax_error_names_the_component_and_unknown_base_code` · `golden_tax_json_is_stable`
+**Done when:** `cargo nextest run -p pos-domain tax::tests::compound_tax_basis_round_trips_without_loss` exits zero with the exact synthetic `Percent` ppm and the per-unit `Money` minor amount and currency unchanged after a serde JSON round-trip.
 
 ### 1.3.2 — `resolve_components`
 **Files:** `crates/pos-domain/src/tax.rs`
