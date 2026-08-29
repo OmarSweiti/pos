@@ -1798,63 +1798,196 @@ Tests: `exchange_with_a_negative_difference_routes_to_the_original_card` (E.81) 
 /// on stable, and is what 1.6.4 builds.
 pub trait Capability {
     const NAME: &'static str;
+    /// §8.2's row for this capability. An associated const rather than a table
+    /// beside the macro, because a capability added without deciding all four
+    /// roles must be a compile error and not a red test somebody has to run.
+    const DEFAULT_GRANTS: RoleGrants;
 }
 
-/// Declares each capability exactly once: its marker type, its wire name, and
-/// its membership in `ALL`. One source, so a name and a type cannot drift —
-/// which is how `sale.park`, `sale.resume` and the cash-movement capability
-/// came to be used by the IPC catalogue while missing from the list.
+/// The four roles `0004` seeds, spelled as `role.code` stores them, and the
+/// columns of §8.2's grid. Closed on purpose: a merchant adds users, not roles.
+pub enum Role { Cashier, ShiftLead, Manager, Owner }   // `Role::ALL`, `Role::as_str`
+
+/// What bounds a grant that is held but not held outright — §8.2's
+/// parentheticals, as values. Two of the five are decided in `permissions.rs`
+/// because their rule is a *shape*: `OwnShift` and `ExactMatchOnly`. The other
+/// three name a number a merchant sets, so this type records *which* limit
+/// applies and the microstep owning the operation applies it (1.4.5, 1.4.7,
+/// 2.3.x). `Limit::as_str` is the token a seed, a report and an error all quote.
+pub enum Limit { OwnShift, OwnStore, ExactMatchOnly, RoleCap, RefundThreshold }
+
+/// One cell of §8.2's grid. `SetsTheLimit` is a blank with a reason — §8.2's
+/// "sets the caps" / "sets floor and ceiling" / "sets the threshold" cells — and
+/// `is_held` is false for it, so 1.6.1 seeds no `role_capability` row. Writing
+/// those three as an ordinary blank would leave a reader to guess whether the
+/// owner was forgotten.
+pub enum Grant { Held, HeldWithin(Limit), Withheld, SetsTheLimit }
+impl Grant {
+    pub const fn is_held(self) -> bool;         // seeds a row exactly when true
+    pub const fn limit(self) -> Option<Limit>;
+}
+
+/// One row of the grid. Named fields, never `[Grant; 4]`: a positional array
+/// lets `refund.cash_for_card` reach a cashier because a value landed one column
+/// left of where its author meant it, and a field name cannot be off by one. It
+/// is also what makes a fifth role a decision: adding one is 34 compile errors —
+/// `E0004` at `Role::as_str` and `RoleGrants::for_role`, and `E0063` at each of
+/// the 32 rows that now have a column nobody has answered for.
+pub struct RoleGrants { pub cashier: Grant, pub shift_lead: Grant,
+                        pub manager: Grant, pub owner: Grant }
+impl RoleGrants { pub const fn for_role(self, role: Role) -> Grant; }
+
+/// Declares each capability exactly once: its marker type, its wire name, its
+/// default grant for each of the four roles, and its membership in `ALL` and
+/// `DEFAULT_MATRIX`. One source, so a name and a type cannot drift — which is
+/// how `sale.park`, `sale.resume` and the cash-movement capability came to be
+/// used by the IPC catalogue while missing from the list — and so the grid
+/// cannot drift from the list of capabilities it is a grid over.
+///
+/// The grant tokens are a closed vocabulary — `yes`, `no`, `sets_the_limit`,
+/// and one per `Limit` — so a row reads straight against §8.2's table and a
+/// spelling outside the list is a macro error rather than a different grant.
+macro_rules! capability_grant {
+    (yes) => { Grant::Held };
+    (no)  => { Grant::Withheld };
+    (sets_the_limit) => { Grant::SetsTheLimit };
+    (own_shift) => { Grant::HeldWithin(Limit::OwnShift) };
+    // …and one arm per remaining `Limit`: own_store, exact_match_only,
+    // role_cap, refund_threshold. There is no catch-all arm, on purpose.
+}
+
 macro_rules! capabilities {
-    ($($ident:ident => $name:literal),+ $(,)?) => {
+    ($($ident:ident => $name:literal {
+        cashier: $cashier:tt, shift_lead: $shift_lead:tt,
+        manager: $manager:tt, owner: $owner:tt $(,)?
+    }),+ $(,)?) => {
         pub mod cap {
-            use super::Capability;
+            use super::{Capability, RoleGrants};
             $(
                 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
                 pub struct $ident;
-                impl Capability for $ident { const NAME: &'static str = $name; }
+                impl Capability for $ident {
+                    const NAME: &'static str = $name;
+                    const DEFAULT_GRANTS: RoleGrants = RoleGrants {
+                        cashier: capability_grant!($cashier),
+                        shift_lead: capability_grant!($shift_lead),
+                        manager: capability_grant!($manager),
+                        owner: capability_grant!($owner),
+                    };
+                }
             )+
             /// Derived from the types themselves, never hand-maintained.
             pub const ALL: &[&str] = &[$(<$ident as Capability>::NAME),+];
+            /// The whole of §8.2's grid, in `ALL`'s order and from the same
+            /// declarations, so the two cannot disagree about what exists.
+            pub const DEFAULT_MATRIX: &[(&str, RoleGrants)] = &[
+                $((<$ident as Capability>::NAME, <$ident as Capability>::DEFAULT_GRANTS)),+
+            ];
         }
     };
 }
 
 capabilities! {
-    SaleCreate           => "sale.create",
-    SalePark             => "sale.park",
-    SaleResume           => "sale.resume",
-    SaleVoid             => "sale.void",
-    SaleReprint          => "sale.reprint",        // any document, not only your own [1.9.3]
-    DepartmentSale       => "sale.department",     // the open-price line (§6.5)
-    LineVoid             => "line.void",
-    DiscountManual       => "discount.manual",
-    PriceOverride        => "price.override",
-    RefundReceipted      => "refund.receipted",
-    RefundAboveThreshold => "refund.above_threshold",
-    RefundReceiptless    => "refund.receiptless",
-    RefundCashForCard    => "refund.cash_for_card",
-    RefundOutsideWindow  => "refund.outside_window",  // §10 — a defect claim on day 20
-    DrawerOpen           => "drawer.open",
-    CashMovement         => "cash.movement",       // every kind (schema §cash_movement)
-    ShiftOpen            => "shift.open",
-    ShiftClose           => "shift.close",
-    XReportRun           => "xreport.run",         // split from zreport.run — see §8.3
-    ZReportRun           => "zreport.run",
-    JournalView          => "journal.view",        // find Tuesday's receipt in ten seconds
-    StockAdjust          => "stock.adjust",
-    ProductEdit          => "product.edit",
-    TaxRateEdit          => "tax.rate.edit",       // a rate is a legal fact, not a setting
-    FiscalRemediate      => "fiscal.remediate",    // rebuild a failed fiscal payload (§8.2)
-    CustomerLookup       => "customer.lookup",     // PII: name, phone (PDPL) [3.x]
-    TrainingToggle       => "training_mode.toggle",
-    SettingsEdit         => "settings.edit",
-    UserAdmin            => "user.admin",
-    BackupRestore        => "backup.restore",      // see the note in §8.2
-    ReportsOwn           => "reports.own",         // your own shift and day
-    ReportsAll           => "reports.all",         // anyone's shift, any day, any cashier
+    SaleCreate           => "sale.create"            { cashier: yes, shift_lead: yes, manager: yes, owner: no },
+    SalePark             => "sale.park"              { cashier: yes, shift_lead: yes, manager: yes, owner: no },
+    SaleResume           => "sale.resume"            { cashier: yes, shift_lead: yes, manager: yes, owner: no },
+    SaleVoid             => "sale.void"              { cashier: no, shift_lead: yes, manager: yes, owner: no },
+    // Any document, not only your own (microstep 1.9.3).
+    SaleReprint          => "sale.reprint"           { cashier: yes, shift_lead: yes, manager: yes, owner: yes },
+    // The open-price line (ref/domain-api.md §6.5), capped and audited.
+    DepartmentSale       => "sale.department"        { cashier: yes, shift_lead: yes, manager: yes, owner: no },
+    LineVoid             => "line.void"              { cashier: yes, shift_lead: yes, manager: yes, owner: no },
+    DiscountManual       => "discount.manual"        { cashier: role_cap, shift_lead: yes, manager: yes, owner: sets_the_limit },
+    PriceOverride        => "price.override"         { cashier: no, shift_lead: yes, manager: yes, owner: sets_the_limit },
+    RefundReceipted      => "refund.receipted"       { cashier: refund_threshold, shift_lead: yes, manager: yes, owner: sets_the_limit },
+    RefundAboveThreshold => "refund.above_threshold" { cashier: no, shift_lead: no, manager: yes, owner: no },
+    RefundReceiptless    => "refund.receiptless"     { cashier: no, shift_lead: no, manager: yes, owner: no },
+    RefundCashForCard    => "refund.cash_for_card"   { cashier: no, shift_lead: no, manager: yes, owner: no },
+    // A defect claim on day 20 (ref/domain-api.md §10).
+    RefundOutsideWindow  => "refund.outside_window"  { cashier: no, shift_lead: no, manager: yes, owner: no },
+    DrawerOpen           => "drawer.open"            { cashier: no, shift_lead: yes, manager: yes, owner: no },
+    // Every kind (ref/schema.md `cash_movement`).
+    CashMovement         => "cash.movement"          { cashier: no, shift_lead: yes, manager: yes, owner: no },
+    ShiftOpen            => "shift.open"             { cashier: own_shift, shift_lead: yes, manager: yes, owner: no },
+    ShiftClose           => "shift.close"            { cashier: own_shift, shift_lead: yes, manager: yes, owner: no },
+    // Split from zreport.run: totals by tender plus the opening float *is* the
+    // expected figure, so an X report defeats the blind close (§8.3).
+    XReportRun           => "xreport.run"            { cashier: no, shift_lead: yes, manager: yes, owner: no },
+    ZReportRun           => "zreport.run"            { cashier: no, shift_lead: yes, manager: yes, owner: no },
+    // Find Tuesday's receipt in ten seconds.
+    JournalView          => "journal.view"           { cashier: own_shift, shift_lead: yes, manager: yes, owner: yes },
+    StockAdjust          => "stock.adjust"           { cashier: no, shift_lead: no, manager: yes, owner: yes },
+    ProductEdit          => "product.edit"           { cashier: no, shift_lead: no, manager: yes, owner: yes },
+    // A rate is a legal fact, not a setting.
+    TaxRateEdit          => "tax.rate.edit"          { cashier: no, shift_lead: no, manager: no, owner: yes },
+    // Rebuild a failed fiscal payload after the builder is corrected (§8.2).
+    FiscalRemediate      => "fiscal.remediate"       { cashier: no, shift_lead: no, manager: yes, owner: yes },
+    // PII: name, phone — PDPL (microstep 3.x).
+    CustomerLookup       => "customer.lookup"        { cashier: exact_match_only, shift_lead: yes, manager: yes, owner: yes },
+    TrainingToggle       => "training_mode.toggle"   { cashier: no, shift_lead: yes, manager: yes, owner: no },
+    SettingsEdit         => "settings.edit"          { cashier: no, shift_lead: no, manager: own_store, owner: yes },
+    UserAdmin            => "user.admin"             { cashier: no, shift_lead: no, manager: own_store, owner: yes },
+    // The back-office restore of a register whose database opens. Recovery after
+    // credential-store loss is authorised by the merchant recovery code instead
+    // (microstep 1.8.5b) — the capability tables live inside the database that
+    // cannot be opened.
+    BackupRestore        => "backup.restore"         { cashier: no, shift_lead: no, manager: no, owner: yes },
+    ReportsOwn           => "reports.own"            { cashier: yes, shift_lead: yes, manager: yes, owner: yes },
+    // Anyone's shift, any day, any cashier.
+    ReportsAll           => "reports.all"            { cashier: no, shift_lead: no, manager: own_store, owner: yes },
 }
 
-/// A proof-carrying token. `authorize` is the ONLY way to obtain one, and
+/// §8.2's row for one capability, or `None` when nothing by that name exists.
+/// `None` is not "denied to everyone": it means the string is not a capability,
+/// which is what `role_capability.capability REFERENCES capability(code)`
+/// refuses in the storage engine and what this answers in memory.
+pub fn default_grants(capability: &str) -> Option<RoleGrants>;
+
+/// What one holder may do. `authorize` below takes one of these, and until this
+/// step it was named in that signature and declared nowhere.
+///
+/// A set contains only what its holder *holds* — a `Withheld` or `SetsTheLimit`
+/// cell contributes nothing, exactly as it seeds no `role_capability` row — so
+/// `grant` answers `Withheld` for absent and denied alike and no caller has to
+/// tell them apart. **Unioning several roles is deliberately absent**: a user may
+/// hold more than one `user_role`, and widening two different `Limit`s is not a
+/// lattice. That decision belongs with `authorize` at 1.6.4, where there is an
+/// actor, a store and an escalation policy to decide it against.
+pub struct GrantSet { /* private: capability -> Grant, held only */ }
+
+impl GrantSet {
+    pub const fn empty() -> GrantSet;
+    /// §8.2's column for one role — the *defaults*. A running register reads
+    /// `role_capability`, which `user.admin` can edit, so a rule that branched on
+    /// `Role` instead of on what the holder holds would ignore every merchant
+    /// edit. This is the only function here that takes a `Role`.
+    pub fn of_role(role: Role) -> GrantSet;
+    /// Add a grant, or remove the capability when the grant is not held.
+    pub fn with_grant(self, capability: &'static str, grant: Grant) -> GrantSet;
+    pub fn grant(&self, capability: &str) -> Grant;
+    pub fn holds(&self, capability: &str) -> bool;
+    /// §8.2: the holder's own shift unless they also hold `reports.all`. `None`
+    /// when `journal.view` is not held. How far `EveryShift` reaches is the limit
+    /// on the `reports.all` grant, not a second scope here.
+    pub fn journal_scope(&self) -> Option<JournalScope>;
+    /// §8.2: an exact identifier, never a list and never a prefix — for every
+    /// role, because the sentence the cashier's parenthetical abbreviates is
+    /// about the capability.
+    pub fn customer_lookup(&self, shape: CustomerQueryShape)
+        -> Result<(), PermissionError>;
+}
+
+pub enum JournalScope { OwnShift, EveryShift }
+
+/// The SHAPE of a customer lookup, and not its contents: no phone, card or
+/// loyalty number and no name. A value here would put customer PII into a type
+/// that `Debug`-prints into every error, assertion and log line that touches it,
+/// and `phone`, `email` and `customer_name` are on the never-log registry
+/// ([`security-compliance.md`](security-compliance.md) §6). The shell classifies
+/// what the cashier typed; the domain decides whether that shape is allowed.
+pub enum CustomerQueryShape { ExactIdentifier, Prefix, ListAll }
+
+/// A proof-carrying token — 1.6.4. `authorize` is the ONLY way to obtain one, and
 /// domain functions that reverse money REQUIRE one. You cannot forget the
 /// check, because you cannot call the function without it.
 ///
@@ -1886,8 +2019,15 @@ pub fn authorize<C: Capability>(
     policy: &EscalationPolicy, at: Timestamp,
 ) -> Result<Authorized<C>, PermissionError>;
 
-#[derive(Debug, thiserror::Error, PartialEq)]
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum PermissionError {
+    // The two the grid needs, and the only two that exist before 1.6.4: they
+    // answer for a `GrantSet` alone, which has no actor and no approval to name.
+    #[error("{} is not held", .0)]                         NotHeld(&'static str),
+    #[error("{} is limited to {}", .0, .1.as_str())]       OutsideLimit(&'static str, Limit),
+    // Everything below arrives with `authorize` and the handle at 1.6.4. Each
+    // names a value — a `UserId`, an `ApprovalId`, a `Timestamp` — that the
+    // machinery producing it does not exist to produce yet.
     #[error("{0} lacks {1}")]                              Denied(UserId, &'static str),
     #[error("{0} requires manager approval")]              EscalationRequired(&'static str),
     #[error("self-approval is not permitted for {0}")]     SelfApprovalBanned(&'static str), // E.52
@@ -1908,6 +2048,25 @@ the wrong capability is a *type* error — `expected &Authorized<SaleVoid>, foun
 cannot be forged outside the module, because `_capability` is private: attempting
 the struct literal is `error[E0451]: field `_capability` ... is private`. Both are
 `trybuild` cases in 1.6.4.
+
+**A third property, and this one lands with the grid at 1.6.3.** A capability
+added without deciding all four roles does not compile, because the grant cells
+are part of the same macro arm as the name: the macro has no rule for a row that
+omits them, and a `Capability` impl written by hand without `DEFAULT_GRANTS` is
+`error[E0046]`. A *fifth role* does not compile either: it is thirty-four errors,
+`E0004` at the two wildcard-free matches over `Role` and `E0063` at every one of
+the thirty-two rows. That is the difference between a grid the compiler maintains
+and a grid a test hopes somebody ran.
+
+**What this section splits between two microsteps.** 1.6.3 builds the `cap`
+module, the grid, `RoleGrants`, `GrantSet` and the two shape rules
+(`journal_scope`, `customer_lookup`) — everything above `Authorized<C>`. 1.6.4
+builds `Authorized<C>`, `authorize`, §8.1's handle and the rest of
+`PermissionError`, because `authorize` is the only constructor of a token and it
+cannot validate an `ApprovalHandle` that does not exist. The database half of the
+grid waits on migration `0004`, which seeds `role` and `role_capability` *from*
+this grid; [`../phase-1-sellable-mvp.md`](../phase-1-sellable-mvp.md) 1.6.3
+carries that deferral.
 
 **The exhaustiveness test** (`ipc_commands_all_declare_a_capability`, microstep 1.6.7) walks the IPC command registry and fails if any command has no capability entry. Adding a command without declaring one breaks CI.
 
@@ -2024,6 +2183,13 @@ that does not enumerate what the test asserts. **This grid is the fixture.** It 
 `cap::ALL`, so the test is exhaustive rather than counted — a hard-coded count drifts the moment a
 capability is added, and it already had.
 
+**Read this table against the `capabilities!` invocation in §8**, which carries the same cells as its
+third, fourth, fifth and sixth columns and is the only place the code states them. `yes` is `✓`, `no`
+is a blank, `sets_the_limit` is a "sets the …" cell, and every other token is the `Limit` the
+parenthetical names. The two are a table and its declaration rather than two hand-maintained lists:
+the grid cannot lose a capability, because the capability *is* the row, and it cannot gain a role
+without answering for all thirty-two.
+
 | Capability | Cashier | Shift lead | Manager | Owner |
 |---|---|---|---|---|
 | `sale.create` | ✓ | ✓ | ✓ | — |
@@ -2065,9 +2231,17 @@ The parenthetical qualifiers are enforced, not decorative:
   Tuesday"* a ten-second job. Putting the journal behind `reports.all` means fetching a manager to
   read back a receipt, which is why the qualifier exists rather than the capability being withheld.
   Another cashier's sales need `reports.all` — that is the answer to "who can see whose takings".
+  **The rule is stated over `reports.all`, not over this cell**: `GrantSet::journal_scope` answers
+  `OwnShift` for anyone without `reports.all` — the shift lead's plain `✓` included — and
+  `EveryShift` for anyone with it, including a cashier a merchant deliberately granted it. The
+  parenthetical records where the grid annotated the consequence; on the shipped defaults the two
+  always agree, and the named test asserts that for all four roles.
 - **`customer.lookup` (exact match only)** returns a customer for an exact phone, card or loyalty
   number and **never lists or prefix-searches**. PDPL minimisation is a search-shape decision, not a
-  disclaimer.
+  disclaimer. **The refusal is the same for every role**, because that sentence is about the
+  capability and not about the cashier; the cell is where the grid had room to annotate it.
+  `GrantSet::customer_lookup` takes a `CustomerQueryShape` and no identifier, so the refusal happens
+  without the domain ever holding the phone number it is protecting.
 - **`backup.restore`** governs the back-office and settings-screen restore of a register whose
   database opens. It does **not** govern recovery after credential-store loss: the capability tables
   live inside the database that cannot be opened, so that path is authorised by the merchant recovery
@@ -2082,10 +2256,13 @@ The parenthetical qualifiers are enforced, not decorative:
   blanks as omissions. An owner reads the day's takings through `reports.all`, which is a report over
   facts; running a Z *closes a shift* on a register they are not standing at.
 
-Tests: `default_matrix_covers_every_capability_in_cap_all` — an exhaustive iteration over `cap::ALL`
-that fails when a capability has no row, replacing the counted assertion. ·
+Tests: `default_matrix_covers_every_capability_in_cap_all` ·
 `journal_view_is_scoped_to_the_holders_own_shift_without_reports_all` ·
-`customer_lookup_refuses_a_prefix_query`.
+`customer_lookup_refuses_a_prefix_query`. The first is an exhaustive iteration over `cap::ALL` that
+fails when a capability has no row, replacing the counted assertion.
+The wrapping is load-bearing: `check-test-catalog.py` follows a `Tests:` line onto a continuation
+only while the previous line ends in `·` and the next one opens with a backtick, so prose between two
+names hides every name after it from assertion 7's owner check.
 
 ### 8.3 The things nobody may do — [1.6.3]
 

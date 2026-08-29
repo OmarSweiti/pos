@@ -4,14 +4,18 @@
 pub mod catalog;
 pub mod ids;
 pub mod money;
+pub mod permissions;
 pub mod time;
 
 // The module graph points one way (ref/domain-api.md §15): `ids`, `money` and
 // `time` have no cross-module edges, and `catalog` is the first module with any
 // — it reads `money` for `Money`/`Qty` and `ids` for the three id types a
-// product row refers to, and nothing depends on it yet. `money`'s external
-// arithmetic dependency is `rust_decimal`; `time` performs only integer calendar
-// arithmetic. `just acyclic` is what establishes the graph, not this comment.
+// product row refers to, and nothing depends on it yet. `permissions` has none
+// either while it holds only the capability grid; §15 gives it an edge to `ids`
+// at microstep 1.6.4, when `Authorized<C>` starts carrying a `UserId`. `money`'s
+// external arithmetic dependency is `rust_decimal`; `time` performs only integer
+// calendar arithmetic. `just acyclic` is what establishes the graph, not this
+// comment.
 pub use catalog::{
     Barcode, BarcodeKind, CatalogError, Product, RegulatedKind, RegulatedSaleForm, SaleForm,
     UnitOfMeasure,
@@ -22,6 +26,10 @@ pub use ids::{
     UserId,
 };
 pub use money::{Currency, Money, MoneyError, Percent, Qty, RoundingDirection, RoundingRule};
+pub use permissions::{
+    Capability, CustomerQueryShape, Grant, GrantSet, JournalScope, Limit, PermissionError, Role,
+    RoleGrants, cap, default_grants,
+};
 pub use time::{
     BusinessDate, Clock, ClockAnomaly, ClockConfidence, ClockPolicy, ClockState, DayBoundary,
     FixedClock, MonotonicClock, TimeError, Timestamp, business_date_of, clock_confidence,
