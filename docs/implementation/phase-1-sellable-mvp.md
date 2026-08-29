@@ -558,6 +558,8 @@ JOD denominations (50, 20, 10, 5, 1 dinar; 500, 250, 100, 50, 25, 10 fils) for t
 ### 1.6.1 — Migration `0004`
 **Files:** `crates/pos-db/migrations/0004_people_and_audit.sql`
 Per [`ref/schema.md`](ref/schema.md) §0004, including the complete role/capability matrix defined by 1.6.3. Design that matrix first and land its seed here, because adding it to `0004` after this microstep commits would violate the forward-only migration law. Note `app_user`, not `user` — reserved in Postgres.
+**Tests:** `migration_0004_creates_all_tables` · `every_capability_in_cap_all_has_a_seeded_row` · `every_role_carries_an_explicit_grant_for_every_capability` · `audit_log_refuses_update_and_delete` · `an_approval_handle_can_be_consumed_only_once` · `the_user_table_is_named_app_user`
+**Done when:** `just verify-schema` applies `0001`–`0004` and `cargo nextest run -p pos-db --test migration_0004_people_and_audit` passes, with **every** `cap::ALL` entry present in `capability` and **every one of the four roles carrying an explicit grant or denial for each** — so a capability added after this migration cannot inherit a silent default, which is the failure the forward-only law makes permanent.
 
 ### 1.6.2 — Argon2id PINs
 **Scheduled in:** build hash/verify and its benchmark first; add the privileged reset command after 1.6.4
