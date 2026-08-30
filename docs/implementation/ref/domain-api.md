@@ -2801,8 +2801,10 @@ money ─┬─→ tax ──┬─→ cart ──┬─→ tender ──→ rec
 
 The diagram omits two modules that the tree at the top of this file lists. `catalog` sits beside
 `tax` — it depends on `money` (since `Product` carries its price, §4.1) and on `ids`, and `cart`
-depends on it. `pricing` sits between `money` and `cart`, and depends on `permissions` for the
-`Authorized<C>` arguments its override and discount functions take. Neither adds a cycle, and
+depends on it. `tax` also depends on the pure `Timestamp` value in `time`, because
+`TaxRateRule.valid_from` and `valid_to` are effective-dated; that is a value dependency, never
+permission to read a clock. `pricing` sits between `money` and `cart`, and depends on `permissions`
+for the `Authorized<C>` arguments its override and discount functions take. None adds a cycle, and
 `just acyclic` is what establishes that rather than this diagram.
 
 Arrows point one way. `money` depends on nothing but `rust_decimal`. Nothing depends on `receipt`. A

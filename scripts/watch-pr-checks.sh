@@ -72,7 +72,7 @@ expected_checks() {
 
   if cross_platform_required "$base_ref"; then
     printf '%s\n' \
-      $'ci\tcross-platform (ubuntu-22.04)' \
+      $'ci\tcross-platform (ubuntu-latest)' \
       $'ci\tcross-platform (macos-latest)' \
       $'ci\tcross-platform (windows-latest)'
   fi
@@ -237,7 +237,7 @@ ci_jobs = ci.fetch("jobs")
 required_ci_jobs = %w[rust guards web supply-chain cross-platform]
 abort "ci.yml readiness job set changed" unless ci_jobs.keys == required_ci_jobs
 matrix = ci_jobs.fetch("cross-platform").dig("strategy", "matrix", "platform")
-expected_matrix = %w[ubuntu-22.04 macos-latest windows-latest]
+expected_matrix = %w[ubuntu-latest macos-latest windows-latest]
 abort "ci.yml cross-platform matrix changed" unless matrix == expected_matrix
 expected_matrix_condition =
   "github.base_ref == 'staging' || github.base_ref == 'main' || " \
@@ -366,7 +366,7 @@ self_test() {
   assert_has_check 'a renamed previous .github path still triggers security' "$security" $'security\tworkflow-analysis'
 
   development_to_staging=$(expected_checks staging development 'crates/pos-domain/src/lib.rs')
-  assert_has_check 'development to staging requires Linux matrix' "$development_to_staging" $'ci\tcross-platform (ubuntu-22.04)'
+  assert_has_check 'development to staging requires Linux matrix' "$development_to_staging" $'ci\tcross-platform (ubuntu-latest)'
   assert_has_check 'development to staging requires macOS matrix' "$development_to_staging" $'ci\tcross-platform (macos-latest)'
   assert_has_check 'development to staging requires Windows matrix' "$development_to_staging" $'ci\tcross-platform (windows-latest)'
   assert_has_check 'development to staging requires promotion notice' "$development_to_staging" $'branch-flow\tpromotion-notice'
@@ -385,7 +385,7 @@ self_test() {
 
   security=$(expected_checks staging development '.github/labeler.yml')
   assert_has_check 'security promotion requires workflow analysis' "$security" $'security\tworkflow-analysis'
-  assert_has_check 'security promotion also requires the matrix' "$security" $'ci\tcross-platform (ubuntu-22.04)'
+  assert_has_check 'security promotion also requires the matrix' "$security" $'ci\tcross-platform (ubuntu-latest)'
   assert_has_check 'security promotion also requires promotion notice' "$security" $'branch-flow\tpromotion-notice'
 
   if [ "$SELF_TEST_FAILURES" -ne 0 ]; then
