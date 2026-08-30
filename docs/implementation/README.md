@@ -32,7 +32,10 @@ Group 1.1 has **no immediately buildable work remaining**:
 `1.1.9`'s pure-domain time values, clock policy, and terminal IANA-zone resolution have landed, but
 its database persistence half remains deferred until `1.9.1` creates `trusted_time_state`, including
 `clock_state_survives_restart`. The `1.1.9` microstep is therefore **partially delivered**, not
-complete. Group 1.2 begins with the **partially delivered** `1.2.0` benchmark gate: `just
+complete. `1.6.3` is **partially delivered** on the same terms: its domain grid, limits and shape
+rules are complete and enforced, but the seed comparison it also names cannot run until `1.6.1`
+commits migration `0004` and creates the `role` and `role_capability` tables it would query.
+Group 1.2 begins with the **partially delivered** `1.2.0` benchmark gate: `just
 bench-gate`, `scripts/bench-gate.py`, its fourteen refusal-path tests, and
 `benchmarks/reference-register.toml` are committed with **every identity value deliberately blank**
 beside §6a.1's empty register-hardware table. `python3 scripts/bench-gate.py --check-profile`
@@ -41,10 +44,9 @@ records is `1.2.0`'s deferred half and waits on hardware nobody has bought
 ([`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6a: order it before group 1.7
 starts). **`1.8.9` has landed, so the gate it held is open**: groups 1.6, 1.9 and 1.10 may now write
 append-only facts, because every fact graph commits with its delivery envelope and the writer refuses
-to return success on an incomplete one. Three microsteps now have every dependency met and none
-blocks another: `1.2.4` (the scan parser's pure half, next in §1.2's build order), `1.6.3`
-(capabilities and the default role matrix, which must be designed before migration `0004` seeds it)
-and `1.6.5` (the audit hash chain). None of them is **blocked on the merchant legal name or TIN**,
+to return success on an incomplete one. Two microsteps now have every dependency met and none
+blocks another: `1.2.4` (the scan parser's pure half, next in §1.2's build order) and `1.6.5` (the
+audit hash chain); `1.6.3`'s remaining seed comparison waits on `1.6.1` alone. None of them is **blocked on the merchant legal name or TIN**,
 which instead gate store provisioning and the issuing of a valid tax receipt. `1.3.2` is the next
 code step on the phase's longest critical path, but its `ZeroRatingReason` vocabulary and evidence
 requirements remain externally blocked by the `⚠️ OPEN` item in [`ref/domain-api.md`](ref/domain-api.md)
