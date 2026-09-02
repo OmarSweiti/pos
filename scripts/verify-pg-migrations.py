@@ -840,7 +840,8 @@ def audit_mapping(report: Report, verbose: bool = False) -> dict[str, str]:
 
 def run(argv: list[str], stdin: str | None = None, timeout: int = 120):
     return subprocess.run(
-        argv, input=stdin, capture_output=True, text=True, timeout=timeout, check=False
+        argv, input=stdin, capture_output=True, text=True, encoding="utf-8",
+        timeout=timeout, check=False,
     )
 
 

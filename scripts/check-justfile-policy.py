@@ -20,6 +20,7 @@ def run(*arguments: str) -> subprocess.CompletedProcess[str]:
         cwd=ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
 
@@ -287,6 +288,7 @@ exit 92
                 env=environment,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 check=False,
             )
             recorded = calls.read_text(encoding="utf-8")
@@ -437,6 +439,7 @@ exit 95
                 env=environment,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 check=False,
             )
 

@@ -135,6 +135,7 @@ def project_root(cwd: str) -> Path:
             ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=5,
         )
     except (OSError, subprocess.SubprocessError):

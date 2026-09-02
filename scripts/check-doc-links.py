@@ -377,6 +377,7 @@ def repository_root(cwd: Path) -> Path:
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=5,
         )
     except (OSError, subprocess.SubprocessError) as exc:

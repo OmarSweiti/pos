@@ -265,7 +265,7 @@ def validate_repository(root: Path, running: str) -> tuple[str, list[str]]:
 def running_node() -> str:
     try:
         done = subprocess.run(
-            ["node", "--version"], capture_output=True, text=True, timeout=15
+            ["node", "--version"], capture_output=True, text=True, encoding="utf-8", timeout=15
         )
     except FileNotFoundError:
         raise RuntimeError("Node.js is not installed: https://nodejs.org/") from None

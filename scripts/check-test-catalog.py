@@ -1247,6 +1247,7 @@ def run_listing(command: Sequence[str], *, cwd: Path) -> str:
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
     except (OSError, UnicodeError) as error:
         raise RunnerError(
