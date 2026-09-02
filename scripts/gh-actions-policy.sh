@@ -24,6 +24,7 @@ readonly -a APPROVED_ACTIONS=(
   actions/download-artifact
   actions/labeler
   actions/setup-node
+  actions/setup-python
   actions/upload-artifact
   anchore/sbom-action
   EmbarkStudios/cargo-deny-action

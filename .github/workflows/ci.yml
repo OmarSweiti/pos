@@ -391,6 +391,11 @@ jobs:
   # the promotion PRs into staging and main, and on those branches themselves.
   # Without this, `release.yml` is the FIRST multi-platform build and a
   # Windows-only break is discovered at tag time.
+  #
+  # Linux is deliberately `ubuntu-22.04`, matching release.yml's "build on oldest
+  # supported glibc" target. A matrix that tests a newer glibc than the one the
+  # release ships is worse than no matrix: it manufactures confidence about the
+  # exact leg that matters for a Tauri desktop binary.
   cross-platform:
     if: >-
       github.base_ref == 'staging' || github.base_ref == 'main' ||
@@ -398,15 +403,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [ubuntu-latest, macos-latest, windows-latest]
+        platform: [ubuntu-22.04, macos-latest, windows-latest]
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Set up the repository's Python floor on Linux
+        # ubuntu-22.04's ambient interpreter is 3.10, below the 3.11 floor
+        # scripts/run-python.sh enforces; without this the job exits 127 before
+        # compiling anything, which is exactly what the first matrix run hit.
+        if: runner.os == 'Linux'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
       - name: Install Linux packaging dependencies
-        if: matrix.platform == 'ubuntu-22.04'
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \

@@ -379,10 +379,13 @@ gh issue list --label "meta: flake"                     # should always be empty
 Milestones collect the tracked delivery items for one of the six phase gates, and nothing else;
 their burndown is not a phase-completion percentage. A planned microstep earns its issue only when
 work starts (the rule above), while one work PR covers a whole group (§6 below), so unstarted work is absent
-from the denominator and tracked items have unequal scope. Phase 1 therefore reads **13 closed / 0
-open** while strict progress is **11 of 112 executable microsteps**. Compute Phase-1 progress against
-those 112 steps under [`01-conventions.md`](01-conventions.md) §6; use the milestone only to read the
-delivery items GitHub actually tracked.
+from the denominator and tracked items have unequal scope. A milestone bar can therefore read
+near-complete while most of a phase is still unbuilt, and the two numbers this paragraph used to
+quote had both gone stale before anyone noticed. Read phase progress from the checked frontier
+region in [`README.md`](README.md), which
+[`scripts/check-implementation-frontier.py`](../../scripts/check-implementation-frontier.py)
+reconciles against the phase files that define it; use the milestone only to read the delivery
+items GitHub actually tracked.
 
 **`just pr` sets it, from the branch name.** A `phase-<0-5>/...` branch earns the milestone whose
 title starts `Phase <n> `, looked up from GitHub so the six titles live only in

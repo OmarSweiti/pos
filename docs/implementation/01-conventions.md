@@ -160,7 +160,7 @@ A microstep is done when **all** of these hold. Not most.
 6. Nothing outside the step's `Files:` list changed, except imports and module declarations.
 7. It is committed with the step number in the message (§8).
 
-**When rule 5 has nothing to check.** Twenty executable Phase-1 microsteps carry no `Done when` line
+**When rule 5 has nothing to check.** Some executable Phase-1 microsteps carry no `Done when` line
 at all, which makes rule 5 unsatisfiable and quietly turns "done" back into an opinion — the one thing
 this section exists to prevent. So: **a microstep that reaches implementation without a `Done when`
 line gets one written in the pull request that builds it**, together with the `Tests:` line if that is
