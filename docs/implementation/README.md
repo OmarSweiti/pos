@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **17 of 112 executable microsteps fully complete (~15%)**: `1.1.0`
+Phase 1 has **18 of 112 executable microsteps fully complete (~16%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -31,15 +31,17 @@ pair), `1.3.1` (the tax engine's value and evidence types), `1.8.9` (the outbox 
 fact graph commits with its delivery envelope), `1.8.5` (the release build's key policy, proven
 in a release build), `1.11.2` (the RTL lint, whose escape hatch now requires its reason), and
 `1.6.5` (the audit hash chain, and the external anchor that closes what a chain alone cannot
-detect).
+detect), and `1.6.1` (migration `0004`, the people and audit tables, and a role/capability matrix
+in which a denial is a row rather than an absence).
 <!-- frontier:end -->
 Group 1.1 has **no immediately buildable work remaining**:
 `1.1.9`'s pure-domain time values, clock policy, and terminal IANA-zone resolution have landed, but
 its database persistence half remains deferred until `1.9.1` creates `trusted_time_state`, including
 `clock_state_survives_restart`. The `1.1.9` microstep is therefore **partially delivered**, not
 complete. `1.6.3` is **partially delivered** on the same terms: its domain grid, limits and shape
-rules are complete and enforced, but the seed comparison it also names cannot run until `1.6.1`
-commits migration `0004` and creates the `role` and `role_capability` tables it would query.
+rules are complete and enforced, and the seed comparison it also names is now runnable: `1.6.1`
+has committed migration `0004`, so `role` and `role_capability` exist with all 128 decision rows
+to read back. Writing `crates/pos-db/tests/role_matrix.rs` closes the microstep.
 Group 1.2 begins with the **partially delivered** `1.2.0` benchmark gate: `just
 bench-gate`, `scripts/bench-gate.py`, its fourteen refusal-path tests, and
 `benchmarks/reference-register.toml` are committed with **every identity value deliberately blank**
@@ -50,8 +52,10 @@ records is `1.2.0`'s deferred half and waits on hardware nobody has bought
 starts). **`1.8.9` has landed, so the gate it held is open**: groups 1.6, 1.9 and 1.10 may now write
 append-only facts, because every fact graph commits with its delivery envelope and the writer refuses
 to return success on an incomplete one. `1.2.4` (the scan parser's pure half, next in
-§1.2's build order) has every dependency met; `1.6.3`'s remaining seed comparison waits on `1.6.1`
-alone. Neither is **blocked on the merchant legal name or TIN**, which instead gate store
+§1.2's build order) has every dependency met, and `1.6.3`'s remaining seed comparison is now
+unblocked: `1.6.1` has landed, so `role_capability`'s 128 rows exist to be read back and compared
+with `cap::DEFAULT_MATRIX`. `1.6.4` (`Authorized<C>` and `authorize`) is likewise unblocked, because
+`approval_handle`, `approval_consumption` and `audit_log` now exist. Neither is **blocked on the merchant legal name or TIN**, which instead gate store
 provisioning and the issuing of a valid tax receipt. `1.3.2` is the next
 code step on the phase's longest critical path, but its `ZeroRatingReason` vocabulary and evidence
 requirements remain externally blocked by the `⚠️ OPEN` item in [`ref/domain-api.md`](ref/domain-api.md)

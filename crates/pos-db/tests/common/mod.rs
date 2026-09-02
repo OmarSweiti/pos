@@ -1,7 +1,7 @@
 //! Shared machinery for tests that need the *reference* schema, not just the
 //! shipped chain.
 //!
-//! `pos_db::open` applies committed migrations 0001 through 0003. Most
+//! `pos_db::open` applies committed migrations 0001 through 0004. Most
 //! of the schema, and therefore most of its constraints and triggers, exists only
 //! in `ref/schema.md` until those migrations are written. A test that opens the
 //! shipped chain alone silently skips all of it, which is how the first version of
@@ -31,12 +31,15 @@ pub fn declared_fact_tables() -> Vec<String> {
         .collect()
 }
 
-/// Every `” ```sql ”` block under a `## NNNN — ` heading numbered 0004 or above.
+/// Every `” ```sql ”` block under a `## NNNN — ` heading numbered 0005 or above.
 ///
-/// 0001 through 0003 are applied by `pos_db::open` from the committed migration
+/// 0001 through 0004 are applied by `pos_db::open` from the committed migration
 /// files, so replaying the reference's own copy of them would double-apply.
+/// §0004 has no `IF NOT EXISTS` anywhere, so replaying it over the shipped
+/// migration is not a harmless duplicate: `CREATE TABLE capability` aborts and
+/// every fixture built this way panics.
 pub fn reference_blocks() -> Vec<String> {
-    reference_blocks_at_or_after(4)
+    reference_blocks_at_or_after(5)
 }
 
 /// The reference schema from 0003 onward, for fixtures deliberately held at v2.

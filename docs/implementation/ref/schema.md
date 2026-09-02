@@ -96,9 +96,10 @@ Each migration is complete when its file is first committed. `0003` commits at 1
 structural tax vocabulary and no guessed rates. Microstep 1.3.7 later imports the reviewed,
 source-backed jurisdiction pack through the versioned data path; it never edits `0003` to append
 evidence that was not available when the migration committed.
-`0004` owns the complete planned capability catalogue, while merchant-specific roles are created
-at provisioning, and `0005` owns the complete tender-type catalogue with unsupported tenders
-inactive. A later microstep verifies, configures or consumes those rows; it never edits the earlier
+`0004` owns the complete planned capability catalogue **and** the four standard roles with an
+explicit decision for every one of their 128 (role, capability) cells; provisioning creates the
+merchant's users and their `user_role` grants against those rows rather than inventing a role per
+install. `0005` owns the complete tender-type catalogue with unsupported tenders inactive. A later microstep verifies, configures or consumes those rows; it never edits the earlier
 migration to append them. The three Phase-4 workstreams consume one complete `0012` schema-spine
 migration rather than successively reopening it.
 
@@ -1334,7 +1335,7 @@ END;
 
 ---
 
-## 0004 — people and audit  ·  Phase 1, microsteps 1.6.1–1.6.4
+## 0004 — people and audit  ·  Phase 1, microsteps 1.6.1–1.6.4  ·  SHIPPED
 
 ```sql
 CREATE TABLE capability (
@@ -1391,7 +1392,8 @@ CREATE TABLE app_user (                    -- `user` is reserved in Postgres
 
 CREATE TABLE role (
   id          BLOB PRIMARY KEY,
-  code        TEXT NOT NULL UNIQUE,        -- cashier|shift_lead|manager|owner
+  code        TEXT NOT NULL UNIQUE         -- cashier|shift_lead|manager|owner
+                CHECK (code IN ('cashier','shift_lead','manager','owner')),
   name_ar     TEXT NOT NULL,
   name_en     TEXT,
   deleted_at  TEXT,
@@ -1399,12 +1401,52 @@ CREATE TABLE role (
   version     INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 
+-- The ids are deterministic UUIDv7-shaped literals, not `randomblob(16)`: the
+-- same logical role must carry the same id on every register, because `role`
+-- and `role_capability` are server-wins reference tables and two registers that
+-- invented different ids for "manager" cannot be reconciled centrally. The
+-- byte layout — 0x01A05F6A5800 = 2026-09-02T00:00:00.000Z, version nibble 7,
+-- variant bits 0b10, and the role ordinal in the last byte — is set out in the
+-- migration file's header.
+INSERT INTO role (id, code, name_ar, name_en) VALUES
+  (X'01A05F6A580070008000000000000001', 'cashier', 'أمين صندوق', 'Cashier'),
+  (X'01A05F6A580070008000000000000002', 'shift_lead', 'مسؤول وردية', 'Shift lead'),
+  (X'01A05F6A580070008000000000000003', 'manager', 'مدير', 'Manager'),
+  (X'01A05F6A580070008000000000000004', 'owner', 'مالك', 'Owner');
+
 CREATE TABLE role_capability (
   role_id     BLOB NOT NULL REFERENCES role(id),
   capability  TEXT NOT NULL REFERENCES capability(code),
-  limit_json  TEXT,                        -- e.g. {"max_percent_ppm":50000}
+  -- ONE ROW PER CELL — all 128, not only the 75 a role holds. NOT NULL with no
+  -- DEFAULT, so an undecided cell is an absent row rather than a silent denial
+  -- no query can tell apart from a deliberate one, and the forward-only law
+  -- would make that permanent. Three values because `Grant::SetsTheLimit` in
+  -- pos-domain is a different answer from `Grant::Withheld`: the owner runs no
+  -- till, and what they do is configure the ceiling the roles that can work
+  -- under. A boolean collapses the two into the same blank.
+  decision    TEXT NOT NULL
+                CHECK (decision IN ('granted','withheld','sets_the_limit')),
+  -- The limit's kind, spelled as `pos_domain::permissions::Limit::as_str`
+  -- spells it: {"kind":"own_shift"}. An object, so the merchant-configured
+  -- value can join it later as a sibling key — which is where
+  -- e.g. {"max_percent_ppm":50000} lands, once merchant decisions 3.1–3.3 are
+  -- answered at microstep 1.4.5. 0004 does not guess that number.
+  limit_json  TEXT,
+  -- A denial carrying a limit is nonsense, and would read as a bounded grant to
+  -- anything that reached for `limit_json` before `decision`.
+  CHECK (decision = 'granted' OR limit_json IS NULL),
   PRIMARY KEY (role_id, capability)
 ) STRICT;
+
+-- The 128 seeded cells are ref/domain-api.md §8.2 row for row, and they live in
+-- `crates/pos-db/migrations/0004_people_and_audit.sql` rather than being copied
+-- here: a second transcription of a grid is a second thing to drift, and this
+-- section is skipped by verify-schema.py now that it is SHIPPED, so nothing
+-- would execute the copy. `crates/pos-db/tests/migration_0004_people_and_audit.rs`
+-- proves every role carries an explicit decision for every capability, and
+-- microstep 1.6.3's deferred half — `crates/pos-db/tests/role_matrix.rs`, still
+-- unwritten — is what will compare each seeded cell with `cap::DEFAULT_MATRIX`.
+-- That comparison, not a duplicate table, is the check.
 
 -- `store_id` is NULL for an org-wide grant, and that NULL is load-bearing: it is
 -- how an owner or an area manager holds a role across every store.
@@ -1614,10 +1656,13 @@ BEFORE DELETE ON audit_checkpoint BEGIN
   SELECT RAISE(ABORT, 'an audit checkpoint cannot be deleted');
 END;
 
--- Provisioning creates the org-specific cashier/lead/manager/owner roles and
--- their role-capability matrix in one transaction from this immutable catalogue.
--- A later authorization microstep verifies the typed registry; it never edits
--- 0004 to append a capability that the plan already knew about.
+-- This migration owns the capability catalogue, the four standard roles and
+-- every one of their 128 (role, capability) decisions. Provisioning creates the
+-- merchant's users and their `user_role` grants against these rows; it does not
+-- invent a role, because a role invented per install cannot be reconciled across
+-- registers. A later authorization microstep verifies the typed registry against
+-- what is seeded here; it never edits 0004 to append a capability the plan
+-- already knew about.
 
 ```
 
