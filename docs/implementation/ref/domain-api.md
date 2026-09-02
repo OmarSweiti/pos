@@ -2074,8 +2074,8 @@ module, the grid, `RoleGrants`, `GrantSet` and the two shape rules
 builds `Authorized<C>`, `authorize`, §8.1's handle and the rest of
 `PermissionError`, because `authorize` is the only constructor of a token and it
 cannot validate an `ApprovalHandle` that does not exist. The database half of the
-grid waits on migration `0004`, which seeds `role` and `role_capability` *from*
-this grid; [`../phase-1-sellable-mvp.md`](../phase-1-sellable-mvp.md) 1.6.3
+grid has landed: migration `0004` seeds `role` and `role_capability` *from* this
+grid, and `role_matrix.rs` reads them back and holds them to it; [`../phase-1-sellable-mvp.md`](../phase-1-sellable-mvp.md) 1.6.3
 carries that deferral.
 
 **The exhaustiveness test** (`ipc_commands_all_declare_a_capability`, microstep 1.6.7) walks the IPC command registry and fails if any command has no capability entry. Adding a command without declaring one breaks CI.
