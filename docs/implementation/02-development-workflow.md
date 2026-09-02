@@ -246,7 +246,7 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just fmt` | rewrite formatting, Rust and TS |
 | `just lint` | fmt-check · Clippy/workspace lint contract · acyclic/domain-pure · SQLite/PG mapping · policy-script lint · logical CSS/property names · **test-catalog reconciliation** · Biome · doc-links |
 | `just test` | `cargo nextest run --locked --workspace` · `pnpm -r --if-present test` — until 2.9.6 adds the `soak` profile, the default nextest run still includes soak and long-chaos tests |
-| `just test-catalog` | locally reconcile catalog and normative-reference test names with runner listings, the shrinking `PLANNED` ceiling and exact phase-microstep owners; `just lint` invokes this full check, `just guards` invokes only its `--self-test`, and `ci.yml` invokes neither |
+| `just test-catalog` | locally reconcile catalog and normative-reference test names with runner listings, the shrinking `PLANNED` ceiling and exact phase-microstep owners; `just lint` and `ci.yml`'s `rust` job run the full check, `just guards` and `ci.yml`'s `guards` job run its `--self-test` |
 | `just audit` | Rust advisories/licences/bans/sources · reviewed JavaScript licence expressions · npm advisories |
 | `just node-version-check` | exact runtime, root engine, Node typings, pnpm resolver and every CI setup-node step agree with `.nvmrc` |
 | `just workspace-lints` | every Cargo member inherits the exact workspace lint levels |
@@ -1110,7 +1110,7 @@ CI runs on every push to `development`, `staging` and `main`, and on every PR in
 
 | Workflow | Job | Steps | Local equivalent |
 |---|---|---|---|
-| [`ci.yml`](../../.github/workflows/ci.yml) | `rust` | locked fmt/Clippy/tests · domain structure/purity · property names · exact runtime SQLite · real scratch PostgreSQL. **It does not run the test-catalog reconciler** | `just lint && just test && just verify-pg` *(local lint adds that reconciler)* |
+| [`ci.yml`](../../.github/workflows/ci.yml) | `rust` | locked fmt/Clippy/tests · domain structure/purity · property names · exact runtime SQLite · real scratch PostgreSQL · the test-catalog reconciler, which lives on this job because it reads nextest listings | `just lint && just test && just verify-pg` |
 | [`ci.yml`](../../.github/workflows/ci.yml) | `guards` | Claude/Codex/Git/protected-path/schema/title/attribution/secret/workflow policy negative suites | `just guards` |
 | [`ci.yml`](../../.github/workflows/ci.yml) | `web` | exact Node contract · Biome · logical CSS · tests · fail-closed build/types coverage · test coverage notice · docs links | `just lint && just test && just build-web` |
 | [`ci.yml`](../../.github/workflows/ci.yml) | `supply-chain` | trusted-range Gitleaks · Rust advisories/licences/bans/sources · reviewed JavaScript licences · npm advisories | `just secrets && just audit` |
@@ -1616,7 +1616,6 @@ it.
 | **No DOM component harness in `apps/terminal`** — it has `vitest` and no `jsdom` environment, while `apps/backoffice` already has the pattern. Three named 1.11.x tests, including `scan_routes_while_search_focused`, cannot be written until it exists | 1.11.0 |
 | **Nothing automated launches the packaged application, on any OS.** CI builds the Tauri bundle and never starts it; `.spec.ts` naming implies Playwright, which drives browser engines and cannot attach to a Tauri webview | 2.9.5 (WebdriverIO + `tauri-driver`). Any platform `tauri-driver` does not support is named there, not left implicit |
 | No fuzzing, for four parsers that consume input this product does not control — the scan parser, the receipt raster path, the UBL builder, and the sync decoder — under a `unwrap`/`expect` ban that makes panic-freedom on hostile input an invariant | 1.2.8, then per parser |
-| `scripts/check-test-catalog.py` is wired into local `just lint`, and its `--self-test` into `just guards`, with product ownership at 1.12.4; `ci.yml` invokes neither | a separate reviewed workflow edit; until then every contributor runs the local gates and no document calls the reconciler a CI control |
 | The soak and long-chaos suites live in the default `cargo nextest --workspace` run, with no selection policy and no runtime budget | 2.9.6, and the `soak` nextest profile |
 | Test coverage is not measured. Deliberate — property tests over invariants are the coverage story here — but `cargo llvm-cov` is worth running once per phase to find modules with **no** test at all. **Mutation testing on `pos-domain` is the better instrument** for the same reason: line coverage says a line ran, and `cargo-mutants` says whether the properties bite when `>=` becomes `>` or `HalfAwayFromZero` becomes `HalfEven` | per-phase, by hand |
 | No installer signing of any kind | 0.3.2 (updater), 5.5.1 (OS) |
