@@ -14,22 +14,33 @@ serde.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 rust_decimal.workspace = true
+# The one hash in the system (root Cargo.toml says why there is only one). The
+# audit chain is BLAKE3 over the canonical entry bytes — ref/security-compliance.md
+# §4 — and BLAKE3 is arithmetic on bytes: no clock, no RNG, no I/O, so it costs
+# purity nothing (I-8).
+blake3.workspace = true
+# `AuditIntent.payload` is a JSON document (ref/domain-api.md §9), stored in
+# `audit_log.payload` as canonical JSON and read by SQLite's `json_extract` in
+# `approval_consumption`'s trigger. That makes serde_json a *runtime* dependency
+# of this crate rather than a test-only one, which is a deliberate change to the
+# allowlist at the top of ref/domain-api.md and is recorded there. It reads no
+# clock, generates nothing random, and performs no I/O on its own: the
+# `to_writer`/`from_reader` helpers take a stream the caller already opened, and
+# nothing in this crate calls them.
+serde_json.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
 # Tests only, and the reason it is not in [dependencies] is invariant I-8: this
 # crate reads `PROPTEST_CASES` from the environment, which a pure crate may not
 # do. As a dev-dependency it is compiled for the test target and is absent from
-# the register binary, so purity is untouched — the same argument that lets
-# serde_json in below. It holds the one shared case count, seed and
-# regression-persistence policy (conventions §5.1) so no property in this crate
-# can quietly choose a cheaper one.
+# the register binary, so purity is untouched. It holds the one shared case
+# count, seed and regression-persistence policy (conventions §5.1) so no
+# property in this crate can quietly choose a cheaper one.
 pos-test-support.workspace = true
-# Tests only. `Currency` hand-writes Serialize/Deserialize so the exponent stays
-# off the wire, and that cannot be tested without a concrete format. Ships
-# nothing: purity (I-8) governs what reaches a register, and a dev-dependency
-# never does. See ref/domain-api.md's dependency allowlist.
-serde_json.workspace = true
+# `serde_json` is no longer listed here: it became a normal dependency above when
+# `AuditIntent.payload` landed, and a normal dependency is already available to
+# every test. `Currency`'s hand-written Serialize/Deserialize tests still use it.
 # Tests only. The typed ids exist so that `refund(line_id, sale_id)` does not
 # compile, and nothing but a compile-fail test can assert that. The golden in
 # tests/ui/ captures rustc's own diagnostic, so it is coupled to the compiler

@@ -1,6 +1,7 @@
 //! Pure domain logic. NO I/O, NO SQLite, NO Tauri, NO network — ever.
 //! (Blueprint §2: this purity is what makes it shareable between register and server.)
 
+pub mod audit;
 pub mod catalog;
 pub mod ids;
 pub mod money;
@@ -10,13 +11,17 @@ pub mod time;
 
 // The module graph points one way (ref/domain-api.md §15): `ids`, `money` and
 // `time` have no cross-module edges. `catalog` reads `money` and `ids`; `tax`
-// reads those two plus the pure `Timestamp` value from `time`; nothing depends
-// on either module yet. `permissions` has no cross-module edges either while it
-// holds only the capability grid; §15 gives it an edge to `ids` at microstep
-// 1.6.4, when `Authorized<C>` starts carrying a `UserId`. `money`'s external
-// arithmetic dependency is `rust_decimal`; `time` performs only integer
-// calendar arithmetic. `just acyclic` is what establishes the graph, not this
-// comment.
+// reads those two plus the pure `Timestamp` value from `time`; `audit` reads
+// `ids` and `time`. Nothing depends on any of them yet. `permissions` has no
+// cross-module edges either while it holds only the capability grid; §15 gives
+// it edges to `ids` and `audit` at microstep 1.6.4, when `Authorized<C>` starts
+// carrying a `UserId`. `money`'s external arithmetic dependency is
+// `rust_decimal`; `time` performs only integer calendar arithmetic. `just
+// acyclic` is what establishes the graph, not this comment.
+pub use audit::{
+    AuditError, AuditIntent, CanonicalAuditEntry, ChainAnchor, ChainVerdict, canonical_bytes,
+    chain_hash, check_payload, verify_chain,
+};
 pub use catalog::{
     Barcode, BarcodeKind, CatalogError, Product, RegulatedKind, RegulatedSaleForm, SaleForm,
     UnitOfMeasure,

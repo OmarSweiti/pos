@@ -5,24 +5,34 @@ The crown jewel. Pure, no I/O, shared by register and server so the two can neve
 This document is the **target shape**, assembled across Phases 1–4. Each item is annotated with the microstep that creates it. Signatures here are normative: if a phase file shows something different, this file wins.
 
 **Purity is enforced mechanically.** `pos-domain/Cargo.toml` may depend only on `serde`,
-`thiserror`, `uuid`, `rust_decimal`, and (dev) `proptest`, `criterion`, `trybuild`,
-`serde_json`, `pos-test-support`. `uuid` is an identity/serialization type here: its default and
+`serde_json`, `thiserror`, `uuid`, `rust_decimal`, `blake3`, and (dev) `proptest`, `criterion`,
+`trybuild`, `pos-test-support`. `uuid` is an identity/serialization type here: its default and
 version-generation features stay disabled, and generated IDs are injected by the shell.
 Adding anything capable of I/O, clock access, or randomness is a design review, not a commit.
 `scripts/check-domain-purity.py` audits the resolved normal dependency features and direct
 call sites.
 
-> `trybuild`, `serde_json` and `pos-test-support` are dev-dependencies and ship nothing, which is
-> why they are allowed: purity governs what reaches a register, and a `[dev-dependencies]` entry
-> never does.
+> `serde_json` and `blake3` became **normal** dependencies at microstep 1.6.5, and the move is the
+> design review that rule asks for rather than a quiet edit. `AuditIntent.payload` is a JSON
+> document (§9) that `audit_log.payload` stores as canonical JSON and that
+> `approval_consumption`'s own trigger reads with `json_extract`; a pure `cart_void` that returns
+> an `AuditIntent` has to be able to build one. `blake3` is the audit chain's digest
+> ([`security-compliance.md`](security-compliance.md) §4) and the workspace's only hash. Neither
+> reads a clock, generates anything random, or performs I/O on its own — `serde_json`'s
+> `to_writer`/`from_reader` helpers take a stream the caller already opened, and nothing in this
+> crate calls them. Both are compiled into the register binary, which is what makes this a
+> reviewed change to the list above rather than a `[dev-dependencies]` entry. The older reason for
+> `serde_json` still stands and no longer needs its own entry: `Currency` hand-writes
+> `Serialize`/`Deserialize` to keep the minor-unit exponent off the wire (§1.1), and an encoding
+> cannot be tested without an encoder.
+>
+> `trybuild` and `pos-test-support` are dev-dependencies and ship nothing, which is why they are
+> allowed: purity governs what reaches a register, and a `[dev-dependencies]` entry never does.
 >
 > `trybuild` is here because 1.1.8's claim — that two id types cannot be interchanged — is only
 > provable by code that **fails** to compile, and `cargo nextest` does not run doctests, so a
 > ` ```compile_fail ` block would be invisible to both `just test` and CI. `trybuild` runs as an
 > ordinary integration test.
->
-> `serde_json` is here because `Currency` hand-writes `Serialize`/`Deserialize` to keep the
-> minor-unit exponent off the wire (§1.1), and an encoding cannot be tested without an encoder.
 >
 > `pos-test-support` is here because [`01-conventions.md`](../01-conventions.md) §5.1 requires
 > every property in this crate to take its case count, seed and regression-persistence policy from
@@ -2292,6 +2302,14 @@ the currently open shift ([`ipc-contract.md`](ipc-contract.md) §3).
 ## 9 · `audit.rs` — hash chain — [1.6.x] *(gap G-7)*
 
 ```rust
+pub const DOMAIN: &str = "pos.audit";
+pub const VERSION: u16 = 1;                  // audit_log.canonical_version
+pub const GENESIS: [u8; 32] = [0u8; 32];
+pub const MAX_PAYLOAD_DEPTH: usize = 128;    // serde_json's own parse limit
+
+/// `Deserialize` carries an implicit `'de: 'static` bound, because `action` and
+/// `entity` are `&'static str`. A row is rebuilt from database columns, not from
+/// JSON, so that costs nothing.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AuditIntent {
     pub actor: UserId,
@@ -2311,7 +2329,11 @@ pub struct AuditIntent {
 /// which is enough to reattribute a drawer-open or a refund to another register
 /// while `verify_chain` still answers `Intact`. The domain tag and version
 /// prevent a hash from one context being replayed in another.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// No `Deserialize`: serde has no impl for the `&'a AuditIntent` borrow. The
+/// derived `Serialize` emits DECLARATION order and is therefore **not** the
+/// canonical form — hash `canonical_bytes` and nothing else.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CanonicalAuditEntry<'a> {
     pub domain: &'static str,          // "pos.audit"
     pub version: u16,                  // 1
@@ -2322,21 +2344,40 @@ pub struct CanonicalAuditEntry<'a> {
 }
 
 /// Canonical serialization: JSON with keys sorted, no whitespace, UTF-8.
-/// The hash is only reproducible if this is byte-stable, so it is pinned
-/// by a golden test, not left to serde_json's default ordering.
+/// The hash is only reproducible if this is byte-stable, so it is written by
+/// hand and pinned by a golden test, not left to serde_json's field ordering:
+///
+///   {"domain":…,"id":…,"intent":{"action":…,"actor":…,"approval":…,
+///    "approver":…,"at":…,"entity":…,"entity_id":…,"payload":…,"reason":…},
+///    "register_id":…,"seq":…,"version":…}
+///
+/// `security-compliance.md` §4 enumerates the same bound fields flat; they nest
+/// under "intent" here because this type nests them, and because nesting keeps a
+/// payload key from ever colliding with an entry key. TOTAL, deliberately: a
+/// verifier must be able to hash a row that should never have been written.
 pub fn canonical_bytes(entry: &CanonicalAuditEntry<'_>) -> Vec<u8>;
 
 /// hash = BLAKE3(prev_hash ‖ canonical_bytes(entry))
 pub fn chain_hash(prev: &[u8; 32], entry: &CanonicalAuditEntry<'_>) -> [u8; 32];
 
-pub const GENESIS: [u8; 32] = [0u8; 32];
+/// The write-path gate for the half of §4's canonical rule that `canonical_bytes`
+/// cannot enforce while staying total. The shell calls it before appending.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum AuditError {
+    #[error("audit payload at {pointer} holds a number that is not an integer")]
+    PayloadNumberIsNotAnInteger { pointer: String },   // RFC 6901; never a value
+    #[error("audit payload nests deeper than the {limit}-level canonical limit")]
+    PayloadNestedTooDeeply { limit: usize },
+}
+
+pub fn check_payload(payload: &serde_json::Value) -> Result<(), AuditError>;
 
 /// A `(seq, hash)` pair recorded somewhere the register cannot rewrite: on a
 /// Z report, in a verified backup manifest, and from Phase 3 on the server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChainAnchor { pub register_id: RegisterId, pub seq: u64, pub hash: [u8; 32] }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChainVerdict {
     Intact  { entries: u64 },
     Broken  { at_seq: u64 },
@@ -2357,6 +2398,20 @@ pub fn verify_chain<'a>(
     anchor: Option<ChainAnchor>,
 ) -> ChainVerdict;
 ```
+
+Four things the signatures above do not say, decided at 1.6.5 and pinned here so a second
+implementation cannot decide them differently:
+
+1. **`entries` arrives in ascending `seq` order**, which is the order `audit_log` is read in. The
+   walk is single-pass and does not sort.
+2. **An anchor naming another `register_id` is discarded**, and the verdict then reports everything
+   as unanchored. Honouring it would let a verifier answer `Intact` on the strength of a document
+   about a different till; refusing the whole call would make a mis-loaded anchor look like tamper.
+3. **`Broken { at_seq: anchor.seq }` is also the verdict for a re-chained history** — when the walk
+   is self-consistent but the anchored `seq` is absent, or present with a different hash. That is
+   the rewrite-and-recompute attack, and it is the one thing only the anchor can see.
+4. **`found_seq` is `0` when no rows survive at all**, so `Truncated { anchored_seq: n, found_seq: 0 }`
+   is what a completely emptied chain below an anchor reports.
 
 **A local hash chain cannot detect deletion of its own tail**, and saying so is the difference between
 a control and a claim. Remove the newest rows and what is left is a shorter, perfectly valid chain —

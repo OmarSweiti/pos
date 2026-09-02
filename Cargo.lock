@@ -3184,6 +3184,7 @@ dependencies = [
 name = "pos-domain"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "pos-test-support",
  "proptest",
  "rust_decimal",
