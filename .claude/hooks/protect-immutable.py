@@ -173,7 +173,7 @@ def repo_root(cwd: str) -> Path:
     try:
         done = subprocess.run(
             ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, encoding="utf-8", timeout=5,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise GuardOperationalError(f"git rev-parse could not run: {exc}") from exc
@@ -193,6 +193,7 @@ def head_paths(root: Path) -> tuple[str, ...]:
             ["git", "-C", str(root), "ls-tree", "-r", "--name-only", "HEAD"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=5,
         )
     except (OSError, subprocess.SubprocessError) as exc:

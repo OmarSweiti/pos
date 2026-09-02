@@ -234,6 +234,7 @@ def run_gate(*arguments: str, environment: Mapping[str, str] | None = None) -> R
         cwd=ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
         env=dict(environment) if environment is not None else workstation_environment(),
     )
@@ -1042,6 +1043,7 @@ def a_recipe_argument_never_becomes_shell_source(expect: Expect) -> None:
             cwd=ROOT,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=False,
             env=workstation_environment(),
         )

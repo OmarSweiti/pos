@@ -38,6 +38,7 @@ def validate(root: Path, source: str = "project_settings", file_path: Path | Non
         input=json.dumps(payload),
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
 
@@ -205,6 +206,7 @@ class SettingsContract(unittest.TestCase):
                 input=json.dumps(payload),
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 check=False,
             )
         self.assertEqual(result.returncode, 2)
@@ -230,6 +232,7 @@ class SettingsContract(unittest.TestCase):
                 input=json.dumps(payload),
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 check=False,
                 env=environment,
             )
@@ -269,6 +272,7 @@ class SettingsContract(unittest.TestCase):
             input="not json",
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=False,
         )
         self.assertEqual(result.returncode, 2)
