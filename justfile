@@ -185,6 +185,11 @@ prop-names:
 test-catalog:
     {{ python }} ./scripts/check-test-catalog.py
 
+# Completion is human judgement, but its arithmetic is not: README.md's
+# hand-typed frontier and published phase totals must answer to the phase files.
+frontier:
+    {{ python }} ./scripts/check-implementation-frontier.py
+
 # Both clippy invocations pass no lint flags of their own, so the workspace lint
 # table is the entire lint scope of every gate — and it is inert in any member
 # that does not opt in with `[lints] workspace = true`.
@@ -273,6 +278,7 @@ lint: node-version-check
     bash ./scripts/check-logical-css.sh
     {{ python }} ./scripts/check-prop-test-names.py
     {{ python }} ./scripts/check-test-catalog.py
+    {{ python }} ./scripts/check-implementation-frontier.py
     pnpm biome ci --error-on-warnings .
     bash ./scripts/check-doc-links.sh
     bash ./scripts/lint-scripts.sh
@@ -298,6 +304,7 @@ guards:
     bash ./scripts/check-logical-css.sh --self-test
     {{ python }} ./scripts/check-prop-test-names.py --self-test
     {{ python }} ./scripts/check-test-catalog.py --self-test
+    {{ python }} ./scripts/check-implementation-frontier.py --self-test
     {{ python }} ./scripts/check-domain-purity.py --self-test
     {{ python }} ./scripts/check-workspace-lints.py --self-test
     {{ python }} ./scripts/check-node-version.py --self-test

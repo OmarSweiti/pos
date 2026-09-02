@@ -94,8 +94,8 @@ the same transaction as its financial effect and audit row. [`01-conventions.md`
 just check          # cargo check --locked --workspace --all-targets — the fastest "would build"
 just fmt            # rewrite formatting, Rust and TS, before lint refuses it
 just lint           # node pin · fmt · clippy · workspace lints · acyclic/purity · schema + PG
-                    # mapping · logical CSS · prop names · test catalog · biome · doc links
-                    # · policy-script lint
+                    # mapping · logical CSS · prop names · test catalog · frontier reconciliation
+                    # · biome · doc links · policy-script lint
 just test           # cargo nextest --locked --workspace · pnpm -r test
 just guards         # the write guards, the git hooks and every policy checker still refuse
 just build-web      # web build coverage · pnpm -r build — the only place `tsc` runs
