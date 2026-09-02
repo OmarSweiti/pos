@@ -556,8 +556,28 @@ JOD denominations (50, 20, 10, 5, 1 dinar; 500, 250, 100, 50, 25, 10 fils) for t
 > not been implemented yet, and the migration cannot be reopened later to add its role seeds.
 
 ### 1.6.1 — Migration `0004`
-**Files:** `crates/pos-db/migrations/0004_people_and_audit.sql`
+**Files:** `crates/pos-db/migrations/0004_people_and_audit.sql` (new), `crates/pos-db/src/lib.rs`, `crates/pos-db/tests/migration_0004_people_and_audit.rs` (new), `crates/pos-db/tests/common/mod.rs`, `crates/pos-db/Cargo.toml`, `Cargo.lock`, `apps/server/migrations/<14-digit>_people_and_audit.sql` (new), `docs/implementation/ref/schema.md`, `crates/pos-domain/src/permissions.rs`
 Per [`ref/schema.md`](ref/schema.md) §0004, including the complete role/capability matrix defined by 1.6.3. Design that matrix first and land its seed here, because adding it to `0004` after this microstep commits would violate the forward-only migration law. Note `app_user`, not `user` — reserved in Postgres.
+> **Why the `Files:` line is nine entries and not one.** Shipping a migration is never one file: it
+> registers in `MIGRATIONS`, moves `tests/common/mod.rs`'s reference-replay boundary, marks its
+> §0004 heading `SHIPPED` so `verify-schema` stops replaying it, and gains a Postgres counterpart
+> or `verify-pg-migrations.py` refuses it. 1.2.1 recorded the same correction after PR #56.
+> The two entries that were not obvious in advance: `crates/pos-db/Cargo.toml` gains
+> `pos-domain` as a **dev**-dependency, because `every_capability_in_cap_all_has_a_seeded_row`
+> iterates `cap::ALL` rather than a second hand-typed list of capability names, and `Cargo.lock`
+> records that edge or `--locked` refuses the build.
+
+**The three shape decisions, settled before the SQL, because `0004` cannot be reopened.**
+`role_capability` carries **one row per (role, capability) cell — 128 rows, not 75**. The column is
+`decision TEXT NOT NULL CHECK (decision IN ('granted','withheld','sets_the_limit'))` with **no
+default**: a default turns "nobody decided" into a silent denial that no query can distinguish from
+a deliberate one, and the forward-only law makes that permanent. Three values rather than a
+boolean because `Grant::SetsTheLimit` is a distinct decision from `Grant::Withheld` — the owner
+defines the ceiling others work under — and a binary column collapses the two.
+`role.code` gains a real `CHECK (code IN ('cashier','shift_lead','manager','owner'))`, which
+`crates/pos-domain/src/permissions.rs` already documents as existing. The four `role.id` values are
+**deterministic UUIDv7-shaped literals**, not `randomblob(16)`: the same logical role must carry the
+same id on every register, or synced `role_capability` rows cannot be reconciled centrally.
 **Tests:** `migration_0004_creates_all_tables` · `every_capability_in_cap_all_has_a_seeded_row` · `every_role_carries_an_explicit_grant_for_every_capability` · `audit_log_refuses_update_and_delete` · `an_approval_handle_can_be_consumed_only_once` · `the_user_table_is_named_app_user`
 **Done when:** `just verify-schema` applies `0001`–`0004` and `cargo nextest run -p pos-db --test migration_0004_people_and_audit` passes, with **every** `cap::ALL` entry present in `capability` and **every one of the four roles carrying an explicit grant or denial for each** — so a capability added after this migration cannot inherit a silent default, which is the failure the forward-only law makes permanent.
 
@@ -588,10 +608,10 @@ The grid is declared **with** each capability rather than beside it, so the comp
 **Current half done when:** `cargo nextest run -p pos-domain permissions::` passes, comparing every `cap::ALL` entry with all four roles and asserting no capability is granted to nobody — an accidental blanket denial is what a newly added capability looks like when its grants were never decided.
 > **`cargo nextest run -p pos-db --test role_matrix` is not in the current half, and nothing green stands in for it.** The domain tests prove the grid is complete and internally consistent; they cannot prove migration `0004` seeded it, because `0004` does not exist. The seed comparison is the deferred half below, and it is the half that closes gap G-6's fixture claim.
 
-**Deferred half — after 1.6.1 commits migration `0004`.** `role`, `role_capability` and the `capability` code list arrive there, seeded from `cap::DEFAULT_MATRIX`. The test then reads them back and compares: one `role_capability` row for exactly the cells where `Grant::is_held` is true — so the three `sets_the_limit` cells seed nothing — and `capability(code)` holding exactly `cap::ALL`. Do not write this test before the migration: it would be a permanently skipped or permanently red file, and both teach a reader to ignore it. **Open it through the registered migration chain, never through `tests/common/mod.rs`'s `full_schema`**, which replays [`ref/schema.md`](ref/schema.md)'s reference SQL on top of the shipped chain: `authorization_scope.rs` and `fact_table_guards.rs` already exercise `user_role` and `approval_handle` that way and are green today, while `0004` does not exist. That is 1.2.1's recorded failure repeating — a green run against reference SQL is not evidence that a migration shipped.
+**Deferred half — after 1.6.1 commits migration `0004`.** `role`, `role_capability` and the `capability` code list arrive there, seeded from `cap::DEFAULT_MATRIX`. The test then reads them back and compares: one `role_capability` row for **every** one of the 128 (role, capability) cells, its `decision` column holding `granted`, `withheld` or `sets_the_limit` to match the domain `Grant` exactly — an absent row is the failure, not a denial — and `capability(code)` holding exactly `cap::ALL`. Do not write this test before the migration: it would be a permanently skipped or permanently red file, and both teach a reader to ignore it. **Open it through the registered migration chain, never through `tests/common/mod.rs`'s `full_schema`**, which replays [`ref/schema.md`](ref/schema.md)'s reference SQL on top of the shipped chain: `authorization_scope.rs` and `fact_table_guards.rs` already exercise `user_role` and `approval_handle` that way and are green today, while `0004` does not exist. That is 1.2.1's recorded failure repeating — a green run against reference SQL is not evidence that a migration shipped.
 **Files (deferred half):** `crates/pos-db/tests/role_matrix.rs` (new)
 **Tests (deferred half):** `seeded_role_capability_rows_equal_the_domain_default_matrix`
-**Deferred half done when:** `cargo nextest run -p pos-db --test role_matrix` passes after comparing every `cap::ALL` entry with all four roles against the seeded rows, and fails when a seeded row is added, removed or given a different limit.
+**Deferred half done when:** `cargo nextest run -p pos-db --test role_matrix` passes after comparing every `cap::ALL` entry with all four roles against the seeded rows, and fails when a seeded row is added, removed, given a different `decision`, or given a different limit.
 **Full-step status:** 1.6.3 is not complete until migration `0004` exists and its seeded rows are compared with `cap::DEFAULT_MATRIX` for every capability and all four roles. The domain grid, its limits and the two shape rules are complete and enforced now.
 
 ### 1.6.4 — `Authorized<C>` and `authorize`

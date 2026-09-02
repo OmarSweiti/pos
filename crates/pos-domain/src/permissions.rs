@@ -153,8 +153,19 @@ impl Limit {
 /// One cell of §8.2's grid.
 ///
 /// Four states, because the grid has four kinds of cell and flattening the last
-/// two into one blank loses the reason for a blank. Only [`Grant::is_held`]
-/// decides whether 1.6.1 seeds a `role_capability` row.
+/// two into one blank loses the reason for a blank.
+///
+/// Migration `0004` seeds a `role_capability` row for **every** one of the 128
+/// (role, capability) cells, not only the held ones, so an absent row is a
+/// capability nobody decided rather than a denial. Each variant maps to exactly
+/// one `decision`, and only [`Grant::HeldWithin`] writes a `limit_json`:
+///
+/// | variant | `decision` | `limit_json` |
+/// |---|---|---|
+/// | [`Grant::Held`] | `granted` | `NULL` |
+/// | [`Grant::HeldWithin`] | `granted` | `{"kind":"own_shift"}` — the token from [`Limit::as_str`] |
+/// | [`Grant::Withheld`] | `withheld` | `NULL` |
+/// | [`Grant::SetsTheLimit`] | `sets_the_limit` | `NULL` |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Grant {
     /// A plain `✓`: held, unqualified.
@@ -164,17 +175,22 @@ pub enum Grant {
     /// A blank cell: not held.
     Withheld,
     /// §8.2's "sets the caps" / "sets floor and ceiling" / "sets the threshold"
-    /// cells. **Not held**, and it seeds no row: the owner runs no till, so they
-    /// cannot apply a manual discount or override a price. What they do is
-    /// configure the [`Limit`] that bounds the roles which can, through
-    /// `settings.edit`. Writing those three cells as an ordinary blank would
-    /// leave a reader to guess whether the owner was forgotten.
+    /// cells. **Not held**: the owner runs no till, so they cannot apply a
+    /// manual discount or override a price. What they do is configure the
+    /// [`Limit`] that bounds the roles which can, through `settings.edit`.
+    /// Writing those three cells as an ordinary blank would leave a reader to
+    /// guess whether the owner was forgotten, which is why `0004` stores them as
+    /// their own `decision = 'sets_the_limit'` rather than as a second kind of
+    /// `withheld`.
     SetsTheLimit,
 }
 
 impl Grant {
-    /// Whether the role may perform the operation at all — and therefore whether
-    /// migration `0004` seeds a `role_capability` row for this cell.
+    /// Whether the role may perform the operation at all.
+    ///
+    /// Not whether `0004` seeds a row: it seeds one for every cell. This is what
+    /// separates the two `decision` values that mean yes-with-conditions and yes
+    /// from the two that mean no.
     pub const fn is_held(self) -> bool {
         match self {
             Grant::Held | Grant::HeldWithin(_) => true,
@@ -389,9 +405,11 @@ pub fn default_grants(capability: &str) -> Option<RoleGrants> {
 /// What one holder may do: the capabilities they hold, and the limit on each.
 ///
 /// A set only ever contains what its holder *holds* — a [`Grant::Withheld`] or
-/// [`Grant::SetsTheLimit`] cell contributes nothing, exactly as it seeds no
-/// `role_capability` row. [`GrantSet::grant`] answers `Withheld` for everything
-/// else, so a caller never has to distinguish "absent" from "denied".
+/// [`Grant::SetsTheLimit`] cell contributes nothing. That is a property of this
+/// in-memory view, not of storage: `role_capability` carries a row for those
+/// cells too, recording which of the two answers was given.
+/// [`GrantSet::grant`] answers `Withheld` for everything else, so a caller never
+/// has to distinguish "absent" from "denied".
 ///
 /// **Unioning several roles is not here.** `user_role` lets one user hold more
 /// than one role, and widening two different [`Limit`]s has no obvious answer —
@@ -796,10 +814,10 @@ mod tests {
     #[test]
     fn a_cell_that_only_sets_a_limit_grants_nothing() {
         // "Sets the caps", "sets floor and ceiling" and "sets the threshold" are
-        // blanks with a reason, not grants. Migration `0004` seeds a
-        // `role_capability` row exactly where `is_held` is true, so reading one
-        // of these three as a grant would hand the owner a till operation they
-        // have no `sale.create` to perform it inside.
+        // blanks with a reason, not grants. Migration `0004` stores them as
+        // `decision = 'sets_the_limit'`, a third answer beside granted and
+        // withheld, so reading one of these three as a grant would hand the owner
+        // a till operation they have no `sale.create` to perform it inside.
         let owner_matrix = [
             cap::DiscountManual::NAME,
             cap::PriceOverride::NAME,
@@ -838,7 +856,8 @@ mod tests {
         assert_eq!(cashier.grant("not.a.capability"), Grant::Withheld);
 
         // Every capability in the set is held, and every held cell of the role's
-        // column is in the set. The two together are what 1.6.1 seeds.
+        // column is in the set. `0004` seeds all 128 cells, held or not; what the
+        // two assertions below pin is which of them a holder actually holds.
         for role in Role::ALL {
             let grants = GrantSet::of_role(role);
             for name in cap::ALL {
