@@ -5,7 +5,7 @@ Tauri 2 + Rust core + React UI; SQLite/SQLCipher on the register, Axum/Postgres 
 
 ## The plan
 
-`docs/implementation/` is the plan of record. The two source plans under `docs/plan/` are
+`docs/implementation/` is the plan of record. The three source documents under `docs/plan/` are
 **immutable historical inputs**, frozen on purpose — read them for intent, never for a name.
 
 | Document | Answers |
@@ -111,10 +111,16 @@ just setup          # after pulling
 against the suite, the phase files and its own arithmetic
 (`scripts/check-test-catalog.py`). That gate exists because the dangerous failure of a coverage
 matrix is not a red test — it is an absent test behind a green row, and a hand-maintained table
-counted 73 cases against a stated total of 72 before anything checked it. **It is the one checker
-in the local gate with no `ci.yml` step**, so on this repository it is only as strong as the person
-who ran `just lint`; wiring it into CI is a change to the frozen workflow surface and gets its own
-reviewed edit ([`03-github-workflow.md`](docs/implementation/03-github-workflow.md) §3).
+counted 73 cases against a stated total of 72 before anything checked it. **It now runs in CI**, in
+the `rust` job, because it reconciles against nextest listings and needs cargo.
+
+Until then this file claimed it was "the one checker in the local gate with no `ci.yml` step". That
+was wrong twice over: there were **two** — `scripts/tests/bench_gate_test.py` had drifted the same way
+unnoticed — and naming one of them made the other invisible. Both are wired now, and
+`scripts/check-ci-gate-parity.py` compares the gate recipes against the workflows so the gap cannot
+reopen silently. Its structural cause is still there and is deliberate: `ci.yml` hand-enumerates the
+guard steps rather than calling `just guards`, so a failure names the check that failed instead of
+one opaque step. The parity checker is what makes that enumeration safe.
 
 `just pre-push` is the complete local gate. Time-varying advisory checks stay in CI's
 `supply-chain` job because they reach the network and can change without a repository change.

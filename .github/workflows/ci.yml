@@ -106,6 +106,13 @@ jobs:
       - name: Property tests are named prop_<invariant>
         run: ./scripts/check-prop-test-names.py
 
+      # The dangerous failure of a coverage matrix is not a red test — it is an
+      # absent test behind a green row. This reconciles ref/test-catalog.md
+      # against the actual runner listings, which is why it lives on the job that
+      # has cargo and nextest rather than with the self-tests in `guards`.
+      - name: Test catalogue reconciles with the suite
+        run: ./scripts/check-test-catalog.py
+
       # ref/schema.md is DDL that nothing compiles, and the shipped migrations are
       # audited against conventions §2 in the same pass.
       - name: Schema reference and shipped migrations conform
@@ -224,6 +231,15 @@ jobs:
         run: ./scripts/check-domain-purity.py --self-test
       - name: The PR type-label mapping still matches conventions §8
         run: ./scripts/pr-type-label.sh --self-test
+      - name: The test-catalogue check's own checks still fire
+        run: ./scripts/check-test-catalog.py --self-test
+      # Invoked through the interpreter, exactly as `just guards` does. The file
+      # is not mode +x — running it directly is exit 126, which is how this step
+      # failed the first time it ran.
+      - name: The benchmark gate still refuses every unqualified run
+        run: python3 ./scripts/tests/bench_gate_test.py
+      - name: Every local gate command has a CI step
+        run: ./scripts/check-ci-gate-parity.py
 
   web:
     runs-on: ubuntu-latest
@@ -363,6 +379,14 @@ jobs:
 
   # The register ships on three operating systems, but a full matrix on every
   # feature PR is not affordable on metered Free-plan minutes (macOS bills at 10x).
+  #
+  # The Linux runner is `ubuntu-latest`, like every other job here. It was pinned
+  # to `ubuntu-22.04`, whose Python is 3.10 — below the 3.11 floor
+  # `scripts/run-python.sh` enforces — so the licence step exited 127 with
+  # "Python 3.11+ was not found" before compiling anything. Nothing caught it
+  # because this job runs only on promotion PRs, and until 2026-08-29 there had
+  # never been one. If an older glibc target is ever wanted for the Linux bundle,
+  # it needs a Python set up alongside it rather than an older runner alone.
   # So the matrix runs where a break is expensive rather than merely annoying: on
   # the promotion PRs into staging and main, and on those branches themselves.
   # Without this, `release.yml` is the FIRST multi-platform build and a
@@ -374,7 +398,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [ubuntu-22.04, macos-latest, windows-latest]
+        platform: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 60
     steps:
