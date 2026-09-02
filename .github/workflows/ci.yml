@@ -233,6 +233,12 @@ jobs:
         run: ./scripts/pr-type-label.sh --self-test
       - name: The test-catalogue check's own checks still fire
         run: ./scripts/check-test-catalog.py --self-test
+      # The frontier is repository text, not a cargo listing. Its live check
+      # belongs here; unlike the test catalogue, it needs no Rust toolchain.
+      - name: The implementation frontier reconciles with the phase files
+        run: ./scripts/check-implementation-frontier.py
+      - name: The implementation-frontier check's own checks still fire
+        run: ./scripts/check-implementation-frontier.py --self-test
       # Invoked through the interpreter, exactly as `just guards` does. The file
       # is not mode +x — running it directly is exit 126, which is how this step
       # failed the first time it ran.

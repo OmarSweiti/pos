@@ -244,9 +244,10 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just db-local-reset` | delete this machine's register database |
 | `just migrate` | `sqlx migrate run` against `DATABASE_URL` |
 | `just fmt` | rewrite formatting, Rust and TS |
-| `just lint` | fmt-check · Clippy/workspace lint contract · acyclic/domain-pure · SQLite/PG mapping · policy-script lint · logical CSS/property names · **test-catalog reconciliation** · Biome · doc-links |
+| `just lint` | fmt-check · Clippy/workspace lint contract · acyclic/domain-pure · SQLite/PG mapping · policy-script lint · logical CSS/property names · **test-catalog reconciliation** · **frontier reconciliation** · Biome · doc-links |
 | `just test` | `cargo nextest run --locked --workspace` · `pnpm -r --if-present test` — until 2.9.6 adds the `soak` profile, the default nextest run still includes soak and long-chaos tests |
 | `just test-catalog` | locally reconcile catalog and normative-reference test names with runner listings, the shrinking `PLANNED` ceiling and exact phase-microstep owners; `just lint` and `ci.yml`'s `rust` job run the full check, `just guards` and `ci.yml`'s `guards` job run its `--self-test` |
+| `just frontier` | reconcile `README.md`'s declared completion frontier and every published phase total with the phase files that own them |
 | `just audit` | Rust advisories/licences/bans/sources · reviewed JavaScript licence expressions · npm advisories |
 | `just node-version-check` | exact runtime, root engine, Node typings, pnpm resolver and every CI setup-node step agree with `.nvmrc` |
 | `just workspace-lints` | every Cargo member inherits the exact workspace lint levels |
@@ -700,6 +701,7 @@ The station that gets skipped, and the reason a doc set rots:
 ```bash
 just docs-links            # the doc set is only worth its cross-references
 just test-catalog          # the catalog and normative test tables still match runners and owners
+just frontier              # the declared frontier and published phase totals still match their phase files
 ```
 
 ---
