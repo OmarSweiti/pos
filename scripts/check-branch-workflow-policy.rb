@@ -642,6 +642,13 @@ def validate_labeler_file(path)
         raise PolicyViolation,
               "#{context}.run must select the reviewed explicit title-validator modes"
       end
+    else
+      label_calls = run.lines.grep(/pr-type-label\.sh/).map(&:strip)
+      expected_label_calls = ['want=$(./scripts/pr-type-label.sh --label "$TITLE")']
+      unless label_calls == expected_label_calls
+        raise PolicyViolation,
+              "#{context}.run must select the reviewed explicit type-label mode"
+      end
     end
   end
 end
@@ -1331,6 +1338,10 @@ def self_test(default_path)
       "labeler title validation cannot fall back to ambiguous positional dispatch" => [
         'if ./scripts/validate-change-title.sh --validate "$TITLE" >/dev/null 2>&1; then',
         'if ./scripts/validate-change-title.sh "$TITLE" >/dev/null 2>&1; then'
+      ],
+      "labeler type selection cannot fall back to ambiguous positional dispatch" => [
+        'want=$(./scripts/pr-type-label.sh --label "$TITLE")',
+        'want=$(./scripts/pr-type-label.sh "$TITLE")'
       ]
     }
     labeler_fixture = File.join(directory, "labeler.yml")

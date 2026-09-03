@@ -70,7 +70,7 @@ jobs:
           NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          want=$(./scripts/pr-type-label.sh "$TITLE")
+          want=$(./scripts/pr-type-label.sh --label "$TITLE")
           echo "title: $TITLE"
           echo "earns: ${want:-<nothing — free-text title, by design>}"
 
