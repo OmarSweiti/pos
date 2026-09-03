@@ -183,12 +183,13 @@ financial effect and audit row. `docs/implementation/01-conventions.md` sections
   requests (`development` to `staging`, then `staging` to `main`) use merge
   commits; never squash a promotion.
 - Commit and squash titles follow
-  `<type>(<scope>): <summary>  [<step>]`, where step is `N.N.N`, an ordered
-  `N.N.N–N.N.N` range, or `—`. Do not skip hooks with `--no-verify`. Coding
-  assistants are tools: do not add AI co-author or generated-by trailers to
-  commits or pull requests. The exact Dependabot bot author/trailer combination
-  is a narrow compatibility exception and follows the same title grammar; local
-  Git author metadata alone is not cryptographic proof of App identity.
+  `<type>(<scope>): <summary>  [<step>]`, where step is `N.N.N`, a lettered
+  split microstep `N.N.Nx`, an ordered `N.N.N–N.N.N` range, or `—`. Do not skip
+  hooks with `--no-verify`. Coding assistants are tools: do not add AI
+  co-author or generated-by trailers to commits or pull requests. The exact
+  Dependabot bot author/trailer combination is a narrow compatibility exception
+  and follows the same title grammar; local Git author metadata alone is not
+  cryptographic proof of App identity.
 
 ## Code review rules
 
