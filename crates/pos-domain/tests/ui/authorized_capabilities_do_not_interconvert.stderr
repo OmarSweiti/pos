@@ -1,0 +1,15 @@
+error[E0308]: mismatched types
+ --> tests/ui/authorized_capabilities_do_not_interconvert.rs:9:15
+  |
+9 |     void_sale(authorization);
+  |     --------- ^^^^^^^^^^^^^ expected `&Authorized<SaleVoid>`, found `&Authorized<DiscountManual>`
+  |     |
+  |     arguments to this function are incorrect
+  |
+  = note: expected reference `&Authorized<SaleVoid>`
+             found reference `&Authorized<DiscountManual>`
+note: function defined here
+ --> tests/ui/authorized_capabilities_do_not_interconvert.rs:6:4
+  |
+6 | fn void_sale(_authorization: &Authorized<cap::SaleVoid>) {}
+  |    ^^^^^^^^^ ------------------------------------------

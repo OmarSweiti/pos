@@ -29,18 +29,24 @@
 //! than a number are decided here, because a shape has no configuration:
 //! [`GrantSet::journal_scope`] and [`GrantSet::customer_lookup`].
 //!
-//! **What is deliberately absent.** `Authorized<C>`, `authorize`, `GrantSet`'s
-//! union across several `user_role` rows, `ApprovalHandle` and the rest of
-//! `ref/domain-api.md` §8's `PermissionError` variants land with microstep 1.6.4,
-//! together with the two `trybuild` cases that prove a token for the wrong
-//! capability is a type error and that one cannot be forged from outside the
-//! module. `authorize` is the only constructor of an `Authorized<C>`, so writing
-//! the token here — before the approval machinery it validates exists — would
-//! ship a type with no way to make one. The database half of this microstep is
-//! deferred for the same kind of reason: `role` and `role_capability` are created
-//! by migration `0004` (microstep 1.6.1), which seeds its rows *from* this grid.
+//! **Authorization is proof, not a boolean.** [`authorize`] is the only place
+//! that can construct an [`Authorized<C>`], so a privileged domain function can
+//! require proof for its own marker type and cannot accidentally accept a token
+//! for another capability. Runtime escalation does not widen a [`GrantSet`]: it
+//! binds one immutable [`ApprovalHandle`] to one actor, operation, amount and
+//! optional prepared intent, while persistence owns the one-use consumption
+//! guarantee.
 
-use std::collections::BTreeMap;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    marker::PhantomData,
+};
+
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use crate::ids::{ApprovalId, UserId};
+use crate::time::Timestamp;
 
 /// One capability: a marker type, its wire name, and its shipped default grants.
 ///
@@ -413,9 +419,9 @@ pub fn default_grants(capability: &str) -> Option<RoleGrants> {
 ///
 /// **Unioning several roles is not here.** `user_role` lets one user hold more
 /// than one role, and widening two different [`Limit`]s has no obvious answer —
-/// `HeldWithin(OwnStore)` beside `HeldWithin(RoleCap)` is not a lattice. That
-/// decision belongs with `authorize` at microstep 1.6.4, where there is an actor,
-/// a store and an escalation policy to decide it against.
+/// `HeldWithin(OwnStore)` beside `HeldWithin(RoleCap)` is not a lattice. The
+/// persistence boundary must resolve those rows into the effective set it gives
+/// [`authorize`]; branching on [`Role`] here would ignore merchant edits.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GrantSet {
     held: BTreeMap<&'static str, Grant>,
@@ -555,14 +561,267 @@ pub enum CustomerQueryShape {
     ListAll,
 }
 
-/// Everything this module refuses.
+/// Proof that one actor was authorized for exactly one capability type.
 ///
-/// Microstep 1.6.4 adds the variants `ref/domain-api.md` §8 lists for `authorize`
-/// and the approval handle — `EscalationRequired`, `SelfApprovalBanned`,
-/// `UserInactive`, `OfflineAuthExpired` and the six `Approval*` mismatches. They
-/// are absent rather than stubbed because each one names a value (`UserId`,
-/// `ApprovalId`, `Timestamp`) that the machinery producing it does not exist to
-/// produce yet.
+/// Every field is private because a struct literal would let a caller assert
+/// its own permission. [`authorize`] is the sole constructor, and the marker
+/// keeps a valid `Authorized<cap::DiscountManual>` from satisfying a function
+/// that requires `Authorized<cap::SaleVoid>`.
+pub struct Authorized<C: Capability> {
+    actor: UserId,
+    approver: Option<UserId>,
+    approval: Option<ApprovalId>,
+    at: Timestamp,
+    _capability: PhantomData<fn() -> C>,
+}
+
+impl<C: Capability> Authorized<C> {
+    /// The user whose grants authorized the operation.
+    pub fn actor(&self) -> UserId {
+        self.actor
+    }
+
+    /// The distinct user who approved an escalated operation, if one was needed.
+    pub fn approver(&self) -> Option<UserId> {
+        self.approver
+    }
+
+    /// The handle persistence must consume with the effect and audit row.
+    pub fn approval(&self) -> Option<ApprovalId> {
+        self.approval
+    }
+
+    /// The caller-supplied instant at which the proof was checked.
+    pub fn at(&self) -> Timestamp {
+        self.at
+    }
+
+    /// The capability this token proves, for the audit row.
+    pub const fn capability() -> &'static str {
+        C::NAME
+    }
+}
+
+/// Which otherwise-held capabilities require a second person.
+///
+/// The set is caller-supplied merchant policy, not a compiled-in role rule. In
+/// particular, `shift.close` needs no special-case here: an ordinary own-shift
+/// close simply is not inserted by the caller's configuration. The typed builder
+/// forces a configuration adapter to resolve each name to a declared marker; a
+/// raw misspelling cannot enter the policy and quietly disable escalation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EscalationPolicy {
+    required: BTreeSet<&'static str>,
+}
+
+impl EscalationPolicy {
+    /// No operation escalates unless the caller's configuration names it.
+    ///
+    /// This is explicit rather than `Default`: a failed policy load must not be
+    /// able to become an empty, fail-open policy through `unwrap_or_default()`.
+    pub const fn empty() -> EscalationPolicy {
+        EscalationPolicy {
+            required: BTreeSet::new(),
+        }
+    }
+
+    /// Return a policy that escalates one additional declared capability.
+    #[must_use]
+    pub fn with_escalation<C: Capability>(mut self) -> EscalationPolicy {
+        self.required.insert(C::NAME);
+        self
+    }
+
+    /// Whether an otherwise-held capability needs a distinct approver.
+    pub fn requires_escalation(&self, capability: &str) -> bool {
+        self.required.contains(capability)
+    }
+}
+
+/// A digest of one versioned, canonical prepared intent.
+///
+/// The bytes are private to ordinary Rust callers. Deserialization is a trusted
+/// persistence boundary, never an IPC input: the webview supplies neither this
+/// digest nor an [`ApprovalHandle`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreparedIntentHash([u8; 32]);
+
+/// The exact operation a manager was shown before approving it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ApprovalBinding {
+    pub entity_id: Uuid,
+    pub amount_minor: i64,
+    pub content_hash: Option<PreparedIntentHash>,
+}
+
+/// Immutable evidence that one approver accepted one actor's exact operation.
+///
+/// Single use is deliberately absent from this value: persistence consumes
+/// [`ApprovalHandle::id`] in the same transaction as the effect and audit row.
+/// Every field stays private so ordinary Rust callers cannot widen an amount,
+/// transfer the handle, or replace a prepared-intent digest after issue. Its
+/// deserializer is for trusted stored rows, not caller-supplied command data.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApprovalHandle {
+    id: ApprovalId,
+    capability: String,
+    actor: UserId,
+    approver: UserId,
+    entity_id: Uuid,
+    amount_minor: i64,
+    content_hash: Option<PreparedIntentHash>,
+    reason: String,
+    issued_at: Timestamp,
+    expires_at: Timestamp,
+    nonce: [u8; 16],
+}
+
+impl ApprovalHandle {
+    /// Issue one handle from the approver's own proof of the same capability.
+    ///
+    /// Self-approval is refused before every other consideration. Policy decides
+    /// whether a handle is required; it never weakens the E.52 invariant once a
+    /// handle is being issued. Time and nonce remain arguments so this crate
+    /// acquires neither a clock nor randomness (I-8).
+    #[allow(clippy::too_many_arguments)]
+    pub fn issue<C: Capability>(
+        id: ApprovalId,
+        actor: UserId,
+        approver: &Authorized<C>,
+        binding: &ApprovalBinding,
+        reason: String,
+        now: Timestamp,
+        ttl_ms: i64,
+        nonce: [u8; 16],
+    ) -> Result<ApprovalHandle, PermissionError> {
+        let approver_id = approver.actor();
+        if actor == approver_id {
+            return Err(PermissionError::SelfApprovalBanned(C::NAME));
+        }
+
+        // A malformed TTL must not mint a handle the shipped schema would reject
+        // or silently shorten an approval near Timestamp::MAX. The reference
+        // error set has no invalid-TTL variant, so the expiry refusal is the only
+        // fail-closed answer available here.
+        let Some(expires_at_ms) = now.epoch_milliseconds().checked_add(ttl_ms) else {
+            return Err(PermissionError::ApprovalExpired(now));
+        };
+        let Ok(expires_at) = Timestamp::from_epoch_milliseconds(expires_at_ms) else {
+            return Err(PermissionError::ApprovalExpired(now));
+        };
+        if expires_at <= now {
+            return Err(PermissionError::ApprovalExpired(expires_at));
+        }
+
+        Ok(ApprovalHandle {
+            id,
+            capability: C::NAME.to_owned(),
+            actor,
+            approver: approver_id,
+            entity_id: binding.entity_id,
+            amount_minor: binding.amount_minor,
+            content_hash: binding.content_hash,
+            reason,
+            issued_at: now,
+            expires_at,
+            nonce,
+        })
+    }
+
+    /// The immutable row the shell consumes exactly once.
+    pub fn id(&self) -> ApprovalId {
+        self.id
+    }
+
+    /// The distinct user whose proof issued this handle.
+    pub fn approver(&self) -> UserId {
+        self.approver
+    }
+
+    /// Refuse any attempt to spend this handle on a different operation.
+    pub fn matches<C: Capability>(
+        &self,
+        actor: UserId,
+        binding: &ApprovalBinding,
+        now: Timestamp,
+    ) -> Result<(), PermissionError> {
+        if self.capability != C::NAME {
+            return Err(PermissionError::ApprovalCapabilityMismatch(
+                self.capability.clone(),
+                C::NAME,
+            ));
+        }
+        // Persistence rehydrates handles, so issue-time validation is not the
+        // only boundary that may encounter a corrupt value. E.52 remains
+        // unconditional when an already-stored handle is checked.
+        if self.actor == self.approver {
+            return Err(PermissionError::SelfApprovalBanned(C::NAME));
+        }
+        if self.actor != actor {
+            return Err(PermissionError::ApprovalActorMismatch(self.actor, actor));
+        }
+        if self.entity_id != binding.entity_id {
+            return Err(PermissionError::ApprovalEntityMismatch(
+                self.entity_id,
+                binding.entity_id,
+            ));
+        }
+        if self.amount_minor != binding.amount_minor {
+            return Err(PermissionError::ApprovalAmountMismatch(
+                self.amount_minor.to_string(),
+                binding.amount_minor.to_string(),
+            ));
+        }
+        if self.content_hash != binding.content_hash {
+            // Hashes are evidence, but they are also covered by the never-log
+            // suffix rule. The variant carries no digest into an error sink.
+            return Err(PermissionError::ApprovalContentHashMismatch);
+        }
+        if now >= self.expires_at {
+            return Err(PermissionError::ApprovalExpired(self.expires_at));
+        }
+        Ok(())
+    }
+}
+
+/// Produce proof for `C`, escalating only when caller-supplied policy says so.
+pub fn authorize<C: Capability>(
+    actor: UserId,
+    grants: &GrantSet,
+    approval: Option<&ApprovalHandle>,
+    binding: &ApprovalBinding,
+    policy: &EscalationPolicy,
+    at: Timestamp,
+) -> Result<Authorized<C>, PermissionError> {
+    if !grants.holds(C::NAME) {
+        return Err(PermissionError::Denied(actor, C::NAME));
+    }
+
+    if !policy.requires_escalation(C::NAME) {
+        return Ok(Authorized {
+            actor,
+            approver: None,
+            approval: None,
+            at,
+            _capability: PhantomData,
+        });
+    }
+
+    let Some(approval) = approval else {
+        return Err(PermissionError::EscalationRequired(C::NAME));
+    };
+    approval.matches::<C>(actor, binding, at)?;
+
+    Ok(Authorized {
+        actor,
+        approver: Some(approval.approver()),
+        approval: Some(approval.id()),
+        at,
+        _capability: PhantomData,
+    })
+}
+
+/// Everything this module refuses.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum PermissionError {
     /// The holder does not have this capability at all.
@@ -572,6 +831,42 @@ pub enum PermissionError {
     /// limit that bounds it.
     #[error("{} is limited to {}", .0, .1.as_str())]
     OutsideLimit(&'static str, Limit),
+    /// The actor's effective grant set does not hold the requested capability.
+    #[error("{0} lacks {1}")]
+    Denied(UserId, &'static str),
+    /// Policy requires a second person, but no handle was supplied.
+    #[error("{0} requires manager approval")]
+    EscalationRequired(&'static str),
+    /// E.52: a person can never issue their own approval handle.
+    #[error("self-approval is not permitted for {0}")]
+    SelfApprovalBanned(&'static str),
+    /// Persistence found that this user can no longer act.
+    #[error("user {0} is deactivated")]
+    UserInactive(UserId),
+    /// The shell's last trusted authorization snapshot is too old.
+    #[error("offline authorization window expired")]
+    OfflineAuthExpired,
+    /// A handle for one capability cannot authorize another marker type.
+    #[error("approval authorises {0}, not {1}")]
+    ApprovalCapabilityMismatch(String, &'static str),
+    /// A handle belongs to the actor who requested it, not whoever possesses it.
+    #[error("approval was issued to {0}, not {1}")]
+    ApprovalActorMismatch(UserId, UserId),
+    /// A handle names one sale, line, shift, or prepared intent.
+    #[error("approval names {0}, not {1}")]
+    ApprovalEntityMismatch(Uuid, Uuid),
+    /// The approved integer minor-unit amount must match exactly, including zero.
+    #[error("approval covers {0}, not {1}")]
+    ApprovalAmountMismatch(String, String),
+    /// The prepared operation changed after the approver saw it.
+    #[error("approval content does not match the prepared intent")]
+    ApprovalContentHashMismatch,
+    /// The validity interval is half-open: the exact expiry instant is refused.
+    #[error("approval expired at {0:?}")]
+    ApprovalExpired(Timestamp),
+    /// Persistence has already consumed this immutable handle.
+    #[error("approval {0} has already been used")]
+    ApprovalAlreadyUsed(ApprovalId),
 }
 
 #[cfg(test)]
@@ -585,6 +880,376 @@ mod tests {
     // is feasible". The whole claim is thirty-two capabilities times four roles,
     // and a generator sampling from 128 cases would be a weaker proof with more
     // machinery. Every sweep below iterates `cap::ALL` or `Role::ALL` in full.
+
+    const NOW_MS: i64 = 1_788_307_200_000;
+    const APPROVAL_TTL_MS: i64 = 120_000;
+
+    fn timestamp(milliseconds: i64) -> Timestamp {
+        Timestamp::from_epoch_milliseconds(milliseconds).unwrap()
+    }
+
+    fn user(value: u128) -> UserId {
+        UserId::from_uuid(Uuid::from_u128(value))
+    }
+
+    fn approval(value: u128) -> ApprovalId {
+        ApprovalId::from_uuid(Uuid::from_u128(value))
+    }
+
+    fn binding(entity: u128, amount_minor: i64) -> ApprovalBinding {
+        ApprovalBinding {
+            entity_id: Uuid::from_u128(entity),
+            amount_minor,
+            content_hash: None,
+        }
+    }
+
+    fn sale_void_policy() -> EscalationPolicy {
+        EscalationPolicy::empty().with_escalation::<cap::SaleVoid>()
+    }
+
+    fn issued_sale_void_handle(
+        id: ApprovalId,
+        actor: UserId,
+        approver: UserId,
+        binding: &ApprovalBinding,
+        now: Timestamp,
+    ) -> ApprovalHandle {
+        // An approver first proves their own capability without entering the
+        // actor's escalation path. Reusing the escalating policy here would
+        // recursively demand another manager and make no handle issuable.
+        let approver_proof = authorize::<cap::SaleVoid>(
+            approver,
+            &GrantSet::of_role(Role::Manager),
+            None,
+            binding,
+            &EscalationPolicy::empty(),
+            now,
+        )
+        .unwrap();
+
+        ApprovalHandle::issue(
+            id,
+            actor,
+            &approver_proof,
+            binding,
+            "manager confirmed the void".to_owned(),
+            now,
+            APPROVAL_TTL_MS,
+            [0xA5; 16],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn cashier_cannot_void_a_sale() {
+        let actor = user(1);
+        let operation = binding(100, 20_000);
+        let grants = GrantSet::of_role(Role::Cashier);
+        let handle = issued_sale_void_handle(
+            approval(208),
+            actor,
+            user(12),
+            &operation,
+            timestamp(NOW_MS),
+        );
+
+        // Grant refusal precedes escalation: an approval cannot manufacture a
+        // capability the actor does not hold.
+        assert!(matches!(
+            authorize::<cap::SaleVoid>(
+                actor,
+                &grants,
+                Some(&handle),
+                &operation,
+                &sale_void_policy(),
+                timestamp(NOW_MS),
+            ),
+            Err(PermissionError::Denied(found, capability))
+                if found == actor && capability == cap::SaleVoid::NAME
+        ));
+
+        // Policy names only what escalates. It does not turn ordinary held
+        // operations into approval paths or compile in role-specific behavior.
+        let ordinary = authorize::<cap::SaleCreate>(
+            actor,
+            &grants,
+            None,
+            &operation,
+            &sale_void_policy(),
+            timestamp(NOW_MS),
+        )
+        .unwrap();
+        assert_eq!(ordinary.actor(), actor);
+        assert_eq!(ordinary.approver(), None);
+        assert_eq!(ordinary.approval(), None);
+        assert_eq!(ordinary.at(), timestamp(NOW_MS));
+        assert_eq!(
+            Authorized::<cap::SaleCreate>::capability(),
+            cap::SaleCreate::NAME
+        );
+    }
+
+    #[test]
+    fn an_actor_cannot_approve_their_own_handle() {
+        let actor = user(2);
+        let operation = binding(101, 0);
+        let now = timestamp(NOW_MS);
+
+        assert!(matches!(
+            authorize::<cap::SaleVoid>(
+                actor,
+                &GrantSet::of_role(Role::ShiftLead),
+                None,
+                &operation,
+                &sale_void_policy(),
+                now,
+            ),
+            Err(PermissionError::EscalationRequired(capability))
+                if capability == cap::SaleVoid::NAME
+        ));
+
+        let actor_proof = authorize::<cap::SaleVoid>(
+            actor,
+            &GrantSet::of_role(Role::ShiftLead),
+            None,
+            &operation,
+            &EscalationPolicy::empty(),
+            now,
+        )
+        .unwrap();
+
+        // A malformed zero TTL would also be refused, so this pins the ordering:
+        // E.52 is unconditional and wins before any other issue-time check.
+        assert_eq!(
+            ApprovalHandle::issue(
+                approval(200),
+                actor,
+                &actor_proof,
+                &operation,
+                "self approval must not issue".to_owned(),
+                now,
+                0,
+                [0; 16],
+            )
+            .unwrap_err(),
+            PermissionError::SelfApprovalBanned(cap::SaleVoid::NAME)
+        );
+
+        // Rehydration is a separate trust boundary from issue. A corrupt stored
+        // handle must not turn the unconditional rule back into caller policy.
+        let mut corrupt = issued_sale_void_handle(
+            approval(209),
+            user(13),
+            actor,
+            &operation,
+            timestamp(NOW_MS),
+        );
+        corrupt.approver = corrupt.actor;
+        assert_eq!(
+            corrupt
+                .matches::<cap::SaleVoid>(user(13), &operation, timestamp(NOW_MS + 1))
+                .unwrap_err(),
+            PermissionError::SelfApprovalBanned(cap::SaleVoid::NAME)
+        );
+    }
+
+    #[test]
+    fn an_altered_amount_is_refused() {
+        let actor = user(3);
+        let approver = user(4);
+        let approved = binding(102, 20_000);
+        let handle =
+            issued_sale_void_handle(approval(201), actor, approver, &approved, timestamp(NOW_MS));
+        let altered = binding(102, 200_000);
+
+        assert!(matches!(
+            authorize::<cap::SaleVoid>(
+                actor,
+                &GrantSet::of_role(Role::ShiftLead),
+                Some(&handle),
+                &altered,
+                &sale_void_policy(),
+                timestamp(NOW_MS + 1),
+            ),
+            Err(PermissionError::ApprovalAmountMismatch(approved, attempted))
+                if approved == "20000" && attempted == "200000"
+        ));
+
+        // Zero binds exactly zero; it never disables the amount comparison for a
+        // non-money effect.
+        let zero = binding(103, 0);
+        let zero_handle =
+            issued_sale_void_handle(approval(202), actor, approver, &zero, timestamp(NOW_MS));
+        let nonzero = binding(103, 1);
+        assert!(matches!(
+            zero_handle.matches::<cap::SaleVoid>(
+                actor,
+                &nonzero,
+                timestamp(NOW_MS + 1),
+            ),
+            Err(PermissionError::ApprovalAmountMismatch(approved, attempted))
+                if approved == "0" && attempted == "1"
+        ));
+
+        // The runtime comparison keeps the same capability boundary that the
+        // marker token enforces at compile time.
+        let discount_policy = EscalationPolicy::empty().with_escalation::<cap::DiscountManual>();
+        assert!(matches!(
+            authorize::<cap::DiscountManual>(
+                actor,
+                &GrantSet::of_role(Role::ShiftLead),
+                Some(&handle),
+                &approved,
+                &discount_policy,
+                timestamp(NOW_MS + 1),
+            ),
+            Err(PermissionError::ApprovalCapabilityMismatch(found, expected))
+                if found == cap::SaleVoid::NAME && expected == cap::DiscountManual::NAME
+        ));
+    }
+
+    #[test]
+    fn a_different_sale_is_refused() {
+        let actor = user(5);
+        let approver = user(6);
+        let approved = binding(104, 20_000);
+        let handle =
+            issued_sale_void_handle(approval(203), actor, approver, &approved, timestamp(NOW_MS));
+        let another_sale = binding(105, 20_000);
+
+        assert_eq!(
+            handle
+                .matches::<cap::SaleVoid>(actor, &another_sale, timestamp(NOW_MS + 1))
+                .unwrap_err(),
+            PermissionError::ApprovalEntityMismatch(approved.entity_id, another_sale.entity_id)
+        );
+
+        // A stable entity id is not enough for a prepared operation: altered
+        // content on that same row is a different operation too.
+        let prepared = ApprovalBinding {
+            content_hash: Some(PreparedIntentHash([1; 32])),
+            ..binding(106, 0)
+        };
+        let prepared_handle =
+            issued_sale_void_handle(approval(204), actor, approver, &prepared, timestamp(NOW_MS));
+        let altered_content = ApprovalBinding {
+            content_hash: Some(PreparedIntentHash([2; 32])),
+            ..prepared
+        };
+        assert_eq!(
+            prepared_handle
+                .matches::<cap::SaleVoid>(actor, &altered_content, timestamp(NOW_MS + 1))
+                .unwrap_err(),
+            PermissionError::ApprovalContentHashMismatch
+        );
+    }
+
+    #[test]
+    fn a_different_actor_is_refused() {
+        let actor = user(7);
+        let another_actor = user(8);
+        let approver = user(9);
+        let operation = binding(107, 20_000);
+        let handle = issued_sale_void_handle(
+            approval(205),
+            actor,
+            approver,
+            &operation,
+            timestamp(NOW_MS),
+        );
+
+        assert!(matches!(
+            authorize::<cap::SaleVoid>(
+                another_actor,
+                &GrantSet::of_role(Role::ShiftLead),
+                Some(&handle),
+                &operation,
+                &sale_void_policy(),
+                timestamp(NOW_MS + 1),
+            ),
+            Err(PermissionError::ApprovalActorMismatch(expected, found))
+                if expected == actor && found == another_actor
+        ));
+    }
+
+    #[test]
+    fn an_expired_handle_is_refused() {
+        let actor = user(10);
+        let approver = user(11);
+        let id = approval(206);
+        let operation = binding(108, 20_000);
+        let now = timestamp(NOW_MS);
+        let handle = issued_sale_void_handle(id, actor, approver, &operation, now);
+        let expires_at = timestamp(NOW_MS + APPROVAL_TTL_MS);
+
+        // A successful escalated proof carries exactly what persistence needs to
+        // consume beside the effect, and the check's caller-supplied instant.
+        let before_expiry = timestamp(NOW_MS + APPROVAL_TTL_MS - 1);
+        let authorized = authorize::<cap::SaleVoid>(
+            actor,
+            &GrantSet::of_role(Role::ShiftLead),
+            Some(&handle),
+            &operation,
+            &sale_void_policy(),
+            before_expiry,
+        )
+        .unwrap();
+        assert_eq!(authorized.actor(), actor);
+        assert_eq!(authorized.approver(), Some(approver));
+        assert_eq!(authorized.approval(), Some(id));
+        assert_eq!(authorized.at(), before_expiry);
+
+        // Migration `0004` admits consumed_at < expires_at, not <=, so the exact
+        // boundary is already expired.
+        assert!(matches!(
+            authorize::<cap::SaleVoid>(
+                actor,
+                &GrantSet::of_role(Role::ShiftLead),
+                Some(&handle),
+                &operation,
+                &sale_void_policy(),
+                expires_at,
+            ),
+            Err(PermissionError::ApprovalExpired(found)) if found == expires_at
+        ));
+        assert_eq!(
+            handle
+                .matches::<cap::SaleVoid>(
+                    actor,
+                    &operation,
+                    timestamp(NOW_MS + APPROVAL_TTL_MS + 1),
+                )
+                .unwrap_err(),
+            PermissionError::ApprovalExpired(expires_at)
+        );
+
+        // The domain refuses a handle whose interval cannot satisfy the shipped
+        // schema's strict expires_at > issued_at constraint.
+        let approver_proof = authorize::<cap::SaleVoid>(
+            approver,
+            &GrantSet::of_role(Role::Manager),
+            None,
+            &operation,
+            &EscalationPolicy::empty(),
+            now,
+        )
+        .unwrap();
+        assert_eq!(
+            ApprovalHandle::issue(
+                approval(207),
+                actor,
+                &approver_proof,
+                &operation,
+                "zero ttl must not issue".to_owned(),
+                now,
+                0,
+                [1; 16],
+            )
+            .unwrap_err(),
+            PermissionError::ApprovalExpired(now)
+        );
+    }
 
     #[test]
     fn default_matrix_covers_every_capability_in_cap_all() {
