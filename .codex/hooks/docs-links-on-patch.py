@@ -42,6 +42,7 @@ def repo_root(cwd: str) -> Path | None:
             ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
@@ -88,6 +89,7 @@ def broken_doc_links(root: Path) -> list[tuple[str, str]]:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=25,
         )
     except (OSError, subprocess.SubprocessError) as exc:

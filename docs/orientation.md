@@ -245,10 +245,10 @@ Small policy programs, each with negative self-tests that `just guards` runs. Ab
 lines of them decide whether a migration may be edited or a secret may be committed, so
 `lint-scripts.sh` lints them too.
 
-One honest exception before the table: **`check-test-catalog.py` runs only in the local gate.**
-Neither it nor its `--self-test` has a step in `ci.yml` yet, because adding one is a change to the
-frozen workflow surface and needs its own reviewed edit
-([`implementation/03-github-workflow.md`](implementation/03-github-workflow.md) §3). Every other
+One honest exception before the table: **`check-staged-policy.py` has no step of its own in
+`ci.yml`.** It inspects the *staged index*, which a CI checkout has no equivalent of, so CI reaches
+it the only way that means anything — through `.githooks/pre-commit`, which
+[`.githooks/test-hooks.sh`](../.githooks/test-hooks.sh) drives against a real index. Every other
 script below runs in CI as well as locally.
 
 | Script | Contract |

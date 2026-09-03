@@ -1444,8 +1444,8 @@ CREATE TABLE role_capability (
 -- section is skipped by verify-schema.py now that it is SHIPPED, so nothing
 -- would execute the copy. `crates/pos-db/tests/migration_0004_people_and_audit.rs`
 -- proves every role carries an explicit decision for every capability, and
--- microstep 1.6.3's deferred half — `crates/pos-db/tests/role_matrix.rs`, still
--- unwritten — is what will compare each seeded cell with `cap::DEFAULT_MATRIX`.
+-- microstep 1.6.3's `crates/pos-db/tests/role_matrix.rs` compares each seeded
+-- cell with `cap::DEFAULT_MATRIX`, in both directions.
 -- That comparison, not a duplicate table, is the check.
 
 -- `store_id` is NULL for an org-wide grant, and that NULL is load-bearing: it is
