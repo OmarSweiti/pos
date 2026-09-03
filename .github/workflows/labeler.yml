@@ -52,7 +52,7 @@ jobs:
           NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          if ./scripts/validate-change-title.sh "$TITLE" >/dev/null 2>&1; then
+          if ./scripts/validate-change-title.sh --validate "$TITLE" >/dev/null 2>&1; then
             exit 0
           fi
           if ! normalized=$(./scripts/validate-change-title.sh --normalize "$TITLE"); then

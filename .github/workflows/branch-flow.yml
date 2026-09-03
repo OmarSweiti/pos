@@ -150,7 +150,7 @@ jobs:
               echo "promotion, back-merge, or hotfix PR — merged with a merge commit, so the title is free text. Skipping."
               exit 0 ;;
           esac
-          "$GITHUB_WORKSPACE/scripts/validate-change-title.sh" "$TITLE"
+          "$GITHUB_WORKSPACE/scripts/validate-change-title.sh" --validate "$TITLE"
 
       - name: PR title and body contain no assistant attribution
         env:

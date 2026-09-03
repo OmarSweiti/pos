@@ -25,7 +25,7 @@ step='—|[0-9]+\.[0-9]+\.[0-9]+[a-z]?(–[0-9]+\.[0-9]+\.[0-9]+[a-z]?)?'
 grammar="^($types)\\(($scopes)\\): ([^[:space:]].*[^[:space:]]|[^[:space:]])[[:space:]]+\\[($step)\\][[:space:]]*$"
 
 usage() {
-  echo "usage: $0 '<title>'" >&2
+  echo "usage: $0 --validate '<title>'" >&2
   echo "       $0 --normalize '<title>'" >&2
   echo "       $0 --self-test" >&2
   exit 2
@@ -247,6 +247,19 @@ self_test() {
     fi
   }
 
+  cli_case_is() {
+    local want="$1" label="$2" got=0
+    shift 2
+    "$0" "$@" >/dev/null 2>&1 || got=$?
+    if [ "$got" -eq "$want" ]; then
+      printf '  ok      %s\n' "$label"
+      pass=$((pass + 1))
+    else
+      printf '  FAILED  %s (wanted exit %s, got %s)\n' "$label" "$want" "$got"
+      fail_count=$((fail_count + 1))
+    fi
+  }
+
   normalize_is() {
     local want="$1" label="$2" candidate="$3" got='' status=0
     got=$(normalize "$candidate" 2>/dev/null) || status=$?
@@ -322,6 +335,14 @@ self_test() {
   case_is 1 "an unknown scope" 'feat(agent): exact inclusive tax extraction   [1.3.4]'
   case_is 1 "a multi-line title" $'feat(domain): exact tax   [1.3.4]\nsecond line'
 
+  echo "change-title policy — explicit mode selection"
+  cli_case_is 0 "explicit validation accepts a canonical title" \
+    --validate 'feat(domain): exact inclusive tax extraction   [1.3.4]'
+  cli_case_is 1 "a title cannot select the self-test mode" --validate '--self-test'
+  cli_case_is 1 "a title cannot select the normalization mode" --validate '--normalize'
+  cli_case_is 2 "a bare title cannot select validation" \
+    'feat(domain): exact inclusive tax extraction   [1.3.4]'
+
   echo "change-title policy — Dependabot normalization"
   normalize_is \
     'chore(repo): bump @vitejs/plugin-react from 6.0.5 to 6.1.0  [—]' \
@@ -374,5 +395,10 @@ if [ "${1:-}" = "--normalize" ]; then
   exit $?
 fi
 
-[ "$#" -eq 1 ] || usage
-validate "$1"
+if [ "${1:-}" = "--validate" ]; then
+  [ "$#" -eq 2 ] || usage
+  validate "$2"
+  exit $?
+fi
+
+usage
