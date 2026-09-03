@@ -17,9 +17,10 @@ unless someone remembers to add one. Rewriting CI to shell out to `just` would
 trade that for a worse problem — one opaque step whose failure names no check —
 so the enumeration stays and this compares the two lists instead.
 
-What it does NOT prove: that a CI step runs the script with the same arguments,
-on the same files, or at all (a step can be `if:`-gated). It proves the path is
-referenced. That is the drift that actually happened twice.
+What it does NOT prove: that a CI step uses the same operands after its operation
+mode, reads the same files, or runs at all (a step can be `if:`-gated). It proves
+that the path and its first explicit long-option mode are referenced. One narrow,
+directional exception records where CI deliberately runs a stronger operation.
 
 Usage:  ./scripts/check-ci-gate-parity.py [--self-test]
 Exit:   0 clean · 1 a violation · 2 could not run at all
@@ -41,18 +42,33 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 GATE_RECIPES = ("lint", "test", "build-web", "guards", "secrets")
 
 # A repository script invoked from a recipe, whatever the interpreter in front of
-# it. Anchored on the leading `./` the justfile uses everywhere.
-SCRIPT_CALL = re.compile(r"\./((?:scripts|\.claude|\.codex|\.githooks)/[\w./-]+)")
+# it. The first long option is the operation mode; later operands remain data and
+# do not let a comment or argument donate coverage to another mode.
+DEFAULT_MODE = "<live>"
+SELF_TEST_MODE = "--self-test"
+SCRIPT_CALL = re.compile(
+    r"\./(?P<path>(?:scripts|\.agents|\.claude|\.codex|\.githooks)/[\w./-]+)"
+    r"(?:[ \t]+(?P<mode>--[\w-]+)(?=[ \t]|$))?"
+)
+Invocation = tuple[str, str]
+
+# CI's normal verifier runs the mapping audit before attempting the database
+# engine pass. The reverse is not true, so this edge is deliberately directional.
+CI_MODE_COVERAGE: dict[Invocation, frozenset[Invocation]] = {
+    ("scripts/verify-pg-migrations.py", "--mapping-only"): frozenset(
+        {("scripts/verify-pg-migrations.py", "--verbose")}
+    ),
+}
 
 # Deliberate omissions. Each needs a reason, and the reason is the review: an
 # entry here is a decision that CI cannot or should not run something the local
 # gate does.
-ALLOWED_ABSENCES: dict[str, str] = {
+ALLOWED_ABSENCES: dict[Invocation, str] = {
     # `bench-gate.py`'s live path compares a measurement against a committed
     # baseline for a specific machine. A hosted runner is refused by the gate
     # itself (conventions §7.1), and no reference register exists yet. Its
     # refusal suite, `scripts/tests/bench_gate_test.py`, IS in CI.
-    "scripts/bench-gate.py": (
+    ("scripts/bench-gate.py", DEFAULT_MODE): (
         "the live comparison is machine-bound and refuses hosted runners; "
         "its refusal suite runs in CI instead"
     ),
@@ -83,40 +99,79 @@ def recipe_bodies(text: str) -> dict[str, list[str]]:
     return bodies
 
 
-def gate_scripts(text: str) -> set[str]:
+def script_invocations(text: str) -> set[Invocation]:
+    found: set[Invocation] = set()
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        for match in SCRIPT_CALL.finditer(line):
+            found.add((match.group("path"), match.group("mode") or DEFAULT_MODE))
+    return found
+
+
+def gate_invocations(text: str) -> set[Invocation]:
     bodies = recipe_bodies(text)
     missing = [name for name in GATE_RECIPES if name not in bodies]
     if missing:
         raise ParityError(f"justfile has no recipe named: {', '.join(missing)}")
-    found: set[str] = set()
+    found: set[Invocation] = set()
     for name in GATE_RECIPES:
-        for line in bodies[name]:
-            found.update(SCRIPT_CALL.findall(line))
+        found.update(script_invocations("\n".join(bodies[name])))
     if not found:
         raise ParityError("no repository scripts found in the gate recipes")
     return found
 
 
-def workflow_scripts(sources: dict[str, str]) -> set[str]:
-    found: set[str] = set()
+def guard_invocations(text: str) -> set[Invocation]:
+    bodies = recipe_bodies(text)
+    if "guards" not in bodies:
+        raise ParityError("justfile has no recipe named: guards")
+    return script_invocations("\n".join(bodies["guards"]))
+
+
+def workflow_invocations(sources: dict[str, str]) -> set[Invocation]:
+    found: set[Invocation] = set()
     for text in sources.values():
-        found.update(SCRIPT_CALL.findall(text))
+        found.update(script_invocations(text))
     return found
 
 
+def invocation_label(invocation: Invocation) -> str:
+    path, mode = invocation
+    return path if mode == DEFAULT_MODE else f"{path} {mode}"
+
+
+def covered_by_workflow(local: Invocation, covered: set[Invocation]) -> bool:
+    if local in covered:
+        return True
+    return bool(CI_MODE_COVERAGE.get(local, frozenset()) & covered)
+
+
 def audit(just_text: str, workflow_sources: dict[str, str]) -> list[str]:
-    local = gate_scripts(just_text)
-    covered = workflow_scripts(workflow_sources)
+    local = gate_invocations(just_text)
+    local_guards = guard_invocations(just_text)
+    covered = workflow_invocations(workflow_sources)
     problems = []
-    for script in sorted(local - covered):
-        if script in ALLOWED_ABSENCES:
+    for invocation in sorted(local):
+        if covered_by_workflow(invocation, covered):
             continue
-        problems.append(f"{script} runs in the local gate and in no workflow")
-    for script, reason in sorted(ALLOWED_ABSENCES.items()):
-        if script in covered:
+        if invocation in ALLOWED_ABSENCES:
+            continue
+        problems.append(
+            f"{invocation_label(invocation)} runs in the local gate and in no "
+            "workflow with that mode"
+        )
+    for invocation in sorted(covered - local_guards):
+        if invocation[1] == SELF_TEST_MODE:
             problems.append(
-                f"{script} is allowed to be absent from CI ({reason}) but a "
-                "workflow now references it; remove the allowance"
+                f"{invocation_label(invocation)} runs in a workflow but not in "
+                "`just guards`"
+            )
+    for invocation, reason in sorted(ALLOWED_ABSENCES.items()):
+        if covered_by_workflow(invocation, covered):
+            problems.append(
+                f"{invocation_label(invocation)} is allowed to be absent from CI "
+                f"({reason}) but a workflow now covers it; remove the allowance"
             )
     return problems
 
@@ -133,6 +188,9 @@ def self_test() -> int:
             "guards:",
             "    bash ./scripts/two.sh",
             "    ruby ./scripts/three.rb --self-test",
+            "    python3 ./scripts/parity.py",
+            "    python3 ./scripts/parity.py --self-test",
+            "    python3 ./.agents/test-skills.py",
             "secrets:",
             "    bash ./scripts/four.sh --history",
         ]
@@ -140,7 +198,11 @@ def self_test() -> int:
     covered = {
         "ci.yml": (
             "run: ./scripts/one.py\nrun: ./scripts/two.sh\n"
-            "run: ./scripts/three.rb --self-test\nrun: ./scripts/four.sh --history"
+            "run: ./scripts/three.rb --self-test\n"
+            "run: ./scripts/parity.py\n"
+            "run: ./scripts/parity.py --self-test\n"
+            "run: ./.agents/test-skills.py\n"
+            "run: ./scripts/four.sh --history"
         )
     }
 
@@ -173,9 +235,115 @@ def self_test() -> int:
 
     cases.append(
         (
-            "an interpreter in front of the path does not hide it",
-            gate_scripts(just_ok)
-            == {"scripts/one.py", "scripts/two.sh", "scripts/three.rb", "scripts/four.sh"},
+            "interpreters and the .agents root do not hide a script",
+            gate_invocations(just_ok)
+            == {
+                (".agents/test-skills.py", DEFAULT_MODE),
+                ("scripts/four.sh", "--history"),
+                ("scripts/one.py", DEFAULT_MODE),
+                ("scripts/parity.py", DEFAULT_MODE),
+                ("scripts/parity.py", SELF_TEST_MODE),
+                ("scripts/three.rb", SELF_TEST_MODE),
+                ("scripts/two.sh", DEFAULT_MODE),
+            },
+        )
+    )
+
+    without_ci_self_test = {
+        "ci.yml": covered["ci.yml"].replace(
+            "run: ./scripts/parity.py --self-test\n", ""
+        )
+    }
+    problems = audit(just_ok, without_ci_self_test)
+    cases.append(
+        (
+            "a live CI reference does not cover the same script's self-test",
+            any("scripts/parity.py --self-test" in p for p in problems),
+        )
+    )
+
+    without_local_self_test = just_ok.replace(
+        "    python3 ./scripts/parity.py --self-test\n", ""
+    )
+    problems = audit(without_local_self_test, covered)
+    cases.append(
+        (
+            "a local self-test removed from just guards is refused",
+            any(
+                "scripts/parity.py --self-test runs in a workflow but not in "
+                "`just guards`" in p
+                for p in problems
+            ),
+        )
+    )
+
+    postgres_local = just_ok.replace(
+        "    python3 ./scripts/one.py",
+        "    python3 ./scripts/one.py\n"
+        "    python3 ./scripts/verify-pg-migrations.py --mapping-only",
+    )
+    postgres_ci = {
+        "ci.yml": covered["ci.yml"]
+        + "\nrun: ./scripts/verify-pg-migrations.py --verbose"
+    }
+    cases.append(
+        (
+            "the stronger Postgres CI mode covers mapping-only",
+            audit(postgres_local, postgres_ci) == [],
+        )
+    )
+
+    weaker_postgres_local = just_ok.replace(
+        "    python3 ./scripts/one.py",
+        "    python3 ./scripts/one.py\n"
+        "    python3 ./scripts/verify-pg-migrations.py --verbose",
+    )
+    weaker_postgres_ci = {
+        "ci.yml": covered["ci.yml"]
+        + "\nrun: ./scripts/verify-pg-migrations.py --mapping-only"
+    }
+    cases.append(
+        (
+            "the weaker Postgres mode does not cover verbose",
+            any(
+                "verify-pg-migrations.py --verbose" in p
+                for p in audit(weaker_postgres_local, weaker_postgres_ci)
+            ),
+        )
+    )
+
+    distinct_mode_local = just_ok.replace(
+        "    python3 ./scripts/one.py",
+        "    python3 ./scripts/one.py\n"
+        "    bash ./scripts/gh-actions-policy.sh --check",
+    )
+    distinct_mode_ci = {
+        "ci.yml": covered["ci.yml"]
+        + "\nrun: ./scripts/gh-actions-policy.sh --dry-run"
+    }
+    cases.append(
+        (
+            "an unrelated mode does not donate coverage",
+            any(
+                "gh-actions-policy.sh --check" in p
+                for p in audit(distinct_mode_local, distinct_mode_ci)
+            ),
+        )
+    )
+
+    parsed_modes = script_invocations(
+        "# run: ./scripts/pure-comment.py --self-test\n"
+        "run: ./scripts/commented.py # --self-test\n"
+        "run: ./scripts/not-quite.py --self-testing\n"
+    )
+    cases.append(
+        (
+            "comments and similarly named flags cannot donate self-test coverage",
+            parsed_modes
+            == {
+                ("scripts/commented.py", DEFAULT_MODE),
+                ("scripts/not-quite.py", "--self-testing"),
+            },
         )
     )
 
@@ -194,6 +362,22 @@ def self_test() -> int:
         (
             "an allowance that CI now covers is refused as stale",
             any("remove the allowance" in p for p in stale),
+        )
+    )
+
+    allowed_mode_drift = just_ok.replace(
+        "    python3 ./scripts/parity.py",
+        "    python3 ./scripts/bench-gate.py --self-test\n"
+        "    python3 ./scripts/parity.py",
+        1,
+    )
+    cases.append(
+        (
+            "a live-mode allowance does not hide an uncovered self-test",
+            any(
+                "scripts/bench-gate.py --self-test" in p
+                for p in audit(allowed_mode_drift, covered)
+            ),
         )
     )
 
@@ -231,15 +415,17 @@ def main() -> int:
         for problem in problems:
             print(f"  {problem}", file=sys.stderr)
         print(
-            "\n`just pre-push` is advertised as the complete local gate. A command in it\n"
-            "with no CI step is only as strong as the person who ran it. Add the step to\n"
-            "`.github/workflows/`, or record a reviewed reason in ALLOWED_ABSENCES.",
+            "\n`just pre-push` is advertised as the complete local gate. Align each script\n"
+            "mode between it and CI: add a missing workflow step, restore a workflow\n"
+            "self-test to `just guards`, or record a reviewed live-mode absence.",
             file=sys.stderr,
         )
         return 1
     print(
-        f"every local gate command has a CI step "
-        f"({len(gate_scripts(just_text))} script(s), {len(ALLOWED_ABSENCES)} reviewed absence)"
+        "every local gate command mode has a CI step "
+        f"({len({path for path, _mode in gate_invocations(just_text)})} script(s), "
+        f"{len(gate_invocations(just_text))} mode(s), "
+        f"{len(ALLOWED_ABSENCES)} reviewed absence)"
     )
     return 0
 

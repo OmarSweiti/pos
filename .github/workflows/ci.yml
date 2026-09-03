@@ -246,6 +246,8 @@ jobs:
         run: python3 ./scripts/tests/bench_gate_test.py
       - name: Every local gate command has a CI step
         run: ./scripts/check-ci-gate-parity.py
+      - name: The CI-gate-parity check's own checks still fire
+        run: ./scripts/check-ci-gate-parity.py --self-test
 
   web:
     runs-on: ubuntu-latest
