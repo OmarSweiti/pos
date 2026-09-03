@@ -8,7 +8,7 @@
           {
             "type": "command",
             "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/protect-immutable.py\"",
-            "commandWindows": "py -3 -c __import__('runpy').run_path(str(__import__('pathlib').Path(__import__('subprocess').check_output(['git','rev-parse','--show-toplevel'],text=True).strip())/'.codex/hooks/protect-immutable.py'),run_name='__main__')",
+            "commandWindows": "py -3 -c __import__('runpy').run_path(str(__import__('pathlib').Path(__import__('subprocess').check_output(['git','rev-parse','--show-toplevel'],text=True,encoding='utf-8').strip())/'.codex/hooks/protect-immutable.py'),run_name='__main__')",
             "timeout": 15,
             "statusMessage": "Checking protected paths"
           }
@@ -22,7 +22,7 @@
           {
             "type": "command",
             "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/docs-links-on-patch.py\"",
-            "commandWindows": "py -3 -c __import__('runpy').run_path(str(__import__('pathlib').Path(__import__('subprocess').check_output(['git','rev-parse','--show-toplevel'],text=True).strip())/'.codex/hooks/docs-links-on-patch.py'),run_name='__main__')",
+            "commandWindows": "py -3 -c __import__('runpy').run_path(str(__import__('pathlib').Path(__import__('subprocess').check_output(['git','rev-parse','--show-toplevel'],text=True,encoding='utf-8').strip())/'.codex/hooks/docs-links-on-patch.py'),run_name='__main__')",
             "timeout": 30,
             "statusMessage": "Checking documentation links"
           }

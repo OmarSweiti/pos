@@ -93,9 +93,9 @@ with open(sys.argv[1], encoding="utf-8") as handle:
     config = json.load(handle)
 
 pre_command = 'python3 "$(git rev-parse --show-toplevel)/.codex/hooks/protect-immutable.py"'
-pre_windows = "py -3 -c __import__('runpy').run_path(str(__import__('pathlib').Path(__import__('subprocess').check_output(['git','rev-parse','--show-toplevel'],text=True).strip())/'.codex/hooks/protect-immutable.py'),run_name='__main__')"
+pre_windows = "py -3 -c __import__('runpy').run_path(str(__import__('pathlib').Path(__import__('subprocess').check_output(['git','rev-parse','--show-toplevel'],text=True,encoding='utf-8').strip())/'.codex/hooks/protect-immutable.py'),run_name='__main__')"
 post_command = 'python3 "$(git rev-parse --show-toplevel)/.codex/hooks/docs-links-on-patch.py"'
-post_windows = "py -3 -c __import__('runpy').run_path(str(__import__('pathlib').Path(__import__('subprocess').check_output(['git','rev-parse','--show-toplevel'],text=True).strip())/'.codex/hooks/docs-links-on-patch.py'),run_name='__main__')"
+post_windows = "py -3 -c __import__('runpy').run_path(str(__import__('pathlib').Path(__import__('subprocess').check_output(['git','rev-parse','--show-toplevel'],text=True,encoding='utf-8').strip())/'.codex/hooks/docs-links-on-patch.py'),run_name='__main__')"
 expected = {
     "description": "Repository safeguards for Codex tool calls.",
     "hooks": {
