@@ -1,0 +1,15 @@
+error[E0451]: fields `actor`, `approver`, `approval`, `at` and `_capability` of struct `Authorized` are private
+  --> tests/ui/authorized_token_cannot_be_forged.rs:16:9
+   |
+15 |     Authorized {
+   |     ---------- in this type
+16 |         actor,
+   |         ^^^^^ private field
+17 |         approver,
+   |         ^^^^^^^^ private field
+18 |         approval,
+   |         ^^^^^^^^ private field
+19 |         at,
+   |         ^^ private field
+20 |         _capability: PhantomData,
+   |         ^^^^^^^^^^^ private field

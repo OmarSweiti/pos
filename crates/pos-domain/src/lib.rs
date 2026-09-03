@@ -12,10 +12,11 @@ pub mod time;
 // The module graph points one way (ref/domain-api.md §15): `ids`, `money` and
 // `time` have no cross-module edges. `catalog` reads `money` and `ids`; `tax`
 // reads those two plus the pure `Timestamp` value from `time`; `audit` reads
-// `ids` and `time`. Nothing depends on any of them yet. `permissions` has no
-// cross-module edges either while it holds only the capability grid; §15 gives
-// it edges to `ids` and `audit` at microstep 1.6.4, when `Authorized<C>` starts
-// carrying a `UserId`. `money`'s external arithmetic dependency is
+// `ids` and `time`. Nothing depends on any of them yet. `permissions` gained its
+// edges at microstep 1.6.4, when `Authorized<C>` and `ApprovalHandle` started
+// carrying a `UserId` and a `Timestamp`: the checker reports `ids` and `time`,
+// not the `ids` and `audit` §15 predicted — the handle names an approver and an
+// expiry, and reaches for no audit type to do it. `money`'s external arithmetic dependency is
 // `rust_decimal`; `time` performs only integer calendar arithmetic. `just
 // acyclic` is what establishes the graph, not this comment.
 pub use audit::{
@@ -33,8 +34,9 @@ pub use ids::{
 };
 pub use money::{Currency, Money, MoneyError, Percent, Qty, RoundingDirection, RoundingRule};
 pub use permissions::{
-    Capability, CustomerQueryShape, Grant, GrantSet, JournalScope, Limit, PermissionError, Role,
-    RoleGrants, cap, default_grants,
+    ApprovalBinding, ApprovalHandle, Authorized, Capability, CustomerQueryShape, EscalationPolicy,
+    Grant, GrantSet, JournalScope, Limit, PermissionError, PreparedIntentHash, Role, RoleGrants,
+    authorize, cap, default_grants,
 };
 pub use tax::{
     ComponentTax, LineTax, PriceMode, StoreTaxProfile, SupplyDestination, SupplyTaxContext,

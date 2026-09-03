@@ -8,3 +8,10 @@ fn typed_ids_do_not_interconvert() {
     let cases = trybuild::TestCases::new();
     cases.compile_fail("tests/ui/typed_ids_do_not_interconvert.rs");
 }
+
+#[test]
+fn authorized_tokens_cannot_be_forged_or_substituted() {
+    let cases = trybuild::TestCases::new();
+    cases.compile_fail("tests/ui/authorized_token_cannot_be_forged.rs");
+    cases.compile_fail("tests/ui/authorized_capabilities_do_not_interconvert.rs");
+}

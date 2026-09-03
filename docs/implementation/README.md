@@ -53,8 +53,11 @@ starts). **`1.8.9` has landed, so the gate it held is open**: groups 1.6, 1.9 an
 append-only facts, because every fact graph commits with its delivery envelope and the writer refuses
 to return success on an incomplete one. `1.2.4` (the scan parser's pure half, next in
 §1.2's build order) has every dependency met, and `1.6.3` is closed: its seed comparison landed
-against `0004`'s 128 rows. `1.6.4` (`Authorized<C>` and `authorize`) is unblocked, because
-`approval_handle`, `approval_consumption` and `audit_log` now exist. Neither is **blocked on the merchant legal name or TIN**, which instead gate store
+against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
+`authorize`, `ApprovalHandle` and `EscalationPolicy` are complete in `pos-domain`, with the two
+compile-fail proofs that a token cannot be forged or substituted across capabilities. Its
+persistence half — `consume_approval`, and the shell command that resolves a stored handle — waits
+on `pos-db` being wired into the terminal, which 1.8.x owns. Neither is **blocked on the merchant legal name or TIN**, which instead gate store
 provisioning and the issuing of a valid tax receipt. `1.3.2` is the next
 code step on the phase's longest critical path, but its `ZeroRatingReason` vocabulary and evidence
 requirements remain externally blocked by the `⚠️ OPEN` item in [`ref/domain-api.md`](ref/domain-api.md)

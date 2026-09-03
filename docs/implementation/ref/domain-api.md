@@ -2047,6 +2047,11 @@ pub enum PermissionError {
     #[error("approval was issued to {0}, not {1}")]        ApprovalActorMismatch(UserId, UserId),
     #[error("approval names {0}, not {1}")]                ApprovalEntityMismatch(Uuid, Uuid),
     #[error("approval covers {0}, not {1}")]               ApprovalAmountMismatch(String, String),
+    // Carries no digest: `content_hash` is covered by the never-log `_hash`
+    // suffix rule (ref/security-compliance.md §6), so a mismatch is reported
+    // without putting either value into an error sink.
+    #[error("approval was issued for different prepared content")]
+                                                           ApprovalContentHashMismatch,
     #[error("approval expired at {0:?}")]                  ApprovalExpired(Timestamp),
     #[error("approval {0} has already been used")]         ApprovalAlreadyUsed(ApprovalId),
 }
