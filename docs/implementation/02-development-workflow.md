@@ -271,7 +271,7 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just promote-staging` | PR: `development` → `staging` (a release candidate) |
 | `just promote-main` | PR: `staging` → `main` (production) |
 | `just gh-bootstrap` | labels, milestones, merge behaviour, default branch — idempotent |
-| `just gh-protect` | branch protection; refuses politely on the Free plan |
+| `just gh-protect` | **refuses, deliberately.** Written against a 403 that a public repository no longer returns, so its `PUT` would now actually apply — with an incomplete required-check list. A ruleset replaces it |
 | `just gh-project` | the delivery board and its fields |
 
 Not yet recipes, and the microstep that creates each: `just seed` (1.12.1) · `just fuzz` and its

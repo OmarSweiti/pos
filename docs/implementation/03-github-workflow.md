@@ -853,8 +853,13 @@ just gh-project           # the board and its fields; then the four views, by ha
 ./scripts/gh-actions-policy.sh            # enable and verify GitHub SHA-only Actions
 ```
 
-Do not run `just gh-protect` on the current plan; branch protection is outside this implementation
-and the script is retained only for a future repository eligibility change.
+`just gh-protect` now refuses and exits 3, and that refusal is the point. The script was written
+while the repository was private on GitHub Free, where the protection API answered 403 on every
+call — so the 403 was doing the reviewing, and three defects went unnoticed. Going public removed
+it: the `PUT` would now succeed and apply a required-check list omitting `guards`, `supply-chain`
+and `protected-paths`, which makes a branch look protected while the checks that refuse an edited
+migration are not required at all. It also cannot express `allowed_merge_methods`, which this flow
+needs. The replacement is a **ruleset**, not a patch to that file.
 
 ---
 

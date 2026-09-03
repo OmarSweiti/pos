@@ -1,18 +1,47 @@
 #!/usr/bin/env bash
-# Makes the branch flow unbypassable — on a plan that allows it.
+# Makes the branch flow unbypassable — and REFUSES TO RUN, deliberately.
 #
-# THE SITUATION TODAY: this repository is PRIVATE on the GitHub Free plan, where
-# neither branch protection nor rulesets exist. The API answers:
+# THE SITUATION THIS WAS WRITTEN FOR is gone. It was authored while the repository
+# was PRIVATE on GitHub Free, where the protection API answered:
 #   403  "Upgrade to GitHub Pro or make this repository public to enable this feature."
-# So this script is written, tested against that 403, and waiting. Three ways out,
-# in the order they make sense for a commercial product:
-#   1. GitHub Pro — $4/month, keeps the repo private. Run this script, done.
-#   2. A free GitHub organisation — org-owned PRIVATE repos on the Free plan still
-#      do not get protection; only public ones do. Not a way out on its own.
-#   3. Make the repository public — not an option for this product.
-# Until then: .githooks/pre-push and the branch-flow check are the enforcement.
+# Every run was that refusal, which is why three defects below were never noticed:
+# the 403 was doing the reviewing.
+#
+# The repository went PUBLIC on 30 August 2026. The 403 is gone, the PUT below now
+# SUCCEEDS, and it would apply a configuration that is wrong in three verified ways:
+#
+#   1. Its check list omits `guards`, `supply-chain` and — critically —
+#      `protected-paths`. Requiring an incomplete set is worse than requiring
+#      none: it makes a branch look protected while the checks that refuse an
+#      edited migration or a frozen-surface change are not required at all.
+#   2. It sets `require_code_owner_reviews: true` with
+#      `required_approving_review_count: 0` against a sole-developer CODEOWNERS,
+#      and on `main` pairs that with `enforce_admins: true`.
+#   3. The legacy branch-protection API cannot express `allowed_merge_methods`.
+#      Only a RULESET can, and this flow needs it: `development` must allow squash
+#      AND merge, while a promotion into `staging` must be a merge commit.
+#
+# So this script fails closed until it is rewritten against the rulesets API.
+# `.githooks/pre-push` and the branch-flow check remain the enforcement meanwhile.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
+
+cat >&2 <<'REFUSAL'
+gh-protect: REFUSED — this script predates the repository going public.
+
+  It was written against a 403 that no longer happens, so its PUT would now
+  actually apply. Three verified defects make that unsafe:
+
+    * the required-check list omits guards, supply-chain and protected-paths
+    * require_code_owner_reviews with 0 required approvals, sole-developer
+      CODEOWNERS, and enforce_admins on main
+    * the legacy API cannot express allowed_merge_methods, which this flow
+      needs: squash+merge on development, merge-commit only into staging
+
+  The replacement is a ruleset, not a patch to this file. Until it lands,
+  .githooks/pre-push and the branch-flow check are the enforcement.
+REFUSAL
+exit 3
 
 REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner) || exit 1
 echo "repository: $REPO"
