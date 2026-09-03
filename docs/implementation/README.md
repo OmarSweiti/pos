@@ -106,7 +106,7 @@ docs/implementation/
 
 Source documents live in [`../plan/`](../plan/): the business & functional master plan, the engineering blueprint, and the original Phase-0 setup guide.
 
-`status-page.html` is a locally shareable summary of the spine — verdict, corrections, phase map, risk register, and live Phase-0 status — for people who need the picture without the microsteps. No publication workflow or stable hosted URL is configured; it is a view of this set, never the source of truth.
+`status-page.html` is a locally shareable summary of the spine — verdict, corrections, phase map, risk register, and live Phase-0 status — for people who need the picture without the microsteps. No publication workflow is configured in this repository; it is a view of this set, never the source of truth.
 
 ---
 

@@ -70,7 +70,7 @@ just dev-terminal   # run the register
 
 `just setup` is not optional. It installs the local hooks before any networked
 dependency step, so a failed install does not leave the clone silently
-unprotected. Branch protection is unavailable on this plan; the hooks are a
+unprotected. Branch protection and rulesets are available but unconfigured; the hooks are a
 bypassable local safety net, while CI provides the server-side evidence. A clone
 that skipped setup can still push straight to `main`. `just --list` shows
 everything else.

@@ -340,7 +340,8 @@
       microsteps. Where the two disagree, the master plan is right and this page is stale — including
       every date, count and week range below. Corrections to the immutable source plans live in
       <b>master plan §4a, &ldquo;Errata and concordance&rdquo;</b>, and nothing here replaces it. There is no
-      publication workflow and no hosted URL; it is a local file you may share deliberately.</blockquote>
+      publication workflow in this repository; it is a versioned repository file you may share
+      deliberately.</blockquote>
   </header>
 
   <section>
@@ -521,8 +522,8 @@
       <div class="gate-row ok"><span class="n">Local</span><span><code>just setup</code>, <code>just lint</code>, <code>just test</code>, and <code>just pre-push</code> are the maintained entry points; recipe contents are the source of truth</span><span class="pill pass">Configured</span></div>
       <div class="gate-row ok"><span class="n">CI</span><span>Locked Rust/web/schema/guard checks, Gitleaks, static workflow analysis, advisory scans, and promotion-only cross-platform Tauri builds are defined</span><span class="pill pass">Configured</span></div>
       <div class="gate-row ok"><span class="n">Flow</span><span><code>development → staging → main</code>, with exact PR-head and post-merge workflow-SHA evidence required by the human procedure</span><span class="pill pass">Documented</span></div>
-      <div class="gate-row block"><span class="n">Free</span><span>Branch protection/rulesets, required reviews, CODEOWNERS enforcement, and native secret-scanning enforcement are unavailable; CI cannot block an administrator merge</span><span class="pill">Unavailable</span></div>
-      <div class="gate-row ok"><span class="n">Actions</span><span>Full-SHA enforcement is active for workflow dependencies; exact selected-action patterns remain unavailable on this private non-enterprise plan, so Actions remain allowed from all sources</span><span class="pill pass">Enforced</span></div>
+      <div class="gate-row block"><span class="n">Protection</span><span>The repository is public; native secret scanning, push protection, and private vulnerability reporting are enabled. Branch protection and rulesets are available but not configured, so CI still cannot block an administrator merge</span><span class="pill">Not configured</span></div>
+      <div class="gate-row ok"><span class="n">Actions</span><span>Every workflow dependency uses a full commit SHA from the repository allowlist, and repository policy enforces that checked-in surface; any repository-wide selected-Action setting is a separate live configuration step</span><span class="pill pass">Enforced</span></div>
       <div class="gate-row block"><span class="n">Release</span><span>Published-release immutability is enabled, but releases intentionally fail until verified tag signing, an updater keypair generated on the offline signing host, its public key in <code>tauri.conf.json</code>, and platform signing are configured — the private key stays on that host and never reaches a step that compiles third-party code (microsteps 5.5.0 and 5.5.1)</span><span class="pill">Blocked safely</span></div>
       <div class="gate-row ok"><span class="n">Coverage</span><span>The catalogue reconciliation runs in the local <code>just lint</code> gate and in CI: the <code>rust</code> job runs the reconciliation, because it reads nextest listings, and <code>guards</code> runs its <code>--self-test</code></span><span class="pill pass">Enforced</span></div>
     </div>
