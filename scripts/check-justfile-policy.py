@@ -195,11 +195,14 @@ def main() -> int:
     for required in (
         "gh auth status",
         "state,url,baseRefName,baseRefOid,headRefName,headRefOid,headRepository,isDraft,title,body",
+        "title=${before[8]}",
         '"$base_ref" = development',
         "development|staging|main|hotfix/*",
         "scripts/validate-branch-flow.sh",
+        'scripts/validate-change-title.sh --validate "$title"',
         'scripts/watch-pr-checks.sh "$pr_url"',
         '--match-head-commit "$head_oid" --squash --delete-branch',
+        '--subject "$title (#$pr_number)"',
     ):
         if required not in merge_body:
             failures.append(f"merge: safe work-PR contract is missing {required!r}")
@@ -304,8 +307,9 @@ exit 92
 
     # Exercise the real merge recipe and readiness watcher with a fake GitHub
     # CLI. This proves route refusals occur before check evidence is collected,
-    # both tips are re-read after the watcher, hostile targets remain argv data,
-    # and the only successful mutation carries GitHub's atomic head match.
+    # both tips are re-read after the watcher, hostile inputs remain argv data,
+    # and the only successful mutation carries GitHub's atomic head match and
+    # the validated snapshot title.
     with tempfile.TemporaryDirectory(prefix="pos-merge-policy-") as temporary:
         temp = Path(temporary)
         calls = temp / "calls"
@@ -358,6 +362,8 @@ if [ "${1:-}" = pr ] && [ "${2:-}" = view ]; then
     closed) state=CLOSED ;;
     draft) draft=true ;;
     invalid-route) head=feature/not-in-the-repository-grammar ;;
+    invalid-title) title='--self-test' ;;
+    valid-title) title='fix(repo): merge $(printf PWNED) safely   [—]' ;;
     foreign) pr_url=https://github.com/other/pos/pull/42 ;;
     head-drift) [ "$merge_view_count" -lt 2 ] || head_oid=cccccccccccccccccccccccccccccccccccccccc ;;
     base-drift) [ "$merge_view_count" -lt 2 ] || base_oid=dddddddddddddddddddddddddddddddddddddddd ;;
@@ -468,9 +474,20 @@ exit 95
             if " <merge>" in recorded:
                 failures.append(f"merge: {scenario} reached the merge mutation")
 
+        result = run_merge("invalid-title")
+        recorded = calls.read_text(encoding="utf-8")
+        if result.returncode == 0:
+            failures.append("merge: an invalid PR title unexpectedly succeeded")
+        if " <merge>" in recorded:
+            failures.append("merge: an invalid PR title reached the merge mutation")
+        if "got: --self-test" not in result.stderr:
+            failures.append("merge: an invalid PR title was not named in the refusal")
+        if "Edit the title on https://github.com/owner/pos/pull/42" not in result.stderr:
+            failures.append("merge: an invalid PR title refusal gave no remediation")
+
         sentinel = temp / "shell-injection-ran"
         hostile_target = f"42; $(touch {sentinel})"
-        result = run_merge("success", hostile_target)
+        result = run_merge("valid-title", hostile_target)
         recorded = calls.read_text(encoding="utf-8")
         if result.returncode != 0:
             failures.append(
@@ -481,13 +498,14 @@ exit 95
         expected_merge = (
             "gh <pr> <merge> <https://github.com/owner/pos/pull/42> "
             "<--match-head-commit> <bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb> "
-            "<--squash> <--delete-branch>"
+            "<--squash> <--delete-branch> <--subject> "
+            "<fix(repo): merge $(printf PWNED) safely   [—] (#42)>"
         )
         merge_calls = [line for line in recorded.splitlines() if " <merge>" in line]
         if merge_calls != [expected_merge]:
             failures.append(
                 "merge: successful work PR did not use the canonical URL, exact head, "
-                "squash mode, and branch deletion exactly once"
+                "squash mode, branch deletion, and validated subject exactly once"
             )
 
     if failures:
@@ -496,7 +514,7 @@ exit 95
         return 1
     print(
         "justfile-policy: branch, PR, and merge inputs remain quoted data; "
-        "merge routes and tips are fail-closed"
+        "merge routes, tips, and titles are fail-closed"
     )
     return 0
 
