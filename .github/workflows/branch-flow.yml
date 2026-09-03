@@ -126,8 +126,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # Title, body, and branch names go through env, never through expressions
-      # embedded in shell source. All validators come from the workflow revision.
+      # Branch names and immutable PR coordinates go through env, never through
+      # expressions embedded in shell source. Mutable PR text is fetched once at
+      # the point of use and stays in files or quoted variables. All validators
+      # come from the workflow revision.
       - name: A PR must flow feature → development → staging → main
         env:
           HEAD_REF: ${{ github.head_ref }}
@@ -139,27 +141,89 @@ jobs:
           "$GITHUB_WORKSPACE/scripts/validate-branch-flow.sh" \
             "$HEAD_REF" "$BASE_REF" "$HEAD_REPO" "$BASE_REPO"
 
-      - name: PR title is the squash commit message, so it obeys conventions §8
+      - name: A work PR title obeys conventions §8 or Dependabot can normalize it
         env:
           HEAD_REF: ${{ github.head_ref }}
-          TITLE: ${{ github.event.pull_request.title }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
+          live_pr="$RUNNER_TEMP/live-pr.json"
+          gh api --method GET "repos/$GH_REPO/pulls/$PR_NUMBER" > "$live_pr"
+
           case "$HEAD_REF" in
             development|staging|main|hotfix/*)
               echo "promotion, back-merge, or hotfix PR — merged with a merge commit, so the title is free text. Skipping."
               exit 0 ;;
           esac
-          "$GITHUB_WORKSPACE/scripts/validate-change-title.sh" --validate "$TITLE"
+
+          title_fields="$RUNNER_TEMP/live-pr-title-fields"
+          "$GITHUB_WORKSPACE/scripts/run-python.sh" - "$live_pr" > "$title_fields" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as source:
+              pull = json.load(source)
+          title = pull.get("title") if isinstance(pull, dict) else None
+          user = pull.get("user") if isinstance(pull, dict) else None
+          author = user.get("login") if isinstance(user, dict) else None
+          if not isinstance(title, str) or not title:
+              raise SystemExit("GitHub returned an invalid PR title")
+          if not isinstance(author, str) or not author:
+              raise SystemExit("GitHub returned an invalid PR author")
+          if "\0" in title or "\0" in author:
+              raise SystemExit("GitHub returned NUL in PR metadata")
+          sys.stdout.buffer.write(title.encode("utf-8") + b"\0")
+          sys.stdout.buffer.write(author.encode("utf-8") + b"\0")
+          PY
+          fields=()
+          while IFS= read -r -d '' field; do fields+=("$field"); done < "$title_fields"
+          [ "${#fields[@]}" -eq 2 ] || {
+            echo "::error::GitHub returned ambiguous PR title metadata"
+            exit 1
+          }
+          title=${fields[0]}
+          author=${fields[1]}
+
+          validator="$GITHUB_WORKSPACE/scripts/validate-change-title.sh"
+          if "$validator" --validate "$title" >/dev/null 2>&1; then
+            exit 0
+          fi
+          if [ "$author" = 'dependabot[bot]' ]; then
+            "$validator" --normalize "$title" >/dev/null
+            echo "Dependabot title is normalizable; the write-scoped labeler owns the canonical edit."
+            exit 0
+          fi
+          "$validator" --validate "$title"
 
       - name: PR title and body contain no assistant attribution
-        env:
-          TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           set -euo pipefail
+          live_pr="$RUNNER_TEMP/live-pr.json"
+          [ -f "$live_pr" ] || {
+            echo "::error::live PR metadata is unavailable"
+            exit 1
+          }
           message_file="$RUNNER_TEMP/pr-title-and-body.txt"
-          printf '%s\n%s' "$TITLE" "$PR_BODY" > "$message_file"
+          "$GITHUB_WORKSPACE/scripts/run-python.sh" - "$live_pr" > "$message_file" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as source:
+              pull = json.load(source)
+          title = pull.get("title") if isinstance(pull, dict) else None
+          body = pull.get("body") if isinstance(pull, dict) else None
+          if not isinstance(title, str) or not title:
+              raise SystemExit("GitHub returned an invalid PR title")
+          if body is None:
+              body = ""
+          if not isinstance(body, str):
+              raise SystemExit("GitHub returned an invalid PR body")
+          sys.stdout.write(title)
+          sys.stdout.write("\n")
+          sys.stdout.write(body)
+          PY
           "$GITHUB_WORKSPACE/scripts/check-automation-attribution.py" \
             --message-file "$message_file"
 

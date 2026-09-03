@@ -356,8 +356,17 @@ therefore passes a conforming title unchanged and sends any other title through 
 validator's tested normalizer. That mode adds `[—]` when no canonical tag is present, removes an
 anchored generated directory suffix, then removes an anchored generated group suffix only if the
 subject is still overlength. As a last resort it truncates at a clean word boundary, and it validates
-its own output before the resulting edit retriggers title validation and type labeling. This is not
-a grammar exemption. A commit with the exact Dependabot author name/email may retain the exact
+its own output.
+
+That edit **retriggers nothing.** GitHub fires no workflow event for a `GITHUB_TOKEN`-authored
+action, so `branch-flow` never re-ran and stayed on the title in the stored event payload — which is
+why every Dependabot pull request was red on `topology` and why a re-run did not help: a re-run
+replays the same payload. Merged PRs #81 and #82 show it, reporting the pre-normalization title
+while the merged title carried its tag. The title check therefore reads the title **live** from the
+REST endpoint, and for the exact author `dependabot[bot]` it accepts a title the trusted normalizer
+accepts, because the write-scoped labeler owns the canonical edit and the two workflows race. A
+human's merely-normalizable title is still refused: the PR title becomes the commit subject, and
+`just merge` would refuse it anyway. This is not a grammar exemption. A commit with the exact Dependabot author name/email may retain the exact
 GitHub-generated trailer, but that locally configurable metadata is a compatibility signal, not
 authenticated App provenance. Coding assistants are tools and never receive co-author or
 generated-by attribution.
