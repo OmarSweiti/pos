@@ -43,7 +43,7 @@ complete. `1.6.3` is now **fully delivered**: `crates/pos-db/tests/role_matrix.r
 128 seeded `role_capability` rows and holds each one to `cap::DEFAULT_MATRIX`, so the grid the
 domain declares and the grid the register ships are the same grid or the gate is red.
 Group 1.2 begins with the **partially delivered** `1.2.0` benchmark gate: `just
-bench-gate`, `scripts/bench-gate.py`, its fourteen refusal-path tests, and
+bench-gate`, `scripts/bench-gate.py`, its refusal-path suite, and
 `benchmarks/reference-register.toml` are committed with **every identity value deliberately blank**
 beside §6a.1's empty register-hardware table. `python3 scripts/bench-gate.py --check-profile`
 therefore exits **non-zero**, which is conventions §7.1 working rather than failing; filling both
