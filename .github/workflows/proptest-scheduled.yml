@@ -2,7 +2,7 @@ name: proptest-scheduled
 
 on:
   schedule:
-    # Weekly high-count coverage without putting the metered full CI matrix on a cron.
+    # Weekly high-count coverage without putting the whole CI matrix on a cron.
     - cron: "37 2 * * 6"
   workflow_dispatch:
 

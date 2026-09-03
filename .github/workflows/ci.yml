@@ -8,10 +8,10 @@ on:
 permissions:
   contents: read
 
-# A superseded run is wasted money. This is a PRIVATE repository on the GitHub Free
-# plan, so Actions minutes are metered — 2,000/month, and macOS bills at 10x — which
-# makes "cancel the run nobody is waiting for any more" a budget decision, not a tidy
-# one. Never cancel on the release branches: a half-cancelled promotion build tells
+# A superseded run is wasted capacity. This repository is public, so standard-runner
+# minutes are not metered and the old 2,000/month budget argument is void — but a run
+# nobody is waiting for still occupies a runner and delays the one that matters, so
+# cancelling it is a latency decision rather than a tidy one. Never cancel on the release branches: a half-cancelled promotion build tells
 # you nothing about whether staging was green.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -384,7 +384,9 @@ jobs:
         run: pnpm audit --audit-level high
 
   # The register ships on three operating systems, but a full matrix on every
-  # feature PR is not affordable on metered Free-plan minutes (macOS bills at 10x).
+  # feature PR triples its wall-clock. Minutes are no longer metered here, so this
+  # gate now rests on latency alone — a weaker argument than the one it was written
+  # with, and the reason removing it is a queued change rather than a settled one.
   #
   # The Linux runner is `ubuntu-latest`, like every other job here. It was pinned
   # to `ubuntu-22.04`, whose Python is 3.10 — below the 3.11 floor

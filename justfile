@@ -53,9 +53,9 @@ setup-tools-check:
 node-version-check:
     {{ python }} ./scripts/check-node-version.py
 
-# Branch protection is not available on a private repo on the GitHub Free plan.
-# These hooks are the first local safety net; a machine that has not run this can
-# push straight to main, and `--no-verify` can bypass them.
+# No branch protection or ruleset is configured, so nothing server-side refuses a
+# push. These hooks are the first local safety net; a machine that has not run
+# this can push straight to main, and `--no-verify` can bypass them.
 # Point git at the committed hooks (commit-msg, pre-commit, pre-push)
 hooks:
     git config core.hooksPath .githooks
@@ -359,7 +359,8 @@ gh-actions-policy-dry:
 gh-actions-policy:
     bash ./scripts/gh-actions-policy.sh
 
-# Branch protection. Refuses politely on the Free plan — see the script's header.
+# Refuses, deliberately: written against a 403 a public repository no longer
+# returns, so its PUT would now apply an incomplete check list. See its header.
 gh-protect:
     bash ./scripts/gh-protect.sh
 
@@ -527,8 +528,8 @@ pr $title='' $body='' $milestone='':
 # This is the gap that cost this repository a day. `just pr` watches CI when it
 # OPENS a pull request, and nothing watched the moment that matters: #18 was
 # merged with `rust` failing, and `just lint` was red on development from that
-# merge until it was repaired. Branch protection cannot close this on the Free
-# plan, so the merge path has to.
+# merge until it was repaired. No configured ruleset closes this today, so the
+# merge path has to.
 #
 # The required set is re-derived for THIS PR by the same script `just pr` uses,
 # so a check that has not registered yet cannot be mistaken for a check that
