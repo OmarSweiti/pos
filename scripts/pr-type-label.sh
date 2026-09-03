@@ -2,7 +2,7 @@
 # The `type:` label a PR title earns, printed on stdout. Nothing printed means no
 # label applies.
 #
-#   ./scripts/pr-type-label.sh 'feat(domain): tax engine   [1.3.4]'   ->  type: feat
+#   ./scripts/pr-type-label.sh --label 'feat(domain): tax engine   [1.3.4]'   ->  type: feat
 #   ./scripts/pr-type-label.sh --self-test
 #
 # WHY THIS EXISTS. `.github/labeler.yml` derived `type: docs` from a path glob on
@@ -25,6 +25,12 @@ set -uo pipefail
 # `branch-flow.yml` enforce — if this drifts from those, the label lies.
 TYPES='feat|fix|test|docs|chore|refactor|perf'
 
+usage() {
+  echo "usage: $0 --label '<pr title>'" >&2
+  echo "       $0 --self-test" >&2
+  exit 2
+}
+
 label_for() {                       # label_for <title>
   local title="$1"
   # `<type>(<scope>): …` — the scope is not checked here; branch-flow owns that.
@@ -45,6 +51,19 @@ self_test() {
       printf '  ok    %-14s <- %s\n' "${want:-(none)}" "${title:0:52}"; pass=$((pass+1))
     else
       printf '  FAIL  wanted %-12s got %-12s <- %s\n' "${want:-(none)}" "${got:-(none)}" "$title"; fail=$((fail+1))
+    fi
+  }
+
+  cli_case_is() {                   # cli_case_is <status> <output|--none> <label> <args...>
+    local want_status="$1" want="$2" label="$3" got='' status=0
+    shift 3
+    got=$("$0" "$@" 2>/dev/null) || status=$?
+    [ "$want" = "--none" ] && want=""
+    if [ "$status" -eq "$want_status" ] && [ "$got" = "$want" ]; then
+      printf '  ok    %s\n' "$label"; pass=$((pass+1))
+    else
+      printf '  FAIL  %s (wanted exit %s/output %q, got exit %s/output %q)\n' \
+        "$label" "$want_status" "$want" "$status" "$got"; fail=$((fail+1))
     fi
   }
 
@@ -73,19 +92,33 @@ self_test() {
   # A bare type with no scope is not a legal subject either.
   case_is --none 'feat: tax engine   [1.3.4]'
 
+  echo "pr-type-label.sh — explicit mode selection"
+  cli_case_is 0 "type: feat" "explicit labeling emits the correct label" \
+    --label 'feat(domain): tax engine, inclusive extraction   [1.3.4]'
+  cli_case_is 0 --none "a title cannot select the self-test mode" \
+    --label '--self-test'
+  cli_case_is 0 --none "a title cannot select the label mode" \
+    --label '--label'
+  cli_case_is 2 --none "a bare title cannot select labeling" \
+    'feat(domain): tax engine, inclusive extraction   [1.3.4]'
+  cli_case_is 2 --none "the self-test mode refuses extra arguments" \
+    --self-test unexpected
+  cli_case_is 2 --none "the label mode requires one title" --label
+
   printf '\n%s passed, %s failed\n' "$pass" "$fail"
   [ "$fail" -eq 0 ]
 }
 
 if [ "${1:-}" = "--self-test" ]; then
+  [ "$#" -eq 1 ] || usage
   self_test
   exit $?
 fi
 
-if [ $# -lt 1 ]; then
-  echo "usage: $0 '<pr title>'" >&2
-  echo "       $0 --self-test" >&2
-  exit 2
+if [ "${1:-}" = "--label" ]; then
+  [ "$#" -eq 2 ] || usage
+  label_for "$2"
+  exit $?
 fi
 
-label_for "$1"
+usage
