@@ -196,16 +196,42 @@ def main() -> int:
         "gh auth status",
         "state,url,baseRefName,baseRefOid,headRefName,headRefOid,headRepository,isDraft,title,body",
         "title=${before[8]}",
+        "body=${before[9]}",
         '"$base_ref" = development',
         "development|staging|main|hotfix/*",
         "scripts/validate-branch-flow.sh",
         'scripts/validate-change-title.sh --validate "$title"',
+        'printf \'%s\\n%s\' "$title" "$body" > "$snapshot_file"',
+        "scripts/check-automation-attribution.py",
+        '--message-file "$snapshot_file"',
         'scripts/watch-pr-checks.sh "$pr_url"',
+        'printf \'%s\' "$body" > "$snapshot_file"',
         '--match-head-commit "$head_oid" --squash --delete-branch',
         '--subject "$title (#$pr_number)"',
+        '--body-file "$snapshot_file"',
     ):
         if required not in merge_body:
             failures.append(f"merge: safe work-PR contract is missing {required!r}")
+    title_position = merge_body.find('scripts/validate-change-title.sh --validate "$title"')
+    message_position = merge_body.find(
+        'printf \'%s\\n%s\' "$title" "$body" > "$snapshot_file"'
+    )
+    attribution_position = merge_body.find("scripts/check-automation-attribution.py")
+    watcher_position = merge_body.find('scripts/watch-pr-checks.sh "$pr_url"')
+    if (
+        title_position < 0
+        or message_position < 0
+        or attribution_position < 0
+        or watcher_position < 0
+        or title_position > message_position
+        or message_position > attribution_position
+        or attribution_position > watcher_position
+    ):
+        failures.append(
+            "merge: snapshot attribution must be assembled and refused before checks are watched"
+        )
+    if '--body "$body"' in merge_body:
+        failures.append("merge: an unbounded PR body must travel through --body-file")
     if 'gh pr merge "$target"' in merge_body:
         failures.append("merge: the caller-supplied target must be canonicalized before merge")
 
@@ -307,13 +333,20 @@ exit 92
 
     # Exercise the real merge recipe and readiness watcher with a fake GitHub
     # CLI. This proves route refusals occur before check evidence is collected,
-    # both tips are re-read after the watcher, hostile inputs remain argv data,
-    # and the only successful mutation carries GitHub's atomic head match and
-    # the validated snapshot title.
+    # both tips are re-read after the watcher, hostile inputs remain data, and
+    # the only successful mutation carries GitHub's atomic head match plus the
+    # validated snapshot title and body.
     with tempfile.TemporaryDirectory(prefix="pos-merge-policy-") as temporary:
         temp = Path(temporary)
         calls = temp / "calls"
         view_count = temp / "view-count"
+        body_capture = temp / "body-capture"
+        sentinel = temp / "shell-injection-ran"
+        valid_body = (
+            "Reviewed body\r\n"
+            f'Literal shell text: $(touch "{sentinel}"); `touch "{sentinel}"`; '
+            '${HOME}; "quoted"; ; & | < >\r\n\r\n'
+        )
         fake_gh = temp / "gh"
         fake_gh.write_text(
             r'''#!/usr/bin/env bash
@@ -363,11 +396,17 @@ if [ "${1:-}" = pr ] && [ "${2:-}" = view ]; then
     draft) draft=true ;;
     invalid-route) head=feature/not-in-the-repository-grammar ;;
     invalid-title) title='--self-test' ;;
-    valid-title) title='fix(repo): merge $(printf PWNED) safely   [—]' ;;
+    forbidden-body) body='Reviewed body.
+Co-authored-by: Claude <noreply@anthropic.com>' ;;
+    valid-body)
+      title='fix(repo): merge $(printf PWNED) safely   [—]'
+      body="$POLICY_VALID_BODY"
+      ;;
     foreign) pr_url=https://github.com/other/pos/pull/42 ;;
     head-drift) [ "$merge_view_count" -lt 2 ] || head_oid=cccccccccccccccccccccccccccccccccccccccc ;;
     base-drift) [ "$merge_view_count" -lt 2 ] || base_oid=dddddddddddddddddddddddddddddddddddddddd ;;
     metadata-drift) [ "$merge_view_count" -lt 2 ] || title='fix(repo): changed after checks   [—]' ;;
+    body-drift) [ "$merge_view_count" -lt 2 ] || body='changed after checks' ;;
   esac
   case "$json_fields" in
     *changedFiles*)
@@ -379,8 +418,30 @@ if [ "${1:-}" = pr ] && [ "${2:-}" = view ]; then
       printf 'https://github.com/owner/pos/pull/42\n'
       ;;
     *)
-      printf '{"state":"%s","url":"%s","baseRefName":"%s","baseRefOid":"%s","headRefName":"%s","headRefOid":"%s","headRepository":{"nameWithOwner":"owner/pos"},"isDraft":%s,"title":"%s","body":"%s"}\n' \
-        "$state" "$pr_url" "$base" "$base_oid" "$head" "$head_oid" "$draft" "$title" "$body"
+      "$POLICY_PYTHON" - \
+        "$state" "$pr_url" "$base" "$base_oid" "$head" "$head_oid" \
+        "$draft" "$title" "$body" <<'PY'
+import json
+import sys
+
+state, url, base, base_oid, head, head_oid, draft, title, body = sys.argv[1:]
+print(
+    json.dumps(
+        {
+            "state": state,
+            "url": url,
+            "baseRefName": base,
+            "baseRefOid": base_oid,
+            "headRefName": head,
+            "headRefOid": head_oid,
+            "headRepository": {"nameWithOwner": "owner/pos"},
+            "isDraft": draft == "true",
+            "title": title,
+            "body": body,
+        }
+    )
+)
+PY
       ;;
   esac
   exit 0
@@ -419,6 +480,32 @@ if [ "${1:-}" = api ]; then
   exit 0
 fi
 if [ "${1:-}" = pr ] && [ "${2:-}" = merge ]; then
+  body_file=''
+  body_file_count=0
+  body_file_value_next=false
+  for argument in "$@"; do
+    if "$body_file_value_next"; then
+      body_file=$argument
+      body_file_value_next=false
+      continue
+    fi
+    if [ "$argument" = --body-file ]; then
+      body_file_count=$((body_file_count + 1))
+      body_file_value_next=true
+    fi
+  done
+  [ "$body_file_count" -eq 1 ] && ! "$body_file_value_next" \
+    && [ -f "$body_file" ] || exit 96
+  "$POLICY_PYTHON" - \
+    "$body_file" "$POLICY_BODY_CAPTURE" "$POLICY_CALLS" <<'PY'
+import sys
+from pathlib import Path
+
+body = Path(sys.argv[1]).read_bytes()
+Path(sys.argv[2]).write_bytes(body)
+with Path(sys.argv[3]).open("a", encoding="utf-8") as calls:
+    calls.write(f"gh <body-file-bytes> <{body.hex()}>\n")
+PY
   exit 0
 fi
 exit 95
@@ -430,12 +517,17 @@ exit 95
         def run_merge(scenario: str, target: str = "42") -> subprocess.CompletedProcess[str]:
             calls.write_text("", encoding="utf-8")
             view_count.unlink(missing_ok=True)
+            body_capture.unlink(missing_ok=True)
+            sentinel.unlink(missing_ok=True)
             environment = os.environ.copy()
             environment.update(
                 {
                     "PATH": f"{temp}{os.pathsep}{environment['PATH']}",
+                    "POLICY_BODY_CAPTURE": str(body_capture),
                     "POLICY_CALLS": str(calls),
+                    "POLICY_PYTHON": sys.executable,
                     "POLICY_SCENARIO": scenario,
+                    "POLICY_VALID_BODY": valid_body,
                     "POLICY_VIEW_COUNT": str(view_count),
                 }
             )
@@ -466,7 +558,7 @@ exit 95
                     f"merge: {scenario} PR reached check collection or a merge mutation"
                 )
 
-        for scenario in ("head-drift", "base-drift", "metadata-drift"):
+        for scenario in ("head-drift", "base-drift", "metadata-drift", "body-drift"):
             result = run_merge(scenario)
             recorded = calls.read_text(encoding="utf-8")
             if result.returncode == 0:
@@ -485,9 +577,24 @@ exit 95
         if "Edit the title on https://github.com/owner/pos/pull/42" not in result.stderr:
             failures.append("merge: an invalid PR title refusal gave no remediation")
 
-        sentinel = temp / "shell-injection-ran"
+        result = run_merge("forbidden-body")
+        recorded = calls.read_text(encoding="utf-8")
+        if result.returncode == 0:
+            failures.append("merge: forbidden attribution in a PR body unexpectedly succeeded")
+        if " <checks>" in recorded or " <merge>" in recorded:
+            failures.append(
+                "merge: forbidden attribution in a PR body reached checks or a merge mutation"
+            )
+        if "PR title or body contains forbidden assistant attribution" not in result.stderr:
+            failures.append("merge: forbidden body attribution was not named in the refusal")
+        if (
+            "Remove the attribution from https://github.com/owner/pos/pull/42"
+            not in result.stderr
+        ):
+            failures.append("merge: forbidden body attribution refusal gave no remediation")
+
         hostile_target = f"42; $(touch {sentinel})"
-        result = run_merge("valid-title", hostile_target)
+        result = run_merge("valid-body", hostile_target)
         recorded = calls.read_text(encoding="utf-8")
         if result.returncode != 0:
             failures.append(
@@ -502,11 +609,31 @@ exit 95
             "<fix(repo): merge $(printf PWNED) safely   [—] (#42)>"
         )
         merge_calls = [line for line in recorded.splitlines() if " <merge>" in line]
+        body_file_marker = " <--body-file> <"
+        if len(merge_calls) != 1 or merge_calls[0].count(body_file_marker) != 1:
+            failures.append(
+                "merge: successful work PR did not carry exactly one --body-file argument"
+            )
+        elif not merge_calls[0].endswith(">"):
+            failures.append("merge: successful work PR recorded a malformed body-file argument")
+        else:
+            body_file_path = merge_calls[0].split(body_file_marker, 1)[1][:-1]
+            expected_merge += f"{body_file_marker}{body_file_path}>"
         if merge_calls != [expected_merge]:
             failures.append(
                 "merge: successful work PR did not use the canonical URL, exact head, "
-                "squash mode, branch deletion, and validated subject exactly once"
+                "squash mode, branch deletion, validated subject, and body file exactly once"
             )
+        expected_body_record = f"gh <body-file-bytes> <{valid_body.encode().hex()}>"
+        body_records = [
+            line
+            for line in recorded.splitlines()
+            if line.startswith("gh <body-file-bytes>")
+        ]
+        if body_records != [expected_body_record]:
+            failures.append("merge: fake gh did not observe the exact snapshotted body bytes")
+        if not body_capture.exists() or body_capture.read_bytes() != valid_body.encode():
+            failures.append("merge: --body-file did not preserve the snapshotted body bytes")
 
     if failures:
         for failure in failures:
@@ -514,7 +641,7 @@ exit 95
         return 1
     print(
         "justfile-policy: branch, PR, and merge inputs remain quoted data; "
-        "merge routes, tips, and titles are fail-closed"
+        "merge routes, tips, titles, and bodies are fail-closed"
     )
     return 0
 
