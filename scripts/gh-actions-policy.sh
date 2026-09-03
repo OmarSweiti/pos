@@ -2,10 +2,11 @@
 # Enable GitHub's full-SHA Actions policy only after every checked-in workflow
 # has passed a local immutable-reference and repository-allowlist preflight.
 #
-# Exact `patterns_allowed` enforcement is intentionally not attempted here:
-# GitHub documents that repository action patterns apply to private repositories
-# only when the repository belongs to an enterprise. This private user-owned
-# repository therefore retains `allowed_actions: all`; the full-SHA requirement
+# Exact `patterns_allowed` enforcement is intentionally not attempted here. What
+# this repository enforces is the full-SHA requirement below, in the checked-in
+# workflows and in policy. Whether GitHub offers exact action patterns for it now
+# that it is public is a live setting this script does not read and does not
+# claim either way; it leaves `allowed_actions` as it finds it. The requirement
 # is still server-enforced and this script rejects unknown action repositories.
 set -euo pipefail
 readonly MODE=${1:-}
@@ -331,7 +332,7 @@ echo
 echo "repository: $repo"
 echo "current: enabled=$enabled allowed_actions=$allowed sha_pinning_required=$sha_required"
 echo "target:  enabled=true allowed_actions=$allowed sha_pinning_required=true"
-echo "note: exact selected-action patterns are unavailable for this private, non-enterprise repository"
+echo "note: exact selected-action patterns are not configured here; full-SHA pinning is what is enforced"
 echo "default branch: $default_branch"
 echo "local HEAD:     $local_head"
 echo "remote HEAD:    $remote_head"

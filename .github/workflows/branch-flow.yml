@@ -1,8 +1,8 @@
 name: branch-flow
 
-# Branch protection and rulesets are unavailable on a PRIVATE repository on the
-# GitHub Free plan. This workflow therefore makes violations visible and logged,
-# but it cannot prevent the repository administrator from merging a red check.
+# No branch protection or ruleset is configured, so no check is a merge wall.
+# This workflow therefore makes violations visible and logged, but it cannot
+# prevent the repository administrator from merging a red check.
 # Paid-plan enforcement is intentionally out of scope.
 #
 # `pull_request_target` is load-bearing here: GitHub reads this workflow from the

@@ -49,11 +49,13 @@ never add AI attribution trailers. The exact Dependabot bot author/trailer combi
 narrow compatibility exception and uses the same title grammar with `[—]`; Git author metadata
 alone is not cryptographic proof of App identity.
 
-Branch protection does **not** exist here: the repo is private on the GitHub Free plan, where
-protection and rulesets both answer 403. The git hooks in `.githooks/` are the first local safety
-net, so `just setup` is not optional — a clone that skipped it, or an explicit `--no-verify`, can
-still bypass them. CI makes violations loud and reviewable but cannot block this repository's
-administrator on the current plan.
+Branch protection is **available and unconfigured** — the repository has been public since
+30 August 2026, so `branches/main/protection` answers `404 Branch not protected` rather than the
+former 403, and the rulesets API reports zero rulesets. Availability is not configuration: nothing
+server-side requires a check today. The git hooks in `.githooks/` are the first local safety net,
+so `just setup` is not optional — a clone that skipped it, or an explicit `--no-verify`, can still
+bypass them. CI makes violations loud and reviewable but cannot yet block a merge, because no rule
+has been written to make it.
 [`03-github-workflow.md`](docs/implementation/03-github-workflow.md) §3 has the full honest table.
 
 ## The nine invariants
