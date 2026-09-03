@@ -5,7 +5,8 @@
 # workflow that treats the exact PR head as data and executes only policy from
 # the commit that supplied the trusted workflow definition. Also prevent a
 # green PR from weakening the workflow/policy blobs that a future trusted
-# workflow revision would execute.
+# workflow revision would execute, or from placing a just-invoked repository
+# helper outside that reviewed surface.
 
 require "psych"
 require "json"
@@ -52,22 +53,27 @@ STATIC_POLICY_PATHS = %w[
   js-license-policy.json
   ruff.toml
   justfile
+  scripts/bench-gate.py
   scripts/check-automation-attribution.py
   scripts/check-branch-workflow-policy.rb
+  scripts/check-ci-gate-parity.py
   scripts/check-doc-links.py
   scripts/check-doc-links.sh
   scripts/check-node-version.py
   scripts/check-domain-acyclic.py
   scripts/check-domain-purity.py
+  scripts/check-implementation-frontier.py
   scripts/check-justfile-policy.py
   scripts/check-js-licenses.py
   scripts/check-logical-css.sh
   scripts/check-prop-test-names.py
   scripts/check-protected-paths.sh
   scripts/check-staged-policy.py
+  scripts/check-test-catalog.py
   scripts/check-workspace-lints.py
   scripts/check-web-build-coverage.py
   scripts/gh-bootstrap.sh
+  scripts/gh-protect.sh
   scripts/gh-project.sh
   scripts/gh-actions-policy.sh
   scripts/install-gitleaks-ci.sh
@@ -79,6 +85,7 @@ STATIC_POLICY_PATHS = %w[
   scripts/rust_lexer.py
   scripts/scan-secrets.sh
   scripts/test-gh-setup.sh
+  scripts/tests/bench_gate_test.py
   scripts/validate-branch-flow.sh
   scripts/validate-change-title.sh
   scripts/verify-pg-migrations.py
@@ -103,6 +110,7 @@ APPROVED_BIOME_EXCLUSIONS = %w[
 ].freeze
 WORKFLOW_SUFFIXES = %w[.yml .yaml].freeze
 LOCAL_ACTIONS_PATH = ".github/actions"
+JUSTFILE_SCRIPT_CALL = %r{\./((?:scripts|\.agents|\.claude|\.codex|\.githooks)/[\w./-]+)}
 
 EXPECTED_STEPS = {
   "protected-paths" => [
@@ -906,6 +914,36 @@ def policy_paths_for_roots(trusted_root, candidate_root)
   (STATIC_POLICY_PATHS + trusted_workflows + trusted_discoverable).uniq.sort
 end
 
+def justfile_script_paths(root)
+  relative = "justfile"
+  reject_symlink_components(root, relative, "justfile policy path")
+  path = File.join(root, relative)
+  raise PolicyViolation, "justfile policy path is missing" unless File.file?(path)
+  raise PolicyViolation, "justfile policy path must not be a symbolic link" if File.symlink?(path)
+
+  # Every repository helper exposed through `just` can mutate or attest to
+  # project state. Scanning that command surface avoids another recipe-name
+  # allowlist that could drift before a new helper becomes review-bearing.
+  paths = File.read(path, encoding: "UTF-8").each_line.each_with_object([]) do |line, result|
+    next if line.lstrip.start_with?("#")
+
+    line.scan(JUSTFILE_SCRIPT_CALL) { |match| result << match.first }
+  end.uniq.sort
+  raise PolicyViolation, "justfile has no repository-script invocations" if paths.empty?
+
+  paths
+rescue SystemCallError, EncodingError => error
+  raise PolicyViolation, "justfile policy surface could not be read: #{error.message}"
+end
+
+def validate_justfile_script_policy_surface(root)
+  missing = justfile_script_paths(root) - policy_paths_for_root(root)
+  return if missing.empty?
+
+  raise PolicyViolation,
+        "justfile invokes repository scripts outside the frozen policy surface: #{missing.join(', ')}"
+end
+
 def reject_local_actions_path(root, context)
   path = File.join(root, LOCAL_ACTIONS_PATH)
   return unless File.exist?(path) || File.symlink?(path)
@@ -1086,6 +1124,7 @@ def validate_candidate(
     validate_revision_policy(trusted_revision, candidate_revision)
   end
   validate_pinned_policy(trusted_root, candidate_root)
+  validate_justfile_script_policy_surface(candidate_root)
   validate_repository_configuration(candidate_root)
   reject_symlink_components(
     candidate_root,
@@ -1385,6 +1424,49 @@ def self_test(default_path)
       puts "  FAIL  unchanged candidate policy blobs match the trusted workflow revision"
       failed += 1
     end
+
+    puts "check-branch-workflow-policy.rb — justfile script surface"
+    begin
+      validate_justfile_script_policy_surface(candidate_root)
+      puts "  ok    every just-invoked repository script is frozen"
+      passed += 1
+    rescue PolicyViolation
+      puts "  FAIL  every just-invoked repository script is frozen"
+      failed += 1
+    end
+
+    justfile_path = File.join(candidate_root, "justfile")
+    justfile_original = File.read(justfile_path)
+    unfrozen_relative = "scripts/adversarial-unpinned.py"
+    unfrozen_path = File.join(candidate_root, unfrozen_relative)
+    File.write(unfrozen_path, "#!/usr/bin/env python3\n")
+    File.chmod(0o755, unfrozen_path)
+    justfile_mutated = justfile_original.sub(
+      "guards:\n",
+      "guards:\n    python3 ./#{unfrozen_relative}\n"
+    )
+    if justfile_mutated == justfile_original
+      puts "  FAIL  fixture mutation did not add an unfrozen gate script"
+      failed += 1
+    else
+      File.write(justfile_path, justfile_mutated)
+      begin
+        validate_justfile_script_policy_surface(candidate_root)
+        puts "  FAIL  a just-invoked script outside the frozen surface is rejected"
+        failed += 1
+      rescue PolicyViolation => error
+        if error.message.include?(unfrozen_relative)
+          puts "  ok    a just-invoked script outside the frozen surface is rejected"
+          passed += 1
+        else
+          puts "  FAIL  the frozen-surface refusal names the unfrozen script"
+          failed += 1
+        end
+      ensure
+        File.write(justfile_path, justfile_original)
+      end
+    end
+    FileUtils.rm_f(unfrozen_path)
 
     self_node_version = File.read(File.join(trusted_root, ".nvmrc")).strip
     self_rust_version = toml_string(
