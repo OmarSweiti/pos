@@ -44,7 +44,8 @@ forks the branches permanently. `just branch <name>`, `just pr`, `just merge`, `
 `just promote-staging`, `just promote-main`.
 
 Commit and squash titles use `<type>(<scope>): <summary>  [<step>]`, where `<step>` is one
-`N.N.N`, an ordered `N.N.N–N.N.N` range, or `—`. Coding assistants are tools, not co-authors:
+`N.N.N`, a lettered split microstep `N.N.Nx`, an ordered `N.N.N–N.N.N` range, or `—`. Coding
+assistants are tools, not co-authors:
 never add AI attribution trailers. The exact Dependabot bot author/trailer combination is a
 narrow compatibility exception and uses the same title grammar with `[—]`; Git author metadata
 alone is not cryptographic proof of App identity.
@@ -158,7 +159,7 @@ Codex-specific execution policy and hook adapters live under `.codex/`.
 | `.claude/hooks/docs-links-on-write.py` | leaving a broken cross-reference after Claude changes **any** tracked `.md` — the five root documents included — whatever the link target's extension; the `.sh` file is only an inactive POSIX compatibility wrapper |
 | `.claude/hooks/validate-settings.py` | a session-time weakening of the reviewed project or local Claude settings, or the loss of a required skill contract. The one hook here that **fails closed** |
 | `.codex/hooks/` | immutable-path and forward-only SQLx checks for Codex shell, immutable-path checks for `apply_patch`, and complete documentation-link checks after any Markdown `apply_patch` |
-| `.githooks/commit-msg` | a title outside `<type>(<scope>): <summary>  [N.N.N\|N.N.N–N.N.N\|—]`, or coding-assistant attribution |
+| `.githooks/commit-msg` | a title outside `<type>(<scope>): <summary>  [N.N.N\|N.N.Nx\|N.N.N–N.N.N\|—]`, or coding-assistant attribution |
 | `.githooks/pre-commit` | protected/sensitive paths, oversized staged blobs, plan or committed-migration edits, and Gitleaks findings in staged content |
 | `.githooks/pre-push` | direct/force/deletion pushes to the three flow branches, moving/deleting an existing tag, assistant attribution, or a secret anywhere in reachable history |
 | `scripts/check-protected-paths.sh` | a pull request that edits a source plan or a migration already present in its base; `branch-flow.yml` runs policy from the exact trusted workflow revision |

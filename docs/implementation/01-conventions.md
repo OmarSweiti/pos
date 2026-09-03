@@ -209,8 +209,10 @@ docs(impl): phase 2 fiscal conformance harness               [—]
 
 `type` ∈ `feat` `fix` `test` `docs` `chore` `refactor` `perf`. `scope` is the crate or app short name — `domain`, `db`, `sync`, `hardware`, `fiscal`, `terminal`, `server`, `backoffice` — plus `repo` for the workspace itself (gates, CI, tooling) and `impl` for the implementation doc set. The list is closed: `.githooks/commit-msg` refuses anything else, and so does the `branch-flow` check on a pull-request title. One microstep, one commit, wherever possible — a bisect that lands on a microstep tells you exactly what broke.
 
-`step` is exactly one microstep (`1.3.4`), an inclusive microstep range joined by an en dash
-(`1.3.4–1.3.6`), or an em dash (`—`) for repository work outside the implementation plan.
+`step` is exactly one microstep (`1.3.4`), a lettered split microstep (`1.1.2a` — Phase 1 alone
+declares thirteen, and the letter is what keeps two independently green halves distinguishable), an
+inclusive microstep range joined by an en dash (`1.3.4–1.3.6`), or an em dash (`—`) for repository
+work outside the implementation plan.
 `scripts/validate-change-title.sh` is the shared parser used by Git and GitHub; do not maintain a
 second regular expression in a workflow.
 
