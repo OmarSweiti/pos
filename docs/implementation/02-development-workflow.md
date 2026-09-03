@@ -116,7 +116,8 @@ Not installed yet, and the microstep that needs each — install when you get th
 |---|---|---|
 | `sqlcipher` CLI | `brew install sqlcipher` | §5.7 — inspecting the encrypted register DB by hand |
 | `criterion` (dep) | workspace `[dev-dependencies]` | 1.4.9 / 1.2.7 benchmarks |
-| Playwright | `pnpm add -D @playwright/test` | 1.9.4 scan-latency trace |
+| Playwright | `pnpm add -D @playwright/test` | 1.11.14 RTL screenshot baselines |
+| WebdriverIO + `tauri-driver` | per 2.9.5 | 1.11.13 scan-latency trace — Playwright drives browser engines and cannot attach to a Tauri webview |
 | `ts-rs` (dep) | workspace dependency | conventions §13 — generated TS types |
 
 Gitleaks is a setup prerequisite, not an optional later tool: pre-commit refuses

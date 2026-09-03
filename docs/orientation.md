@@ -213,7 +213,7 @@ squash merge commits the title:
 <type>(<scope>): <summary>   [<step>]
 ```
 
-The type and scope lists are closed. A step is `N.N.N`, an ordered inclusive `N.N.N–N.N.N` range, or
+The type and scope lists are closed. A step is `N.N.N`, `N.N.Nx` for a lettered split microstep, an ordered inclusive `N.N.N–N.N.N` range, or
 `—`. [`../scripts/check-automation-attribution.py`](../scripts/check-automation-attribution.py)
 rejects coding-assistant co-author and generated-by lines; the exact Dependabot author/trailer
 combination is a narrow compatibility exception, not cryptographic proof of App identity.
