@@ -631,6 +631,7 @@ merge $pr='':
     head_oid=${before[5]}
     head_repository=${before[6]}
     is_draft=${before[7]}
+    title=${before[8]}
 
     [ "$state" = OPEN ] || {
       echo "merge: REFUSED — $pr_url is not open." >&2
@@ -665,6 +666,11 @@ merge $pr='':
       echo "merge: REFUSED — this is not a legal work-branch route." >&2
       exit 1
     }
+    if ! bash ./scripts/validate-change-title.sh --validate "$title"; then
+      echo "merge: REFUSED — the PR title above does not obey conventions §8." >&2
+      echo "  Edit the title on $pr_url, then rerun just merge." >&2
+      exit 1
+    fi
     printf 'merge: verified work route %s@%s -> %s@%s\n' \
       "$head_ref" "$head_oid" "$base_ref" "$base_oid"
 
@@ -696,9 +702,12 @@ merge $pr='':
       exit 1
     }
 
-    # GitHub atomically matches the reviewed head. The immediately preceding
+    # GitHub atomically matches the reviewed head. The explicit subject binds
+    # the validated snapshot title through the mutation and preserves this
+    # repository's established PR-number suffix. The immediately preceding
     # snapshot also closes the base-tip race as far as the API permits.
-    gh pr merge "$pr_url" --match-head-commit "$head_oid" --squash --delete-branch
+    gh pr merge "$pr_url" --match-head-commit "$head_oid" --squash --delete-branch \
+      --subject "$title (#$pr_number)"
 
 # development → staging, as a release candidate. Merge with a MERGE COMMIT.
 promote-staging:
