@@ -24,4 +24,4 @@ case "$subject" in
   Merge\ *|Revert\ *|fixup!*|squash!*|amend!*|"Initial commit") exit 0 ;;
 esac
 
-"$policy_root/scripts/validate-change-title.sh" "$subject"
+"$policy_root/scripts/validate-change-title.sh" --validate "$subject"

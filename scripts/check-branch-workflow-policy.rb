@@ -199,7 +199,7 @@ EXPECTED_RUN = {
         echo "promotion, back-merge, or hotfix PR — merged with a merge commit, so the title is free text. Skipping."
         exit 0 ;;
     esac
-    "$GITHUB_WORKSPACE/scripts/validate-change-title.sh" "$TITLE"
+    "$GITHUB_WORKSPACE/scripts/validate-change-title.sh" --validate "$TITLE"
   SH
   "PR title and body contain no assistant attribution" => <<~'SH'.rstrip,
     set -euo pipefail
@@ -570,6 +570,17 @@ def validate_labeler_file(path)
     run = scalar(step.fetch("run"), "#{context}.run")
     if run.include?("${{") || run.include?("CANDIDATE_ROOT")
       raise PolicyViolation, "#{context}.run must treat event fields as env data and never use candidate code"
+    end
+    if conditional
+      validator_calls = run.lines.grep(/validate-change-title\.sh/).map(&:strip)
+      expected_validator_calls = [
+        'if ./scripts/validate-change-title.sh --validate "$TITLE" >/dev/null 2>&1; then',
+        'if ! normalized=$(./scripts/validate-change-title.sh --normalize "$TITLE"); then'
+      ]
+      unless validator_calls == expected_validator_calls
+        raise PolicyViolation,
+              "#{context}.run must select the reviewed explicit title-validator modes"
+      end
     end
   end
 end
@@ -1101,6 +1112,10 @@ def self_test(default_path)
     "repository-local actions cannot replace checkout" => [CHECKOUT, "./candidate/.github/actions/checkout"],
     "the workflow self-policy step cannot disappear" => ["The next workflow retains this trusted-workflow boundary", "The next workflow skips its trusted-workflow boundary"],
     "promotion titles cannot bypass attribution" => ["          printf '%s\\n%s' \"$TITLE\" \"$PR_BODY\" > \"$message_file\"\n", "          printf '%s' \"$PR_BODY\" > \"$message_file\"\n"],
+    "title validation cannot fall back to ambiguous positional dispatch" => [
+      '"$GITHUB_WORKSPACE/scripts/validate-change-title.sh" --validate "$TITLE"',
+      '"$GITHUB_WORKSPACE/scripts/validate-change-title.sh" "$TITLE"'
+    ],
     "duplicate YAML keys are rejected" => ["permissions:\n", "permissions:\n  contents: read\npermissions:\n"],
     "YAML aliases are rejected" => ["name: branch-flow", "name: &workflow_name branch-flow\nx-copy: *workflow_name"]
   }
@@ -1141,7 +1156,11 @@ def self_test(default_path)
       "labeler content access cannot become writable" => ["  contents: read", "  contents: write"],
       "labeler cannot add a candidate checkout path" => ["          persist-credentials: false\n", "          persist-credentials: false\n          path: candidate\n"],
       "labeler action cannot use a mutable reference" => [LABELER_ACTION, "actions/labeler@v7"],
-      "labeler cannot replace the trusted checkout" => [CHECKOUT, LABELER_ACTION]
+      "labeler cannot replace the trusted checkout" => [CHECKOUT, LABELER_ACTION],
+      "labeler title validation cannot fall back to ambiguous positional dispatch" => [
+        'if ./scripts/validate-change-title.sh --validate "$TITLE" >/dev/null 2>&1; then',
+        'if ./scripts/validate-change-title.sh "$TITLE" >/dev/null 2>&1; then'
+      ]
     }
     labeler_fixture = File.join(directory, "labeler.yml")
     labeler_cases.each do |label, (needle, replacement)|
