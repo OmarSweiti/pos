@@ -17,4 +17,5 @@
 //! commit-manifest writer is scheduled before any repository that appends a
 //! fact.
 
+pub mod approval;
 pub mod outbox;
