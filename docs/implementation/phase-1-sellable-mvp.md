@@ -610,7 +610,7 @@ The grid is declared **with** each capability rather than beside it, so the comp
 **The seed comparison.** `role`, `role_capability` and the `capability` code list arrive in `0004`, seeded from `cap::DEFAULT_MATRIX`. `role_matrix.rs` reads them back and compares: one `role_capability` row for **every** one of the 128 (role, capability) cells, its `decision` column holding `granted`, `withheld` or `sets_the_limit` to match the domain `Grant` exactly — an absent row is the failure, not a denial — and `capability(code)` holding exactly `cap::ALL`. **It opens the database through the registered migration chain, never through `tests/common/mod.rs`'s `full_schema`**, which turns foreign keys off and layers on [`ref/schema.md`](ref/schema.md) reference blocks the shipped chain does not carry. That boundary is 1.2.1's recorded failure declining to repeat: `authorization_scope.rs` and `fact_table_guards.rs` were green against `user_role` and `approval_handle` for weeks before `0004` existed, and a green run against reference SQL is not evidence that a migration shipped.
 
 ### 1.6.4 — `Authorized<C>` and `authorize`
-**Files (current half):** `crates/pos-domain/src/permissions.rs` · `crates/pos-domain/tests/typed_ids_ui.rs` · `crates/pos-domain/tests/ui/` (two compile-fail cases and their goldens)
+**Files (domain and persistence halves):** `crates/pos-domain/src/permissions.rs` · `crates/pos-domain/src/lib.rs` · `crates/pos-domain/tests/typed_ids_ui.rs` · `crates/pos-domain/tests/ui/` (three compile-fail cases and their goldens) · `crates/pos-db/Cargo.toml` · `crates/pos-db/src/lib.rs` · `crates/pos-db/src/repo/mod.rs` · `crates/pos-db/src/repo/approval.rs` (new) · `crates/pos-db/tests/approval.rs` (new) · `docs/implementation/README.md` · `docs/implementation/phase-1-sellable-mvp.md` · `docs/implementation/ref/domain-api.md` · `docs/implementation/ref/test-catalog.md` · `scripts/check-test-catalog.py`
 The proof-carrying token, as a **marker type** — `Authorized<C: Capability>` with a private `PhantomData<fn() -> C>`. Not `Authorized<const C: &'static str>`, which does not compile on any stable rustc: `&'static str` is forbidden as the type of a const generic parameter. Resist "fixing" it with a runtime `&str` field, which throws away the property the design exists for.
 
 `authorize` is the only way to obtain a `&Authorized<C>`, and privileged domain functions require one. Runtime escalation adds a persisted one-use handle:
@@ -623,31 +623,73 @@ pub struct ApprovalHandle {
     issued_at: Timestamp, expires_at: Timestamp, nonce: [u8; 16],
 }
 
+pub struct StoredApprovalHandle {
+    pub id: ApprovalId, pub capability: String,
+    pub actor: UserId, pub approver: UserId, pub entity_id: Uuid,
+    pub amount_minor: i64, pub content_hash: Option<[u8; 32]>,
+    pub reason: String, pub issued_at: Timestamp,
+    pub expires_at: Timestamp, pub nonce: [u8; 16],
+}
+
 impl ApprovalHandle {
     pub fn issue<C: Capability>(
         id: ApprovalId, actor: UserId, approver: &Authorized<C>,
         binding: &ApprovalBinding, reason: String, now: Timestamp,
         ttl_ms: i64, nonce: [u8; 16],
     ) -> Result<Self, PermissionError>;
+    pub fn id(&self) -> ApprovalId;
+    pub fn approver(&self) -> UserId;
+    pub fn reason(&self) -> &str;
     pub fn matches<C: Capability>(&self, actor: UserId,
         binding: &ApprovalBinding, now: Timestamp) -> Result<(), PermissionError>;
+    pub fn to_stored(&self) -> StoredApprovalHandle;
+    pub fn restore(stored: StoredApprovalHandle) -> Result<Self, PermissionError>;
 }
 
-pub fn consume_approval(tx: &Transaction, id: ApprovalId,
-                        binding: &ApprovalBinding, audit_id: Uuid)
-    -> Result<(), PermissionError>;
+pub struct ApprovalRepository<'c> { conn: &'c Connection }
+
+impl<'c> ApprovalRepository<'c> {
+    pub fn new(conn: &'c Connection) -> Self;
+    pub fn insert(&self, tx: &Transaction<'_>, handle: &ApprovalHandle)
+        -> Result<(), DbError>;
+    pub fn load_for_consumption(&self, tx: &Transaction<'_>, id: ApprovalId)
+        -> Result<Option<ApprovalHandle>, DbError>;
+    pub fn ensure_unconsumed(&self, tx: &Transaction<'_>, id: ApprovalId)
+        -> Result<(), DbError>;
+    pub fn consume(&self, tx: &Transaction<'_>, handle_id: ApprovalId,
+        effect_id: Uuid, audit_log_id: Uuid, consumed_at: Timestamp)
+        -> Result<(), DbError>;
+    pub fn is_consumed(&self, id: ApprovalId) -> Result<bool, DbError>;
+}
 ```
 
-Every always-privileged IPC command accepts `approval_id`; a conditionally privileged command accepts `approval_id?` and refuses its privileged branch when the handle is absent. The handler resolves the immutable handle, verifies capability, actor, entity, amount, optional prepared-content hash, reason and expiry, then inserts `approval_consumption` in the same transaction as the effect and audit row. `actor != approver` is unconditional on every handle path; `ban_self_approval` decides whether an operation needs escalation at all and never permits a self-issued handle. Private fields and the sole `issue` constructor stop Rust callers forging a larger amount or altered prepared intent before persistence. The handle itself remains evidence; deleting it would contradict the append-only audit design. JavaScript receives only `ApprovalRef`, never the nonce, content hash or a bearer proof.
-**Tests:** `cashier_cannot_void_a_sale` · `an_actor_cannot_approve_their_own_handle` (E.52) · `an_altered_amount_is_refused` · `a_different_sale_is_refused` · `a_different_actor_is_refused` · `an_expired_handle_is_refused` · `deactivated_user_denied` · `a_handle_used_twice_is_refused` · `a_consumed_handle_is_still_consumed_after_restart` · `the_effect_and_the_consumption_commit_together_or_not_at_all`, and the two `trybuild` cases §8 requires — a forged token is `E0451`, and `Authorized<DiscountManual>` where `Authorized<SaleVoid>` is wanted is `E0308`. The first six and both compile-fail cases are the current half; the last four need the database.
-**Current half done when:** `cargo nextest run -p pos-domain permissions::` passes, including a handle refused for a widened amount, a different sale, a different actor, expiry, and an actor who is also the approver.
+Every always-privileged IPC command accepts `approval_id`; a conditionally privileged command accepts `approval_id?` and refuses its privileged branch when the handle is absent. The handler resolves the immutable handle, verifies capability, actor, entity, amount, optional prepared-content hash, reason and the full half-open validity interval, then inserts `approval_consumption` in the same transaction as the effect and audit row. `actor != approver` is unconditional on every handle path; `ban_self_approval` decides whether an operation needs escalation at all and never permits a self-issued handle. Private fields and the absence of `Deserialize` prevent direct construction or deserialization of `ApprovalHandle`; `issue` remains the only minting path, while trusted persistence may reconstruct only through `restore`, which rechecks the structural invariants. As limit 3 records below, that explicit trusted seam is not proof that the approver authenticated. The handle itself remains evidence; deleting it would contradict the append-only audit design. JavaScript receives only `ApprovalRef`, never the nonce, content hash or a bearer proof.
 
-**Deferred half — the persistence and shell halves.** `consume_approval`, the `approval_consumption` row written in the same transaction as the effect and its audit row, and the IPC command that resolves a stored handle.
-**Files (deferred half):** `crates/pos-db/src/repo/approval.rs` (new) · `crates/pos-db/tests/approval.rs` (new) · `apps/terminal/src-tauri/src/commands/auth.rs` (new)
-**Deferred half tests:** the four database ones named above — `deactivated_user_denied`, `a_handle_used_twice_is_refused`, `a_consumed_handle_is_still_consumed_after_restart` and `the_effect_and_the_consumption_commit_together_or_not_at_all`.
-**Deferred half done when:** `cargo nextest run -p pos-db --test approval` passes, including rollback of both the effect and the consumption under an injected failure.
+The adapter distinguishes `DbError::ApprovalAlreadyConsumed`, `DbError::ApprovalConsumptionUnbound` and `DbError::InvalidStoredApproval { reason }`. None carries a domain type and there is deliberately no automatic `From<PermissionError>` conversion: the shell must map business policy explicitly. A malformed stored row records only the domain error's scrub-safe display text; no digest, nonce or PIN enters the message.
+
+The caller owns the transaction and the write order: refuse an already-consumed id, load and validate the handle, write the complete commit envelope, then write the effect, all thirteen audit columns — with `reason` copied from the handle — and the consumption before one commit. `consume` repeats the one-use check so a caller that omits the early guard receives `DbError::ApprovalAlreadyConsumed`, not an unrelated manifest uniqueness error. The shell maps that storage result to `PermissionError::ApprovalAlreadyUsed(id)` while retaining the id itself; `ApprovalConsumptionUnbound` remains an integrity failure.
+
+**Tests:** `cashier_cannot_void_a_sale` · `an_actor_cannot_approve_their_own_handle` (E.52) · `an_altered_amount_is_refused` · `a_different_sale_is_refused` · `a_different_actor_is_refused` · `an_expired_handle_is_refused` · `an_approval_before_issuance_is_refused` · `approval_debug_output_redacts_content_hash_and_nonce` · `a_handle_used_twice_is_refused` · `a_consumed_handle_is_still_consumed_after_restart` · `the_effect_and_the_consumption_commit_together_or_not_at_all` · `a_stored_handle_round_trips_through_restore` · `a_malformed_stored_handle_is_refused` · `authorized_tokens_cannot_be_forged_or_substituted` · `approval_handles_cannot_be_deserialized`.
+**Domain half done when:** `cargo nextest run -p pos-domain permissions:: && cargo nextest run -p pos-domain --test typed_ids_ui` passes, including the inclusive issuance boundary, compile-time refusal to deserialize `ApprovalHandle`, and compile-time refusal to forge or substitute an `Authorized<C>` token.
+**Persistence half done when:** `cargo nextest run -p pos-db --test approval` passes through the registered migration chain, including restart, rehydration and rollback coverage.
+
+**Deferred half — terminal orchestration only.** The IPC command resolves the stored handle and coordinates validation, effect, audit and consumption after 1.8.x wires `pos-db` into the terminal.
+**Files (deferred half):** `apps/terminal/src-tauri/src/commands/auth.rs` (new)
+**Deferred half done when:** `cargo nextest run -p terminal` passes with stored-handle resolution, explicit permission-error mapping and current-user activity denial exercised across the real IPC orchestration.
 > **The terminal file waits on something this microstep does not own.** `apps/terminal/src-tauri/Cargo.toml` does not depend on `pos-db`, and §17 of [`02-development-workflow.md`](02-development-workflow.md) assigns that wiring to 1.8.x persistence. A command that resolves a persisted handle cannot be written against a crate the terminal does not link, so `commands/auth.rs` follows the persistence wiring rather than leading it.
-**Full-step status:** 1.6.4 is not complete until `consume_approval` writes an `approval_consumption` row in the same transaction as the effect and audit row, and a rollback leaves the handle spendable. The token, the handle, the escalation policy and the two compile-fail proofs are complete and enforced now.
+
+**Persistence boundary and stated limits.** This half proves only the guarantees its present schema and tests can enforce:
+
+1. Migration `0004`'s `approval_consumption_matches_handle_and_audit` trigger does **not** compare `content_hash`. `ApprovalHandle::matches` enforces that binding in Rust, while the per-request database triggers arrive with the prepared-intent tables in migration `0005` and later (the `product_quick_add_request` and stock-request blocks in [`ref/schema.md`](ref/schema.md)). Until those tables and triggers land, no content-hash-bearing capability may ship, and this microstep does not claim to bind prepared content in SQL.
+2. `approval_consumption.effect_id` has no foreign key and no trigger requiring a row with that id. `the_effect_and_the_consumption_commit_together_or_not_at_all` proves the rollback direction and the shared-transaction plumbing; it does not prove that a consumption cannot exist without a financial effect. The end-to-end guarantee belongs to 1.8.3's orchestration and fault-injection work.
+3. `ApprovalHandle::restore` proves structural validity, not that the approver authenticated. The trusted issuance transaction and its immutable evidence own that claim. Rust has no friend-crate visibility, so `pos-db` is a trusted boundary by convention; making reconstruction explicit exposes that trust rather than creating it.
+4. Whether deactivating an **approver** retroactively revokes an already-issued, unexpired handle remains unresolved. No code or prose in this step selects either behavior.
+5. `app_user` carries both `is_active` and `deleted_at`, and no trigger enforces either. Every future current-user activity check must read both; checking only `is_active` would let a soft-deleted user spend an approval. This is command-handler policy, not an `ApprovalRepository` business rule.
+
+> ⚠️ **OPEN — blocks the 1.8.x terminal approval handler.** Does deactivating an approver retroactively revoke an already-issued, unexpired handle? Default until answered: no terminal behavior depending on either answer is declared complete or described as guaranteed. Owner: the 1.8.x command-handler integration. Source that settles it: the reviewed authorization policy and its recorded threat-model decision.
+
+**Full-step status:** 1.6.4 remains incomplete only until the 1.8.x terminal handler resolves a stored handle and orchestrates its explicit permission mapping and same-transaction use. The domain proof and persistence halves, including restart and rollback evidence, are complete.
+**Done when:** `cargo nextest run -p pos-domain permissions:: && cargo nextest run -p pos-domain --test typed_ids_ui && cargo nextest run -p pos-db --test approval && cargo nextest run -p terminal` passes the domain, repository and eventual terminal-handler suites, including `deactivated_user_denied` at the handler boundary.
 
 ### 1.6.5 — Audit hash chain
 **Files:** `Cargo.toml`, `Cargo.lock`, `crates/pos-domain/Cargo.toml`, `crates/pos-domain/src/audit.rs` (new)
@@ -877,7 +919,9 @@ impl FinalizeWritePoint { pub const ALL: &'static [Self]; }
 ```
 
 The fault seam fires before every variant in `FinalizeWritePoint::ALL`. This is an exhaustive catalog, not prose claiming eleven writes while variable line/tax/member counts make that number false. **After commit only**, the drawer and printer effects run.
-**Tests:** `finalize_write_point_catalog_is_exhaustive` · `finalize_is_atomic_under_injected_failure` · `manifest_and_delivery_rows_precede_guarded_facts` · `hardware_failure_after_commit_leaves_sale_complete` · `a_complete_sale_has_one_ready_commit_manifest` · `no_ready_commit_omits_a_required_member` · `approval_effect_audit_and_consumption_commit_together` · `finalize_removes_the_checkout_operation_in_the_same_commit` · `department_line_writes_no_stock_event`
+
+`deactivated_user_denied` belongs to this command-handler gate, not to 1.6.4's repository suite. `app_user.is_active` is stored state, but observing that state in `pos-db` does not prove a command was denied, and repository law excludes business policy. The handler must treat either `is_active = 0` or a non-NULL `deleted_at` as inactive before the financial write. This test names the acting user only; 1.6.4 records the still-open question of whether later deactivation of the **approver** revokes an unexpired handle.
+**Tests:** `finalize_write_point_catalog_is_exhaustive` · `finalize_is_atomic_under_injected_failure` · `manifest_and_delivery_rows_precede_guarded_facts` · `hardware_failure_after_commit_leaves_sale_complete` · `a_complete_sale_has_one_ready_commit_manifest` · `no_ready_commit_omits_a_required_member` · `approval_effect_audit_and_consumption_commit_together` · `deactivated_user_denied` · `finalize_removes_the_checkout_operation_in_the_same_commit` · `department_line_writes_no_stock_event`
 **Done when:** `cargo nextest run -p terminal commands::sale::tests::` injects failure at every `FinalizeWritePoint::ALL` entry and leaves either the whole fact graph plus ready manifest or no financial fact, artifact, job, consumption or delivery row.
 
 ### 1.8.4 — Crash recovery for `Finalizing`

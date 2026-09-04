@@ -56,8 +56,10 @@ to return success on an incomplete one. `1.2.4` (the scan parser's pure half, ne
 against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
 `authorize`, `ApprovalHandle` and `EscalationPolicy` are complete in `pos-domain`, with the two
 compile-fail proofs that a token cannot be forged or substituted across capabilities. Its
-persistence half — `consume_approval`, and the shell command that resolves a stored handle — waits
-on `pos-db` being wired into the terminal, which 1.8.x owns. Neither is **blocked on the merchant legal name or TIN**, which instead gate store
+persistence half now stores, validates, reloads and one-use consumes a handle through a
+caller-owned transaction, with restart and rollback coverage; the additional compile-fail proof
+prevents deserialization from bypassing that validated seam. Only the shell command that resolves
+the stored handle remains deferred until 1.8.x wires `pos-db` into the terminal. It is not **blocked on the merchant legal name or TIN**, which instead gate store
 provisioning and the issuing of a valid tax receipt. `1.3.2` is the next
 code step on the phase's longest critical path, but its `ZeroRatingReason` vocabulary and evidence
 requirements remain externally blocked by the `⚠️ OPEN` item in [`ref/domain-api.md`](ref/domain-api.md)

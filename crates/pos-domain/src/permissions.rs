@@ -39,6 +39,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fmt,
     marker::PhantomData,
 };
 
@@ -643,8 +644,25 @@ impl EscalationPolicy {
 /// The bytes are private to ordinary Rust callers. Deserialization is a trusted
 /// persistence boundary, never an IPC input: the webview supplies neither this
 /// digest nor an [`ApprovalHandle`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreparedIntentHash([u8; 32]);
+
+struct Redacted;
+
+impl fmt::Debug for Redacted {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<redacted>")
+    }
+}
+
+impl fmt::Debug for PreparedIntentHash {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("PreparedIntentHash")
+            .field(&Redacted)
+            .finish()
+    }
+}
 
 /// The exact operation a manager was shown before approving it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -654,14 +672,37 @@ pub struct ApprovalBinding {
     pub content_hash: Option<PreparedIntentHash>,
 }
 
+/// Stored approval columns crossing the trusted persistence boundary.
+///
+/// This record is transport, not proof: its fields are public so a repository
+/// can bind and read the row without reaching through [`ApprovalHandle`]'s
+/// invariants. Persistence must pass every loaded record through
+/// [`ApprovalHandle::restore`] before domain authorization sees it. The digest
+/// crosses this seam as bytes rather than as the private proof value.
+#[derive(Clone, PartialEq, Eq)]
+pub struct StoredApprovalHandle {
+    pub id: ApprovalId,
+    pub capability: String,
+    pub actor: UserId,
+    pub approver: UserId,
+    pub entity_id: Uuid,
+    pub amount_minor: i64,
+    pub content_hash: Option<[u8; 32]>,
+    pub reason: String,
+    pub issued_at: Timestamp,
+    pub expires_at: Timestamp,
+    pub nonce: [u8; 16],
+}
+
 /// Immutable evidence that one approver accepted one actor's exact operation.
 ///
 /// Single use is deliberately absent from this value: persistence consumes
 /// [`ApprovalHandle::id`] in the same transaction as the effect and audit row.
-/// Every field stays private so ordinary Rust callers cannot widen an amount,
-/// transfer the handle, or replace a prepared-intent digest after issue. Its
-/// deserializer is for trusted stored rows, not caller-supplied command data.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Every field stays private so callers cannot mutate a validated handle in
+/// place. This proof type deliberately cannot be deserialized directly;
+/// [`ApprovalHandle::restore`] is the explicit trusted persistence
+/// reconstruction seam and rechecks the structural invariants below.
+#[derive(Clone, PartialEq, Serialize)]
 pub struct ApprovalHandle {
     id: ApprovalId,
     capability: String,
@@ -674,6 +715,25 @@ pub struct ApprovalHandle {
     issued_at: Timestamp,
     expires_at: Timestamp,
     nonce: [u8; 16],
+}
+
+impl fmt::Debug for ApprovalHandle {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ApprovalHandle")
+            .field("id", &self.id)
+            .field("capability", &self.capability)
+            .field("actor", &self.actor)
+            .field("approver", &self.approver)
+            .field("entity_id", &self.entity_id)
+            .field("amount_minor", &self.amount_minor)
+            .field("content_hash", &self.content_hash.map(|_| Redacted))
+            .field("reason", &self.reason)
+            .field("issued_at", &self.issued_at)
+            .field("expires_at", &self.expires_at)
+            .field("nonce", &Redacted)
+            .finish()
+    }
 }
 
 impl ApprovalHandle {
@@ -700,9 +760,10 @@ impl ApprovalHandle {
         }
 
         // A malformed TTL must not mint a handle the shipped schema would reject
-        // or silently shorten an approval near Timestamp::MAX. The reference
-        // error set has no invalid-TTL variant, so the expiry refusal is the only
-        // fail-closed answer available here.
+        // or silently shorten an approval near Timestamp::MAX. Issuance can fail
+        // before a representable expiry exists, so it retains its established
+        // fail-closed expiry result; ApprovalValidityIntervalInvalid below names
+        // contradictory instants that were actually read from persistence.
         let Some(expires_at_ms) = now.epoch_milliseconds().checked_add(ttl_ms) else {
             return Err(PermissionError::ApprovalExpired(now));
         };
@@ -736,6 +797,61 @@ impl ApprovalHandle {
     /// The distinct user whose proof issued this handle.
     pub fn approver(&self) -> UserId {
         self.approver
+    }
+
+    /// The immutable reason the audit row must repeat when consuming the handle.
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
+
+    /// Copy this validated handle into the record persistence stores.
+    pub fn to_stored(&self) -> StoredApprovalHandle {
+        StoredApprovalHandle {
+            id: self.id,
+            capability: self.capability.clone(),
+            actor: self.actor,
+            approver: self.approver,
+            entity_id: self.entity_id,
+            amount_minor: self.amount_minor,
+            content_hash: self.content_hash.map(|hash| hash.0),
+            reason: self.reason.clone(),
+            issued_at: self.issued_at,
+            expires_at: self.expires_at,
+            nonce: self.nonce,
+        }
+    }
+
+    /// Reconstruct a handle from trusted persistence after validating its shape.
+    ///
+    /// This proves only the structural invariants that [`ApprovalHandle::issue`]
+    /// established. Authentication remains evidence of the trusted issuance
+    /// transaction, not something a stored transport record can prove.
+    pub fn restore(stored: StoredApprovalHandle) -> Result<Self, PermissionError> {
+        if stored.actor == stored.approver {
+            return Err(PermissionError::SelfApprovalBanned(
+                "stored approval handle",
+            ));
+        }
+        if stored.issued_at >= stored.expires_at {
+            return Err(PermissionError::ApprovalValidityIntervalInvalid(
+                stored.issued_at,
+                stored.expires_at,
+            ));
+        }
+
+        Ok(ApprovalHandle {
+            id: stored.id,
+            capability: stored.capability,
+            actor: stored.actor,
+            approver: stored.approver,
+            entity_id: stored.entity_id,
+            amount_minor: stored.amount_minor,
+            content_hash: stored.content_hash.map(PreparedIntentHash),
+            reason: stored.reason,
+            issued_at: stored.issued_at,
+            expires_at: stored.expires_at,
+            nonce: stored.nonce,
+        })
     }
 
     /// Refuse any attempt to spend this handle on a different operation.
@@ -776,6 +892,9 @@ impl ApprovalHandle {
             // Hashes are evidence, but they are also covered by the never-log
             // suffix rule. The variant carries no digest into an error sink.
             return Err(PermissionError::ApprovalContentHashMismatch);
+        }
+        if now < self.issued_at {
+            return Err(PermissionError::ApprovalNotYetValid(self.issued_at));
         }
         if now >= self.expires_at {
             return Err(PermissionError::ApprovalExpired(self.expires_at));
@@ -840,7 +959,9 @@ pub enum PermissionError {
     /// E.52: a person can never issue their own approval handle.
     #[error("self-approval is not permitted for {0}")]
     SelfApprovalBanned(&'static str),
-    /// Persistence found that this user can no longer act.
+    /// Reserved for the command-handler gate: when it lands, it must deny an
+    /// inactive account or one with a non-null `deleted_at`. Persistence only
+    /// observes those fields; it does not apply this business rule.
     #[error("user {0} is deactivated")]
     UserInactive(UserId),
     /// The shell's last trusted authorization snapshot is too old.
@@ -861,6 +982,12 @@ pub enum PermissionError {
     /// The prepared operation changed after the approver saw it.
     #[error("approval content does not match the prepared intent")]
     ApprovalContentHashMismatch,
+    /// A stored handle must expire strictly after its issuance instant.
+    #[error("approval validity interval is non-positive: issued at {0:?}, expires at {1:?}")]
+    ApprovalValidityIntervalInvalid(Timestamp, Timestamp),
+    /// The validity interval includes issuance, but no earlier instant.
+    #[error("approval is not valid before {0:?}")]
+    ApprovalNotYetValid(Timestamp),
     /// The validity interval is half-open: the exact expiry instant is refused.
     #[error("approval expired at {0:?}")]
     ApprovalExpired(Timestamp),
@@ -1249,6 +1376,68 @@ mod tests {
             .unwrap_err(),
             PermissionError::ApprovalExpired(now)
         );
+    }
+
+    #[test]
+    fn an_approval_before_issuance_is_refused() {
+        let actor = user(14);
+        let approver = user(15);
+        let operation = binding(109, 20_000);
+        let issued_at = timestamp(NOW_MS);
+        let handle = issued_sale_void_handle(approval(210), actor, approver, &operation, issued_at);
+
+        assert_eq!(
+            handle
+                .matches::<cap::SaleVoid>(actor, &operation, timestamp(NOW_MS - 1))
+                .unwrap_err(),
+            PermissionError::ApprovalNotYetValid(issued_at)
+        );
+
+        // The lower boundary is inclusive, matching migration `0004`'s
+        // `consumed_at >= issued_at` guard.
+        assert_eq!(
+            handle.matches::<cap::SaleVoid>(actor, &operation, issued_at),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn approval_debug_output_redacts_content_hash_and_nonce() {
+        let prepared_hash = PreparedIntentHash([0xD6; 32]);
+        assert_eq!(
+            format!("{prepared_hash:?}"),
+            "PreparedIntentHash(<redacted>)"
+        );
+
+        let operation = ApprovalBinding {
+            content_hash: Some(prepared_hash),
+            ..binding(110, 20_000)
+        };
+        let handle = issued_sale_void_handle(
+            approval(211),
+            user(16),
+            user(17),
+            &operation,
+            timestamp(NOW_MS),
+        );
+        let stored = handle.to_stored();
+        let raw_digest = format!("{:?}", stored.content_hash.unwrap());
+        let raw_nonce = format!("{:?}", stored.nonce);
+        let output = format!("{handle:?}");
+
+        assert!(output.contains("content_hash: Some(<redacted>)"));
+        assert!(output.contains("nonce: <redacted>"));
+        assert!(!output.contains(&raw_digest));
+        assert!(!output.contains(&raw_nonce));
+
+        let no_digest = issued_sale_void_handle(
+            approval(212),
+            user(18),
+            user(19),
+            &binding(111, 0),
+            timestamp(NOW_MS),
+        );
+        assert!(format!("{no_digest:?}").contains("content_hash: None"));
     }
 
     #[test]

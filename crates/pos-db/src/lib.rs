@@ -51,6 +51,12 @@ pub enum DbError {
         members: i64,
         delivery_rows: i64,
     },
+    #[error("approval handle is already consumed; a one-use handle cannot be spent twice")]
+    ApprovalAlreadyConsumed,
+    #[error("approval consumption did not match one bound financial effect and audit row")]
+    ApprovalConsumptionUnbound,
+    #[error("stored approval handle is malformed: {reason}")]
+    InvalidStoredApproval { reason: String },
     #[error("{table}.{column} holds a {found}-byte id; ids are BLOB(16) (conventions §2)")]
     IdWidthInvalid {
         table: &'static str,
