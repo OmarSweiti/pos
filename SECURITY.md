@@ -18,11 +18,13 @@ customer, read it first; the answer today is "not yet".
 
 ## Reporting a vulnerability
 
-The repository is private and has one maintainer.
+This repository is public. Use GitHub's
+[private vulnerability reporting](https://github.com/OmarSweiti/pos/security/advisories/new) as
+the primary reporting route.
 
 - **Do not open a public issue**, and do not describe the flaw in a pull request title.
-- Email **omarswaty4@gmail.com** with a description, the affected version or commit, and
-  the smallest reproduction you have.
+- You may also email **omarswaty4@gmail.com** with a description, the affected version or commit,
+  and the smallest reproduction you have.
 - If a real cardholder value, PIN, or customer record is involved, say that in the subject
   line and **do not paste the value** into the report.
 
@@ -60,13 +62,13 @@ the release build must refuse to honour it.
 | Dependency version bumps, grouped and monthly | [`.github/dependabot.yml`](.github/dependabot.yml) |
 | Advisories, licences, banned crates and registries | [`deny.toml`](deny.toml), via the `supply-chain` CI job and `just audit` |
 
-GitHub's **native** secret scanning and push protection are _not_ available on this private
-repository's current plan. The repository therefore supplies an independent, content-based
-Gitleaks gate: `pre-commit` scans the staged index, `pre-push` scans reachable history, and CI
-scans the proposed commit range with fully redacted output. The local checks remain bypassable
-with `--no-verify` or in a clone that skipped `just setup`; CI is server-side evidence but cannot
-block an administrator merge while branch protection is unavailable. A finding means rotate the
-credential first, then handle history as a separate, explicitly authorised operation.
+GitHub's **native** secret scanning and push protection are enabled. They complement the
+independent, content-based Gitleaks gate: `pre-commit` scans the staged index, `pre-push` scans
+reachable history, and CI scans the proposed commit range with fully redacted output. The local
+checks remain bypassable with `--no-verify` or in a clone that skipped `just setup`; CI is
+server-side evidence but cannot block an administrator merge while `main` is unprotected and zero
+rulesets are configured. A finding means rotate the credential first, then handle history as a
+separate, explicitly authorised operation.
 
 `just pre-push` runs the deterministic local gates plus a full-history secret scan. CI repeats
 those checks and runs the network-dependent supply-chain audit separately.
@@ -85,7 +87,7 @@ network, environment, and credential access. The repository does not claim subpr
 scrubbing, metadata-endpoint denial, or OS containment under this policy. This is an explicit
 developer-convenience tradeoff, not an application-security or secret-exfiltration boundary.
 Git hooks and CI remain cross-platform backstops and visible signals, but CI cannot block an
-administrator merge on this plan.
+administrator merge while `main` is unprotected and zero rulesets are configured.
 
 ## Known gaps, stated plainly
 

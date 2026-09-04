@@ -18,9 +18,9 @@ concurrency:
   cancel-in-progress: false        # never cancel a release build
 
 jobs:
-  # Three platform builds cost real money on a private Free-plan repo (macOS
-  # bills at 10x). Refusing a mistagged commit before the matrix starts is the
-  # cheapest check in this repository.
+  # Three platform builds are the slowest thing this repository does. Refusing a
+  # mistagged commit before the matrix starts is still its cheapest check — the
+  # cost is now wall-clock and runner capacity rather than metered minutes.
   guard:
     runs-on: ubuntu-latest
     timeout-minutes: 15

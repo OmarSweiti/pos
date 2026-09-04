@@ -5,7 +5,8 @@
 # workflow that treats the exact PR head as data and executes only policy from
 # the commit that supplied the trusted workflow definition. Also prevent a
 # green PR from weakening the workflow/policy blobs that a future trusted
-# workflow revision would execute.
+# workflow revision would execute, or from placing a just-invoked repository
+# helper outside that reviewed surface.
 
 require "psych"
 require "json"
@@ -52,22 +53,27 @@ STATIC_POLICY_PATHS = %w[
   js-license-policy.json
   ruff.toml
   justfile
+  scripts/bench-gate.py
   scripts/check-automation-attribution.py
   scripts/check-branch-workflow-policy.rb
+  scripts/check-ci-gate-parity.py
   scripts/check-doc-links.py
   scripts/check-doc-links.sh
   scripts/check-node-version.py
   scripts/check-domain-acyclic.py
   scripts/check-domain-purity.py
+  scripts/check-implementation-frontier.py
   scripts/check-justfile-policy.py
   scripts/check-js-licenses.py
   scripts/check-logical-css.sh
   scripts/check-prop-test-names.py
   scripts/check-protected-paths.sh
   scripts/check-staged-policy.py
+  scripts/check-test-catalog.py
   scripts/check-workspace-lints.py
   scripts/check-web-build-coverage.py
   scripts/gh-bootstrap.sh
+  scripts/gh-protect.sh
   scripts/gh-project.sh
   scripts/gh-actions-policy.sh
   scripts/install-gitleaks-ci.sh
@@ -79,6 +85,7 @@ STATIC_POLICY_PATHS = %w[
   scripts/rust_lexer.py
   scripts/scan-secrets.sh
   scripts/test-gh-setup.sh
+  scripts/tests/bench_gate_test.py
   scripts/validate-branch-flow.sh
   scripts/validate-change-title.sh
   scripts/verify-pg-migrations.py
@@ -103,6 +110,7 @@ APPROVED_BIOME_EXCLUSIONS = %w[
 ].freeze
 WORKFLOW_SUFFIXES = %w[.yml .yaml].freeze
 LOCAL_ACTIONS_PATH = ".github/actions"
+JUSTFILE_SCRIPT_CALL = %r{\./((?:scripts|\.agents|\.claude|\.codex|\.githooks)/[\w./-]+)}
 
 EXPECTED_STEPS = {
   "protected-paths" => [
@@ -116,7 +124,7 @@ EXPECTED_STEPS = {
   "topology" => [
     "Check out policy from the exact trusted workflow revision",
     "A PR must flow feature → development → staging → main",
-    "PR title is the squash commit message, so it obeys conventions §8",
+    "A work PR title obeys conventions §8 or Dependabot can normalize it",
     "PR title and body contain no assistant attribution"
   ],
   "promotion-notice" => [
@@ -192,19 +200,82 @@ EXPECTED_RUN = {
     "$GITHUB_WORKSPACE/scripts/validate-branch-flow.sh" \
       "$HEAD_REF" "$BASE_REF" "$HEAD_REPO" "$BASE_REPO"
   SH
-  "PR title is the squash commit message, so it obeys conventions §8" => <<~'SH'.rstrip,
+  "A work PR title obeys conventions §8 or Dependabot can normalize it" => <<~'SH'.rstrip,
     set -euo pipefail
+    live_pr="$RUNNER_TEMP/live-pr.json"
+    gh api --method GET "repos/$GH_REPO/pulls/$PR_NUMBER" > "$live_pr"
+
     case "$HEAD_REF" in
       development|staging|main|hotfix/*)
         echo "promotion, back-merge, or hotfix PR — merged with a merge commit, so the title is free text. Skipping."
         exit 0 ;;
     esac
-    "$GITHUB_WORKSPACE/scripts/validate-change-title.sh" "$TITLE"
+
+    title_fields="$RUNNER_TEMP/live-pr-title-fields"
+    "$GITHUB_WORKSPACE/scripts/run-python.sh" - "$live_pr" > "$title_fields" <<'PY'
+    import json
+    import sys
+
+    with open(sys.argv[1], encoding="utf-8") as source:
+        pull = json.load(source)
+    title = pull.get("title") if isinstance(pull, dict) else None
+    user = pull.get("user") if isinstance(pull, dict) else None
+    author = user.get("login") if isinstance(user, dict) else None
+    if not isinstance(title, str) or not title:
+        raise SystemExit("GitHub returned an invalid PR title")
+    if not isinstance(author, str) or not author:
+        raise SystemExit("GitHub returned an invalid PR author")
+    if "\0" in title or "\0" in author:
+        raise SystemExit("GitHub returned NUL in PR metadata")
+    sys.stdout.buffer.write(title.encode("utf-8") + b"\0")
+    sys.stdout.buffer.write(author.encode("utf-8") + b"\0")
+    PY
+    fields=()
+    while IFS= read -r -d '' field; do fields+=("$field"); done < "$title_fields"
+    [ "${#fields[@]}" -eq 2 ] || {
+      echo "::error::GitHub returned ambiguous PR title metadata"
+      exit 1
+    }
+    title=${fields[0]}
+    author=${fields[1]}
+
+    validator="$GITHUB_WORKSPACE/scripts/validate-change-title.sh"
+    if "$validator" --validate "$title" >/dev/null 2>&1; then
+      exit 0
+    fi
+    if [ "$author" = 'dependabot[bot]' ]; then
+      "$validator" --normalize "$title" >/dev/null
+      echo "Dependabot title is normalizable; the write-scoped labeler owns the canonical edit."
+      exit 0
+    fi
+    "$validator" --validate "$title"
   SH
   "PR title and body contain no assistant attribution" => <<~'SH'.rstrip,
     set -euo pipefail
+    live_pr="$RUNNER_TEMP/live-pr.json"
+    [ -f "$live_pr" ] || {
+      echo "::error::live PR metadata is unavailable"
+      exit 1
+    }
     message_file="$RUNNER_TEMP/pr-title-and-body.txt"
-    printf '%s\n%s' "$TITLE" "$PR_BODY" > "$message_file"
+    "$GITHUB_WORKSPACE/scripts/run-python.sh" - "$live_pr" > "$message_file" <<'PY'
+    import json
+    import sys
+
+    with open(sys.argv[1], encoding="utf-8") as source:
+        pull = json.load(source)
+    title = pull.get("title") if isinstance(pull, dict) else None
+    body = pull.get("body") if isinstance(pull, dict) else None
+    if not isinstance(title, str) or not title:
+        raise SystemExit("GitHub returned an invalid PR title")
+    if body is None:
+        body = ""
+    if not isinstance(body, str):
+        raise SystemExit("GitHub returned an invalid PR body")
+    sys.stdout.write(title)
+    sys.stdout.write("\n")
+    sys.stdout.write(body)
+    PY
     "$GITHUB_WORKSPACE/scripts/check-automation-attribution.py" \
       --message-file "$message_file"
   SH
@@ -238,13 +309,11 @@ EXPECTED_ENV = {
     "HEAD_REPO" => "${{ github.event.pull_request.head.repo.full_name }}",
     "BASE_REPO" => "${{ github.event.pull_request.base.repo.full_name }}"
   },
-  "PR title is the squash commit message, so it obeys conventions §8" => {
+  "A work PR title obeys conventions §8 or Dependabot can normalize it" => {
     "HEAD_REF" => "${{ github.head_ref }}",
-    "TITLE" => "${{ github.event.pull_request.title }}"
-  },
-  "PR title and body contain no assistant attribution" => {
-    "TITLE" => "${{ github.event.pull_request.title }}",
-    "PR_BODY" => "${{ github.event.pull_request.body }}"
+    "GH_TOKEN" => "${{ github.token }}",
+    "GH_REPO" => "${{ github.repository }}",
+    "PR_NUMBER" => "${{ github.event.pull_request.number }}"
   },
   "Warn that this PR must use a merge commit" => {
     "HEAD_REF" => "${{ github.head_ref }}",
@@ -571,6 +640,24 @@ def validate_labeler_file(path)
     if run.include?("${{") || run.include?("CANDIDATE_ROOT")
       raise PolicyViolation, "#{context}.run must treat event fields as env data and never use candidate code"
     end
+    if conditional
+      validator_calls = run.lines.grep(/validate-change-title\.sh/).map(&:strip)
+      expected_validator_calls = [
+        'if ./scripts/validate-change-title.sh --validate "$TITLE" >/dev/null 2>&1; then',
+        'if ! normalized=$(./scripts/validate-change-title.sh --normalize "$TITLE"); then'
+      ]
+      unless validator_calls == expected_validator_calls
+        raise PolicyViolation,
+              "#{context}.run must select the reviewed explicit title-validator modes"
+      end
+    else
+      label_calls = run.lines.grep(/pr-type-label\.sh/).map(&:strip)
+      expected_label_calls = ['want=$(./scripts/pr-type-label.sh --label "$TITLE")']
+      unless label_calls == expected_label_calls
+        raise PolicyViolation,
+              "#{context}.run must select the reviewed explicit type-label mode"
+      end
+    end
   end
 end
 
@@ -827,6 +914,36 @@ def policy_paths_for_roots(trusted_root, candidate_root)
   (STATIC_POLICY_PATHS + trusted_workflows + trusted_discoverable).uniq.sort
 end
 
+def justfile_script_paths(root)
+  relative = "justfile"
+  reject_symlink_components(root, relative, "justfile policy path")
+  path = File.join(root, relative)
+  raise PolicyViolation, "justfile policy path is missing" unless File.file?(path)
+  raise PolicyViolation, "justfile policy path must not be a symbolic link" if File.symlink?(path)
+
+  # Every repository helper exposed through `just` can mutate or attest to
+  # project state. Scanning that command surface avoids another recipe-name
+  # allowlist that could drift before a new helper becomes review-bearing.
+  paths = File.read(path, encoding: "UTF-8").each_line.each_with_object([]) do |line, result|
+    next if line.lstrip.start_with?("#")
+
+    line.scan(JUSTFILE_SCRIPT_CALL) { |match| result << match.first }
+  end.uniq.sort
+  raise PolicyViolation, "justfile has no repository-script invocations" if paths.empty?
+
+  paths
+rescue SystemCallError, EncodingError => error
+  raise PolicyViolation, "justfile policy surface could not be read: #{error.message}"
+end
+
+def validate_justfile_script_policy_surface(root)
+  missing = justfile_script_paths(root) - policy_paths_for_root(root)
+  return if missing.empty?
+
+  raise PolicyViolation,
+        "justfile invokes repository scripts outside the frozen policy surface: #{missing.join(', ')}"
+end
+
 def reject_local_actions_path(root, context)
   path = File.join(root, LOCAL_ACTIONS_PATH)
   return unless File.exist?(path) || File.symlink?(path)
@@ -1007,6 +1124,7 @@ def validate_candidate(
     validate_revision_policy(trusted_revision, candidate_revision)
   end
   validate_pinned_policy(trusted_root, candidate_root)
+  validate_justfile_script_policy_surface(candidate_root)
   validate_repository_configuration(candidate_root)
   reject_symlink_components(
     candidate_root,
@@ -1100,7 +1218,22 @@ def self_test(default_path)
     "the exact event set is retained" => ["types: [opened, edited, reopened, synchronize]", "types: [opened, synchronize]"],
     "repository-local actions cannot replace checkout" => [CHECKOUT, "./candidate/.github/actions/checkout"],
     "the workflow self-policy step cannot disappear" => ["The next workflow retains this trusted-workflow boundary", "The next workflow skips its trusted-workflow boundary"],
-    "promotion titles cannot bypass attribution" => ["          printf '%s\\n%s' \"$TITLE\" \"$PR_BODY\" > \"$message_file\"\n", "          printf '%s' \"$PR_BODY\" > \"$message_file\"\n"],
+    "promotion titles cannot bypass attribution" => [
+      "          sys.stdout.write(title)\n          sys.stdout.write(\"\\n\")\n          sys.stdout.write(body)\n",
+      "          sys.stdout.write(body)\n"
+    ],
+    "the live PR snapshot cannot fall back to the stored event payload" => [
+      '          gh api --method GET "repos/$GH_REPO/pulls/$PR_NUMBER" > "$live_pr"',
+      '          cp "$GITHUB_EVENT_PATH" "$live_pr"'
+    ],
+    "Dependabot title tolerance cannot widen to every PR author" => [
+      "          if [ \"$author\" = 'dependabot[bot]' ]; then",
+      '          if [ -n "$author" ]; then'
+    ],
+    "title validation cannot fall back to ambiguous positional dispatch" => [
+      '          if "$validator" --validate "$title" >/dev/null 2>&1; then',
+      '          if "$validator" "$title" >/dev/null 2>&1; then'
+    ],
     "duplicate YAML keys are rejected" => ["permissions:\n", "permissions:\n  contents: read\npermissions:\n"],
     "YAML aliases are rejected" => ["name: branch-flow", "name: &workflow_name branch-flow\nx-copy: *workflow_name"]
   }
@@ -1134,6 +1267,105 @@ def self_test(default_path)
       passed += 1
     end
 
+    # The structural contract above pins the exact workflow body. Run that body
+    # too: the meaningful failure mode here is a green shell branch for the
+    # wrong author, not merely a recognizable string in YAML.
+    repository_root = File.expand_path("..", __dir__)
+    title_contract = EXPECTED_RUN.fetch(
+      "A work PR title obeys conventions §8 or Dependabot can normalize it"
+    )
+    fake_gh = File.join(directory, "gh")
+    File.write(fake_gh, <<~'SH')
+      #!/usr/bin/env bash
+      set -euo pipefail
+      if [ "$#" -ne 4 ] || [ "$1" != api ] || [ "$2" != --method ] || \
+         [ "$3" != GET ] || [ "$4" != "repos/$GH_REPO/pulls/$PR_NUMBER" ]; then
+        echo "unexpected gh invocation" >&2
+        exit 97
+      fi
+      cat -- "$FIXTURE_PR_JSON"
+    SH
+    File.chmod(0o755, fake_gh)
+    pull_fixture = File.join(directory, "pull.json")
+    production_title =
+      "chore(repo): bump @tanstack/react-query from 5.101.4 to 5.102.4 in the js-minor group"
+    title_cases = [
+      {
+        label: "a Dependabot pre-normalization title is accepted",
+        author: "dependabot[bot]",
+        title: production_title,
+        success: true,
+        output: "Dependabot title is normalizable; the write-scoped labeler owns the canonical edit.\n"
+      },
+      {
+        label: "a Dependabot title that cannot normalize is refused",
+        author: "dependabot[bot]",
+        title: "not a repository title",
+        success: false,
+        error: "title-policy: REFUSED"
+      },
+      {
+        label: "a human title that is only normalizable is refused",
+        author: "octocat",
+        title: production_title,
+        success: false,
+        error: "got: #{production_title}"
+      },
+      {
+        label: "a human canonical title is accepted",
+        author: "octocat",
+        title: "fix(repo): read the current pull-request title   [—]",
+        success: true,
+        output: ""
+      },
+      {
+        label: "a title cannot select the validator self-test mode",
+        author: "octocat",
+        title: "--self-test",
+        success: false,
+        error: "got: --self-test",
+        forbidden: "change-title policy — canonical subjects"
+      }
+    ]
+    puts "check-branch-workflow-policy.rb — live title decisions"
+    title_cases.each do |test_case|
+      File.write(
+        pull_fixture,
+        JSON.generate(
+          "title" => test_case.fetch(:title),
+          "body" => "reviewed fixture",
+          "user" => { "login" => test_case.fetch(:author) }
+        )
+      )
+      environment = {
+        "PATH" => "#{directory}#{File::PATH_SEPARATOR}#{ENV.fetch('PATH')}",
+        "GITHUB_WORKSPACE" => repository_root,
+        "RUNNER_TEMP" => directory,
+        "HEAD_REF" => "fix/dependabot-title-liveness",
+        "GH_TOKEN" => "fixture-token",
+        "GH_REPO" => "owner/pos",
+        "PR_NUMBER" => "42",
+        "FIXTURE_PR_JSON" => pull_fixture
+      }
+      output, error, status = Open3.capture3(
+        environment,
+        "bash", "-c", title_contract,
+        chdir: repository_root
+      )
+      accepted = status.success? == test_case.fetch(:success)
+      accepted &&= output == test_case.fetch(:output, output)
+      accepted &&= error.include?(test_case.fetch(:error, ""))
+      forbidden = test_case[:forbidden]
+      accepted &&= !"#{output}\n#{error}".include?(forbidden) if forbidden
+      if accepted
+        puts "  ok    #{test_case.fetch(:label)}"
+        passed += 1
+      else
+        puts "  FAIL  #{test_case.fetch(:label)}"
+        failed += 1
+      end
+    end
+
     labeler_cases = {
       "labeler code must come from the workflow definition SHA" => [WORKFLOW_SHA, BASE_SHA],
       "labeler checkout credentials cannot persist" => ["persist-credentials: false", "persist-credentials: true"],
@@ -1141,7 +1373,15 @@ def self_test(default_path)
       "labeler content access cannot become writable" => ["  contents: read", "  contents: write"],
       "labeler cannot add a candidate checkout path" => ["          persist-credentials: false\n", "          persist-credentials: false\n          path: candidate\n"],
       "labeler action cannot use a mutable reference" => [LABELER_ACTION, "actions/labeler@v7"],
-      "labeler cannot replace the trusted checkout" => [CHECKOUT, LABELER_ACTION]
+      "labeler cannot replace the trusted checkout" => [CHECKOUT, LABELER_ACTION],
+      "labeler title validation cannot fall back to ambiguous positional dispatch" => [
+        'if ./scripts/validate-change-title.sh --validate "$TITLE" >/dev/null 2>&1; then',
+        'if ./scripts/validate-change-title.sh "$TITLE" >/dev/null 2>&1; then'
+      ],
+      "labeler type selection cannot fall back to ambiguous positional dispatch" => [
+        'want=$(./scripts/pr-type-label.sh --label "$TITLE")',
+        'want=$(./scripts/pr-type-label.sh "$TITLE")'
+      ]
     }
     labeler_fixture = File.join(directory, "labeler.yml")
     labeler_cases.each do |label, (needle, replacement)|
@@ -1184,6 +1424,49 @@ def self_test(default_path)
       puts "  FAIL  unchanged candidate policy blobs match the trusted workflow revision"
       failed += 1
     end
+
+    puts "check-branch-workflow-policy.rb — justfile script surface"
+    begin
+      validate_justfile_script_policy_surface(candidate_root)
+      puts "  ok    every just-invoked repository script is frozen"
+      passed += 1
+    rescue PolicyViolation
+      puts "  FAIL  every just-invoked repository script is frozen"
+      failed += 1
+    end
+
+    justfile_path = File.join(candidate_root, "justfile")
+    justfile_original = File.read(justfile_path)
+    unfrozen_relative = "scripts/adversarial-unpinned.py"
+    unfrozen_path = File.join(candidate_root, unfrozen_relative)
+    File.write(unfrozen_path, "#!/usr/bin/env python3\n")
+    File.chmod(0o755, unfrozen_path)
+    justfile_mutated = justfile_original.sub(
+      "guards:\n",
+      "guards:\n    python3 ./#{unfrozen_relative}\n"
+    )
+    if justfile_mutated == justfile_original
+      puts "  FAIL  fixture mutation did not add an unfrozen gate script"
+      failed += 1
+    else
+      File.write(justfile_path, justfile_mutated)
+      begin
+        validate_justfile_script_policy_surface(candidate_root)
+        puts "  FAIL  a just-invoked script outside the frozen surface is rejected"
+        failed += 1
+      rescue PolicyViolation => error
+        if error.message.include?(unfrozen_relative)
+          puts "  ok    a just-invoked script outside the frozen surface is rejected"
+          passed += 1
+        else
+          puts "  FAIL  the frozen-surface refusal names the unfrozen script"
+          failed += 1
+        end
+      ensure
+        File.write(justfile_path, justfile_original)
+      end
+    end
+    FileUtils.rm_f(unfrozen_path)
 
     self_node_version = File.read(File.join(trusted_root, ".nvmrc")).strip
     self_rust_version = toml_string(

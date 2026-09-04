@@ -49,7 +49,7 @@ jobs:
           pyflakes: false
           shellcheck: true
 
-      - name: Audit GitHub Actions security without paid code-scanning storage
+      - name: Audit GitHub Actions security through check annotations
         uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
         with:
           inputs: .github

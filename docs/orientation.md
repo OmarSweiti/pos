@@ -213,7 +213,7 @@ squash merge commits the title:
 <type>(<scope>): <summary>   [<step>]
 ```
 
-The type and scope lists are closed. A step is `N.N.N`, an ordered inclusive `N.N.N–N.N.N` range, or
+The type and scope lists are closed. A step is `N.N.N`, `N.N.Nx` for a lettered split microstep, an ordered inclusive `N.N.N–N.N.N` range, or
 `—`. [`../scripts/check-automation-attribution.py`](../scripts/check-automation-attribution.py)
 rejects coding-assistant co-author and generated-by lines; the exact Dependabot author/trailer
 combination is a narrow compatibility exception, not cryptographic proof of App identity.
@@ -237,7 +237,8 @@ a new tag is allowed, moving or deleting an existing one is not.
 
 It remains a local safety belt. `--no-verify` or a clone that skipped setup bypasses it, and the
 repository deliberately offers no environment-variable override. Server workflows are the evidence
-layer, and without branch protection red evidence still cannot stop the repository administrator.
+layer, and with `main` unprotected and zero rulesets configured, red evidence still cannot stop the
+repository administrator.
 
 ## 7. Repository verification: `scripts/`
 
@@ -263,7 +264,7 @@ script below runs in CI as well as locally.
 | `check-protected-paths.sh` | a pull request does not edit a base-committed migration or source plan |
 | `scan-secrets.sh` | staged, range, or reachable-history content has no known secret |
 | `validate-change-title.sh` / `check-automation-attribution.py` | one grammar for commit subjects and pull-request titles, and no coding-assistant attribution anywhere |
-| `gh-actions-policy.sh` | workflow Actions use full SHAs from the local repository allowlist before enabling GitHub's SHA-only setting |
+| `gh-actions-policy.sh` | workflow Actions use full SHAs from the repository allowlist; applying any repository-wide Actions setting is a separate live step |
 | `check-branch-workflow-policy.rb` | the read-only trusted pull-request boundary and the frozen policy surface — workflows, Git hooks, both agent entry points, and the `.claude/`/`.codex/` trees — cannot silently weaken themselves |
 | `watch-pr-checks.sh` | every expected workflow/job for one immutable PR head has registered and passed before a documented merge proceeds |
 | `test-gh-setup.sh` | mocked GitHub API/list/parse failures make bootstrap and project setup stop instead of reporting false success or creating duplicates |
@@ -288,9 +289,10 @@ script out from the exact trusted base revision into a temporary directory and p
 revisions in as data.
 
 `gh-actions-policy.sh` is a post-merge activation tool. It audits every checked-in `uses:` reference
-against the repository allowlist and full-SHA grammar, then enables GitHub's SHA-only Actions
-setting. Run it only after the hardened workflow files are on the default branch; its dry-run and
-self-test are safe before then.
+against the repository allowlist and full-SHA grammar. That checked-in policy is enforced locally
+and in CI; applying any repository-wide Actions setting is a separate live configuration step. Run
+the tool only after the hardened workflow files are on the default branch; its dry-run and self-test
+are safe before then.
 
 ## 8. GitHub automation: `.github/`
 
@@ -333,8 +335,9 @@ authentication, CSP/capabilities, agent controls, hooks, and workflow security.
 
 `security.yml` runs actionlint and zizmor when automation changes. A weekly and manual job scans full
 Git history and reruns Rust/npm advisory checks even when the repository has had no recent pull
-request. It uses check annotations rather than the code-scanning storage a private repository on this
-plan does not have.
+request. It reports actionlint and zizmor findings as check annotations. GitHub code scanning
+separately records analyses for `actions`, `javascript-typescript`, `python`, and `ruby` — not Rust.
+Rust's static coverage remains Clippy, `check-domain-purity.py`, and the workspace lint contract.
 
 ### Releases
 
@@ -361,12 +364,12 @@ Action updates preserve full-SHA pins. Monthly and grouped is deliberate: an unr
 is how a supply-chain problem arrives politely. The issue forms and pull-request templates demand
 the project-specific evidence a reviewer needs.
 
-`CODEOWNERS` records intended ownership but is **not active** for automatic review assignment or
-enforcement on this private Free-plan repository. Branch protection and rulesets are likewise
-unavailable, as are GitHub-native secret scanning and push protection — the independent Gitleaks
-implementation is this repository's content scanner. Exact selected-Action patterns are also
-unavailable here, so the local allowlist plus the SHA-only setting cover immutability once the
-post-merge activation succeeds. These limitations are stated, never presented as completed controls.
+`CODEOWNERS` records intended ownership; this repository does not treat automatic review assignment
+or a CODEOWNERS approval as a merge gate. `main` is unprotected and zero rulesets are configured, so
+red checks cannot block an administrator merge. GitHub-native secret scanning and push protection
+are enabled alongside independent Gitleaks scanning. Every `uses:` is a full commit SHA from the
+repository allowlist and policy checks enforce that checked-in surface; applying any repository-wide
+selected-Action setting is a separate live configuration step.
 
 ## 9. Code and application directories
 
@@ -451,8 +454,8 @@ the hotfix path, are in
 | compiler/lints/tests | domain, money, schema, frontend, and behavior checks | only the behavior actually encoded is proved |
 | agent permissions, the Codex sandbox, and Claude/Codex hooks | safer agent execution and immediate immutable/docs feedback | Claude shell subprocesses have ambient host access; client support and lexical parsing limits apply |
 | Git hooks | staged policy, content scanning, message/history policy, branch-push safety | local and intentionally bypassable |
-| GitHub workflows | trusted-base policy, CI, security analysis, releases, logged evidence | red checks cannot block this repository's administrator without protection |
-| GitHub live settings | read-only default token posture, full-SHA policy after post-merge activation, immutable published releases | private-Free plan omits branch protection, active CODEOWNERS, and native secret scanning |
+| GitHub workflows | trusted-base policy, CI, security analysis, releases, logged evidence | red checks cannot block this repository's administrator while `main` is unprotected and zero rulesets are configured |
+| GitHub live settings | read-only default token posture, native secret scanning and push protection, private vulnerability reporting, immutable published releases | `main` is unprotected; zero rulesets are configured; no CODEOWNERS review assignment or enforcement is claimed |
 
 No compliance validation is complete. No text in this repository should claim PCI DSS, SAQ, JoFotara
 certification, or PDPL registration without the evidence required by

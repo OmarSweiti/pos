@@ -121,13 +121,12 @@ PLANNED: dict[str, tuple[str, ...]] = {
         "prop_cash_rounding_only_on_final_cash_tender",
     ),
     "1.6.2": ("manager_reset_retires_old_hash_and_audits",),
+    # The four domain-level refusals landed with 1.6.4's pos-domain half and are
+    # in PLANNED_RETIRED. What remains here needs the database: a second use, a
+    # restart, and the rollback of an effect and its consumption together.
     "1.6.4": (
         "a_consumed_handle_is_still_consumed_after_restart",
-        "a_different_actor_is_refused",
-        "a_different_sale_is_refused",
         "a_handle_used_twice_is_refused",
-        "an_altered_amount_is_refused",
-        "an_expired_handle_is_refused",
         "the_effect_and_the_consumption_commit_together_or_not_at_all",
     ),
     "1.6.6b": ("tail_deletion_is_detected_against_the_last_anchor",),
@@ -563,7 +562,11 @@ zero_due_tender_completes_and_issues_a_fiscal_doc
 # the initial ceiling into a monotonic history rather than a one-time maximum.
 PLANNED_RETIRED: frozenset[str] = frozenset(
     {
+        "a_different_actor_is_refused",
+        "a_different_sale_is_refused",
         "a_pack_quantity_of_zero_is_refused_at_save",
+        "an_altered_amount_is_refused",
+        "an_expired_handle_is_refused",
         "clock_jump_back_reports_anomaly",
         "manager_self_approval_denied_when_policy_bans_it",
         "mutating_an_identity_column_breaks_the_chain",

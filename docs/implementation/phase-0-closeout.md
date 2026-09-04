@@ -204,6 +204,13 @@ protection step is active. Hooks and CI are backstops/signals, and an administra
 a failing PR; the exact manual sequence in the maintained workflow compensates honestly for that
 limit.
 
+> **Post-closeout note — 30 August 2026:** The repository became public. Branch protection is now
+> available but unconfigured: `main` answers `404 Branch not protected`, not the former 403
+> availability error, and the rulesets API reports zero configured rulesets. Native secret scanning,
+> push protection, and private vulnerability reporting are enabled. The original paragraph above
+> and the later Free-plan wording remain visible as the state recorded at closeout;
+> [`03-github-workflow.md`](03-github-workflow.md) is the live procedure.
+
 ---
 
 ## Group 0.3 — Product identity

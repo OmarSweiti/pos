@@ -53,9 +53,9 @@ setup-tools-check:
 node-version-check:
     {{ python }} ./scripts/check-node-version.py
 
-# Branch protection is not available on a private repo on the GitHub Free plan.
-# These hooks are the first local safety net; a machine that has not run this can
-# push straight to main, and `--no-verify` can bypass them.
+# No branch protection or ruleset is configured, so nothing server-side refuses a
+# push. These hooks are the first local safety net; a machine that has not run
+# this can push straight to main, and `--no-verify` can bypass them.
 # Point git at the committed hooks (commit-msg, pre-commit, pre-push)
 hooks:
     git config core.hooksPath .githooks
@@ -359,7 +359,8 @@ gh-actions-policy-dry:
 gh-actions-policy:
     bash ./scripts/gh-actions-policy.sh
 
-# Branch protection. Refuses politely on the Free plan — see the script's header.
+# Refuses, deliberately: written against a 403 a public repository no longer
+# returns, so its PUT would now apply an incomplete check list. See its header.
 gh-protect:
     bash ./scripts/gh-protect.sh
 
@@ -527,8 +528,8 @@ pr $title='' $body='' $milestone='':
 # This is the gap that cost this repository a day. `just pr` watches CI when it
 # OPENS a pull request, and nothing watched the moment that matters: #18 was
 # merged with `rust` failing, and `just lint` was red on development from that
-# merge until it was repaired. Branch protection cannot close this on the Free
-# plan, so the merge path has to.
+# merge until it was repaired. No configured ruleset closes this today, so the
+# merge path has to.
 #
 # The required set is re-derived for THIS PR by the same script `just pr` uses,
 # so a check that has not registered yet cannot be mistaken for a check that
@@ -537,6 +538,8 @@ pr $title='' $body='' $milestone='':
 # is the manual security review signal described in 03-github-workflow.md §3,
 # and taking it is a decision to make explicitly with `gh pr merge`, having read
 # the diff, not something to wave through with a flag on this recipe.
+# That manual path, and the promotion/hotfix merge-commit paths, remain outside
+# the body binding below. This recipe closes the ordinary work-PR path only.
 merge $pr='':
     #!/usr/bin/env bash
     set -euo pipefail
@@ -630,6 +633,8 @@ merge $pr='':
     head_oid=${before[5]}
     head_repository=${before[6]}
     is_draft=${before[7]}
+    title=${before[8]}
+    body=${before[9]}
 
     [ "$state" = OPEN ] || {
       echo "merge: REFUSED — $pr_url is not open." >&2
@@ -664,6 +669,18 @@ merge $pr='':
       echo "merge: REFUSED — this is not a legal work-branch route." >&2
       exit 1
     }
+    if ! bash ./scripts/validate-change-title.sh --validate "$title"; then
+      echo "merge: REFUSED — the PR title above does not obey conventions §8." >&2
+      echo "  Edit the title on $pr_url, then rerun just merge." >&2
+      exit 1
+    fi
+    printf '%s\n%s' "$title" "$body" > "$snapshot_file"
+    if ! ./scripts/run-python.sh ./scripts/check-automation-attribution.py \
+        --message-file "$snapshot_file"; then
+      echo "merge: REFUSED — the PR title or body contains forbidden assistant attribution." >&2
+      echo "  Remove the attribution from $pr_url, then rerun just merge." >&2
+      exit 1
+    fi
     printf 'merge: verified work route %s@%s -> %s@%s\n' \
       "$head_ref" "$head_oid" "$base_ref" "$base_oid"
 
@@ -695,9 +712,17 @@ merge $pr='':
       exit 1
     }
 
-    # GitHub atomically matches the reviewed head. The immediately preceding
-    # snapshot also closes the base-tip race as far as the API permits.
-    gh pr merge "$pr_url" --match-head-commit "$head_oid" --squash --delete-branch
+    # GitHub atomically matches the reviewed head. The explicit subject and body
+    # file bind the validated snapshot inputs through the mutation. GitHub does
+    # not promise byte-identical server formatting versus implicit PR_BODY,
+    # including Dependabot trailers; compare the first human and Dependabot
+    # commits after this lands. No merge queue exists; re-audit if one is added,
+    # because GitHub documents that queued merges may ignore these fields.
+    # The immediately preceding snapshot closes the base-tip race as far as the
+    # API permits, and the subject preserves the established PR-number suffix.
+    printf '%s' "$body" > "$snapshot_file"
+    gh pr merge "$pr_url" --match-head-commit "$head_oid" --squash --delete-branch \
+      --subject "$title (#$pr_number)" --body-file "$snapshot_file"
 
 # development → staging, as a release candidate. Merge with a MERGE COMMIT.
 promote-staging:

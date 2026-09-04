@@ -217,13 +217,13 @@ old evidence. It waits for all core jobs, conditionally requires
 `security / workflow-analysis`, requires all three cross-platform jobs for a `staging` or `main`
 target, requires the promotion notice for official-branch and hotfix heads, and refuses if that
 snapshot changes while it waits.
-Because the current plan cannot require green checks, the human operator records both tips before
-the watcher and re-reads both immediately before every merge. Any mismatch discards the evidence
-and requires another watcher run. `--match-head-commit` atomically guards only the head SHA during
-the merge; this plan/API has no equivalent atomic target-base lock. Serialize maintainer merges—or
-temporarily freeze the target branch—during this final window. The immediate base recheck narrows
-but cannot eliminate that residual race. The operator then watches the merge result's exact
-branch-push CI SHA and only then creates the tag.
+Because no configured branch protection or ruleset requires green checks, the human operator
+records both tips before the watcher and re-reads both immediately before every merge. Any mismatch
+discards the evidence and requires another watcher run. `--match-head-commit` atomically guards only
+the head SHA during the merge; the documented flow has no equivalent atomic target-base lock.
+Serialize maintainer merges—or temporarily freeze the target branch—during this final window. The
+immediate base recheck narrows but cannot eliminate that residual race. The operator then watches
+the merge result's exact branch-push CI SHA and only then creates the tag.
 
 Release tags use `git tag -s`. The workflow requires an annotated tag object, a cryptographic
 signature, and GitHub's verified signature status; unsigned annotated and lightweight tags are
@@ -231,32 +231,33 @@ both refused. Configure and verify the signing identity before attempting the fi
 
 ---
 
-## 3 · What GitHub enforces here, and what the current plan cannot enforce
+## 3 · What GitHub and the repository enforce here
 
-This repository is **private, on the GitHub Free plan**. That is not a detail; it decides which
-of these rules are laws and which are merely written down.
+This repository has been **public since 30 August 2026**. GitHub's server-side branch controls are
+available, but availability is not configuration:
 
 ```
 $ gh api repos/OmarSweiti/pos/branches/main/protection
-403  Upgrade to GitHub Pro or make this repository public to enable this feature.
+404  Branch not protected
 ```
 
-Branch protection **and** rulesets are both gated. Neither is available. So:
+The rulesets API likewise reports zero configured rulesets. Branch protection and rulesets are
+therefore absent controls, not unavailable ones. So:
 
 | Rule | Control | Honest limit |
 |---|---|---|
 | No direct, force, or deletion push to `main`/`staging`/`development` | [`.githooks/pre-push`](../../.githooks/pre-push), using Git's supplied destination remote | local; `--no-verify` or an unconfigured clone bypasses it |
 | Existing tags never move or disappear | `.githooks/pre-push` allows a new tag but refuses every update/deletion; the release workflow revalidates the remote annotated-tag object around draft mutation | the hook is local, and draft/tag binding is not atomic until immutable publication |
-| Commit and squash title obey the exact same grammar | [`scripts/validate-change-title.sh`](../../scripts/validate-change-title.sh), called by `commit-msg` and `branch-flow` | the server check can be merged while red without protection |
-| Coding assistants receive no PR or history attribution; the exact Dependabot metadata/trailer combination remains visible | [`scripts/check-automation-attribution.py`](../../scripts/check-automation-attribution.py), called by Git and trusted CI for commits plus the PR title/body | Git author metadata is spoofable, local hooks are bypassable, and CI is evidence rather than a merge wall |
-| Protected source plans and committed migrations do not change | Claude/Codex hooks, staged-index policy, and `branch-flow` | `pull_request_target` loads the trusted default-branch definition, policy is checked out at its exact `github.workflow_sha`, and the verified PR head is materialized only as data; a red check still cannot block the administrator |
+| Commit and squash title obey the exact same grammar | [`scripts/validate-change-title.sh`](../../scripts/validate-change-title.sh), called by `commit-msg` and `branch-flow` | the server check can be merged while red because no configured protection or ruleset requires it |
+| Coding assistants receive no PR or history attribution; the exact Dependabot metadata/trailer combination remains visible | [`scripts/check-automation-attribution.py`](../../scripts/check-automation-attribution.py), called by Git and trusted CI for commits plus the PR title/body | Git author metadata is spoofable, local hooks are bypassable, and no configured server-side rule makes CI a merge wall |
+| Protected source plans and committed migrations do not change | Claude/Codex hooks, staged-index policy, and `branch-flow` | `pull_request_target` loads the trusted default-branch definition, policy is checked out at its exact `github.workflow_sha`, and the verified PR head is materialized only as data; no configured server-side rule makes a red check a merge wall |
 | Sensitive paths, oversized staged blobs, and Git inspection failures are refused | [`.githooks/pre-commit`](../../.githooks/pre-commit) with NUL-safe staged-index inspection | local only |
-| Secret-like content is detected independently of its filename | Gitleaks in pre-commit, pre-push, CI commit-range scanning, and the weekly security workflow | GitHub-native scanning/push protection remains unavailable; local scans can be skipped |
-| Tests, lint, domain purity, schema parity, real PostgreSQL, web build, docs, guards and supply-chain policy run | `ci.yml` | visible and logged, but not a required-check wall on this plan |
-| The coverage matrix reconciles with the suite, the phase files, normative reference names, and its own arithmetic | [`scripts/check-test-catalog.py`](../../scripts/check-test-catalog.py): `just lint` runs the real reconciliation; `just guards` runs `--self-test` | the `rust` job runs the reconciliation and `guards` runs `--self-test`, so a push that skipped `just lint` is still caught. Like every row here, that result is visible and logged rather than a required-check wall on this plan |
+| Secret-like content is detected independently of its filename | GitHub-native secret scanning and push protection are enabled; Gitleaks runs in pre-commit, pre-push, CI commit-range scanning, and the weekly security workflow | local scans can be skipped, so the native controls remain an independent backstop rather than a substitute for the repository-owned range and history gates |
+| Tests, lint, domain purity, schema parity, real PostgreSQL, web build, docs, guards and supply-chain policy run | `ci.yml` | visible and logged, but no configured protection or ruleset makes them a required-check wall |
+| The coverage matrix reconciles with the suite, the phase files, normative reference names, and its own arithmetic | [`scripts/check-test-catalog.py`](../../scripts/check-test-catalog.py): `just lint` runs the real reconciliation; `just guards` runs `--self-test` | the `rust` job runs the reconciliation and `guards` runs `--self-test`, so a push that skipped `just lint` is still caught. Like every row here, that result is visible and logged, but no configured protection or ruleset makes it a required-check wall |
 | The release signing key is never on a step that compiles third-party code | **nothing yet.** `release.yml` passes `TAURI_SIGNING_PRIVATE_KEY` and its password to the same step that builds the frontend and the Rust binary | this row is a **requirement, not a control**. [`ref/security-compliance.md`](ref/security-compliance.md) §6b specifies the split — an unsigned job that compiles and reaches the network, then a signing step that receives artifact digests and holds the key with no checkout, no dependency installation and no compilation. Until it lands, any build script or proc macro in the dependency graph can read the key. It is one reason the first external release is deliberately blocked |
-| Workflow syntax and Actions security are audited | `security.yml` using actionlint and zizmor | findings are annotations/check failures, not protected-branch requirements |
-| Third-party Actions are immutable | every `uses:` is a complete commit SHA; the post-merge policy script enables repository SHA pinning only after a local allowlist/default-head preflight | exact selected-action allow patterns are unavailable for this private user-owned repository, so `allowed_actions` remains the repository's existing mode |
+| Workflow syntax and Actions security are audited | `security.yml` using actionlint and zizmor | findings are annotations/check failures; no configured protection or ruleset requires them |
+| Third-party Actions are immutable in tracked workflows | every external `uses:` is a complete commit SHA from the repository allowlist, enforced by repository policy | repository-wide Action selection and SHA settings are separate live configuration; `gh-actions-policy.sh` owns their checked post-merge activation |
 | A release identifies the exact validated branch tip | `release.yml` validates SemVer/RC grammar, annotated tag object, branch tip, versions and successful CI for the same SHA | release signing secrets and OS signing still have to be provisioned before an external release |
 
 `branch-flow.yml` checks its candidate replacement with the trusted revision of
@@ -275,24 +276,24 @@ symlinks), mode changes, and any added local Action are refused, as is adding or
 workflow. Ordinary application and test implementation remains outside this exact-byte boundary.
 A change to the future policy surface is therefore intentionally red
 under the current trusted revision and requires an explicit manual security review before merge.
-That red result is the review signal and expected escape hatch on the Free plan; after the reviewed
-change lands, its exact `github.workflow_sha` becomes the policy used for later PRs. This friction
-prevents a green policy-only PR from silently poisoning the next trusted run; it does not pretend
-that a red check can block the administrator on this plan.
+That red result is the review signal; because no branch protection or ruleset is configured to make
+it a merge wall, an explicit human review authorises the change. After it lands, its exact
+`github.workflow_sha` becomes the policy used for later PRs. This friction prevents a green
+policy-only PR from silently poisoning the next trusted run; it does not pretend that a red check
+can block the administrator while no server-side rule requires it.
 The first merge that installs this boundary is necessarily a reviewed bootstrap: a trusted
 default-branch checker cannot protect the commit before that checker exists there.
 
 The practical rule remains **`just setup` on every machine, always**. It installs hooks before
 networked dependency setup and refuses early if Gitleaks is missing. Server workflows then repeat
 the policy from trusted code. This is professional defence in depth, but it is not branch
-protection: the current private Free-plan repository cannot require checks, prevent an
-administrator push, or activate CODEOWNERS review enforcement. Nothing in this repository claims
-that those paid-plan controls were completed.
+protection: no configured protection or ruleset requires checks, prevents an administrator push,
+or makes CODEOWNERS a review requirement. Nothing in this repository claims those server-side
+controls were completed.
 
-GitHub-native secret scanning and push protection are also unavailable here. The independent
-Gitleaks implementation closes the content-scanning gap without pretending to be the native
-product: findings are redacted, the scanner version and downloaded archive digest are pinned in
-CI, and operational errors fail closed.
+GitHub-native secret scanning and push protection are enabled. Independent Gitleaks remains defence
+in depth: findings are redacted, the scanner version and downloaded archive digest are pinned in CI,
+and operational errors fail closed.
 
 ---
 
@@ -355,8 +356,17 @@ therefore passes a conforming title unchanged and sends any other title through 
 validator's tested normalizer. That mode adds `[—]` when no canonical tag is present, removes an
 anchored generated directory suffix, then removes an anchored generated group suffix only if the
 subject is still overlength. As a last resort it truncates at a clean word boundary, and it validates
-its own output before the resulting edit retriggers title validation and type labeling. This is not
-a grammar exemption. A commit with the exact Dependabot author name/email may retain the exact
+its own output.
+
+That edit **retriggers nothing.** GitHub fires no workflow event for a `GITHUB_TOKEN`-authored
+action, so `branch-flow` never re-ran and stayed on the title in the stored event payload — which is
+why every Dependabot pull request was red on `topology` and why a re-run did not help: a re-run
+replays the same payload. Merged PRs #81 and #82 show it, reporting the pre-normalization title
+while the merged title carried its tag. The title check therefore reads the title **live** from the
+REST endpoint, and for the exact author `dependabot[bot]` it accepts a title the trusted normalizer
+accepts, because the write-scoped labeler owns the canonical edit and the two workflows race. A
+human's merely-normalizable title is still refused: the PR title becomes the commit subject, and
+`just merge` would refuse it anyway. This is not a grammar exemption. A commit with the exact Dependabot author name/email may retain the exact
 GitHub-generated trailer, but that locally configurable metadata is a compatibility signal, not
 authenticated App provenance. Coding assistants are tools and never receive co-author or
 generated-by attribution.
@@ -427,8 +437,8 @@ example: its milestone is already closed with an adoption note recording closure
 
 ## 5 · The board — one project, four views
 
-`POS delivery`, a Projects v2 board. Free on a personal account, works on private repositories,
-and it is the one piece of GitHub's project machinery that is fully available on this plan.
+`POS delivery`, a Projects v2 board on the maintainer's personal account. `just gh-project` owns its
+checked schema; the four views below remain a manual setup step.
 
 ```bash
 gh auth refresh -s project,read:project    # once — the default login lacks this scope
@@ -465,8 +475,8 @@ Four views, and no more. A board with nine views is a board nobody reads:
 | **Blocked** | table, filtered to anything with `Blocked` set | §16's weekly question, as a saved query |
 | **Money & compliance** | table, filtered to `Risk` ∈ money path, migration, compliance | the rows where a mistake costs money instead of time |
 
-Enable the three built-in workflows (project → ⋯ → Workflows) — they are free and they remove the
-step everyone forgets: *item closed* → Done, *PR merged* → Done, *auto-add* new open issues.
+Enable the three built-in workflows (project → ⋯ → Workflows) — they remove the step everyone
+forgets: *item closed* → Done, *PR merged* → Done, *auto-add* new open issues.
 
 **The board is not the plan.** The phase files are the plan. The board holds *status*: what is in
 flight, what is blocked, what is done. When the two disagree, the phase file is right and the
@@ -511,9 +521,9 @@ There is one developer, so the substitutes are the control, not a formality —
 - **Leave review comments on your own PR**, and resolve them. A comment you wrote and answered is
   a decision with a record. A thought you had and forgot is a bug in three weeks.
 
-`CODEOWNERS` records intended ownership and is ready for a future eligible repository, but it does
-not activate automatic review assignment for this private repository on the current plan. Treat it
-as maintained governance metadata, not an active control or a review requirement.
+`CODEOWNERS` records intended ownership. The enforced review path does not depend on automatic
+assignment or a CODEOWNERS review requirement; treat it as maintained governance metadata, not
+evidence that a review occurred.
 
 ---
 
@@ -661,18 +671,17 @@ both the branch name and head repository for these official paths.
 
 ---
 
-## 8 · Actions minutes are a real budget
+## 8 · Actions work is still worth controlling
 
-A private repository on the Free plan gets **2,000 Actions minutes a month**, and the multipliers
-are not kind: **Linux ×1, Windows ×2, macOS ×10.** A three-platform release build can consume a
-double-digit percentage of the month's allowance in one tag.
+GitHub-hosted standard-runner minutes are not metered for this public repository, so the former
+2,000-minute monthly budget and operating-system multipliers do not govern this workflow. Runtime
+still matters: redundant three-platform builds delay useful evidence and consume runner capacity.
 
 What is already done about it:
 
-- `concurrency` groups on `ci`, so a superseded run is cancelled — but **never** on `staging` or
-  `main`, where a half-cancelled build tells you nothing;
-- the release `guard` job, so a mistagged commit costs twenty Linux seconds instead of three
-  builds;
+- `concurrency` groups on `ci`, so a superseded work-branch run stops consuming runner capacity —
+  but **never** on `staging` or `main`, where a half-cancelled build tells you nothing;
+- the release `guard` job, so a mistagged commit is refused before three platform builds;
 - every external Action is pinned to a full commit SHA, and checkouts that do not push disable
   persisted credentials;
 - explicit token permissions and timeouts on every workflow/job;
@@ -682,28 +691,18 @@ What is already done about it:
 - a weekly security workflow, so actionlint/zizmor and advisory/secret-history checks do not rely
   only on a developer remembering to push;
 - Dependabot set to **monthly and grouped**, not daily and per-crate. A daily stream of single-crate
-  bumps is both a minutes bill and a review load nobody sustains — and an unread dependency bump
-  is how a supply-chain problem arrives politely.
+  bumps is both a queue and a review load nobody sustains — and an unread dependency bump is how a
+  supply-chain problem arrives politely.
 
 What to watch: tag deliberately. `-rc` tags are for candidates that will actually be installed,
 not for every merge to `staging`.
 
-Whether that is *enough* is not known, and estimating it from Linux timings is worthless when one
-platform costs ten times another:
-
-> ⚠️ **OPEN — blocks `5.5.1`.** Does the promotion-and-release cadence in this document fit inside
-> this plan's monthly Actions allowance once every release runs three real platform builds? Nothing
-> here has measured a full release, and the figure above is GitHub's published Free-plan allowance
-> rather than an observed bill. Default until answered: the cadence in this section — `-rc` tags
-> only for candidates that will actually be installed, `concurrency` cancellation on work branches
-> but never on `staging` or `main`, and the release `guard` job ahead of every platform build.
-> Owner: `5.5.1`, the first microstep that must ship signed installers on a schedule.
-> Source that settles it: this repository's own Actions usage report for the first month that runs
-> a complete three-platform release, read against the plan's current included-minutes figure.
-
-The consequence if it does not fit is not a broken build, it is a **stalled release in the last week
-of a month** — which is exactly when a merchant-facing fix wants to ship. Read the usage page after
-the first three-platform promotion, before planning the second.
+The constraint to measure at `5.5.1` is elapsed release time and reliability, not an included-minutes
+budget. Keep the same cadence — candidate tags only for builds that will actually be installed,
+concurrency cancellation on work branches but never on `staging` or `main`, and the release `guard`
+job before every platform build — then measure it against the first complete three-platform release.
+A superseded run no longer threatens a monthly allowance, but a slow or flaky release still delays a
+merchant-facing fix.
 
 ---
 
@@ -776,9 +775,7 @@ needs no workflow, no secret, and no webhook of your own.
 
 ## 10 · Documentation lives in `docs/`, and that is the professional answer
 
-GitHub Wikis are **not available** on a private repository on the Free plan (`has_wiki: false`,
-and it cannot be turned on). GitHub Pages from a private repository also needs Pro. So the wiki
-question has an easy answer here — but it would have the same answer on any plan:
+Whether GitHub Wikis or Pages are enabled is not the architectural decision here:
 
 **Engineering documentation belongs in the repository, not in a wiki.** In `docs/`, it is
 versioned with the code that it describes, reviewed in the pull request that changes the
@@ -794,7 +791,7 @@ cross-references.
 
 If a shareable, browsable page is genuinely needed — for a partner or an investor —
 [`status-page.html`](status-page.html) is the checked-in local view to share. No publication
-workflow or stable hosted URL is configured. It is a *view* of the doc set, never the source: when
+workflow is configured in this repository. It is a *view* of the doc set, never the source: when
 the spine changes, the page is corrected from [`00-master-plan.md`](00-master-plan.md), never the
 other way round.
 
@@ -806,25 +803,24 @@ Honest list, same spirit as [workflow §17](02-development-workflow.md).
 
 | Not set up | Why, and what closes it |
 |---|---|
-| Branch protection / rulesets | unavailable for this private repository on its current Free plan. Local hooks and checks do not impersonate it; `gh-protect.sh` is retained for a future eligibility change and was not applied |
-| Required checks / reviewers | consequences of the same plan limitation. `CODEOWNERS` is maintained metadata, not active automatic assignment or enforcement |
+| Branch protection / rulesets | available but not configured: `main` returns `404 Branch not protected`, and the rulesets API returns zero. Local hooks and checks do not impersonate them; `gh-protect.sh` fails closed because its classic-protection payload is incomplete |
+| Required checks / reviewers | no configured protection or ruleset turns CI or review metadata into a server merge wall. `CODEOWNERS` is maintained metadata; the watcher and explicit human decision are the active path |
 | GitHub Discussions | off. With one developer it is a second inbox. Turn it on when there are pilot merchants with questions |
-| Wiki / Pages | unavailable on this plan, and the wrong home for engineering docs anyway — §10 |
+| Wiki / Pages publication | no publication workflow is configured in this repository; engineering docs remain versioned and reviewed with the code — §10 |
 | A staging deployment of `apps/server` | there is no hosted environment yet. `staging` currently means "a tagged candidate", not "a running system" |
 | Jira | free and connectable, deliberately deferred until someone outside engineering needs it — §9 |
-| Protected release environment | excluded with the other paid-plan controls. Release jobs instead separate read-only signing from the minimal write-only publisher |
+| Protected release-environment enforcement | not claimed. Release jobs instead separate read-only signing from the minimal write-only publisher |
 | Release signing material | verified signed tags, updater secrets/public configuration, and platform signing/notarisation must be configured before the intentionally blocked first external release |
 | The signing/build split | the updater key currently reaches the step that compiles third-party code. [`ref/security-compliance.md`](ref/security-compliance.md) §6b specifies the two-job shape that fixes it; it is a workflow change with its own reviewed edit, and it lands before any external release — §3 |
 | Signed ordinary commits | optional before external contributors; release tags are a separate required policy |
-| GitHub-native secret scanning / push protection | unavailable. Independent Gitleaks scanning runs staged, pre-push, in CI, and weekly; it does not claim to be the native product |
-| Exact selected-Action allowlisting | unavailable for this private non-enterprise repository. Full-SHA references and the local repository allowlist apply now; the live SHA-only setting remains pending the required post-merge activation |
-| Auto-merge | without required checks, automatically merging would remove the deliberate human green-check decision, so it remains disabled |
+| Repository-level selected-Action allowlisting | its live capability and state are not asserted here. Every tracked `uses:` reference is a full SHA and policy checks enforce that; repository-wide configuration remains the separate checked post-merge step below |
+| Auto-merge | while no configured protection or ruleset requires checks, automatically merging would remove the deliberate human green-check decision, so it remains disabled |
 
-Immutable releases **are** configured live. Repository-wide Actions SHA enforcement is different:
-the checked-in workflows must first merge to the default branch, then
-`./scripts/gh-actions-policy.sh` performs a clean/default-head and local allowlist preflight before
-enabling it. Until that post-merge step runs, full-SHA pinning is enforced by the workflow files
-and policy checks, not claimed as an already-active GitHub repository setting.
+Immutable releases **are** configured live. Repository-wide Actions settings are separate live
+configuration: after the checked-in workflows merge to the default branch,
+`./scripts/gh-actions-policy.sh` performs a clean/default-head and repository-allowlist preflight
+before applying them. Independently of that live setting, full-SHA pinning is enforced by the
+workflow files and policy checks.
 
 ---
 
@@ -853,8 +849,13 @@ just gh-project           # the board and its fields; then the four views, by ha
 ./scripts/gh-actions-policy.sh            # enable and verify GitHub SHA-only Actions
 ```
 
-Do not run `just gh-protect` on the current plan; branch protection is outside this implementation
-and the script is retained only for a future repository eligibility change.
+`just gh-protect` now refuses and exits 3, and that refusal is the point. The script was written
+while the repository was private on GitHub Free, where the protection API answered 403 on every
+call — so the 403 was doing the reviewing, and three defects went unnoticed. Going public removed
+it: the `PUT` would now succeed and apply a required-check list omitting `guards`, `supply-chain`
+and `protected-paths`, which makes a branch look protected while the checks that refuse an edited
+migration are not required at all. It also cannot express `allowed_merge_methods`, which this flow
+needs. The replacement is a **ruleset**, not a patch to that file.
 
 ---
 

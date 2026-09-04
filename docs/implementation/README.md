@@ -43,7 +43,7 @@ complete. `1.6.3` is now **fully delivered**: `crates/pos-db/tests/role_matrix.r
 128 seeded `role_capability` rows and holds each one to `cap::DEFAULT_MATRIX`, so the grid the
 domain declares and the grid the register ships are the same grid or the gate is red.
 Group 1.2 begins with the **partially delivered** `1.2.0` benchmark gate: `just
-bench-gate`, `scripts/bench-gate.py`, its fourteen refusal-path tests, and
+bench-gate`, `scripts/bench-gate.py`, its refusal-path suite, and
 `benchmarks/reference-register.toml` are committed with **every identity value deliberately blank**
 beside §6a.1's empty register-hardware table. `python3 scripts/bench-gate.py --check-profile`
 therefore exits **non-zero**, which is conventions §7.1 working rather than failing; filling both
@@ -53,8 +53,11 @@ starts). **`1.8.9` has landed, so the gate it held is open**: groups 1.6, 1.9 an
 append-only facts, because every fact graph commits with its delivery envelope and the writer refuses
 to return success on an incomplete one. `1.2.4` (the scan parser's pure half, next in
 §1.2's build order) has every dependency met, and `1.6.3` is closed: its seed comparison landed
-against `0004`'s 128 rows. `1.6.4` (`Authorized<C>` and `authorize`) is unblocked, because
-`approval_handle`, `approval_consumption` and `audit_log` now exist. Neither is **blocked on the merchant legal name or TIN**, which instead gate store
+against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
+`authorize`, `ApprovalHandle` and `EscalationPolicy` are complete in `pos-domain`, with the two
+compile-fail proofs that a token cannot be forged or substituted across capabilities. Its
+persistence half — `consume_approval`, and the shell command that resolves a stored handle — waits
+on `pos-db` being wired into the terminal, which 1.8.x owns. Neither is **blocked on the merchant legal name or TIN**, which instead gate store
 provisioning and the issuing of a valid tax receipt. `1.3.2` is the next
 code step on the phase's longest critical path, but its `ZeroRatingReason` vocabulary and evidence
 requirements remain externally blocked by the `⚠️ OPEN` item in [`ref/domain-api.md`](ref/domain-api.md)
@@ -103,7 +106,7 @@ docs/implementation/
 
 Source documents live in [`../plan/`](../plan/): the business & functional master plan, the engineering blueprint, and the original Phase-0 setup guide.
 
-`status-page.html` is a locally shareable summary of the spine — verdict, corrections, phase map, risk register, and live Phase-0 status — for people who need the picture without the microsteps. No publication workflow or stable hosted URL is configured; it is a view of this set, never the source of truth.
+`status-page.html` is a locally shareable summary of the spine — verdict, corrections, phase map, risk register, and live Phase-0 status — for people who need the picture without the microsteps. No publication workflow is configured in this repository; it is a view of this set, never the source of truth.
 
 ---
 

@@ -116,7 +116,8 @@ Not installed yet, and the microstep that needs each — install when you get th
 |---|---|---|
 | `sqlcipher` CLI | `brew install sqlcipher` | §5.7 — inspecting the encrypted register DB by hand |
 | `criterion` (dep) | workspace `[dev-dependencies]` | 1.4.9 / 1.2.7 benchmarks |
-| Playwright | `pnpm add -D @playwright/test` | 1.9.4 scan-latency trace |
+| Playwright | `pnpm add -D @playwright/test` | 1.11.14 RTL screenshot baselines |
+| WebdriverIO + `tauri-driver` | per 2.9.5 | 1.11.13 scan-latency trace — Playwright drives browser engines and cannot attach to a Tauri webview |
 | `ts-rs` (dep) | workspace dependency | conventions §13 — generated TS types |
 
 Gitleaks is a setup prerequisite, not an optional later tool: pre-commit refuses
@@ -271,7 +272,7 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just promote-staging` | PR: `development` → `staging` (a release candidate) |
 | `just promote-main` | PR: `staging` → `main` (production) |
 | `just gh-bootstrap` | labels, milestones, merge behaviour, default branch — idempotent |
-| `just gh-protect` | branch protection; refuses politely on the Free plan |
+| `just gh-protect` | **refuses, deliberately.** Written against a 403 that a public repository no longer returns, so its `PUT` would now actually apply — with an incomplete required-check list. A reviewed ruleset is the intended replacement; none is configured yet |
 | `just gh-project` | the delivery board and its fields |
 
 Not yet recipes, and the microstep that creates each: `just seed` (1.12.1) · `just fuzz` and its
@@ -618,9 +619,9 @@ gh pr merge "$work_pr" --match-head-commit "$work_head" --squash --delete-branch
 
 The before/after base and head readings are load-bearing. A mismatch invalidates the check
 evidence and requires another watcher run. `--match-head-commit` locks only the head atomically;
-there is no equivalent atomic target-base lock on the current plan/API. Serialize maintainer
-merges—or temporarily freeze the target branch—during that final window. The immediate base
-recheck narrows but cannot eliminate the residual race; §3 in
+this repository's maintained merge sequence has no equivalent atomic target-base lock. Serialize
+maintainer merges—or temporarily freeze the target branch—during that final window. The immediate
+base recheck narrows but cannot eliminate the residual race; §3 in
 [`03-github-workflow.md`](03-github-workflow.md) is the authoritative runbook.
 
 **The PR title becomes the commit.** A squash-merge discards your commit subjects and commits the
@@ -1045,8 +1046,8 @@ denies constrain Claude tools and are not OS containment. Pre-tool launcher and
 settings-validation failures fail closed; post-tool documentation diagnostics remain visible but
 cannot undo a completed write. The portable launcher and real `PowerShell`/`Monitor` routing are
 contract-tested, but native Windows process dispatch was not exercised. Git hooks and CI provide
-cross-platform backstops and signals; on this Free plan a red CI result still cannot block the
-repository administrator from merging.
+cross-platform backstops and signals; with `main` unprotected and zero rulesets configured, a red CI
+result still cannot block the repository administrator from merging.
 
 When a second developer arrives, the reviewer's job in this codebase, in priority order:
 
@@ -1123,8 +1124,9 @@ CI runs on every push to `development`, `staging` and `main`, and on every PR in
 | [`release.yml`](../../.github/workflows/release.yml) | guard, platform signing, publisher, metadata | verified signed exact-tip tag · exact-SHA CI · least-privilege publishing · SBOM/checksums | the release checklist in §15 |
 
 `ci` cancels a superseded run on a work branch, but never on `staging` or `main`: a half-cancelled
-promotion build tells you nothing about whether the candidate was green. Minutes are a real budget
-on this plan — [`03-github-workflow.md`](03-github-workflow.md) §8.
+promotion build tells you nothing about whether the candidate was green. Standard hosted-runner
+minutes are not metered for this public repository; cancellation still retires stale evidence and
+returns runner capacity to the latest head — [`03-github-workflow.md`](03-github-workflow.md) §8.
 
 `just pre-push` predicts the deterministic code and policy jobs. It deliberately cannot reproduce
 GitHub event topology, workflow static analysis, the time-varying advisory databases, or a build on
@@ -1519,7 +1521,7 @@ verify_release_tag "$final_tag" "$final_tag_object" "$main_sha"
 gh release edit "$final_tag" --draft=false --prerelease=false
 ```
 
-The explicit PR and run identifiers compensate for the current plan's missing merge enforcement.
+The explicit PR and run identifiers compensate for the absence of configured merge enforcement.
 Immediately before each merge, confirm the checked head SHA is unchanged and pass it to
 `--match-head-commit` so the merge is atomic with that expectation. After each merge, watch the
 `ci.yml` push run selected by both branch and exact SHA. Never use a bare `gh run watch` in a
@@ -1621,9 +1623,8 @@ it.
 | The soak and long-chaos suites live in the default `cargo nextest --workspace` run, with no selection policy and no runtime budget | 2.9.6, and the `soak` nextest profile |
 | Test coverage is not measured. Deliberate — property tests over invariants are the coverage story here — but `cargo llvm-cov` is worth running once per phase to find modules with **no** test at all. **Mutation testing on `pos-domain` is the better instrument** for the same reason: line coverage says a line ran, and `cargo-mutants` says whether the properties bite when `>=` becomes `>` or `HalfAwayFromZero` becomes `HalfEven` | per-phase, by hand |
 | No installer signing of any kind | 0.3.2 (updater), 5.5.1 (OS) |
-| **Branch protection does not exist.** This repo is private on the current GitHub Free plan, where protection and rulesets both return 403. `.githooks/pre-push` and server-side checks provide safety and evidence, but `--no-verify` and the administrator merge button remain possible | a plan/repository visibility change outside this setup; no paid-plan control is claimed here |
+| **No branch protection or ruleset is configured.** The repository is public: `main` reports `404 Branch not protected`, and the rulesets API reports zero. `.githooks/pre-push` and server-side checks provide safety and evidence, but `--no-verify` and the administrator merge button remain possible | a reviewed server-side policy change outside this setup; no merge-blocking control is claimed until it is configured |
 | A clone that has not run `just setup` has **no** protection, because the hooks live in `core.hooksPath` | nothing — it is inherent to hook-based enforcement. It is why §12 of `03-github-workflow.md` leads with `just setup` |
-| GitHub-native secret scanning and push protection are unavailable for this private repository | independent Gitleaks scanning is installed locally and in CI; native GitHub coverage remains unavailable |
 | Claude's OS sandbox is intentionally disabled on every host, so permitted shell subprocesses have ambient filesystem, network, environment, and credential access; native PowerShell process dispatch was not exercised here | accepted development-policy tradeoff; manual permissions, exact tool-level denies, hooks, Git hooks, and CI remain controls rather than OS containment. Re-enable an audited sandbox policy if host isolation becomes required |
 | `staging` means "a tagged candidate", not "a running system" — there is no hosted environment for `apps/server`, no server backup, no tested restore, no monitoring and no on-call | group 3.10. Running one small instance from Phase 3 is also the cheapest way to buy operational experience before a merchant supplies it |
 | There is no update service — no manifest endpoint, no cohort assignment, no `plugins.updater` block — behind a gate that requires a staged rollout proven end to end | 5.5.0, 5.5.2 |

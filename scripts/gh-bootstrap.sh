@@ -174,17 +174,18 @@ else
     die "failed to configure merge behaviour; check the token has 'repo' scope"
   fi
   echo "  squash ✓  merge-commit ✓  rebase ✗  delete-branch ✓"
-  # allow_auto_merge is deliberately NOT set. The API accepts the field, returns
-  # 200, and leaves it false: auto-merge needs required status checks to gate on,
-  # and those need branch protection, which this plan does not sell.
+  # allow_auto_merge is deliberately NOT set. Auto-merge needs required status
+  # checks to gate on, and no ruleset or branch protection is configured, so
+  # there is nothing for it to wait for. It stays off by choice rather than by
+  # plan limit — 03-github-workflow.md §3 records the decision.
 fi
 
 # ── Dependabot ────────────────────────────────────────────────────────────
-# Alerts and automatic security updates ARE free on a private repository.
-# Native secret scanning is NOT — it needs Advanced Security and answers 422
-# here. Independent Gitleaks checks now cover staged changes, pushes, CI, and a
-# weekly full-history scan; SECURITY.md records that they are not the native
-# product and do not create a paid-plan guarantee.
+# Alerts and automatic security updates are enabled below. GitHub-native secret
+# scanning and push protection are enabled live on this public repository and are
+# not shaped here — SECURITY.md §"Reporting" records that. The independent
+# Gitleaks checks over staged changes, pushes, CI and a weekly full-history scan
+# remain defence in depth beside the native product, not a substitute for it.
 echo
 echo "Dependabot"
 if [ "$DRY" -eq 1 ]; then
@@ -220,5 +221,8 @@ else
 fi
 
 echo
-echo "Done. Branch protection is a separate script — and a separate bill:"
-echo "  ./scripts/gh-protect.sh"
+echo "Done. Branch protection and rulesets are available on this public"
+echo "repository and none is configured. ./scripts/gh-protect.sh deliberately"
+echo "refuses: it was written against a 403 a public repository no longer"
+echo "returns, so its PUT would now apply an incomplete required-check list."
+echo "The replacement is a reviewed ruleset — docs/implementation/03-github-workflow.md §3."

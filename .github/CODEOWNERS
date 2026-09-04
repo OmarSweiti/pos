@@ -2,9 +2,9 @@
 # resolves to the same person; the mapping is ready for the day a second
 # developer arrives, but it is documentation rather than live enforcement today.
 #
-# GitHub does not activate CODEOWNERS for this private personal Free repository,
-# so neither automatic review requests nor required-owner review is active. Do
-# not mistake this map for a merge control. See docs/implementation/03-github-workflow.md §3.
+# No ruleset or branch protection requires owner review, so this map is not a
+# merge control. Whether GitHub raises automatic review requests here is a
+# repository setting, not something this file asserts. See docs/implementation/03-github-workflow.md §3.
 
 *                                   @OmarSweiti
 
