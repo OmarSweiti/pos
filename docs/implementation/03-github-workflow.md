@@ -683,7 +683,10 @@ What is already done about it:
   but **never** on `staging` or `main`, where a half-cancelled build tells you nothing;
 - the release `guard` job, so a mistagged commit is refused before three platform builds;
 - every external Action is pinned to a full commit SHA, and checkouts that do not push disable
-  persisted credentials;
+  persisted credentials. Only the SHA executes; the trailing comment is documentation, and it must
+  name a **tag that resolves to that exact SHA today**. A branch name there is false as soon as the
+  upstream branch moves, so zizmor's `ref-version-mismatch` audit reds the next `.github/**` pull
+  request over an upstream commit rather than over anything in the diff;
 - explicit token permissions and timeouts on every workflow/job;
 - caching on build jobs;
 - real Linux/macOS/Windows Tauri builds on promotion PRs and long-lived release branches, so a tag is not
