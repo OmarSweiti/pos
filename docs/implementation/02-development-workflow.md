@@ -67,8 +67,9 @@ expensive no matter how early it is:
 4. **Claiming a compliance validation you have not completed** — "PCI compliant", "JoFotara
    certified", "SAQ done" — in code, comments, docs, UI copy, or a commit message. See
    [`ref/security-compliance.md`](ref/security-compliance.md) §3.
-5. **A float in a money path.** `clippy::float_arithmetic` is denied workspace-wide; do not
-   `#[allow]` it to get past a compile error. Fix the arithmetic.
+5. **A float in a money path.** `clippy::float_arithmetic` is `forbid` workspace-wide, so
+   `#[allow]`-ing it to get past a compile error is not discouraged — it is `E0453`. Fix the
+   arithmetic.
 
 **On squashing or renumbering migrations.** Do not. Once a migration is present in `HEAD`, it is
 append-only even before a pilot: the runner, repository guards, and other clones all depend on that

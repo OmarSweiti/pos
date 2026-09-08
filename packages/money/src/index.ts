@@ -5,7 +5,7 @@
  * line of this file:
  *
  * **I-1 · no float touches money — in Rust, TypeScript, SQL or JSON.** Rust
- * enforces this with `clippy::float_arithmetic = "deny"`. TypeScript has no
+ * enforces this with `clippy::float_arithmetic = "forbid"`. TypeScript has no
  * equivalent lint, so the guard here is structural instead: every arithmetic
  * operation below is on `bigint`, where `/` is exact integer division and there
  * is no IEEE-754 anywhere to round for you. A `number` that is not an integer

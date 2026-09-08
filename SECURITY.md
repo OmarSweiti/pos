@@ -52,7 +52,7 @@ the release build must refuse to honour it.
 
 | Enforced | By |
 |---|---|
-| No float in a money path | `clippy::float_arithmetic = "deny"`, workspace-wide |
+| No float in a money path | `clippy::float_arithmetic = "forbid"`, workspace-wide; `forbid` rather than `deny`, so an `#[allow]` is `E0453` |
 | No `unwrap` / `expect` outside tests and `main()` | `clippy::unwrap_used`, `expect_used` = deny |
 | A committed migration cannot be edited | `.claude/hooks/protect-immutable.py` · `.githooks/pre-commit` |
 | Sensitive filenames, committed plans, oversized staged blobs, and changes to committed migrations are refused | `.githooks/pre-commit`, using the staged index and failing closed on Git errors |

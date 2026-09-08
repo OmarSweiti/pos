@@ -65,7 +65,8 @@ Not style preferences. Each one, violated, produces a class of bug that costs mo
 
 1. **Money is `i64` minor units. Always.** No float touches money in Rust, TypeScript, SQL, or JSON.
    Intermediate math uses `rust_decimal`, rounds **once**, returns to `i64`.
-   `clippy::float_arithmetic` is **denied** workspace-wide.
+   `clippy::float_arithmetic` is **forbidden** workspace-wide — `forbid`, not `deny`, so an
+   `#[allow]` is `E0453` rather than a silent escape (conventions §1).
 2. **The minor-unit exponent is per-currency data.** JOD = 3 (1 dinar = 1000 fils). Never `100`.
 3. **Quantities are `i64` milli-units.** `1 unit = 1000`. Weighed and discrete share one representation.
 4. **Completed sales are immutable.** No `UPDATE` on a complete sale, ever. Corrections are new
