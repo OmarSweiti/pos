@@ -1174,13 +1174,15 @@ The CSV columns are exactly `product_id`, `qty_milli` and nullable `unit_cost_mi
 *Arabic-first RTL from the first commit. Retrofitting RTL is miserable; scaffolding it is cheap.*
 
 ### 1.11.0 — Register DOM component-test harness
-**Files:** `apps/terminal/package.json`, `pnpm-lock.yaml`, `apps/terminal/vite.config.ts`, `apps/terminal/src/test/setup.ts` (new), `apps/terminal/src/screens/Sale.test.tsx` (new)
+**Files:** `apps/terminal/package.json` (four test devDependencies) · `pnpm-lock.yaml` (their resolutions) · `apps/terminal/vite.config.ts` (the jsdom environment, its document fixture and the setup file) · `apps/terminal/src/test/setup.ts` (new) · `apps/terminal/src/screens/Sale.test.tsx` (new) · `apps/backoffice/vite.config.ts` (the justifying comment that called the terminal's suite DOM-free) · [`02-development-workflow.md`](02-development-workflow.md) (§4.3's Vitest row and §17's DOM-harness gap) · [`ref/test-catalog.md`](ref/test-catalog.md) (the DOM-harness row) · [`ref/ui-spec.md`](ref/ui-spec.md) (§8's harness paragraph) · [`README.md`](README.md) (implementation frontier) · this file (this microstep's `Files:` line and prose)
 
 ```ts
 export function renderWithProviders(ui: React.ReactElement): RenderResult;
 ```
 
 Add `@testing-library/react`, `@testing-library/user-event`, `@testing-library/jest-dom` and `jsdom`; configure Vitest with `environment: "jsdom"`. Scan-burst tests use fake timers and `user-event`'s `advanceTimers`, so the `< 30 ms` heuristic is deterministic rather than scheduler-dependent.
+
+Three things the harness owes, each because leaving it out fails later as something other than itself. **`dir="rtl"` comes from `index.html`, read by `vite.config.ts`** — vitest never loads that file, and a literal retyped into the config leaves the canary green when the served document itself regresses. **`cleanup` is registered explicitly**: Testing Library installs that hook only when a global `afterEach` exists, and `globals` is off here, so without it the second rendering test in any file fails as a duplicate-element selector error rather than as a leaking harness. **A minimal `jest` global exposing `advanceTimersByTime` bridges to `vi`**: Testing Library gates its async wrapper's clock advance on that global, so until it exists every `await user.*()` under `vi.useFakeTimers()` waits on a timeout the frozen clock never fires — the sentence above is a promise the harness has to keep, not a property it inherits.
 **Tests:** `sale_screen_renders_in_rtl_by_default`
 **Done when:** `pnpm --filter terminal exec vitest run src/screens/Sale.test.tsx` executes the canary in a DOM and exits zero.
 

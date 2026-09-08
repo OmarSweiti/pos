@@ -393,7 +393,7 @@ does not exist yet. Pick the layer from conventions §5:
 | Receipt bytes, fiscal XML | golden file | `crates/*/tests/golden/` | `cargo nextest run -p <crate>` |
 | A repository, a migration, a transaction | integration, real SQLite | `crates/*/tests/` | `cargo nextest run -p pos-db` |
 | Sync convergence under replay/drop/reorder | chaos | `crates/pos-sync/tests/` | `cargo nextest run -p pos-sync` |
-| A React helper, a formatter, a store | Vitest | `apps/*/src/**/*.test.ts` | `pnpm --filter terminal exec vitest run` |
+| A React helper, a formatter, a store, or a rendered screen | Vitest | `apps/*/src/**/*.test.ts`, `apps/*/src/**/*.test.tsx` | `pnpm --filter terminal exec vitest run` |
 
 Name them exactly as the microstep says — `<subject>_<behaviour>` for examples, `prop_<invariant>`
 for properties. The names are referenced from [`ref/test-catalog.md`](ref/test-catalog.md); a
@@ -1617,7 +1617,7 @@ it.
 | TS types are hand-written in `packages/api-types`; no `ts-rs` generation into `src/ipc/`, no CI drift gate | conventions §13, with the first real IPC surface |
 | No i18n catalog lockstep test, and no message catalog to test | 1.11.1 |
 | No PII-scrubber test on the logger (G-8) | 1.6.x |
-| **No DOM component harness in `apps/terminal`** — it has `vitest` and no `jsdom` environment, while `apps/backoffice` already has the pattern. Three named 1.11.x tests, including `scan_routes_while_search_focused`, cannot be written until it exists | 1.11.0 |
+| The DOM component harness landed at 1.11.0, so `apps/terminal` has a `jsdom` environment, `renderWithProviders`, explicit cleanup and a fake-timer bridge — but the component tests it unblocks are still owed: `scan_routes_while_search_focused` and `scan_burst_detected_over_typing` (1.11.6), `every_action_reachable_without_a_mouse` (1.11.11) and `latin_runs_inside_arabic_text_are_bidi_isolated` (1.11.12) | 1.11.6, 1.11.11, 1.11.12 |
 | **Nothing automated launches the packaged application, on any OS.** CI builds the Tauri bundle and never starts it; `.spec.ts` naming implies Playwright, which drives browser engines and cannot attach to a Tauri webview | 2.9.5 (WebdriverIO + `tauri-driver`). Any platform `tauri-driver` does not support is named there, not left implicit |
 | No fuzzing, for four parsers that consume input this product does not control — the scan parser, the receipt raster path, the UBL builder, and the sync decoder — under a `unwrap`/`expect` ban that makes panic-freedom on hostile input an invariant | 1.2.8, then per parser |
 | The soak and long-chaos suites live in the default `cargo nextest --workspace` run, with no selection policy and no runtime budget | 2.9.6, and the `soak` nextest profile |
