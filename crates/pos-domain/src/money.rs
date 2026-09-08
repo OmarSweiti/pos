@@ -81,7 +81,7 @@ impl Currency {
 
     /// Minor units in one major unit — 1000 for JOD, 100 for USD.
     ///
-    /// Integer arithmetic only; `clippy::float_arithmetic` is denied workspace
+    /// Integer arithmetic only; `clippy::float_arithmetic` is forbidden workspace
     /// wide and `10f64.powi(3)` is 999.9999999999999 waiting to happen.
     /// `saturating_pow` keeps this total: `i64::pow` panics on overflow in a
     /// debug build, and while no real exponent comes close, a total function
