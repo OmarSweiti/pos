@@ -438,17 +438,33 @@ example: its milestone is already closed with an adoption note recording closure
 ## 5 · The board — one project, four views
 
 `POS delivery`, a Projects v2 board on the maintainer's personal account. `just gh-project` owns its
-checked schema; the four views below remain a manual setup step.
+checked schema; a view's grouping and sorting are the one part no API can set, so they stay a manual
+step.
 
 ```bash
 gh auth refresh -s project,read:project    # once — the default login lacks this scope
 just gh-project                            # creates missing fields; refuses schema drift
 ```
 
-**Live verification note — 27 August 2026:** `just gh-project` created project **#4 `POS delivery`**
-on the personal account, then stopped because field inspection also queried a non-existent
-organisation. The seven custom fields still await the reviewed re-run; the four views remain a
-manual step.
+**Live verification note — 8 September 2026:** project **#4 `POS delivery`** exists on the personal
+account with all seven custom fields at the types and select options
+[`gh-project.sh`](../../scripts/gh-project.sh) declares, all four views, the repository linked, and
+13 items. The 27 August run stopped because field inspection queried a non-existent organisation;
+`7400a12`, landed the same day, made the script resolve the owner through `repositoryOwner(login:)`
+with fragments on both `User` and `Organization`, and the field query now returns clean — the
+mutating recipe itself has not been re-run, so a reviewed re-run remains unproven.
+
+What is **not** set is each view's grouping and sorting. `createProjectV2View` accepts only
+`projectId`, `name`, `layout` and `configuration`; `updateProjectV2View` adds `filter`; and
+`ProjectV2ViewConfigurationInput` exposes **only** `visibleFieldIds`. There is no group-by or sort-by
+input anywhere in the schema, so those two remain clicks — `Phase plan`'s in particular. Every
+view's name, layout and filter already match the table below.
+
+**Auto-add does not work, and it is the one automation that must be configured by hand.** Issues
+#68–#71, #110–#115 and #119–#120 were all created and none reached the board until added explicitly
+with `gh project item-add`. The other built-in workflows do work: "Item closed" moved #110 and #117
+to `Done` on merge with no intervention. Until Auto-add is configured, **add every new issue by
+hand**.
 
 The bootstrap validates exact field types, duplicate names, and every single-select option before
 it calls the board ready. A same-named but incompatible field is a blocking manual correction, not
@@ -846,7 +862,7 @@ For the repository itself — idempotent, run again whenever this document chang
 ```bash
 just gh-bootstrap-dry     # read it first
 just gh-bootstrap         # labels, milestones, merge behaviour, default branch
-just gh-project           # the board and its fields; then the four views, by hand
+just gh-project           # the board and its fields; views by hand (grouping has no API)
 ./scripts/gh-actions-policy.sh --dry-run  # preflight now; no live mutation
 # after this hardened setup is merged on the default branch:
 ./scripts/gh-actions-policy.sh            # enable and verify GitHub SHA-only Actions
