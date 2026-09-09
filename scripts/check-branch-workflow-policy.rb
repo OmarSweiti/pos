@@ -1109,23 +1109,47 @@ def validate_revision_policy(trusted_revision, candidate_revision)
     candidate_discoverable.keys.sort
   )
 
+  # Report EVERY differing path, not the first one found. This comparison exists
+  # so a human reads the policy diff, and the message is the only description of
+  # that diff the reviewer gets. Raising on the first path made the message
+  # actively misleading: a run naming .codex/hooks.json concealed the AGENTS.md
+  # and CLAUDE.md edits in the same PR, which were the reason to read it. A red
+  # that under-describes what changed trains the reader to stop reading.
+  changed = []
+  absent = []
   (STATIC_POLICY_PATHS + trusted_workflows + trusted_discoverable.keys).uniq.sort.each do |relative|
-    entries = revisions.to_h do |label, revision|
+    entries = {}
+    missing_from = []
+    revisions.each do |label, revision|
       output, error, status = Open3.capture3(
         "git", "ls-tree", "-z", "--full-tree", revision, "--", relative
       )
+      # A git failure is an operational error, never evidence that the policy
+      # surface is unchanged, so it still fails closed immediately.
       unless status.success?
         raise PolicyViolation, "git could not inspect #{label} policy #{relative}: #{error.strip}"
       end
-      raise PolicyViolation, "#{label} revision lacks policy blob #{relative}" if output.empty?
 
-      [label, output]
+      output.empty? ? missing_from << label : entries[label] = output
+    end
+
+    unless missing_from.empty?
+      absent << "#{relative} (absent from #{missing_from.join(' and ')})"
+      next
     end
     next if entries.fetch("trusted workflow") == entries.fetch("candidate")
 
-    raise PolicyViolation,
-          "candidate changed trusted policy blob or mode #{relative}; policy changes require an explicit red/manual security review"
+    changed << relative
   end
+
+  return if changed.empty? && absent.empty?
+
+  detail = []
+  detail << "changed blob or mode: #{changed.join(', ')}" unless changed.empty?
+  detail << "missing policy blob: #{absent.join('; ')}" unless absent.empty?
+  raise PolicyViolation,
+        "candidate changed trusted policy blob or mode on #{changed.length + absent.length} path(s) — " \
+        "#{detail.join(' | ')}; policy changes require an explicit red/manual security review"
 end
 
 def validate_candidate(
@@ -2061,6 +2085,40 @@ def self_test(default_path)
     File.chmod(revision_mode, revision_mode_path)
     run_git.call("add", "--", mode_relative)
     run_git.call("commit", "-q", "--no-verify", "-m", "restore policy mode")
+
+    # The message IS the review brief. Naming one path while others changed in
+    # the same PR is how an AGENTS.md/CLAUDE.md edit rode along behind a
+    # .codex/hooks.json headline, so a multi-path change must name every path.
+    multi_first = STATIC_POLICY_PATHS.first
+    multi_second = STATIC_POLICY_PATHS[1]
+    [multi_first, multi_second].each do |relative|
+      path = File.join(revision_repo, relative)
+      File.write(path, "#{File.read(path)}\n# policy drift\n")
+      run_git.call("add", "--", relative)
+    end
+    run_git.call("commit", "-q", "--no-verify", "-m", "change two policy blobs")
+    multi_revision = run_git.call("rev-parse", "HEAD")
+    begin
+      Dir.chdir(revision_repo) do
+        validate_revision_policy(trusted_revision, multi_revision)
+      end
+      puts "  FAIL  Git tree comparison names every changed policy path"
+      failed += 1
+    rescue PolicyViolation => e
+      if e.message.include?(multi_first) && e.message.include?(multi_second)
+        puts "  ok    Git tree comparison names every changed policy path"
+        passed += 1
+      else
+        puts "  FAIL  Git tree comparison names every changed policy path  (message named only one: #{e.message})"
+        failed += 1
+      end
+    end
+
+    [multi_first, multi_second].each do |relative|
+      run_git.call("checkout", trusted_revision, "--", relative)
+      run_git.call("add", "--", relative)
+    end
+    run_git.call("commit", "-q", "--no-verify", "-m", "restore two policy blobs")
 
     removed_workflow_relative = workflow_policy_paths(trusted_root).last
     FileUtils.rm(File.join(revision_repo, removed_workflow_relative))
