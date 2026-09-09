@@ -1,5 +1,8 @@
 # POS
 
+[![ci](https://github.com/OmarSweiti/pos/actions/workflows/ci.yml/badge.svg?branch=development)](https://github.com/OmarSweiti/pos/actions/workflows/ci.yml)
+[![security](https://github.com/OmarSweiti/pos/actions/workflows/security.yml/badge.svg?branch=development)](https://github.com/OmarSweiti/pos/actions/workflows/security.yml)
+
 Cross-platform, offline-first point of sale for the Jordanian market.
 
 A register keeps trading when the internet does not. Sales are captured locally
