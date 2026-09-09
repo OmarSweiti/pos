@@ -2,6 +2,7 @@ name: Microstep
 description: One numbered unit of work from a phase file — the normal way work enters this repo.
 title: "[<phase>.<group>.<step>] "
 labels: ["type: feat"]
+projects: ["OmarSweiti/4"]
 body:
   - type: markdown
     attributes:
