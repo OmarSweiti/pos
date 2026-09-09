@@ -132,6 +132,20 @@ EXPECTED_STEPS = {
   ]
 }.freeze
 
+# Steps that must report their own verdict even when an earlier step in the same
+# job failed. The frozen-policy comparison is *expected* to go red whenever a PR
+# edits the future policy surface, and that red is the reviewed signal — but a
+# failed step cancels every later step by default, so it was also silencing the
+# source-plan/migration immutability wall, the attribution wall and the action
+# pinning wall on precisely the PRs that most need them. Pinning the guard here,
+# rather than merely tolerating it, means the un-masking cannot be quietly
+# dropped: removing the `if` is now itself a policy violation.
+EXPECTED_IF = {
+  "No PR may edit a source plan or an existing migration" => "${{ !cancelled() }}",
+  "PR commits contain no assistant-attribution trailers" => "${{ !cancelled() }}",
+  "GitHub automation uses only approved full-SHA actions" => "${{ !cancelled() }}"
+}.freeze
+
 EXPECTED_RUN = {
   "Materialize the verified untrusted head as data only" => <<~'SH'.rstrip,
     set -euo pipefail
@@ -403,9 +417,12 @@ end
 
 def validate_run_step(step, name, context)
   expected_keys = %w[name run]
+  expected_keys << "if" if EXPECTED_IF.key?(name)
   expected_keys << "env" if EXPECTED_ENV.key?(name)
   expected_keys << "working-directory" if EXPECTED_WORKING_DIRECTORY.key?(name)
   require_exact_keys(step, expected_keys, context)
+
+  require_scalar(step, "if", EXPECTED_IF.fetch(name), context) if EXPECTED_IF.key?(name)
 
   run = scalar(step.fetch("run"), "#{context}.run").rstrip
   expected_run = EXPECTED_RUN.fetch(name)
@@ -1092,23 +1109,91 @@ def validate_revision_policy(trusted_revision, candidate_revision)
     candidate_discoverable.keys.sort
   )
 
+  # Report EVERY differing path, not the first one found. This comparison exists
+  # so a human reads the policy diff, and the message is the only description of
+  # that diff the reviewer gets. Raising on the first path made the message
+  # actively misleading: a run naming .codex/hooks.json concealed the AGENTS.md
+  # and CLAUDE.md edits in the same PR, which were the reason to read it. A red
+  # that under-describes what changed trains the reader to stop reading.
+  changed = []
+  absent = []
   (STATIC_POLICY_PATHS + trusted_workflows + trusted_discoverable.keys).uniq.sort.each do |relative|
-    entries = revisions.to_h do |label, revision|
+    entries = {}
+    missing_from = []
+    revisions.each do |label, revision|
       output, error, status = Open3.capture3(
         "git", "ls-tree", "-z", "--full-tree", revision, "--", relative
       )
+      # A git failure is an operational error, never evidence that the policy
+      # surface is unchanged, so it still fails closed immediately.
       unless status.success?
         raise PolicyViolation, "git could not inspect #{label} policy #{relative}: #{error.strip}"
       end
-      raise PolicyViolation, "#{label} revision lacks policy blob #{relative}" if output.empty?
 
-      [label, output]
+      output.empty? ? missing_from << label : entries[label] = output
+    end
+
+    unless missing_from.empty?
+      absent << "#{relative} (absent from #{missing_from.join(' and ')})"
+      next
     end
     next if entries.fetch("trusted workflow") == entries.fetch("candidate")
 
-    raise PolicyViolation,
-          "candidate changed trusted policy blob or mode #{relative}; policy changes require an explicit red/manual security review"
+    changed << relative
   end
+
+  return if changed.empty? && absent.empty?
+
+  # Attribute each changed path, because the trusted revision is the base branch
+  # tip: a path that moved on the base after this branch started differs from the
+  # candidate without the candidate having touched it. Naming those the same way
+  # as the PR's own edits is what makes the red unreadable — the reviewer cannot
+  # tell which diffs are theirs to read.
+  #
+  # Attribution only labels; it never excuses. Every differing path still refuses,
+  # because the boundary is "the candidate's policy surface byte-matches the
+  # trusted one", and a stale policy surface is a real condition to resolve by
+  # updating the branch. Deciding that base-side drift should stop being red is a
+  # security-relevant loosening, and it is not this change's to make.
+  mine, drift = classify_policy_drift(changed, trusted_revision, candidate_revision)
+
+  detail = []
+  detail << "changed by this branch: #{mine.join(', ')}" unless mine.empty?
+  detail << "already moved on the base since the branch point, update the branch: #{drift.join(', ')}" unless drift.empty?
+  detail << "missing policy blob: #{absent.join('; ')}" unless absent.empty?
+  raise PolicyViolation,
+        "candidate changed trusted policy blob or mode on #{changed.length + absent.length} path(s) — " \
+        "#{detail.join(' | ')}; policy changes require an explicit red/manual security review"
+end
+
+# Split changed paths into the ones this branch edited and the ones that merely
+# moved on the base since the branch point, by comparing each against the merge
+# base of the trusted and candidate revisions. Best effort by design: if the
+# merge base cannot be resolved, every path is reported unattributed rather than
+# failing, because the refusal above is already correct and attribution is only
+# there to make the message readable.
+def classify_policy_drift(changed, trusted_revision, candidate_revision)
+  return [changed, []] if changed.empty?
+
+  base, _error, status = Open3.capture3("git", "merge-base", trusted_revision, candidate_revision)
+  return [changed, []] unless status.success?
+
+  merge_base = base.strip
+  return [changed, []] if merge_base.empty?
+
+  mine = []
+  drift = []
+  changed.each do |relative|
+    at_base, _e1, s1 = Open3.capture3("git", "ls-tree", "-z", "--full-tree", merge_base, "--", relative)
+    at_head, _e2, s2 = Open3.capture3("git", "ls-tree", "-z", "--full-tree", candidate_revision, "--", relative)
+    unless s1.success? && s2.success?
+      mine << relative
+      next
+    end
+
+    at_base == at_head ? drift << relative : mine << relative
+  end
+  [mine, drift]
 end
 
 def validate_candidate(
@@ -1218,6 +1303,15 @@ def self_test(default_path)
     "the exact event set is retained" => ["types: [opened, edited, reopened, synchronize]", "types: [opened, synchronize]"],
     "repository-local actions cannot replace checkout" => [CHECKOUT, "./candidate/.github/actions/checkout"],
     "the workflow self-policy step cannot disappear" => ["The next workflow retains this trusted-workflow boundary", "The next workflow skips its trusted-workflow boundary"],
+    "the immutability wall cannot be re-masked by the policy-blob step" => [
+      "        if: ${{ !cancelled() }}\n        env:\n          BASE_SHA: ${{ github.event.pull_request.base.sha }}\n          HEAD_SHA: ${{ github.event.pull_request.head.sha }}\n        run: |\n          set -euo pipefail\n          \"$GITHUB_WORKSPACE/scripts/check-protected-paths.sh\" \\\n",
+      "        env:\n          BASE_SHA: ${{ github.event.pull_request.base.sha }}\n          HEAD_SHA: ${{ github.event.pull_request.head.sha }}\n        run: |\n          set -euo pipefail\n          \"$GITHUB_WORKSPACE/scripts/check-protected-paths.sh\" \\\n"
+    ],
+    "the action-pinning wall cannot be re-masked either" => [
+      "        if: ${{ !cancelled() }}\n        run: |\n          set -euo pipefail\n          candidate_root=\"$RUNNER_TEMP/candidate\"\n          GH_ACTIONS_POLICY_ROOT=\"$candidate_root\" \\\n",
+      "        run: |\n          set -euo pipefail\n          candidate_root=\"$RUNNER_TEMP/candidate\"\n          GH_ACTIONS_POLICY_ROOT=\"$candidate_root\" \\\n"
+    ],
+    "the guard cannot be weakened to always()" => ["        if: ${{ !cancelled() }}\n        env:\n          BASE_SHA", "        if: ${{ always() }}\n        env:\n          BASE_SHA"],
     "promotion titles cannot bypass attribution" => [
       "          sys.stdout.write(title)\n          sys.stdout.write(\"\\n\")\n          sys.stdout.write(body)\n",
       "          sys.stdout.write(body)\n"
@@ -2035,6 +2129,78 @@ def self_test(default_path)
     File.chmod(revision_mode, revision_mode_path)
     run_git.call("add", "--", mode_relative)
     run_git.call("commit", "-q", "--no-verify", "-m", "restore policy mode")
+
+    # The message IS the review brief. Naming one path while others changed in
+    # the same PR is how an AGENTS.md/CLAUDE.md edit rode along behind a
+    # .codex/hooks.json headline, so a multi-path change must name every path.
+    multi_first = STATIC_POLICY_PATHS.first
+    multi_second = STATIC_POLICY_PATHS[1]
+    [multi_first, multi_second].each do |relative|
+      path = File.join(revision_repo, relative)
+      File.write(path, "#{File.read(path)}\n# policy drift\n")
+      run_git.call("add", "--", relative)
+    end
+    run_git.call("commit", "-q", "--no-verify", "-m", "change two policy blobs")
+    multi_revision = run_git.call("rev-parse", "HEAD")
+    begin
+      Dir.chdir(revision_repo) do
+        validate_revision_policy(trusted_revision, multi_revision)
+      end
+      puts "  FAIL  Git tree comparison names every changed policy path"
+      failed += 1
+    rescue PolicyViolation => e
+      if e.message.include?(multi_first) && e.message.include?(multi_second)
+        puts "  ok    Git tree comparison names every changed policy path"
+        passed += 1
+      else
+        puts "  FAIL  Git tree comparison names every changed policy path  (message named only one: #{e.message})"
+        failed += 1
+      end
+    end
+
+    [multi_first, multi_second].each do |relative|
+      run_git.call("checkout", trusted_revision, "--", relative)
+      run_git.call("add", "--", relative)
+    end
+    run_git.call("commit", "-q", "--no-verify", "-m", "restore two policy blobs")
+
+    # A path the base moved after the branch point differs from the candidate
+    # without the candidate having touched it. Both still refuse, but the message
+    # must say which is which, or the reviewer cannot tell their own diff from
+    # someone else's.
+    run_git.call("checkout", "-q", "-B", "drift-base", trusted_revision)
+    drift_path = File.join(revision_repo, multi_first)
+    File.write(drift_path, "#{File.read(drift_path)}\n# moved on the base\n")
+    run_git.call("add", "--", multi_first)
+    run_git.call("commit", "-q", "--no-verify", "-m", "base moves a frozen file")
+    drift_trusted = run_git.call("rev-parse", "HEAD")
+
+    run_git.call("checkout", "-q", "-B", "drift-branch", trusted_revision)
+    own_path = File.join(revision_repo, multi_second)
+    File.write(own_path, "#{File.read(own_path)}\n# changed by the branch\n")
+    run_git.call("add", "--", multi_second)
+    run_git.call("commit", "-q", "--no-verify", "-m", "branch changes a different frozen file")
+    drift_candidate = run_git.call("rev-parse", "HEAD")
+
+    begin
+      Dir.chdir(revision_repo) do
+        validate_revision_policy(drift_trusted, drift_candidate)
+      end
+      puts "  FAIL  Git tree comparison separates base drift from the branch's own edits"
+      failed += 1
+    rescue PolicyViolation => e
+      mine_ok = e.message.include?("changed by this branch: #{multi_second}")
+      drift_ok = e.message.include?("update the branch: #{multi_first}")
+      if mine_ok && drift_ok
+        puts "  ok    Git tree comparison separates base drift from the branch's own edits"
+        passed += 1
+      else
+        puts "  FAIL  Git tree comparison separates base drift from the branch's own edits  (#{e.message})"
+        failed += 1
+      end
+    end
+
+    run_git.call("checkout", "-q", trusted_revision)
 
     removed_workflow_relative = workflow_policy_paths(trusted_root).last
     FileUtils.rm(File.join(revision_repo, removed_workflow_relative))
