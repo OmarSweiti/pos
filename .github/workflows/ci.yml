@@ -406,6 +406,45 @@ jobs:
   # supported glibc" target. A matrix that tests a newer glibc than the one the
   # release ships is worse than no matrix: it manufactures confidence about the
   # exact leg that matters for a Tauri desktop binary.
+  # A promotion must LAND as a merge commit. Squashing one forks the branches
+  # permanently: it happened on PR #74, the first promotion this repository ever
+  # made, and the repair needed a force-push to a flow branch that
+  # .githooks/pre-push is written to refuse.
+  #
+  # The staging ruleset now constrains allowed_merge_methods to ["merge"], but main
+  # has no ruleset yet — deliberately, because main's ci.yml predates four of the
+  # six required contexts. So this is the backstop for the staging -> main route,
+  # and the only check anywhere that inspects what actually landed rather than what
+  # was permitted to land.
+  #
+  # It runs on push only, so it never produces a check run on a pull request and
+  # must NEVER be added to a ruleset's required status checks.
+  promotion-shape:
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: A release branch advances only by a merge commit
+        run: |
+          set -euo pipefail
+          # --no-walk considers HEAD alone; --merges keeps it only if it has two
+          # or more parents. So this prints 1 for a merge commit and 0 otherwise.
+          shape=$(git rev-list --no-walk --count --merges HEAD)
+          if [ "$shape" != 1 ]; then
+            echo "::error::$GITHUB_REF_NAME advanced to a commit with fewer than two parents."
+            echo "A promotion into staging or main merges with a MERGE COMMIT."
+            echo "Squashing one forks the branches permanently — 03-github-workflow.md §1."
+            git log -1 --format='  landed: %h  %s' HEAD
+            exit 1
+          fi
+          git log -1 --format='promotion shape OK: %h is a merge commit — %s' HEAD
+
   cross-platform:
     if: >-
       github.base_ref == 'staging' || github.base_ref == 'main' ||
