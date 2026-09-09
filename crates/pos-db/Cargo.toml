@@ -14,13 +14,11 @@ blake3.workspace = true
 rusqlite.workspace = true
 keyring.workspace = true
 getrandom.workspace = true
+# Repositories return owned domain values. The capability grid this crate's
+# migration seeds also remains declared once in `pos_domain::permissions`.
+pos-domain.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-# The capability grid this crate's migration seeds is declared once, in
-# `pos_domain::permissions`. Migration 0004's tests iterate `cap::ALL` rather
-# than a second hand-typed list, which is the drift the domain macro exists to
-# prevent. Dev-only: pos-db ships no dependency on the domain crate yet.
-pos-domain.workspace = true
 tempfile.workspace = true

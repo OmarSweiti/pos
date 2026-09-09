@@ -1796,6 +1796,57 @@ ALTER TABLE sale ADD COLUMN sync_commit_id BLOB REFERENCES sync_commit(id);
 ALTER TABLE sale ADD COLUMN origin_device       TEXT;
 CREATE INDEX idx_sale_shift ON sale(shift_id);
 
+-- THE SALE FOREIGN-KEY REPAIR.
+-- `register_id` and `ref_sale_id` are the two columns 0001 declared without a
+-- foreign key, and 0003's STRICT rebuild carried the omission forward unchanged.
+-- Every other column added above gets REFERENCES inline, because ALTER TABLE can
+-- attach one to a NEW column and cannot retrofit one onto an existing column.
+--
+-- Rebuilding `sale` is not available here. 0003's own header records why: the
+-- documented twelve-step procedure begins by turning foreign keys off, and
+-- `PRAGMA foreign_keys` is a no-op inside a transaction — the migration runner
+-- wraps every file in one — while `PRAGMA defer_foreign_keys` is not a
+-- substitute, because DROP TABLE records a deferred violation that re-creating
+-- the parent does not clear and the COMMIT then fails. The only route would be
+-- 0003's staging-table dance, dragging all three tables that reference `sale`
+-- through it, and that same header warns that "rebuilding a table with inbound
+-- references is far worse later". 0003 rebuilt these six tables precisely so
+-- 0005 would not have to.
+--
+-- Triggers are also the stronger guarantee, not merely the cheaper one: SQLite
+-- enforces REFERENCES only while `PRAGMA foreign_keys = ON`, which is per
+-- connection, and a trigger fires whatever the connection has set.
+CREATE TRIGGER sale_register_exists_insert
+BEFORE INSERT ON sale
+WHEN NOT EXISTS (SELECT 1 FROM register r WHERE r.id = NEW.register_id)
+BEGIN
+  SELECT RAISE(ABORT, 'a sale must name an existing register');
+END;
+CREATE TRIGGER sale_register_exists_update
+BEFORE UPDATE OF register_id ON sale
+WHEN NOT EXISTS (SELECT 1 FROM register r WHERE r.id = NEW.register_id)
+BEGIN
+  SELECT RAISE(ABORT, 'a sale must name an existing register');
+END;
+
+-- `ref_sale_id` is the nullable self-reference a correction document uses to name
+-- the sale it corrects. NULL is the ordinary case and stays legal; a non-NULL
+-- value must resolve.
+CREATE TRIGGER sale_ref_sale_exists_insert
+BEFORE INSERT ON sale
+WHEN NEW.ref_sale_id IS NOT NULL
+ AND NOT EXISTS (SELECT 1 FROM sale s WHERE s.id = NEW.ref_sale_id)
+BEGIN
+  SELECT RAISE(ABORT, 'a correction must name an existing sale');
+END;
+CREATE TRIGGER sale_ref_sale_exists_update
+BEFORE UPDATE OF ref_sale_id ON sale
+WHEN NEW.ref_sale_id IS NOT NULL
+ AND NOT EXISTS (SELECT 1 FROM sale s WHERE s.id = NEW.ref_sale_id)
+BEGIN
+  SELECT RAISE(ABORT, 'a correction must name an existing sale');
+END;
+
 CREATE TRIGGER sale_buyer_identifier_complete_insert
 BEFORE INSERT ON sale
 WHEN (NEW.buyer_id_scheme IS NULL) <> (NEW.buyer_id_value IS NULL)
@@ -2193,6 +2244,20 @@ END;
 > ⚠️ **OPEN — blocks 2.1.1.** Which exact PCI SAQ applies to the selected acquirer, terminal model and firmware, PTS/P2PE listing, integration protocol, store network and support model? Default until answered: design and operate to the SAQ C baseline, reject any integration that exposes a full PAN to this process, and make no P2PE-eligibility claim anywhere.
 > Owner: `2.1.1` collects the evidence; `5.3.3` determines the SAQ. Source that settles it: the acquirer's written responsibility matrix and a QSA determination against the current PCI SSC eligibility criteria.
 
+> ⚠️ **OPEN — blocks the Phase-2 microstep that activates `store_credit`.** Is `store_credit.is_internal` `0` or `1`, and what does
+> `is_internal` mean for the four codes other than `exchange`? Two maintained documents disagree:
+> [`domain-api.md`](domain-api.md) §7.1's tender-type table leaves the column blank for
+> `store_credit`, while
+> [`phase-2-money-grade.md`](../phase-2-money-grade.md) states `is_internal = 1` for it. §7.1
+> explains the flag only for `exchange` and never says what separates it from `is_cash_counted = 0`
+> for the rest, which is how the two drifted. Seeded `0` here, following §7.1 as the tender-type
+> contract table. Default until answered: `store_credit` is seeded `is_active = 0` and no
+> store-credit tender can be taken in Phase 1, so the value has no Phase-1 effect; `tender_type`
+> carries no immutability trigger, so a later migration may `UPDATE` it before activation without
+> reopening `0005`.
+> Owner: the Phase-2 microstep that activates `store_credit`. Source that settles it: a stated
+> definition of `is_internal` covering all six codes, recorded in `domain-api.md` §7.1.
+
 ```sql
 CREATE TABLE tender_type (
   code            TEXT PRIMARY KEY,
@@ -2201,6 +2266,8 @@ CREATE TABLE tender_type (
   opens_drawer    INTEGER NOT NULL DEFAULT 0,
   allows_change   INTEGER NOT NULL DEFAULT 0,
   is_cash_counted INTEGER NOT NULL DEFAULT 0,
+  is_internal     INTEGER NOT NULL DEFAULT 0
+                    CHECK (is_internal IN (0,1)),
   refundable_to   TEXT NOT NULL DEFAULT 'same'
                     CHECK (refundable_to IN ('same','cash','store_credit','none')),
   sort_order      INTEGER NOT NULL DEFAULT 0,
@@ -2210,26 +2277,46 @@ CREATE TABLE tender_type (
 -- Complete initial seed. Later payment/refund microsteps enable behavior; they
 -- never reopen 0005 to append codes. `exchange` only offsets two linked
 -- documents and therefore never opens or counts a drawer.
+--
+-- `is_internal` marks a tender that moves no value outside the two documents it
+-- settles. It is NOT implied by `is_cash_counted = 0`: `card` and `cliq` count
+-- no drawer cash but do move real value through a PSP. `exchange` must carry
+-- both, or the offset appears in expected drawer cash on both documents and the
+-- shift closes short by twice the exchanged value (domain-api.md 7.1).
 INSERT INTO tender_type
   (code, name_ar, name_en, opens_drawer, allows_change, is_cash_counted,
-   refundable_to, sort_order, is_active)
+   is_internal, refundable_to, sort_order, is_active)
 VALUES
-  ('cash',         'نقدي',          'Cash',         1, 1, 1, 'cash',         10, 1),
-  ('card',         'بطاقة',         'Card',         0, 0, 0, 'same',         20, 0),
-  ('cliq',         'كليك',          'CliQ',         0, 0, 0, 'same',         30, 0),
-  ('voucher',      'قسيمة',         'Voucher',      0, 0, 0, 'none',         40, 0),
-  ('store_credit', 'رصيد المتجر',   'Store credit', 0, 0, 0, 'store_credit', 50, 0),
-  ('exchange',     'تسوية استبدال', 'Exchange',     0, 0, 0, 'none',         60, 0);
+  ('cash',         'نقدي',          'Cash',         1, 1, 1, 0, 'cash',         10, 1),
+  ('card',         'بطاقة',         'Card',         0, 0, 0, 0, 'same',         20, 0),
+  ('cliq',         'كليك',          'CliQ',         0, 0, 0, 0, 'same',         30, 0),
+  ('voucher',      'قسيمة',         'Voucher',      0, 0, 0, 0, 'none',         40, 0),
+  ('store_credit', 'رصيد المتجر',   'Store credit', 0, 0, 0, 0, 'store_credit', 50, 0),
+  ('exchange',     'تسوية استبدال', 'Exchange',     0, 0, 0, 1, 'none',         60, 0);
 
 -- Parked carts are register-local and NEVER sync (master plan C.14).
+--
+-- `state` and `session_nonce` are the durable working state and session claim
+-- 1.8.2b's four repository methods require. `resume` atomically claims the row as
+-- `active` under a fresh nonce and never deletes the only durable copy before the
+-- IPC response; `save_active` replaces the snapshot under the same nonce; re-park
+-- returns the row to `parked`; `consume_on_finalize` removes it only inside the
+-- complete-sale transaction. A claim IS an `active` row, which is what stops a
+-- second live session from claiming one already held, and what lets startup
+-- restore an `active` claim after a process death.
 CREATE TABLE parked_cart (
-  id           BLOB PRIMARY KEY,
-  register_id  BLOB NOT NULL REFERENCES register(id),
-  cashier_id   BLOB NOT NULL REFERENCES app_user(id),
-  label        TEXT,
-  snapshot     TEXT NOT NULL,           -- serialized Cart
-  parked_at    TEXT NOT NULL,
-  expires_on   TEXT NOT NULL            -- end of business day (C.2)
+  id            BLOB PRIMARY KEY,
+  register_id   BLOB NOT NULL REFERENCES register(id),
+  cashier_id    BLOB NOT NULL REFERENCES app_user(id),
+  label         TEXT,
+  snapshot      TEXT NOT NULL,          -- serialized Cart
+  parked_at     TEXT NOT NULL,
+  expires_on    TEXT NOT NULL,          -- end of business day (C.2)
+  state         TEXT NOT NULL DEFAULT 'parked'
+                  CHECK (state IN ('parked','active')),
+  session_nonce BLOB,
+  -- An active row always carries its claim; a parked row never does.
+  CHECK ((state = 'active') = (session_nonce IS NOT NULL))
 ) STRICT;
 
 -- Register-local recovery journal. It exists before the sale fact and before an
@@ -2559,7 +2646,28 @@ WHEN NOT EXISTS (
 BEGIN
   SELECT RAISE(ABORT, 'prepared quick-add intent is removed only with its approved product effect');
 END;
+```
 
+> ⚠️ **OPEN — blocks `1.9.1`, and structurally, because it is frozen by migration `0005`.** What is
+> the authoritative ICV namespace — register, store, income source, credential, or one TIN across
+> stores? This is unratified merchant decision 6.9. Its answer lands in `doc_sequence.scope_kind`
+> immediately below, and the `CHECK (scope_kind IN ('register','store'))` written there is the
+> running default, **not** a ratified answer. Migrations are forward-only and are never edited once
+> committed, so that `CHECK` becomes structural and uneditable the moment `0005` commits; a later
+> correction is a second migration, plus — if the wrong scope has already issued counter values — a
+> data repair on a sequence that is required to be gapless. That is what separates this row from the
+> other items owned by `2.7.0`: most of them change code or a default, and this one changes a
+> `CHECK` in a file that can never be edited. Default until answered: the store-scoped counter keyed
+> `('store', store_id, 'fiscal_icv')` described under `0010`.
+> Owner: `2.7.0` ratifies 6.9, arriving through #69 on a timeline outside this project's control —
+> so `1.9.1` must choose **deliberately** rather than inherit the default by transcription. Tracked
+> as **#113**, which sets out four options: answer from the official package; widen the `CHECK` to
+> all five candidate scopes and constrain the choice in code until 6.9 is ratified; defer
+> `doc_sequence` out of `0005` entirely; or freeze `store` and accept a second forward-only
+> migration if it is wrong. Source that settles it: the official ISTD business rules or a written
+> ISTD E-Invoicing Directorate ruling.
+
+```sql
 -- Sequence integrity (G-2). Counters, never derived from time (E.6).
 -- Receipt and Z counters are bumped in the SAME transaction as the document
 -- they number. `fiscal_icv` is different: the sale transaction queues a local
@@ -2610,14 +2718,38 @@ END;
 -- Time confidence is a Phase-1 sale input, not a Phase-3 sync feature. Tax-rule
 -- choice, business date and fiscal issue date may branch only when confidence
 -- is sufficient; UUID identity and outbox order never come from this clock.
+-- One row per register, mapping `ClockState` (domain-api.md 3.2) field for field.
+--
+-- `confidence` and an observed skew are deliberately NOT stored. Both are outputs
+-- of `clock_confidence(state, device_now, monotonic_now_ms, policy)`, and a stored
+-- verdict can disagree with the inputs it was derived from — the register would
+-- then trust a snapshot instead of its own clock.
+--
+-- The three trust-anchor readings are captured together, but `device_at_trust` may
+-- be absent on its own: that is precisely what makes a partial anchor detectable,
+-- so no constraint forces it to accompany the other two.
+--
+-- `boot_token` is the opaque shell-owned boot-continuity token. The shell compares
+-- it on startup and calls `ClockState::note_monotonic_reset` before use when it
+-- changes, because a numeric counter alone cannot identify its own boot.
 CREATE TABLE trusted_time_state (
-  register_id             BLOB PRIMARY KEY REFERENCES register(id),
-  authenticated_server_at TEXT,
-  monotonic_elapsed_milli INTEGER NOT NULL DEFAULT 0 CHECK (monotonic_elapsed_milli >= 0),
-  confidence              TEXT NOT NULL DEFAULT 'never_trusted'
-                            CHECK (confidence IN ('never_trusted','trusted','degraded','anomalous')),
-  observed_skew_milli     INTEGER,
-  updated_at              TEXT NOT NULL
+  register_id              BLOB PRIMARY KEY REFERENCES register(id),
+  last_trusted_at          TEXT,
+  device_at_trust          TEXT,
+  monotonic_since_trust_ms INTEGER CHECK (monotonic_since_trust_ms >= 0),
+  high_water               TEXT NOT NULL,   -- E.6: largest timestamp ever issued
+  anomaly_kind             TEXT
+                             CHECK (anomaly_kind IN
+                               ('jumped_back','jumped_forward','monotonic_reset')),
+  anomaly_by_ms            INTEGER,
+  anomaly_at               TEXT,
+  boot_token               BLOB,
+  updated_at               TEXT NOT NULL,
+  -- An anomaly always carries the instant it was observed.
+  CHECK ((anomaly_kind IS NULL) = (anomaly_at IS NULL)),
+  -- Only the two jump variants carry a magnitude; MonotonicReset has none.
+  CHECK ((anomaly_by_ms IS NOT NULL)
+         = (COALESCE(anomaly_kind,'') IN ('jumped_back','jumped_forward')))
 ) STRICT;
 
 CREATE TRIGGER shift_no_update
@@ -4115,8 +4247,8 @@ guide/XSD/code lists, records their package version and hash, then resolves or
 preserves every provisional field below. A reconstruction is not an approvable
 package.
 
-> ⚠️ **OPEN — blocks 2.7.0.** Is the authoritative ICV namespace per register, store/income source, or one TIN across stores? Default until answered: allocate from one store-scoped counter keyed as `('store', store_id, 'fiscal_icv')`; Phase 2 uses the single register's in-process allocator, Phase 3 uses a server-issued one-value lease, and no register advances an independent register-scoped ICV counter.
-> Owner: 2.7.0. Source that settles it: the official ISTD business rules or a written ISTD E-Invoicing Directorate ruling.
+> ⚠️ **OPEN — blocks 2.7.0, and structurally blocks `1.9.1` (migration `0005`).** Is the authoritative ICV namespace per register, store/income source, or one TIN across stores? Default until answered: allocate from one store-scoped counter keyed as `('store', store_id, 'fiscal_icv')`; Phase 2 uses the single register's in-process allocator, Phase 3 uses a server-issued one-value lease, and no register advances an independent register-scoped ICV counter. **The structural deadline is earlier than this section implies:** the answer lands in `doc_sequence.scope_kind`, which `0005` creates under `1.9.1` in Phase 1 — see the OPEN block above that table in the `0005` section. Once `0005` commits, the `CHECK` is uneditable.
+> Owner: 2.7.0 ratifies it; `1.9.1` must choose deliberately first. Tracked as #113. Source that settles it: the official ISTD business rules or a written ISTD E-Invoicing Directorate ruling.
 
 > ⚠️ **OPEN — blocks 2.7.0.** Does ISTD permit asynchronous reporting during an outage, what artifact may be handed to the customer, when is the legal issuance event, what is the submission deadline, and how are backdating and later rejection handled? Default until answered: complete the sale, print only a non-fiscal payment acknowledgement, and issue the fiscal invoice only through the approved clearance path.
 > Owner: 2.7.0. Source that settles it: the official ISTD outage procedure or a written ruling from the ISTD E-Invoicing Directorate.

@@ -10,9 +10,14 @@
 # Idempotent: existing fields must match the reviewed types and select options;
 # the script adds only missing fields and refuses ambiguous or drifted schemas.
 #
-# HONEST LIMIT: the GitHub API can create a project and its fields, but it CANNOT
-# create views (the saved board/table tabs). Those are four clicks each, once, and
-# this script prints the exact recipe at the end.
+# HONEST LIMIT: this script creates a project and its fields; it does not create
+# views. The API can create a view and set its name, layout, filter and visible
+# fields (createProjectV2View takes projectId/name/layout/configuration;
+# updateProjectV2View adds filter), but ProjectV2ViewConfigurationInput exposes
+# only visibleFieldIds, so a view's GROUPING and SORTING have no API input at
+# all. Those two are the clicks, and this script prints the exact recipe at the
+# end. Keep the distinction: "the API cannot" and "this script does not" are
+# different claims, and only the second one is true of views as a whole.
 # `./scripts/test-gh-setup.sh` exercises its API failure paths without GitHub.
 set -euo pipefail
 
@@ -276,12 +281,16 @@ echo
 cat <<TXT
 Project ready: $PROJECT_URL
 
-Three things the API cannot do, so do them once by hand:
+Three things to do once by hand. Only the third is a hard API gap:
 
 1. LINK THE REPOSITORY — so new issues can be added from the issue page:
      project → ⋯ → Settings → Manage access / Linked repositories → add OmarSweiti/pos
+     (linkProjectV2ToRepository exists, so this can be scripted later; it is
+      listed here because this script does not do it.)
 
 2. THE FOUR VIEWS. Each is: "+ New view" then set layout and grouping.
+   A view's name, layout, filter and visible fields ARE settable through the
+   API; its GROUPING and SORTING are not, so those two are always clicks.
 
    "Board — now"        Board,  group by Status, filter: -status:Done
                         The only view open while working. If it has more than one
@@ -296,7 +305,10 @@ Three things the API cannot do, so do them once by hand:
    "Money & compliance" Table,  filter: Risk:"money path",Risk:compliance,Risk:migration
                         The rows where a mistake costs money rather than time.
 
-3. AUTOMATION — free, and it removes the step everyone forgets:
+3. AUTOMATION — free, no API can set it, and it removes the step everyone
+   forgets. Auto-add is the one that matters: until it is configured, every new
+   issue must be added with "gh project item-add", and every issue opened so far
+   had to be:
      project → ⋯ → Workflows → enable
        "Item closed"          → set Status = Done
        "Pull request merged"  → set Status = Done

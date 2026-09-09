@@ -78,6 +78,90 @@ while IFS=' ' read -r _local_ref local_sha remote_ref remote_sha; do
           echo "pre-push: REFUSED — moving existing tag '$tag_name'. Create a new version tag instead."
         fi
         refuse=1
+        continue
+      fi
+
+      # A NEW v* tag is the one flow operation with a permanent cost. release.yml's
+      # guard job refuses a lightweight tag, an unverified signature, a bad grammar
+      # and a tag that is not the branch head — but it refuses them AFTER the tag
+      # exists on GitHub, and repository policy never moves or deletes a release
+      # tag. So a server-side rejection spends the version number: the recovery is
+      # a second bump through development → staging → main, not a retag. These are
+      # the same refusals, applied before the push, where the cost is nothing.
+      #
+      # Deliberately NOT duplicated here: the four-file version parity check. The
+      # guard owns it (Cargo.toml, tauri.conf.json, apps/terminal/package.json and
+      # the tag), and a second implementation in shell would be a second source of
+      # truth that can disagree with the first.
+      case "$tag_name" in
+        v*) ;;
+        *) continue ;;
+      esac
+
+      tag_core='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+      tag_channel=''
+      if printf '%s' "$tag_name" | grep -Eq "^v${tag_core}$"; then
+        tag_channel=main
+      elif printf '%s' "$tag_name" | grep -Eq "^v${tag_core}-(rc|beta)\.[1-9][0-9]*$"; then
+        tag_channel=staging
+      else
+        echo "pre-push: REFUSED — '$tag_name' is not a release tag grammar release.yml accepts."
+        echo "  Use vX.Y.Z, vX.Y.Z-rc.N or vX.Y.Z-beta.N, without leading zeroes."
+        refuse=1
+        continue
+      fi
+
+      tag_object_type=$(git cat-file -t "$local_sha" 2>/dev/null) || tag_object_type=''
+      if [ "$tag_object_type" != tag ]; then
+        echo "pre-push: REFUSED — '$tag_name' is a lightweight tag. Releases require an annotated, signed tag."
+        echo "  Create it with: git tag -s $tag_name -m '<message>'"
+        refuse=1
+        continue
+      fi
+
+      # Presence of a signature is locally decidable; whether GitHub will VERIFY it
+      # depends on the key uploaded there as a Signing Key, so that stays the
+      # guard's call and a local verify failure is reported as a warning below.
+      tag_body=$(git cat-file tag "$local_sha" 2>/dev/null) || tag_body=''
+      case "$tag_body" in
+        *"-----BEGIN PGP SIGNATURE-----"*|*"-----BEGIN SSH SIGNATURE-----"*|*"-----BEGIN SIGNED MESSAGE-----"*) ;;
+        *)
+          echo "pre-push: REFUSED — '$tag_name' carries no signature. release.yml requires a verified signed tag."
+          echo "  Re-create it with: git tag -s $tag_name -m '<message>'"
+          refuse=1
+          continue ;;
+      esac
+
+      tagged_commit=$(git rev-parse --verify --quiet "${local_sha}^{commit}") || tagged_commit=''
+      if [ -z "$tagged_commit" ]; then
+        echo "pre-push: ERROR — '$tag_name' does not resolve to a commit; refusing closed." >&2
+        refuse=1
+        continue
+      fi
+
+      # The channel comes from the grammar: a plain version releases from main, a
+      # prerelease from staging. The guard compares against the GitHub branch head;
+      # locally the best available answer is the remote-tracking ref, falling back
+      # to the local branch. If neither exists this cannot be judged, so it is
+      # skipped with a warning rather than refused on missing information.
+      channel_head=$(git rev-parse --verify --quiet "refs/remotes/$remote_name/$tag_channel^{commit}") \
+        || channel_head=$(git rev-parse --verify --quiet "refs/heads/$tag_channel^{commit}") \
+        || channel_head=''
+      if [ -z "$channel_head" ]; then
+        echo "pre-push: WARNING — no '$tag_channel' ref locally, so '$tag_name' cannot be checked against its channel head." >&2
+      elif [ "$tagged_commit" != "$channel_head" ]; then
+        echo "pre-push: REFUSED — '$tag_name' does not point at the '$tag_channel' head."
+        echo "  tagged:        $tagged_commit"
+        echo "  $tag_channel head: $channel_head"
+        echo "  release.yml requires the tag to identify the current head of its channel."
+        refuse=1
+        continue
+      fi
+
+      if ! git verify-tag "$tag_name" >/dev/null 2>&1; then
+        echo "pre-push: WARNING — '$tag_name' has a signature that this machine cannot verify." >&2
+        echo "  GitHub's verdict is what release.yml reads, so this is not a refusal." >&2
+        echo "  For SSH signing, git also needs: git config gpg.ssh.allowedSignersFile <file>" >&2
       fi
       continue
       ;;

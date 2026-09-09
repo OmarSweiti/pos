@@ -2,6 +2,7 @@ name: Bug
 description: Something behaves wrongly. Money bugs are P0 by default.
 title: "fix: "
 labels: ["type: fix"]
+projects: ["OmarSweiti/4"]
 body:
   - type: markdown
     attributes:

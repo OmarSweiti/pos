@@ -29,6 +29,7 @@ crates/pos-domain/     pure rules: Money, tax, cart machine   ← keep it pure
 crates/pos-db/         SQLite schema, migrations, repositories
 crates/pos-sync/       outbox/cursor protocol (client + server)
 crates/pos-hardware/   printer/scanner/terminal traits + simulator
+crates/pos-test-support/  shared proptest config and strategies  (dev-only)
 apps/terminal/         the register (Tauri 2)
 apps/server/           Axum: sync, auth, reporting
 apps/backoffice/       React admin
@@ -70,10 +71,13 @@ just dev-terminal   # run the register
 
 `just setup` is not optional. It installs the local hooks before any networked
 dependency step, so a failed install does not leave the clone silently
-unprotected. Branch protection and rulesets are available but unconfigured; the hooks are a
-bypassable local safety net, while CI provides the server-side evidence. A clone
-that skipped setup can still push straight to `main`. `just --list` shows
-everything else.
+unprotected. `development` and `staging` carry active rulesets — a pull request
+and six passing checks are required, force pushes and deletions are blocked — and
+`refs/tags/v*` is append-only with no bypass. The hooks remain a bypassable local
+safety net in front of that. **`main` has no ruleset yet**, deliberately: its
+`ci.yml` predates four of the six required checks. So a clone that skipped setup
+can still push straight to `main`, though no longer to `development` or `staging`.
+`just --list` shows everything else.
 
 ## Quality gates
 
@@ -95,8 +99,10 @@ Release automation requires a verified signed tag at the exact validated branch
 tip, builds every platform with separated signing/publishing permissions, and
 adds checksums plus an SBOM to a draft. Published releases are immutable. The
 first external release is intentionally blocked until the updater-signing
-repository secrets, committed updater public configuration, and OS signing
-material are configured; see [`SECURITY.md`](SECURITY.md).
+secrets, committed updater public configuration, and OS signing material are
+configured; see [`SECURITY.md`](SECURITY.md). Those secrets belong to the
+`release` **environment**, not the repository: its only deployment policy is
+`tag: v*`, so no run on another ref can read them.
 The JavaScript licence gate reviews dependency metadata, but an external
 installer also requires a platform-specific third-party notice/source audit as
 stated in [`LICENSE`](LICENSE).

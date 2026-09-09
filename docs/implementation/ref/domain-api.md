@@ -2052,6 +2052,7 @@ pub enum PermissionError {
     // without putting either value into an error sink.
     #[error("approval was issued for different prepared content")]
                                                            ApprovalContentHashMismatch,
+    #[error("approval is not valid before {0:?}")]          ApprovalNotYetValid(Timestamp),
     #[error("approval expired at {0:?}")]                  ApprovalExpired(Timestamp),
     #[error("approval {0} has already been used")]         ApprovalAlreadyUsed(ApprovalId),
 }
@@ -2101,9 +2102,10 @@ The handle is the missing half: **one approval, one operation, one use.**
 ```rust
 /// Issued by `auth_verify_pin` after the approver authenticates, and consumed
 /// by exactly one privileged command. Every field is private and `issue` is the
-/// only constructor, so an `ApprovalHandle` cannot be written as a struct
-/// literal any more than an `Authorized<C>` can.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// only minting constructor, so an `ApprovalHandle` cannot be written as a
+/// struct literal any more than an `Authorized<C>` can. It deliberately has no
+/// `Deserialize`; persistence reconstructs one only through `restore` below.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ApprovalHandle {
     id: ApprovalId,
     capability: String,          // what was approved
@@ -2116,6 +2118,23 @@ pub struct ApprovalHandle {
     issued_at: Timestamp,
     expires_at: Timestamp,       // default: issued_at + 120 s
     nonce: [u8; 16],
+}
+
+/// The database transport record. Public fields make it bindable data, not a
+/// proof; only `ApprovalHandle::restore` may turn it back into a handle.
+#[derive(Clone, PartialEq, Eq)]
+pub struct StoredApprovalHandle {
+    pub id: ApprovalId,
+    pub capability: String,
+    pub actor: UserId,
+    pub approver: UserId,
+    pub entity_id: Uuid,
+    pub amount_minor: i64,
+    pub content_hash: Option<[u8; 32]>,
+    pub reason: String,
+    pub issued_at: Timestamp,
+    pub expires_at: Timestamp,
+    pub nonce: [u8; 16],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -2131,7 +2150,7 @@ pub struct ApprovalBinding {
 }
 
 impl ApprovalHandle {
-    /// The only constructor. It takes the APPROVER's own proof of the
+    /// The only minting constructor. It takes the APPROVER's own proof of the
     /// capability, so an approval can never be issued for something the
     /// approver may not do themselves. It unconditionally refuses an actor who
     /// is also the approver. `ban_self_approval` decides whether an operation
@@ -2147,14 +2166,58 @@ impl ApprovalHandle {
 
     pub fn id(&self) -> ApprovalId;
     pub fn approver(&self) -> UserId;
+    pub fn reason(&self) -> &str;
     pub fn matches<C: Capability>(&self, actor: UserId, binding: &ApprovalBinding,
                                   now: Timestamp) -> Result<(), PermissionError>;
+    pub fn to_stored(&self) -> StoredApprovalHandle;
+    /// Reconstruct a persisted handle after rechecking the structural
+    /// invariants established by `issue`: distinct actor/approver and a
+    /// non-empty half-open validity interval.
+    pub fn restore(stored: StoredApprovalHandle) -> Result<Self, PermissionError>;
+}
+```
+
+The matching `pos-db` seam holds the connection for reads and accepts the caller's transaction for
+every fact write. It reconstructs only through `ApprovalHandle::restore`; it neither opens nor
+commits a transaction and it does not decide whether a user may act:
+
+```rust
+pub struct ApprovalRepository<'c> { conn: &'c Connection }
+
+impl<'c> ApprovalRepository<'c> {
+    pub fn new(conn: &'c Connection) -> Self;
+
+    /// Persist a handle `issue` minted, inside the caller's transaction.
+    pub fn insert(&self, tx: &Transaction<'_>, handle: &ApprovalHandle)
+        -> Result<(), DbError>;
+
+    /// Read a stored handle back as a validated domain value.
+    pub fn load_for_consumption(&self, tx: &Transaction<'_>, id: ApprovalId)
+        -> Result<Option<ApprovalHandle>, DbError>;
+
+    /// Refuse before any envelope so replay reports one-use consumption rather
+    /// than a `fact_commit_member` uniqueness collision.
+    pub fn ensure_unconsumed(&self, tx: &Transaction<'_>, id: ApprovalId)
+        -> Result<(), DbError>;
+
+    pub fn consume(
+        &self,
+        tx: &Transaction<'_>,
+        handle_id: ApprovalId,
+        effect_id: Uuid,
+        audit_log_id: Uuid,
+        consumed_at: Timestamp,
+    ) -> Result<(), DbError>;
+
+    /// Connection-scoped, for a status or post-restart read.
+    pub fn is_consumed(&self, id: ApprovalId) -> Result<bool, DbError>;
 }
 ```
 
 **Single use is a persistence property, not a type property**, and pretending otherwise is how it
-gets lost. The domain checks capability, actor, entity, exact amount, optional content hash and
-expiry. A non-money effect binds `amount_minor = 0`; zero is an exact value and never a wildcard.
+gets lost. The domain checks capability, actor, entity, exact amount, optional content hash and the
+full half-open validity interval: `issued_at` is inclusive and `expires_at` is exclusive. A
+non-money effect binds `amount_minor = 0`; zero is an exact value and never a wildcard.
 `content_hash` is `None` unless the registry names a prepared intent. For
 `product_quick_add_request` and `stock_adjustment_request`, the shell loads the row and computes
 `PreparedIntentHash` itself before issue; neither `auth_verify_pin` nor any other webview command may
@@ -2163,6 +2226,11 @@ privileged transaction then inserts one
 `approval_consumption` beside the financial effect and audit row; it never deletes or updates the
 handle, because the approval itself is audit evidence. The unique consumption row makes a second
 attempt fail after a restart, while the retained handle proves who approved which operation.
+
+`restore` establishes structural validity only. It does not prove the approver authenticated; that
+evidence belongs to the trusted issuance transaction. The explicit transport seam makes `pos-db`'s
+trusted-boundary role visible, while the lack of `Deserialize` prevents persistence or another
+caller from bypassing the validation accidentally.
 
 Prepared-intent canonical bytes have version `1` and the domain separator
 `pos-prepared-intent\0product_quick_add` or `pos-prepared-intent\0stock_adjustment`. Every column
@@ -2185,6 +2253,7 @@ Required tests — [1.6.4]:
 | `a_different_actor_is_refused` | the handle is not a bearer token |
 | `a_consumed_handle_is_still_consumed_after_restart` | a committed consumption remains one-use after reboot |
 | `an_expired_handle_is_refused` | typed at 09:00, spent at 17:00 |
+| `an_approval_before_issuance_is_refused` | one millisecond before issue is refused while exactly `issued_at` remains valid |
 | `the_effect_and_the_consumption_commit_together_or_not_at_all` | roll the transaction back; the handle remains spendable and the effect did not happen |
 | `altering_a_stock_request_after_approval_is_refused` | every prepared stock field is varied; the recomputed hash and the database trigger each refuse it |
 | `altering_a_quick_add_request_after_approval_is_refused` | every prepared product field is varied; the recomputed hash and the database trigger each refuse it |

@@ -2,6 +2,7 @@ name: Merchant decision
 description: A question only the merchant can answer. Never guess one of these in code.
 title: "decision: "
 labels: ["needs: merchant answer", "type: chore"]
+projects: ["OmarSweiti/4"]
 body:
   - type: markdown
     attributes:

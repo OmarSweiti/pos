@@ -15,3 +15,9 @@ fn authorized_tokens_cannot_be_forged_or_substituted() {
     cases.compile_fail("tests/ui/authorized_token_cannot_be_forged.rs");
     cases.compile_fail("tests/ui/authorized_capabilities_do_not_interconvert.rs");
 }
+
+#[test]
+fn approval_handles_cannot_be_deserialized() {
+    let cases = trybuild::TestCases::new();
+    cases.compile_fail("tests/ui/approval_handle_cannot_be_deserialized.rs");
+}

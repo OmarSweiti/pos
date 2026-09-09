@@ -233,29 +233,43 @@ both refused. Configure and verify the signing identity before attempting the fi
 
 ## 3 · What GitHub and the repository enforce here
 
-This repository has been **public since 30 August 2026**. GitHub's server-side branch controls are
-available, but availability is not configuration:
+This repository has been **public since 30 August 2026**, and since **9 September 2026** three
+rulesets are configured:
 
 ```
+$ gh api repos/OmarSweiti/pos/rulesets --jq '.[]|"\(.name) \(.target) \(.enforcement)"'
+development-flow     branch  active
+staging-promotion    branch  active
+tags-v-append-only   tag     active
+
 $ gh api repos/OmarSweiti/pos/branches/main/protection
 404  Branch not protected
 ```
 
-The rulesets API likewise reports zero configured rulesets. Branch protection and rulesets are
-therefore absent controls, not unavailable ones. So:
+`development` and `staging` now require a pull request and six passing checks — `rust`, `guards`,
+`web`, `supply-chain`, `protected-paths`, `topology` — block force pushes and deletions, and
+constrain the merge method: squash or merge on `development`, merge commit only into `staging`.
+`refs/tags/v*` is append-only with no bypass actor.
+
+Three things are still true and are the reason the table below keeps its "honest limit" column.
+**`main` remains unprotected**, deliberately: its `ci.yml` predates four of the six required jobs,
+so requiring them would leave a `hotfix/*` branch cut from `main` waiting on checks that never
+report. The **admin holds `bypass_mode: "pull_request"`** on both branch rulesets, so a red check
+is still mergeable by the maintainer — through a pull request only, never a direct push, and the
+bypass is logged as an event. And the git hooks stay local and bypassable. So:
 
 | Rule | Control | Honest limit |
 |---|---|---|
-| No direct, force, or deletion push to `main`/`staging`/`development` | [`.githooks/pre-push`](../../.githooks/pre-push), using Git's supplied destination remote | local; `--no-verify` or an unconfigured clone bypasses it |
-| Existing tags never move or disappear | `.githooks/pre-push` allows a new tag but refuses every update/deletion; the release workflow revalidates the remote annotated-tag object around draft mutation | the hook is local, and draft/tag binding is not atomic until immutable publication |
-| Commit and squash title obey the exact same grammar | [`scripts/validate-change-title.sh`](../../scripts/validate-change-title.sh), called by `commit-msg` and `branch-flow` | the server check can be merged while red because no configured protection or ruleset requires it |
-| Coding assistants receive no PR or history attribution; the exact Dependabot metadata/trailer combination remains visible | [`scripts/check-automation-attribution.py`](../../scripts/check-automation-attribution.py), called by Git and trusted CI for commits plus the PR title/body | Git author metadata is spoofable, local hooks are bypassable, and no configured server-side rule makes CI a merge wall |
+| No direct, force, or deletion push to `main`/`staging`/`development` | server-side on `development` and `staging` (ruleset: pull request required, `non_fast_forward`, `deletion`); [`.githooks/pre-push`](../../.githooks/pre-push) for all three, using Git's supplied destination remote | `main` has no ruleset yet, so there it is local only, and `--no-verify` or an unconfigured clone bypasses the hook |
+| Existing tags never move or disappear | server-side for `refs/tags/v*` (`tags-v-append-only`: `update` and `deletion` blocked, **no bypass actor**, so it binds the maintainer too); `.githooks/pre-push` allows a new tag but refuses every update/deletion; the release workflow revalidates the remote annotated-tag object around draft mutation | the ruleset covers `v*` only — any other tag name is hook-only — and draft/tag binding is not atomic until immutable publication |
+| Commit and squash title obey the exact same grammar | [`scripts/validate-change-title.sh`](../../scripts/validate-change-title.sh), called by `commit-msg` and `branch-flow` | `topology` is a required check on `development` and `staging`, so a red title check now blocks the merge button there; the admin can still bypass through a pull request, and that bypass is logged |
+| Coding assistants receive no PR or history attribution; the exact Dependabot metadata/trailer combination remains visible | [`scripts/check-automation-attribution.py`](../../scripts/check-automation-attribution.py), called by Git and trusted CI for commits plus the PR title/body | Git author metadata is spoofable and local hooks are bypassable; `protected-paths` is now a required check on `development` and `staging`, so CI is a merge wall there, subject to the logged admin bypass |
 | Protected source plans and committed migrations do not change | Claude/Codex hooks, staged-index policy, and `branch-flow` | `pull_request_target` loads the trusted default-branch definition, policy is checked out at its exact `github.workflow_sha`, and the verified PR head is materialized only as data; no configured server-side rule makes a red check a merge wall |
 | Sensitive paths, oversized staged blobs, and Git inspection failures are refused | [`.githooks/pre-commit`](../../.githooks/pre-commit) with NUL-safe staged-index inspection | local only |
 | Secret-like content is detected independently of its filename | GitHub-native secret scanning and push protection are enabled; Gitleaks runs in pre-commit, pre-push, CI commit-range scanning, and the weekly security workflow | local scans can be skipped, so the native controls remain an independent backstop rather than a substitute for the repository-owned range and history gates |
 | Tests, lint, domain purity, schema parity, real PostgreSQL, web build, docs, guards and supply-chain policy run | `ci.yml` | visible and logged, but no configured protection or ruleset makes them a required-check wall |
 | The coverage matrix reconciles with the suite, the phase files, normative reference names, and its own arithmetic | [`scripts/check-test-catalog.py`](../../scripts/check-test-catalog.py): `just lint` runs the real reconciliation; `just guards` runs `--self-test` | the `rust` job runs the reconciliation and `guards` runs `--self-test`, so a push that skipped `just lint` is still caught. Like every row here, that result is visible and logged, but no configured protection or ruleset makes it a required-check wall |
-| The release signing key is never on a step that compiles third-party code | **nothing yet.** `release.yml` passes `TAURI_SIGNING_PRIVATE_KEY` and its password to the same step that builds the frontend and the Rust binary | this row is a **requirement, not a control**. [`ref/security-compliance.md`](ref/security-compliance.md) §6b specifies the split — an unsigned job that compiles and reaches the network, then a signing step that receives artifact digests and holds the key with no checkout, no dependency installation and no compilation. Until it lands, any build script or proc macro in the dependency graph can read the key. It is one reason the first external release is deliberately blocked |
+| The release signing key is never on a step that compiles third-party code | **still nothing for the same-step problem.** `release.yml` passes `TAURI_SIGNING_PRIVATE_KEY` and its password to the same step that builds the frontend and the Rust binary. What *is* now controlled is the ref surface: the `build` job declares `environment: release`, whose one deployment policy is `tag: v*`, so the key must be an environment secret and a run on any other ref cannot obtain it — and each run leaves a deployment record | this row is a **requirement, not a control**. [`ref/security-compliance.md`](ref/security-compliance.md) §6b specifies the split — an unsigned job that compiles and reaches the network, then a signing step that receives artifact digests and holds the key with no checkout, no dependency installation and no compilation. Until it lands, any build script or proc macro in the dependency graph can read the key. It is one reason the first external release is deliberately blocked |
 | Workflow syntax and Actions security are audited | `security.yml` using actionlint and zizmor | findings are annotations/check failures; no configured protection or ruleset requires them |
 | Third-party Actions are immutable in tracked workflows | every external `uses:` is a complete commit SHA from the repository allowlist, enforced by repository policy | repository-wide Action selection and SHA settings are separate live configuration; `gh-actions-policy.sh` owns their checked post-merge activation |
 | A release identifies the exact validated branch tip | `release.yml` validates SemVer/RC grammar, annotated tag object, branch tip, versions and successful CI for the same SHA | release signing secrets and OS signing still have to be provisioned before an external release |
@@ -438,17 +452,33 @@ example: its milestone is already closed with an adoption note recording closure
 ## 5 · The board — one project, four views
 
 `POS delivery`, a Projects v2 board on the maintainer's personal account. `just gh-project` owns its
-checked schema; the four views below remain a manual setup step.
+checked schema; a view's grouping and sorting are the one part no API can set, so they stay a manual
+step.
 
 ```bash
 gh auth refresh -s project,read:project    # once — the default login lacks this scope
 just gh-project                            # creates missing fields; refuses schema drift
 ```
 
-**Live verification note — 27 August 2026:** `just gh-project` created project **#4 `POS delivery`**
-on the personal account, then stopped because field inspection also queried a non-existent
-organisation. The seven custom fields still await the reviewed re-run; the four views remain a
-manual step.
+**Live verification note — 8 September 2026:** project **#4 `POS delivery`** exists on the personal
+account with all seven custom fields at the types and select options
+[`gh-project.sh`](../../scripts/gh-project.sh) declares, all four views, the repository linked, and
+13 items. The 27 August run stopped because field inspection queried a non-existent organisation;
+`7400a12`, landed the same day, made the script resolve the owner through `repositoryOwner(login:)`
+with fragments on both `User` and `Organization`, and the field query now returns clean — the
+mutating recipe itself has not been re-run, so a reviewed re-run remains unproven.
+
+What is **not** set is each view's grouping and sorting. `createProjectV2View` accepts only
+`projectId`, `name`, `layout` and `configuration`; `updateProjectV2View` adds `filter`; and
+`ProjectV2ViewConfigurationInput` exposes **only** `visibleFieldIds`. There is no group-by or sort-by
+input anywhere in the schema, so those two remain clicks — `Phase plan`'s in particular. Every
+view's name, layout and filter already match the table below.
+
+**Auto-add does not work, and it is the one automation that must be configured by hand.** Issues
+#68–#71, #110–#115 and #119–#120 were all created and none reached the board until added explicitly
+with `gh project item-add`. The other built-in workflows do work: "Item closed" moved #110 and #117
+to `Done` on merge with no intervention. Until Auto-add is configured, **add every new issue by
+hand**.
 
 The bootstrap validates exact field types, duplicate names, and every single-select option before
 it calls the board ready. A same-named but incompatible field is a blocking manual correction, not
@@ -846,7 +876,7 @@ For the repository itself — idempotent, run again whenever this document chang
 ```bash
 just gh-bootstrap-dry     # read it first
 just gh-bootstrap         # labels, milestones, merge behaviour, default branch
-just gh-project           # the board and its fields; then the four views, by hand
+just gh-project           # the board and its fields; views by hand (grouping has no API)
 ./scripts/gh-actions-policy.sh --dry-run  # preflight now; no live mutation
 # after this hardened setup is merged on the default branch:
 ./scripts/gh-actions-policy.sh            # enable and verify GitHub SHA-only Actions

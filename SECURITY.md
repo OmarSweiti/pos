@@ -39,10 +39,14 @@ data, never a CVV, never a PIN or a PIN hash.
 Never logged, anywhere — not through `tracing`, `IpcError.detail`, crash reporting, or a test
 fixture that prints — a value under any canonical sensitive field name: `pin`, `pin_hash`, `pan`,
 `card_number`, `cvv`, `track`, `phone`, `email`, `customer_name`, `buyer_name`, `secret_key`,
-`client_id`, `db_key`, `token`, `password`, or `entitlement`. Fiscal credentials and signing
+`client_id`, `db_key`, `token`, `password`, `entitlement`, `recovery_code`, `enrollment_code`, or
+`wrapped_key`. Exact-name matching is not sufficient on its own: also redact every field whose name
+ends in `_token`, `_secret`, `_key`, `_pin` or `_hash`, and every field whose name contains
+`password`, because `device_token` is not spelled `token` and exact-name matching is how a new field
+arrives unredacted. The rule applies at every nesting depth. Fiscal credentials and signing
 material remain sensitive under any provider-specific name. The canonical list lives in
 [`docs/implementation/ref/security-compliance.md`](docs/implementation/ref/security-compliance.md)
-§5 and must be updated as one contract.
+§6 and must be updated as one contract.
 
 The register's database key lives in the OS credential store. Never in a file, never in an
 environment variable in a release build. `POS_DB_KEY` exists for development and CI only, and
@@ -52,7 +56,7 @@ the release build must refuse to honour it.
 
 | Enforced | By |
 |---|---|
-| No float in a money path | `clippy::float_arithmetic = "deny"`, workspace-wide |
+| No float in a money path | `clippy::float_arithmetic = "forbid"`, workspace-wide; `forbid` rather than `deny`, so an `#[allow]` is `E0453` |
 | No `unwrap` / `expect` outside tests and `main()` | `clippy::unwrap_used`, `expect_used` = deny |
 | A committed migration cannot be edited | `.claude/hooks/protect-immutable.py` · `.githooks/pre-commit` |
 | Sensitive filenames, committed plans, oversized staged blobs, and changes to committed migrations are refused | `.githooks/pre-commit`, using the staged index and failing closed on Git errors |
@@ -65,10 +69,11 @@ the release build must refuse to honour it.
 GitHub's **native** secret scanning and push protection are enabled. They complement the
 independent, content-based Gitleaks gate: `pre-commit` scans the staged index, `pre-push` scans
 reachable history, and CI scans the proposed commit range with fully redacted output. The local
-checks remain bypassable with `--no-verify` or in a clone that skipped `just setup`; CI is
-server-side evidence but cannot block an administrator merge while `main` is unprotected and zero
-rulesets are configured. A finding means rotate the credential first, then handle history as a
-separate, explicitly authorised operation.
+checks remain bypassable with `--no-verify` or in a clone that skipped `just setup`. Since
+9 September 2026 CI is also a merge wall on `development` and `staging`, where six checks are
+required by ruleset; the administrator can still bypass, but only through a pull request and only
+as a logged event, and `main` has no ruleset yet. A finding means rotate the credential first,
+then handle history as a separate, explicitly authorised operation.
 
 `just pre-push` runs the deterministic local gates plus a full-history secret scan. CI repeats
 those checks and runs the network-dependent supply-chain audit separately.
@@ -86,13 +91,14 @@ govern Claude tools, not subprocesses: a permitted shell command has ambient hos
 network, environment, and credential access. The repository does not claim subprocess credential
 scrubbing, metadata-endpoint denial, or OS containment under this policy. This is an explicit
 developer-convenience tradeoff, not an application-security or secret-exfiltration boundary.
-Git hooks and CI remain cross-platform backstops and visible signals, but CI cannot block an
-administrator merge while `main` is unprotected and zero rulesets are configured.
+Git hooks and CI remain cross-platform backstops and visible signals. On `development` and
+`staging` a red required check now blocks the merge button; the administrator retains a
+pull-request-scoped bypass, which GitHub logs, and `main` is still unprotected.
 
 ## Known gaps, stated plainly
 
-- **No installer signing of any kind.** Updater signing is microstep 0.3.2; OS code signing
-  (Windows Authenticode, Apple Developer ID and notarisation) is milestone 5.5.1. Until both
+- **No installer signing of any kind.** Updater signing is microstep 5.5.0; OS code signing
+  (Windows Authenticode, Apple Developer ID and notarisation) is microstep 5.5.1. Until both
   exist, an installer warns loudly on every machine, and nothing should be distributed to a
   device the maintainer does not own. The release workflow deliberately refuses unsigned or
   unverified tags and missing updater keys, separates signing from publishing, and prepares an

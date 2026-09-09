@@ -36,7 +36,7 @@ pub use money::{Currency, Money, MoneyError, Percent, Qty, RoundingDirection, Ro
 pub use permissions::{
     ApprovalBinding, ApprovalHandle, Authorized, Capability, CustomerQueryShape, EscalationPolicy,
     Grant, GrantSet, JournalScope, Limit, PermissionError, PreparedIntentHash, Role, RoleGrants,
-    authorize, cap, default_grants,
+    StoredApprovalHandle, authorize, cap, default_grants,
 };
 pub use tax::{
     ComponentTax, LineTax, PriceMode, StoreTaxProfile, SupplyDestination, SupplyTaxContext,
