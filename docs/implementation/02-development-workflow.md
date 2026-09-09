@@ -1047,8 +1047,9 @@ denies constrain Claude tools and are not OS containment. Pre-tool launcher and
 settings-validation failures fail closed; post-tool documentation diagnostics remain visible but
 cannot undo a completed write. The portable launcher and real `PowerShell`/`Monitor` routing are
 contract-tested, but native Windows process dispatch was not exercised. Git hooks and CI provide
-cross-platform backstops and signals; with `main` unprotected and zero rulesets configured, a red CI
-result still cannot block the repository administrator from merging.
+cross-platform backstops and signals. Since 9 September 2026 a red required check does block the
+merge button on `development` and `staging`; the administrator keeps a pull-request-scoped bypass
+that GitHub logs as an event, and `main` has no ruleset yet.
 
 When a second developer arrives, the reviewer's job in this codebase, in priority order:
 
