@@ -1144,12 +1144,56 @@ def validate_revision_policy(trusted_revision, candidate_revision)
 
   return if changed.empty? && absent.empty?
 
+  # Attribute each changed path, because the trusted revision is the base branch
+  # tip: a path that moved on the base after this branch started differs from the
+  # candidate without the candidate having touched it. Naming those the same way
+  # as the PR's own edits is what makes the red unreadable — the reviewer cannot
+  # tell which diffs are theirs to read.
+  #
+  # Attribution only labels; it never excuses. Every differing path still refuses,
+  # because the boundary is "the candidate's policy surface byte-matches the
+  # trusted one", and a stale policy surface is a real condition to resolve by
+  # updating the branch. Deciding that base-side drift should stop being red is a
+  # security-relevant loosening, and it is not this change's to make.
+  mine, drift = classify_policy_drift(changed, trusted_revision, candidate_revision)
+
   detail = []
-  detail << "changed blob or mode: #{changed.join(', ')}" unless changed.empty?
+  detail << "changed by this branch: #{mine.join(', ')}" unless mine.empty?
+  detail << "already moved on the base since the branch point, update the branch: #{drift.join(', ')}" unless drift.empty?
   detail << "missing policy blob: #{absent.join('; ')}" unless absent.empty?
   raise PolicyViolation,
         "candidate changed trusted policy blob or mode on #{changed.length + absent.length} path(s) — " \
         "#{detail.join(' | ')}; policy changes require an explicit red/manual security review"
+end
+
+# Split changed paths into the ones this branch edited and the ones that merely
+# moved on the base since the branch point, by comparing each against the merge
+# base of the trusted and candidate revisions. Best effort by design: if the
+# merge base cannot be resolved, every path is reported unattributed rather than
+# failing, because the refusal above is already correct and attribution is only
+# there to make the message readable.
+def classify_policy_drift(changed, trusted_revision, candidate_revision)
+  return [changed, []] if changed.empty?
+
+  base, _error, status = Open3.capture3("git", "merge-base", trusted_revision, candidate_revision)
+  return [changed, []] unless status.success?
+
+  merge_base = base.strip
+  return [changed, []] if merge_base.empty?
+
+  mine = []
+  drift = []
+  changed.each do |relative|
+    at_base, _e1, s1 = Open3.capture3("git", "ls-tree", "-z", "--full-tree", merge_base, "--", relative)
+    at_head, _e2, s2 = Open3.capture3("git", "ls-tree", "-z", "--full-tree", candidate_revision, "--", relative)
+    unless s1.success? && s2.success?
+      mine << relative
+      next
+    end
+
+    at_base == at_head ? drift << relative : mine << relative
+  end
+  [mine, drift]
 end
 
 def validate_candidate(
@@ -2119,6 +2163,44 @@ def self_test(default_path)
       run_git.call("add", "--", relative)
     end
     run_git.call("commit", "-q", "--no-verify", "-m", "restore two policy blobs")
+
+    # A path the base moved after the branch point differs from the candidate
+    # without the candidate having touched it. Both still refuse, but the message
+    # must say which is which, or the reviewer cannot tell their own diff from
+    # someone else's.
+    run_git.call("checkout", "-q", "-B", "drift-base", trusted_revision)
+    drift_path = File.join(revision_repo, multi_first)
+    File.write(drift_path, "#{File.read(drift_path)}\n# moved on the base\n")
+    run_git.call("add", "--", multi_first)
+    run_git.call("commit", "-q", "--no-verify", "-m", "base moves a frozen file")
+    drift_trusted = run_git.call("rev-parse", "HEAD")
+
+    run_git.call("checkout", "-q", "-B", "drift-branch", trusted_revision)
+    own_path = File.join(revision_repo, multi_second)
+    File.write(own_path, "#{File.read(own_path)}\n# changed by the branch\n")
+    run_git.call("add", "--", multi_second)
+    run_git.call("commit", "-q", "--no-verify", "-m", "branch changes a different frozen file")
+    drift_candidate = run_git.call("rev-parse", "HEAD")
+
+    begin
+      Dir.chdir(revision_repo) do
+        validate_revision_policy(drift_trusted, drift_candidate)
+      end
+      puts "  FAIL  Git tree comparison separates base drift from the branch's own edits"
+      failed += 1
+    rescue PolicyViolation => e
+      mine_ok = e.message.include?("changed by this branch: #{multi_second}")
+      drift_ok = e.message.include?("update the branch: #{multi_first}")
+      if mine_ok && drift_ok
+        puts "  ok    Git tree comparison separates base drift from the branch's own edits"
+        passed += 1
+      else
+        puts "  FAIL  Git tree comparison separates base drift from the branch's own edits  (#{e.message})"
+        failed += 1
+      end
+    end
+
+    run_git.call("checkout", "-q", trusted_revision)
 
     removed_workflow_relative = workflow_policy_paths(trusted_root).last
     FileUtils.rm(File.join(revision_repo, removed_workflow_relative))
