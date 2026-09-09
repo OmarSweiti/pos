@@ -64,7 +64,7 @@ network), so run it by hand after any dependency change.
 | Phase 1 | **20 of 112** executable microsteps (~18%) — verified by the frontier checker at `ff9da7e` |
 | Open PRs | **0** |
 | Open issues | **11** — see §2. **None is `In Progress`: the WIP=1 slot is empty** |
-| Board #4 | 13 items, all fields populated, four views |
+| Board #4 | 13 items — 10 active, 3 archived. Four views, and a README describing every field. `Status`, `Priority`, `Risk` and `Blocked` on all 13; `Phase`, `Group` and `Microstep` on 11, blank by design on the two items that belong to no microstep |
 | Repository | **PUBLIC** since 30 August 2026, GitHub Free |
 | Rulesets | **`[]`** — nothing server-side. `main` still answers `404 Branch not protected` |
 
@@ -180,10 +180,12 @@ Also verified: **the harness is absent from the shipped bundle**
 
 ---
 
-## 3 · The eleven open issues
+## 3 · The ten open issues, and one closed with a remainder
 
-Two are new, opened 8 September. All are on board #4 with `Phase`, `Group`, `Microstep`,
-`Priority`, `Risk` and `Blocked` set. `Target` is deliberately unset everywhere — the board contract
+Two are new, opened 8 September. All are on board #4 with `Priority`, `Risk` and `Blocked` set.
+`Phase`, `Group` and `Microstep` are set on 11 of 13 and **deliberately blank on #114 and #115**,
+which are repository-governance items belonging to no microstep — an empty Microstep is information,
+not an omission. `Target` is deliberately unset everywhere — the board contract
 says a fictional date is worse than none.
 
 | # | Title | Prio | Risk | Blocked | Blocks |
@@ -196,7 +198,7 @@ says a fictional date is worse than none.
 | 111 | `decision: does deactivating an approver revoke an already-issued handle?` | P1 | security | decision | the 1.8.x approval handler, so `1.6.4`'s last file |
 | 112 | `decision: the three manual discount caps (merchant decisions 3.1–3.3)` | P1 | money path | merchant answer | `1.4.5` |
 | 114 | `gap: the agent read-deny blocks the memory directory and workflow resume` | P2 | none | decision | agent memory, workflow resume |
-| 115 | `gap: branch protection is available and unconfigured, and no ruleset exists` | P1 | security | not blocked | **payloads applied 9 Sep**; still open for the `gh-protect.sh` rewrite against the rulesets API plus negative tests — until then the rulesets are live configuration nobody can diff or restore |
+| ~~115~~ | `gap: branch protection is available and unconfigured, and no ruleset exists` | P1 | security | **CLOSED 9 Sep** | the three rulesets were applied, so the gap it was opened for is gone. **But its own closing condition was not met**: it also asked for a rewrite of `scripts/gh-protect.sh` against the rulesets API plus negative tests. That script still refuses and exits 3, so the rulesets remain live configuration with no checked-in definition — nobody can diff or restore them. That remainder is now tracked by nothing; reopen or re-file it |
 | **119** | `gap: the back office's Testing Library cleanup never registers` — **new** | P2 | none | not blocked | nothing today; the next back-office screen test |
 | **120** | `gap: conventions §5 has no DOM-component layer, and the workflow doc has ten rows to its nine` — **new** | P2 | none | not blocked | nothing; a two-document inconsistency |
 
@@ -438,7 +440,7 @@ Keep this section current; it saves an hour every session.
 
 ### Board #4 `POS delivery`
 
-Project id `PVT_kwHOCn5KRs4BhoZ-`, user `OmarSweiti`. Private board, public repo. **13 items.**
+Project id `PVT_kwHOCn5KRs4BhoZ-`, user `OmarSweiti`. Private board, public repo. **13 items — 10 active, 3 archived.** `shortDescription` and `readme` set 9 September; the README is the field contract, so read it before adding a field.
 
 | Field | Field id | Options (id) |
 |---|---|---|

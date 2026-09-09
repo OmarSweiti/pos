@@ -463,7 +463,12 @@ just gh-project                            # creates missing fields; refuses sch
 **Live verification note — 8 September 2026:** project **#4 `POS delivery`** exists on the personal
 account with all seven custom fields at the types and select options
 [`gh-project.sh`](../../scripts/gh-project.sh) declares, all four views, the repository linked, and
-13 items. The 27 August run stopped because field inspection queried a non-existent organisation;
+13 items — **10 active and 3 archived** since 9 September, when the closed cards were archived by
+explicit `archiveProjectV2Item` calls. There is no standing rule doing that: the built-in
+*Auto-archive items* workflow is UI-only, like the view grouping above. Enumerating the whole
+GraphQL mutation root returns 260 mutations and the only one naming a workflow is
+`deleteProjectV2Workflow`, so a project workflow can be deleted through the API but never created
+or enabled. The 27 August run stopped because field inspection queried a non-existent organisation;
 `7400a12`, landed the same day, made the script resolve the owner through `repositoryOwner(login:)`
 with fragments on both `User` and `Organization`, and the field query now returns clean — the
 mutating recipe itself has not been re-run, so a reviewed re-run remains unproven.
