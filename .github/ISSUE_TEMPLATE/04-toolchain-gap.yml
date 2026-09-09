@@ -2,6 +2,7 @@ name: Toolchain gap / tech debt
 description: A command that cannot work yet, a missing gate, or a known deferral. Mirrors §17.
 title: "chore: "
 labels: ["type: chore", "meta: toolchain gap"]
+projects: ["OmarSweiti/4"]
 body:
   - type: markdown
     attributes:

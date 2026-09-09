@@ -1,3 +1,11 @@
+## Closes
+
+<!-- `Closes #123`, one per line, or "none" and why.
+     This is the only thing that closes the issue and moves its board card on merge —
+     the board's "Item closed → Done" workflow fires on the ISSUE, not on this PR.
+     A PR body without a closing keyword leaves the issue and its card open, which is
+     how most of this repository's merged PRs have behaved so far. -->
+
 ## What
 
 <!-- The group and the microsteps it lands. "Group 1.3 — the tax engine. Microsteps 1.3.1 → 1.3.7." -->
@@ -38,3 +46,4 @@
 - [ ] the Postgres mirror of any SQLite migration, and a data-migration test if the shape moved
 - [ ] the docs loop closed — §4.13 — and `just docs-links` passes
 - [ ] base branch is `development` (only a promotion PR targets `staging` or `main`)
+- [ ] the **Closes** section links every issue this lands, or says why none applies
