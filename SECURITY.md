@@ -39,10 +39,14 @@ data, never a CVV, never a PIN or a PIN hash.
 Never logged, anywhere — not through `tracing`, `IpcError.detail`, crash reporting, or a test
 fixture that prints — a value under any canonical sensitive field name: `pin`, `pin_hash`, `pan`,
 `card_number`, `cvv`, `track`, `phone`, `email`, `customer_name`, `buyer_name`, `secret_key`,
-`client_id`, `db_key`, `token`, `password`, or `entitlement`. Fiscal credentials and signing
+`client_id`, `db_key`, `token`, `password`, `entitlement`, `recovery_code`, `enrollment_code`, or
+`wrapped_key`. Exact-name matching is not sufficient on its own: also redact every field whose name
+ends in `_token`, `_secret`, `_key`, `_pin` or `_hash`, and every field whose name contains
+`password`, because `device_token` is not spelled `token` and exact-name matching is how a new field
+arrives unredacted. The rule applies at every nesting depth. Fiscal credentials and signing
 material remain sensitive under any provider-specific name. The canonical list lives in
 [`docs/implementation/ref/security-compliance.md`](docs/implementation/ref/security-compliance.md)
-§5 and must be updated as one contract.
+§6 and must be updated as one contract.
 
 The register's database key lives in the OS credential store. Never in a file, never in an
 environment variable in a release build. `POS_DB_KEY` exists for development and CI only, and
@@ -91,8 +95,8 @@ administrator merge while `main` is unprotected and zero rulesets are configured
 
 ## Known gaps, stated plainly
 
-- **No installer signing of any kind.** Updater signing is microstep 0.3.2; OS code signing
-  (Windows Authenticode, Apple Developer ID and notarisation) is milestone 5.5.1. Until both
+- **No installer signing of any kind.** Updater signing is microstep 5.5.0; OS code signing
+  (Windows Authenticode, Apple Developer ID and notarisation) is microstep 5.5.1. Until both
   exist, an installer warns loudly on every machine, and nothing should be distributed to a
   device the maintainer does not own. The release workflow deliberately refuses unsigned or
   unverified tags and missing updater keys, separates signing from publishing, and prepares an

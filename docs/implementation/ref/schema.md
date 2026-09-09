@@ -2646,7 +2646,28 @@ WHEN NOT EXISTS (
 BEGIN
   SELECT RAISE(ABORT, 'prepared quick-add intent is removed only with its approved product effect');
 END;
+```
 
+> ⚠️ **OPEN — blocks `1.9.1`, and structurally, because it is frozen by migration `0005`.** What is
+> the authoritative ICV namespace — register, store, income source, credential, or one TIN across
+> stores? This is unratified merchant decision 6.9. Its answer lands in `doc_sequence.scope_kind`
+> immediately below, and the `CHECK (scope_kind IN ('register','store'))` written there is the
+> running default, **not** a ratified answer. Migrations are forward-only and are never edited once
+> committed, so that `CHECK` becomes structural and uneditable the moment `0005` commits; a later
+> correction is a second migration, plus — if the wrong scope has already issued counter values — a
+> data repair on a sequence that is required to be gapless. That is what separates this row from the
+> other items owned by `2.7.0`: most of them change code or a default, and this one changes a
+> `CHECK` in a file that can never be edited. Default until answered: the store-scoped counter keyed
+> `('store', store_id, 'fiscal_icv')` described under `0010`.
+> Owner: `2.7.0` ratifies 6.9, arriving through #69 on a timeline outside this project's control —
+> so `1.9.1` must choose **deliberately** rather than inherit the default by transcription. Tracked
+> as **#113**, which sets out four options: answer from the official package; widen the `CHECK` to
+> all five candidate scopes and constrain the choice in code until 6.9 is ratified; defer
+> `doc_sequence` out of `0005` entirely; or freeze `store` and accept a second forward-only
+> migration if it is wrong. Source that settles it: the official ISTD business rules or a written
+> ISTD E-Invoicing Directorate ruling.
+
+```sql
 -- Sequence integrity (G-2). Counters, never derived from time (E.6).
 -- Receipt and Z counters are bumped in the SAME transaction as the document
 -- they number. `fiscal_icv` is different: the sale transaction queues a local
@@ -4226,8 +4247,8 @@ guide/XSD/code lists, records their package version and hash, then resolves or
 preserves every provisional field below. A reconstruction is not an approvable
 package.
 
-> ⚠️ **OPEN — blocks 2.7.0.** Is the authoritative ICV namespace per register, store/income source, or one TIN across stores? Default until answered: allocate from one store-scoped counter keyed as `('store', store_id, 'fiscal_icv')`; Phase 2 uses the single register's in-process allocator, Phase 3 uses a server-issued one-value lease, and no register advances an independent register-scoped ICV counter.
-> Owner: 2.7.0. Source that settles it: the official ISTD business rules or a written ISTD E-Invoicing Directorate ruling.
+> ⚠️ **OPEN — blocks 2.7.0, and structurally blocks `1.9.1` (migration `0005`).** Is the authoritative ICV namespace per register, store/income source, or one TIN across stores? Default until answered: allocate from one store-scoped counter keyed as `('store', store_id, 'fiscal_icv')`; Phase 2 uses the single register's in-process allocator, Phase 3 uses a server-issued one-value lease, and no register advances an independent register-scoped ICV counter. **The structural deadline is earlier than this section implies:** the answer lands in `doc_sequence.scope_kind`, which `0005` creates under `1.9.1` in Phase 1 — see the OPEN block above that table in the `0005` section. Once `0005` commits, the `CHECK` is uneditable.
+> Owner: 2.7.0 ratifies it; `1.9.1` must choose deliberately first. Tracked as #113. Source that settles it: the official ISTD business rules or a written ISTD E-Invoicing Directorate ruling.
 
 > ⚠️ **OPEN — blocks 2.7.0.** Does ISTD permit asynchronous reporting during an outage, what artifact may be handed to the customer, when is the legal issuance event, what is the submission deadline, and how are backdating and later rejection handled? Default until answered: complete the sale, print only a non-fiscal payment acknowledgement, and issue the fiscal invoice only through the approved clearance path.
 > Owner: 2.7.0. Source that settles it: the official ISTD outage procedure or a written ruling from the ISTD E-Invoicing Directorate.
