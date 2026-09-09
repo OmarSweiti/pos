@@ -85,7 +85,15 @@ jobs:
             --trusted-revision "$TRUSTED_POLICY_SHA" \
             --candidate-revision "$HEAD_SHA"
 
+      # The three walls below are independent of the frozen-policy comparison
+      # above them. That comparison is *designed* to go red whenever a PR edits
+      # the future policy surface, and its red is the reviewed signal. Without
+      # `!cancelled()` a step-4 failure also cancels these, so on 18 of the last
+      # 22 red runs the source-plan/migration immutability wall never executed —
+      # on exactly the PRs most likely to touch schema, because policy and schema
+      # work travel together here. Each of these must report its own verdict.
       - name: No PR may edit a source plan or an existing migration
+        if: ${{ !cancelled() }}
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -95,6 +103,7 @@ jobs:
             "$BASE_SHA" "$HEAD_SHA"
 
       - name: PR commits contain no assistant-attribution trailers
+        if: ${{ !cancelled() }}
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -109,6 +118,7 @@ jobs:
           done < "$commits"
 
       - name: GitHub automation uses only approved full-SHA actions
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           candidate_root="$RUNNER_TEMP/candidate"

@@ -132,6 +132,20 @@ EXPECTED_STEPS = {
   ]
 }.freeze
 
+# Steps that must report their own verdict even when an earlier step in the same
+# job failed. The frozen-policy comparison is *expected* to go red whenever a PR
+# edits the future policy surface, and that red is the reviewed signal — but a
+# failed step cancels every later step by default, so it was also silencing the
+# source-plan/migration immutability wall, the attribution wall and the action
+# pinning wall on precisely the PRs that most need them. Pinning the guard here,
+# rather than merely tolerating it, means the un-masking cannot be quietly
+# dropped: removing the `if` is now itself a policy violation.
+EXPECTED_IF = {
+  "No PR may edit a source plan or an existing migration" => "${{ !cancelled() }}",
+  "PR commits contain no assistant-attribution trailers" => "${{ !cancelled() }}",
+  "GitHub automation uses only approved full-SHA actions" => "${{ !cancelled() }}"
+}.freeze
+
 EXPECTED_RUN = {
   "Materialize the verified untrusted head as data only" => <<~'SH'.rstrip,
     set -euo pipefail
@@ -403,9 +417,12 @@ end
 
 def validate_run_step(step, name, context)
   expected_keys = %w[name run]
+  expected_keys << "if" if EXPECTED_IF.key?(name)
   expected_keys << "env" if EXPECTED_ENV.key?(name)
   expected_keys << "working-directory" if EXPECTED_WORKING_DIRECTORY.key?(name)
   require_exact_keys(step, expected_keys, context)
+
+  require_scalar(step, "if", EXPECTED_IF.fetch(name), context) if EXPECTED_IF.key?(name)
 
   run = scalar(step.fetch("run"), "#{context}.run").rstrip
   expected_run = EXPECTED_RUN.fetch(name)
@@ -1218,6 +1235,15 @@ def self_test(default_path)
     "the exact event set is retained" => ["types: [opened, edited, reopened, synchronize]", "types: [opened, synchronize]"],
     "repository-local actions cannot replace checkout" => [CHECKOUT, "./candidate/.github/actions/checkout"],
     "the workflow self-policy step cannot disappear" => ["The next workflow retains this trusted-workflow boundary", "The next workflow skips its trusted-workflow boundary"],
+    "the immutability wall cannot be re-masked by the policy-blob step" => [
+      "        if: ${{ !cancelled() }}\n        env:\n          BASE_SHA: ${{ github.event.pull_request.base.sha }}\n          HEAD_SHA: ${{ github.event.pull_request.head.sha }}\n        run: |\n          set -euo pipefail\n          \"$GITHUB_WORKSPACE/scripts/check-protected-paths.sh\" \\\n",
+      "        env:\n          BASE_SHA: ${{ github.event.pull_request.base.sha }}\n          HEAD_SHA: ${{ github.event.pull_request.head.sha }}\n        run: |\n          set -euo pipefail\n          \"$GITHUB_WORKSPACE/scripts/check-protected-paths.sh\" \\\n"
+    ],
+    "the action-pinning wall cannot be re-masked either" => [
+      "        if: ${{ !cancelled() }}\n        run: |\n          set -euo pipefail\n          candidate_root=\"$RUNNER_TEMP/candidate\"\n          GH_ACTIONS_POLICY_ROOT=\"$candidate_root\" \\\n",
+      "        run: |\n          set -euo pipefail\n          candidate_root=\"$RUNNER_TEMP/candidate\"\n          GH_ACTIONS_POLICY_ROOT=\"$candidate_root\" \\\n"
+    ],
+    "the guard cannot be weakened to always()" => ["        if: ${{ !cancelled() }}\n        env:\n          BASE_SHA", "        if: ${{ always() }}\n        env:\n          BASE_SHA"],
     "promotion titles cannot bypass attribution" => [
       "          sys.stdout.write(title)\n          sys.stdout.write(\"\\n\")\n          sys.stdout.write(body)\n",
       "          sys.stdout.write(body)\n"
