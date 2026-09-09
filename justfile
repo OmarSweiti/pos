@@ -736,6 +736,195 @@ promote-main:
       --title "promote staging to main" \
       --body-file .github/PULL_REQUEST_TEMPLATE/promotion.md
 
+# Merge a promotion PR, with the same evidence discipline `just merge` applies to
+# work PRs. `promote-staging` and `promote-main` above only OPEN the PR; until this
+# recipe existed the merge itself was done by hand in the web UI, which is how PR
+# #74 was squash-merged and forked staging, and how two of four promotions landed
+# with a required check red. `just merge` deliberately refuses promotions because
+# they need a merge commit, so this is that path and not a flag on that one.
+#
+# Never --delete-branch here: the head of a promotion is `development` or `staging`.
+promote-merge $pr='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v gh >/dev/null 2>&1 || {
+      echo "promote-merge: the GitHub CLI is required — https://cli.github.com" >&2
+      exit 1
+    }
+    gh auth status >/dev/null 2>&1 || {
+      echo "promote-merge: gh is not authenticated — run: gh auth login" >&2
+      exit 1
+    }
+    [ -n "$pr" ] || {
+      echo "promote-merge: pass the promotion PR explicitly: just promote-merge 128" >&2
+      echo "  A promotion is never inferred from the current branch." >&2
+      exit 1
+    }
+
+    repository=$(gh repo view --json nameWithOwner --jq .nameWithOwner) || {
+      echo "promote-merge: unable to resolve the current GitHub repository." >&2
+      exit 1
+    }
+    [[ "$repository" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]] || {
+      echo "promote-merge: GitHub returned an invalid repository name." >&2
+      exit 1
+    }
+
+    # NUL-separated so refs and titles stay data rather than shell source, and
+    # every field plus both branch tips must be present before evidence counts.
+    snapshot_pr() {
+      gh pr view "$1" \
+        --json state,url,baseRefName,baseRefOid,headRefName,headRefOid,headRepository,isDraft,title,body \
+        | ./scripts/run-python.sh -c '
+    import json
+    import re
+    import sys
+
+    data = json.load(sys.stdin)
+    repository = data.get("headRepository")
+    values = [
+        data.get("state"),
+        data.get("url"),
+        data.get("baseRefName"),
+        data.get("baseRefOid"),
+        data.get("headRefName"),
+        data.get("headRefOid"),
+        repository.get("nameWithOwner") if isinstance(repository, dict) else None,
+    ]
+    if not all(isinstance(value, str) and value for value in values):
+        raise SystemExit("GitHub returned an incomplete promotion snapshot")
+    draft = data.get("isDraft")
+    title = data.get("title")
+    body = data.get("body")
+    if not isinstance(draft, bool):
+        raise SystemExit("GitHub returned an invalid draft state")
+    if not isinstance(title, str) or not title:
+        raise SystemExit("GitHub returned an invalid PR title")
+    if body is None:
+        body = ""
+    if not isinstance(body, str):
+        raise SystemExit("GitHub returned an invalid PR body")
+    values.extend(["true" if draft else "false", title, body])
+    if not re.fullmatch(r"[0-9a-f]{40}", values[3]):
+        raise SystemExit("GitHub returned an invalid base OID")
+    if not re.fullmatch(r"[0-9a-f]{40}", values[5]):
+        raise SystemExit("GitHub returned an invalid head OID")
+    for value in values:
+        sys.stdout.buffer.write(value.encode("utf-8") + b"\0")
+    '
+    }
+
+    snapshot_file=$(mktemp)
+    trap 'rm -f "$snapshot_file"' EXIT
+    if ! snapshot_pr "$pr" > "$snapshot_file"; then
+      echo "promote-merge: unable to read a complete pull-request snapshot." >&2
+      exit 1
+    fi
+    before=()
+    while IFS= read -r -d '' value; do before+=("$value"); done < "$snapshot_file"
+    [ "${#before[@]}" -eq 10 ] || {
+      echo "promote-merge: GitHub returned an ambiguous pull-request snapshot." >&2
+      exit 1
+    }
+    state=${before[0]}
+    pr_url=${before[1]}
+    base_ref=${before[2]}
+    base_oid=${before[3]}
+    head_ref=${before[4]}
+    head_oid=${before[5]}
+    head_repository=${before[6]}
+    is_draft=${before[7]}
+    title=${before[8]}
+    body=${before[9]}
+
+    [ "$state" = OPEN ] || {
+      echo "promote-merge: REFUSED — $pr_url is $state, not OPEN." >&2
+      exit 1
+    }
+    [ "$is_draft" = false ] || {
+      echo "promote-merge: REFUSED — $pr_url is still a draft." >&2
+      exit 1
+    }
+    [ "$head_repository" = "$repository" ] || {
+      echo "promote-merge: REFUSED — a promotion never comes from a fork." >&2
+      exit 1
+    }
+    url_prefix="https://github.com/$repository/pull/"
+    case "$pr_url" in
+      "$url_prefix"*) pr_number=${pr_url#"$url_prefix"} ;;
+      *)
+        echo "promote-merge: REFUSED — $pr_url does not belong to $repository." >&2
+        exit 1 ;;
+    esac
+    [[ "$pr_number" =~ ^[0-9]+$ ]] || {
+      echo "promote-merge: REFUSED — GitHub returned a malformed pull-request URL." >&2
+      exit 1
+    }
+
+    # Exactly two promotion routes exist. A back-merge or hotfix also needs a merge
+    # commit, but it is not a promotion and does not belong on this recipe.
+    case "$head_ref -> $base_ref" in
+      "development -> staging"|"staging -> main") : ;;
+      *)
+        echo "promote-merge: REFUSED — $head_ref -> $base_ref is not a promotion route." >&2
+        echo "  Only development -> staging and staging -> main." >&2
+        exit 1 ;;
+    esac
+    bash ./scripts/validate-branch-flow.sh \
+      "$head_ref" "$base_ref" "$head_repository" "$repository" || {
+      echo "promote-merge: REFUSED — validate-branch-flow.sh rejected this route." >&2
+      exit 1
+    }
+
+    # A promotion title is not a conventional-commit subject, so the §8 grammar is
+    # deliberately not applied here; the attribution rule still is.
+    printf '%s\n%s' "$title" "$body" > "$snapshot_file"
+    if ! ./scripts/run-python.sh ./scripts/check-automation-attribution.py \
+        --message-file "$snapshot_file"; then
+      echo "promote-merge: REFUSED — the PR title or body contains assistant attribution." >&2
+      exit 1
+    fi
+
+    printf 'promote-merge: verified promotion %s@%s -> %s@%s\n' \
+      "$head_ref" "$head_oid" "$base_ref" "$base_oid"
+    printf 'promote-merge: read the evidence checklist on %s before continuing.\n' "$pr_url"
+
+    if ! bash ./scripts/watch-pr-checks.sh "$pr_url"; then
+      echo >&2
+      echo "promote-merge: REFUSED — required checks did not all pass for $pr_url." >&2
+      echo "  cross-platform runs ONLY on this route, so a red there is the one" >&2
+      echo "  signal the local gate cannot reproduce. Do not merge past it." >&2
+      exit 1
+    fi
+
+    if ! snapshot_pr "$pr_url" > "$snapshot_file"; then
+      echo "promote-merge: REFUSED — unable to re-read the PR after watching checks." >&2
+      exit 1
+    fi
+    after=()
+    while IFS= read -r -d '' value; do after+=("$value"); done < "$snapshot_file"
+    snapshot_unchanged=true
+    if [ "${#after[@]}" -ne 10 ]; then
+      snapshot_unchanged=false
+    else
+      for index in "${!before[@]}"; do
+        [ "${before[$index]}" = "${after[$index]}" ] || snapshot_unchanged=false
+      done
+    fi
+    "$snapshot_unchanged" || {
+      echo "promote-merge: REFUSED — PR metadata, state, or branch tips changed after check evidence was collected." >&2
+      exit 1
+    }
+
+    # --merge, never --squash: squashing a promotion forks the branches permanently.
+    # The staging ruleset constrains allowed_merge_methods to ["merge"], and main has
+    # no ruleset yet, so on the staging -> main route this flag is the only guard
+    # until one exists. --match-head-commit binds the reviewed head through the
+    # mutation. The subject keeps the established `promote X to Y (#N)` form.
+    printf '%s' "$body" > "$snapshot_file"
+    gh pr merge "$pr_url" --match-head-commit "$head_oid" --merge \
+      --subject "$title (#$pr_number)" --body-file "$snapshot_file"
+
 # What is between the branches right now — read this before promoting.
 flow:
     @echo "── on development, not yet in staging ──"
