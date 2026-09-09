@@ -50,13 +50,25 @@ never add AI attribution trailers. The exact Dependabot bot author/trailer combi
 narrow compatibility exception and uses the same title grammar with `[—]`; Git author metadata
 alone is not cryptographic proof of App identity.
 
-Branch protection is **available and unconfigured** — the repository has been public since
-30 August 2026, so `branches/main/protection` answers `404 Branch not protected` rather than the
-former 403, and the rulesets API reports zero rulesets. Availability is not configuration: nothing
-server-side requires a check today. The git hooks in `.githooks/` are the first local safety net,
-so `just setup` is not optional — a clone that skipped it, or an explicit `--no-verify`, can still
-bypass them. CI makes violations loud and reviewable but cannot yet block a merge, because no rule
-has been written to make it.
+Branch protection is **configured on two of the three flow branches**, since 9 September 2026.
+`development` and `staging` each carry an active ruleset: a pull request is required, six status
+checks must pass (`rust`, `guards`, `web`, `supply-chain`, `protected-paths`, `topology`), force
+pushes and deletions are blocked, and the merge method is constrained — squash or merge on
+`development`, **merge commit only** into `staging`, which is the first server-side guard against
+the squashed promotion that forked the branches once already. A separate tag ruleset makes
+`refs/tags/v*` append-only with **no bypass actor at all**: a `v*` tag may be created and can then
+never be moved or deleted, by anyone, which is the one control here that binds the maintainer too.
+
+Three limits are deliberate and must not be overstated. **`main` is still unprotected** —
+`branches/main/protection` answers `404 Branch not protected`, because main's `ci.yml` predates
+four of the six required jobs, so a `hotfix/*` branch cut from `main` would wait forever on checks
+that never report; `main` gets its ruleset only after a promotion carries the current `ci.yml`
+onto it. The repository **admin keeps `bypass_mode: "pull_request"`** on both branch rulesets, so a
+red check can still be merged — but only through a pull request, never a direct push, and GitHub
+records the bypass as an event, which is the review artifact that disabling and re-enabling a
+ruleset would not leave. And the git hooks in `.githooks/` are still the first local net, so
+`just setup` is not optional: a clone that skipped it, or an explicit `--no-verify`, still bypasses
+them locally.
 [`03-github-workflow.md`](docs/implementation/03-github-workflow.md) §3 has the full honest table.
 
 ## The nine invariants

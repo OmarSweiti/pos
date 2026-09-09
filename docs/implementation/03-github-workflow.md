@@ -233,23 +233,37 @@ both refused. Configure and verify the signing identity before attempting the fi
 
 ## 3 · What GitHub and the repository enforce here
 
-This repository has been **public since 30 August 2026**. GitHub's server-side branch controls are
-available, but availability is not configuration:
+This repository has been **public since 30 August 2026**, and since **9 September 2026** three
+rulesets are configured:
 
 ```
+$ gh api repos/OmarSweiti/pos/rulesets --jq '.[]|"\(.name) \(.target) \(.enforcement)"'
+development-flow     branch  active
+staging-promotion    branch  active
+tags-v-append-only   tag     active
+
 $ gh api repos/OmarSweiti/pos/branches/main/protection
 404  Branch not protected
 ```
 
-The rulesets API likewise reports zero configured rulesets. Branch protection and rulesets are
-therefore absent controls, not unavailable ones. So:
+`development` and `staging` now require a pull request and six passing checks — `rust`, `guards`,
+`web`, `supply-chain`, `protected-paths`, `topology` — block force pushes and deletions, and
+constrain the merge method: squash or merge on `development`, merge commit only into `staging`.
+`refs/tags/v*` is append-only with no bypass actor.
+
+Three things are still true and are the reason the table below keeps its "honest limit" column.
+**`main` remains unprotected**, deliberately: its `ci.yml` predates four of the six required jobs,
+so requiring them would leave a `hotfix/*` branch cut from `main` waiting on checks that never
+report. The **admin holds `bypass_mode: "pull_request"`** on both branch rulesets, so a red check
+is still mergeable by the maintainer — through a pull request only, never a direct push, and the
+bypass is logged as an event. And the git hooks stay local and bypassable. So:
 
 | Rule | Control | Honest limit |
 |---|---|---|
-| No direct, force, or deletion push to `main`/`staging`/`development` | [`.githooks/pre-push`](../../.githooks/pre-push), using Git's supplied destination remote | local; `--no-verify` or an unconfigured clone bypasses it |
-| Existing tags never move or disappear | `.githooks/pre-push` allows a new tag but refuses every update/deletion; the release workflow revalidates the remote annotated-tag object around draft mutation | the hook is local, and draft/tag binding is not atomic until immutable publication |
-| Commit and squash title obey the exact same grammar | [`scripts/validate-change-title.sh`](../../scripts/validate-change-title.sh), called by `commit-msg` and `branch-flow` | the server check can be merged while red because no configured protection or ruleset requires it |
-| Coding assistants receive no PR or history attribution; the exact Dependabot metadata/trailer combination remains visible | [`scripts/check-automation-attribution.py`](../../scripts/check-automation-attribution.py), called by Git and trusted CI for commits plus the PR title/body | Git author metadata is spoofable, local hooks are bypassable, and no configured server-side rule makes CI a merge wall |
+| No direct, force, or deletion push to `main`/`staging`/`development` | server-side on `development` and `staging` (ruleset: pull request required, `non_fast_forward`, `deletion`); [`.githooks/pre-push`](../../.githooks/pre-push) for all three, using Git's supplied destination remote | `main` has no ruleset yet, so there it is local only, and `--no-verify` or an unconfigured clone bypasses the hook |
+| Existing tags never move or disappear | server-side for `refs/tags/v*` (`tags-v-append-only`: `update` and `deletion` blocked, **no bypass actor**, so it binds the maintainer too); `.githooks/pre-push` allows a new tag but refuses every update/deletion; the release workflow revalidates the remote annotated-tag object around draft mutation | the ruleset covers `v*` only — any other tag name is hook-only — and draft/tag binding is not atomic until immutable publication |
+| Commit and squash title obey the exact same grammar | [`scripts/validate-change-title.sh`](../../scripts/validate-change-title.sh), called by `commit-msg` and `branch-flow` | `topology` is a required check on `development` and `staging`, so a red title check now blocks the merge button there; the admin can still bypass through a pull request, and that bypass is logged |
+| Coding assistants receive no PR or history attribution; the exact Dependabot metadata/trailer combination remains visible | [`scripts/check-automation-attribution.py`](../../scripts/check-automation-attribution.py), called by Git and trusted CI for commits plus the PR title/body | Git author metadata is spoofable and local hooks are bypassable; `protected-paths` is now a required check on `development` and `staging`, so CI is a merge wall there, subject to the logged admin bypass |
 | Protected source plans and committed migrations do not change | Claude/Codex hooks, staged-index policy, and `branch-flow` | `pull_request_target` loads the trusted default-branch definition, policy is checked out at its exact `github.workflow_sha`, and the verified PR head is materialized only as data; no configured server-side rule makes a red check a merge wall |
 | Sensitive paths, oversized staged blobs, and Git inspection failures are refused | [`.githooks/pre-commit`](../../.githooks/pre-commit) with NUL-safe staged-index inspection | local only |
 | Secret-like content is detected independently of its filename | GitHub-native secret scanning and push protection are enabled; Gitleaks runs in pre-commit, pre-push, CI commit-range scanning, and the weekly security workflow | local scans can be skipped, so the native controls remain an independent backstop rather than a substitute for the repository-owned range and history gates |

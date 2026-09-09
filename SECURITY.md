@@ -69,10 +69,11 @@ the release build must refuse to honour it.
 GitHub's **native** secret scanning and push protection are enabled. They complement the
 independent, content-based Gitleaks gate: `pre-commit` scans the staged index, `pre-push` scans
 reachable history, and CI scans the proposed commit range with fully redacted output. The local
-checks remain bypassable with `--no-verify` or in a clone that skipped `just setup`; CI is
-server-side evidence but cannot block an administrator merge while `main` is unprotected and zero
-rulesets are configured. A finding means rotate the credential first, then handle history as a
-separate, explicitly authorised operation.
+checks remain bypassable with `--no-verify` or in a clone that skipped `just setup`. Since
+9 September 2026 CI is also a merge wall on `development` and `staging`, where six checks are
+required by ruleset; the administrator can still bypass, but only through a pull request and only
+as a logged event, and `main` has no ruleset yet. A finding means rotate the credential first,
+then handle history as a separate, explicitly authorised operation.
 
 `just pre-push` runs the deterministic local gates plus a full-history secret scan. CI repeats
 those checks and runs the network-dependent supply-chain audit separately.
@@ -90,8 +91,9 @@ govern Claude tools, not subprocesses: a permitted shell command has ambient hos
 network, environment, and credential access. The repository does not claim subprocess credential
 scrubbing, metadata-endpoint denial, or OS containment under this policy. This is an explicit
 developer-convenience tradeoff, not an application-security or secret-exfiltration boundary.
-Git hooks and CI remain cross-platform backstops and visible signals, but CI cannot block an
-administrator merge while `main` is unprotected and zero rulesets are configured.
+Git hooks and CI remain cross-platform backstops and visible signals. On `development` and
+`staging` a red required check now blocks the merge button; the administrator retains a
+pull-request-scoped bypass, which GitHub logs, and `main` is still unprotected.
 
 ## Known gaps, stated plainly
 

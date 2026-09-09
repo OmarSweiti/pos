@@ -236,9 +236,11 @@ direct, force, and deletion pushes to `development`, `staging`, and `main`. Tags
 a new tag is allowed, moving or deleting an existing one is not.
 
 It remains a local safety belt. `--no-verify` or a clone that skipped setup bypasses it, and the
-repository deliberately offers no environment-variable override. Server workflows are the evidence
-layer, and with `main` unprotected and zero rulesets configured, red evidence still cannot stop the
-repository administrator.
+repository deliberately offers no environment-variable override. Since 9 September 2026 rulesets
+back it server-side on `development` and `staging`, and `refs/tags/v*` is append-only there with no
+bypass actor at all. Two gaps remain by design: `main` has no ruleset, and on the two protected
+branches the administrator keeps a pull-request-scoped bypass — so red evidence can still be
+overridden, but only through a pull request and only as an event GitHub records.
 
 ## 7. Repository verification: `scripts/`
 
@@ -365,8 +367,9 @@ is how a supply-chain problem arrives politely. The issue forms and pull-request
 the project-specific evidence a reviewer needs.
 
 `CODEOWNERS` records intended ownership; this repository does not treat automatic review assignment
-or a CODEOWNERS approval as a merge gate. `main` is unprotected and zero rulesets are configured, so
-red checks cannot block an administrator merge. GitHub-native secret scanning and push protection
+or a CODEOWNERS approval as a merge gate — no ruleset requires a review, because a sole developer
+cannot approve their own pull request. Red checks now block the merge button on `development` and
+`staging`, subject to a logged administrator bypass; `main` has no ruleset. GitHub-native secret scanning and push protection
 are enabled alongside independent Gitleaks scanning. Every `uses:` is a full commit SHA from the
 repository allowlist and policy checks enforce that checked-in surface; applying any repository-wide
 selected-Action setting is a separate live configuration step.
@@ -454,8 +457,8 @@ the hotfix path, are in
 | compiler/lints/tests | domain, money, schema, frontend, and behavior checks | only the behavior actually encoded is proved |
 | agent permissions, the Codex sandbox, and Claude/Codex hooks | safer agent execution and immediate immutable/docs feedback | Claude shell subprocesses have ambient host access; client support and lexical parsing limits apply |
 | Git hooks | staged policy, content scanning, message/history policy, branch-push safety | local and intentionally bypassable |
-| GitHub workflows | trusted-base policy, CI, security analysis, releases, logged evidence | red checks cannot block this repository's administrator while `main` is unprotected and zero rulesets are configured |
-| GitHub live settings | read-only default token posture, native secret scanning and push protection, private vulnerability reporting, immutable published releases | `main` is unprotected; zero rulesets are configured; no CODEOWNERS review assignment or enforcement is claimed |
+| GitHub workflows | trusted-base policy, CI, security analysis, releases, logged evidence | six checks are required by ruleset on `development` and `staging`; the administrator can still bypass through a pull request, and that bypass is logged; `main` has no ruleset |
+| GitHub live settings | read-only default token posture, native secret scanning and push protection, private vulnerability reporting, immutable published releases, three active rulesets (`development`, `staging`, `refs/tags/v*`) | `main` is unprotected by design until a promotion carries the current `ci.yml`; the two branch rulesets carry a pull-request-scoped administrator bypass; no CODEOWNERS review assignment or enforcement is claimed |
 
 No compliance validation is complete. No text in this repository should claim PCI DSS, SAQ, JoFotara
 certification, or PDPL registration without the evidence required by
