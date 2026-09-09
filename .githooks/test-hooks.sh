@@ -288,8 +288,18 @@ echo "pre-push — feature branches and new tags remain available"
 expect_push 0 "a feature branch"           "refs/heads/x $head_sha refs/heads/phase-1/group-3-tax $head_sha"
 expect_push 1 "an environment variable cannot bypass a protected push" \
   "refs/heads/main $head_sha refs/heads/main $head_sha" "POS_ALLOW_PROTECTED_PUSH=1"
-expect_push 0 "creating a new tag is allowed" \
+# A NEW v* tag now goes through release.yml's own refusals before it is pushed,
+# because a server-side rejection spends the version number permanently.
+expect_push 1 "a new lightweight v* tag is refused" \
   "refs/tags/v9.9.9 $head_sha refs/tags/v9.9.9 $zero"
+expect_push 1 "a v* tag outside the release grammar is refused" \
+  "refs/tags/v9.9 $head_sha refs/tags/v9.9 $zero"
+expect_push 1 "a v* tag with a leading zero is refused" \
+  "refs/tags/v9.09.9 $head_sha refs/tags/v9.09.9 $zero"
+expect_push 1 "a v* prerelease tag with a zero iteration is refused" \
+  "refs/tags/v9.9.9-rc.0 $head_sha refs/tags/v9.9.9-rc.0 $zero"
+expect_push 0 "a non-release tag name is not a release tag" \
+  "refs/tags/checkpoint-1 $head_sha refs/tags/checkpoint-1 $zero"
 expect_push 1 "moving an existing tag is refused" \
   "refs/tags/v9.9.9 $head_sha refs/tags/v9.9.9 1111111111111111111111111111111111111111"
 expect_push 1 "deleting an existing tag is refused" \

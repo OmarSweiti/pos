@@ -179,6 +179,19 @@ jobs:
 
   build:
     needs: guard
+    # The updater signing key is read on this job, which is also the job that
+    # compiles third-party code — so a build script or proc macro shares its
+    # process with the key. An environment does not fix that; it bounds WHICH
+    # REFS can ever have the key injected. `release` carries one deployment
+    # policy, `tag: v*`, so a run on any other ref cannot obtain these secrets
+    # at all, and the key must be stored as an ENVIRONMENT secret rather than a
+    # repository one — a repository secret stays readable by any job on any ref.
+    #
+    # It also produces a deployment record, which is the audit artifact the
+    # release path otherwise has none of. No reviewers: approving your own
+    # deployment is theatre, and the tag ruleset plus the guard job are the real
+    # controls on what may be released.
+    environment: release
     permissions:
       contents: read
     timeout-minutes: 90
@@ -207,8 +220,8 @@ jobs:
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          [ -n "$TAURI_KEY" ] || { echo "::error::the repository lacks TAURI_SIGNING_PRIVATE_KEY"; exit 1; }
-          [ -n "$TAURI_KEY_PASSWORD" ] || { echo "::error::the repository lacks TAURI_SIGNING_PRIVATE_KEY_PASSWORD"; exit 1; }
+          [ -n "$TAURI_KEY" ] || { echo "::error::the release environment lacks TAURI_SIGNING_PRIVATE_KEY"; exit 1; }
+          [ -n "$TAURI_KEY_PASSWORD" ] || { echo "::error::the release environment lacks TAURI_SIGNING_PRIVATE_KEY_PASSWORD"; exit 1; }
       - name: Linux system deps
         if: matrix.platform == 'ubuntu-22.04'
         run: |

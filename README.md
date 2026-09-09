@@ -99,8 +99,10 @@ Release automation requires a verified signed tag at the exact validated branch
 tip, builds every platform with separated signing/publishing permissions, and
 adds checksums plus an SBOM to a draft. Published releases are immutable. The
 first external release is intentionally blocked until the updater-signing
-repository secrets, committed updater public configuration, and OS signing
-material are configured; see [`SECURITY.md`](SECURITY.md).
+secrets, committed updater public configuration, and OS signing material are
+configured; see [`SECURITY.md`](SECURITY.md). Those secrets belong to the
+`release` **environment**, not the repository: its only deployment policy is
+`tag: v*`, so no run on another ref can read them.
 The JavaScript licence gate reviews dependency metadata, but an external
 installer also requires a platform-specific third-party notice/source audit as
 stated in [`LICENSE`](LICENSE).
