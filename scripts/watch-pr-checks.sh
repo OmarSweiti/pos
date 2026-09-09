@@ -234,7 +234,7 @@ end
 ci = load_workflow(".github/workflows/ci.yml")
 abort "ci.yml workflow name changed" unless ci["name"] == "ci"
 ci_jobs = ci.fetch("jobs")
-required_ci_jobs = %w[rust guards web supply-chain cross-platform]
+required_ci_jobs = %w[rust guards web supply-chain promotion-shape cross-platform]
 abort "ci.yml readiness job set changed" unless ci_jobs.keys == required_ci_jobs
 matrix = ci_jobs.fetch("cross-platform").dig("strategy", "matrix", "platform")
 expected_matrix = %w[ubuntu-22.04 macos-latest windows-latest]
@@ -242,6 +242,12 @@ abort "ci.yml cross-platform matrix changed" unless matrix == expected_matrix
 expected_matrix_condition =
   "github.base_ref == 'staging' || github.base_ref == 'main' || " \
   "github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main'"
+expected_shape_condition =
+  "github.event_name == 'push' && " \
+  "(github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main')"
+unless ci_jobs.fetch("promotion-shape").fetch("if").strip == expected_shape_condition
+  abort "ci.yml promotion-shape route condition changed"
+end
 unless ci_jobs.fetch("cross-platform").fetch("if") == expected_matrix_condition
   abort "ci.yml cross-platform route condition changed"
 end
@@ -278,7 +284,10 @@ workflow_core_checks() {
   ruby -rpsych <<'RUBY'
 ci = Psych.safe_load_file(".github/workflows/ci.yml", aliases: false)
 branch_flow = Psych.safe_load_file(".github/workflows/branch-flow.yml", aliases: false)
-(ci.fetch("jobs").keys - ["cross-platform"]).each { |job| puts "ci\t#{job}" }
+# promotion-shape is a push-only assertion on staging/main. It produces no check
+# run on a pull request, so requiring it would block every PR forever — the exact
+# trap that keeps workflow-analysis out of the required set.
+(ci.fetch("jobs").keys - ["cross-platform", "promotion-shape"]).each { |job| puts "ci\t#{job}" }
 (branch_flow.fetch("jobs").keys - ["promotion-notice"]).each do |job|
   puts "branch-flow\t#{job}"
 end
@@ -310,6 +319,7 @@ self_test() {
   assert_lacks_check 'ordinary PR does not require security workflow' "$core" $'security\tworkflow-analysis'
   assert_lacks_check 'ordinary PR does not require a matrix' "$core" $'ci\tcross-platform (windows-latest)'
   assert_lacks_check 'ordinary PR does not require promotion notice' "$core" $'branch-flow\tpromotion-notice'
+  assert_lacks_check 'ordinary PR does not require the push-only promotion shape' "$core" $'ci\tpromotion-shape'
   derived_core=$(workflow_core_checks)
   assert_complete 'watcher includes every core job derived from the workflow files' "$derived_core" "$core"
   assert_complete 'watcher names no nonexistent core workflow job' "$core" "$derived_core"
