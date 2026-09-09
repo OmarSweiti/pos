@@ -1546,6 +1546,13 @@ publisher output with older build artifacts.
 Promotion CI builds the real Tauri application on Linux, macOS, and Windows before tag time, so the
 release workflow is not the first platform-specific packaging run.
 
+The draft's notes body is generated rather than written: `release.yml` creates the draft with
+`--generate-notes`, and [`.github/release.yml`](../../.github/release.yml) sorts the merged pull
+requests into categories by their `type:` label. A promotion PR earns no `type:` label — that is
+what `scripts/pr-type-label.sh` asserts for exactly that title — so a promotion lands under
+"Other" instead of leading the notes. Read the generated body before publishing. Nothing local
+validates that file; GitHub parses it only at draft creation, so the first draft is its only proof.
+
 What is **not** ready, and must be before anything reaches a machine you do not own:
 
 - **Verified tag signing and updater keys** — configure a signing identity, generate the updater

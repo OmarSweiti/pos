@@ -1,0 +1,33 @@
+# Release-note categories for `gh release create --generate-notes`, which
+# .github/workflows/release.yml runs when it creates a draft. Without this file
+# GitHub emits one flat "What's Changed" list, so the machine-applied label
+# taxonomy reaches the one page an outsider reads with no effect at all.
+#
+# Keyed on `type:` only. scripts/pr-type-label.sh derives that label from the PR
+# title, and a promotion PR ("promote development to staging") earns none by
+# design — its own self-test asserts `--none` for exactly that title. So every
+# promotion falls to "Other" instead of leading the notes, without a rule naming
+# promotions. The first release has no previous tag and therefore spans all
+# history, where four such merges already sit.
+#
+# `meta: dependencies` precedes Internal deliberately: .github/dependabot.yml
+# sets `type: chore`, `area: repo` and `meta: dependencies` on every PR it opens,
+# and GitHub files a PR under the FIRST category whose labels match. Reversed,
+# every dependency bump would read as internal work.
+#
+# Nothing local validates this file — GitHub parses it at draft creation, so the
+# first draft's notes body is the only proof it is correct.
+changelog:
+  categories:
+    - title: New capabilities
+      labels: ["type: feat"]
+    - title: Fixes
+      labels: ["type: fix"]
+    - title: Performance
+      labels: ["type: perf"]
+    - title: Dependencies
+      labels: ["meta: dependencies"]
+    - title: Internal
+      labels: ["type: chore", "type: refactor", "type: test", "type: docs"]
+    - title: Other
+      labels: ["*"]
