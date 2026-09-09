@@ -29,6 +29,7 @@ crates/pos-domain/     pure rules: Money, tax, cart machine   ← keep it pure
 crates/pos-db/         SQLite schema, migrations, repositories
 crates/pos-sync/       outbox/cursor protocol (client + server)
 crates/pos-hardware/   printer/scanner/terminal traits + simulator
+crates/pos-test-support/  shared proptest config and strategies  (dev-only)
 apps/terminal/         the register (Tauri 2)
 apps/server/           Axum: sync, auth, reporting
 apps/backoffice/       React admin
