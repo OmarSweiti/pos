@@ -106,74 +106,28 @@ jobs:
       - name: npm advisories
         run: pnpm audit --audit-level high
 
-  # The lane above can only ever scan `development`. A `schedule` event fires
-  # from the default branch alone, and every advisory step reads the worktree
-  # that was checked out, so a fresh RUSTSEC against a version `main` pins and
-  # `development` has already bumped past is reported by nothing on a clock:
-  # main's pins are audited when a promotion PR opens and never again. main is
-  # 124 commits behind development today, with roughly 1,863 changed lines in
-  # pnpm-lock.yaml alone, and this job is the first thing in the repository that
-  # will ever say so without a human asking. That closes the gap where the
-  # branch a merchant actually runs was audited only at promotion time.
+  # There is no per-flow-branch counterpart to the lane above, and that is now a
+  # recorded gap rather than an oversight. A `schedule` event fires only from the
+  # default branch, so this workflow can audit `development`'s pins and nothing
+  # else: an advisory against a version `main` pins and `development` has already
+  # bumped past is reported by no clock, only by the `supply-chain` job when a
+  # promotion PR opens.
   #
-  # A red `main` leg here is the finding, not a defect in this job. It means the
-  # shipped pins carry an advisory that development has already moved past, and
-  # the fix is a promotion, not a change to the matrix.
+  # A matrix job that checked out `staging` and `main` and audited their pins was
+  # written, and removed. CodeQL's actions pack raised three high-severity
+  # `actions/cache-poisoning/poisonable-step` alerts against it and was right about
+  # the shape: a scheduled run holds the default branch's cache scope, which is a
+  # privileged one, and that job was the only place here that then checked out
+  # another ref and executed what it found — `pnpm install` runs lifecycle scripts
+  # from the tree it was handed. Disabling the package-manager cache did not clear
+  # the finding, because the hazard is the combination and not any single cache:
+  # `schedule` has no unprivileged variant to move the job to.
   #
-  # Deliberately a separate job rather than a matrix over `scheduled-advisories`:
-  # that job's full-history gitleaks scan takes about seventy seconds and walking
-  # the same history three times buys nothing at all. Only the dependency audits
-  # are per-ref here, because only they read pins.
-  #
-  # It runs on schedule and manual dispatch only, so it never produces a check
-  # run on a pull request and must NEVER be added to a ruleset's required status
-  # checks.
-  scheduled-advisories-per-flow-branch:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    strategy:
-      fail-fast: false
-      matrix:
-        ref: [development, staging, main]
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # The whole point of the job: each leg audits the pins that ref carries,
-          # not the pins of the default branch the schedule fired from.
-          ref: ${{ matrix.ref }}
-          persist-credentials: false
-
-      # No Swatinem/rust-cache in this job. The Actions cache is already over its
-      # ceiling — 10,555,721,908 bytes across 100 entries against a 10 GB quota —
-      # and a lane that runs once a week gains a few minutes from a warm target
-      # directory while evicting entries the per-pull-request jobs read hourly.
-      - name: Install the pinned cargo-deny release
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
-        with:
-          tool: cargo-deny@0.20.2
-          fallback: none
-      - name: Rust advisories, licences, and duplicate or banned crates
-        # Scope comes from `[graph] all-features` in deny.toml, not from a flag.
-        run: cargo deny check
-
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .nvmrc
-          # No package-manager cache in THIS job, unlike the lane above, and the
-          # reason is a trust boundary rather than the quota. A `schedule` event
-          # runs in the default branch's context, which is a privileged cache
-          # scope — and this is the one job that then checks out `staging` and
-          # `main` and executes what it finds there: `pnpm install` runs lifecycle
-          # scripts and `cargo deny` resolves a graph. Restoring a cache into that
-          # combination is the poisonable-step shape CodeQL flags, and it was also
-          # flatly inconsistent with the comment above saying this job carries no
-          # cache. `release.yml` refuses the same thing for the same reason.
-          package-manager-cache: false
-      - run: pnpm install --frozen-lockfile
-      - name: npm advisories
-        run: pnpm audit --audit-level high
+  # It was dropped rather than reshaped because the gap it closed is almost
+  # entirely the window in which `main` sits far behind `development`, and the
+  # repair for that is the `staging → main` promotion rather than a second audit
+  # lane. Reopen this only if `main` is ever routinely stale again, and then
+  # without executing the audited ref's code.
 
   # Nothing in this repository noticed a weekly lane that stopped reporting.
   # GitHub does email the repository owner when a scheduled run goes red, so a
@@ -194,7 +148,7 @@ jobs:
   # and must NEVER be added to a ruleset's required status checks.
   scheduled-failure-escalation:
     if: failure() && github.event_name == 'schedule'
-    needs: [workflow-analysis, scheduled-advisories, scheduled-advisories-per-flow-branch]
+    needs: [workflow-analysis, scheduled-advisories]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Job-scoped on purpose: the top-level grant stays `actions: read` plus
@@ -227,7 +181,7 @@ jobs:
           # expand — every runtime value reaches printf as a separate argument.
           # shellcheck disable=SC2016
           body=$(printf '%s\n\n%s\n' \
-            'The scheduled run of the `security` workflow failed. The weekly advisory scan, the full-history secret scan, or a per-flow-branch dependency audit is red — a red `main` leg is a finding about main, not a defect in the workflow.' \
+            'The scheduled run of the `security` workflow failed: the weekly advisory scan, the full-history secret scan, or the workflow analysis is red. It audits the default branch only — `staging` and `main` pins are covered by the `supply-chain` job when a promotion PR opens.' \
             "Run: $run_url")
           existing=$(gh issue list --state open --search "$marker in:title" \
             --limit 1 --json number --jq '.[0].number // empty')

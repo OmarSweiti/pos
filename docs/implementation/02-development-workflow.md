@@ -1133,7 +1133,7 @@ path-filtered pull-request lane. The weekly rows say so:
 | [`ci.yml`](../../.github/workflows/ci.yml) | `cross-platform` | core tests and a real Tauri package build on Linux/macOS/Windows; the packaged-app WebDriver smoke suite is future work owned by 2.9.5 | run the platform tests and Tauri build on each supported OS |
 | [`branch-flow.yml`](../../.github/workflows/branch-flow.yml) | `protected-paths`, `topology` | exact-workflow-revision policy · verified data-only PR head · legal head/base/repository · title and attribution | relevant `just guards` self-tests |
 | [`labeler.yml`](../../.github/workflows/labeler.yml) | `label` | path-derived area/risk plus title-derived type, executing only trusted base code | `bash scripts/validate-change-title.sh --self-test` for normalization and `bash scripts/pr-type-label.sh --self-test` for type selection; GitHub event, path labeling and mutations remain server-only |
-| [`security.yml`](../../.github/workflows/security.yml) | `workflow-analysis`, `scheduled-advisories`, `scheduled-advisories-per-flow-branch`, `scheduled-failure-escalation` | actionlint · zizmor · weekly full-history secret and dependency scan on `development`, then the dependency audits alone re-run against the pins `development`, `staging` and `main` each actually carry · a standing issue when a scheduled run goes red | policy self-tests plus `just secrets && just audit`; the per-branch legs have no local equivalent, because the point is auditing a ref you are not on |
+| [`security.yml`](../../.github/workflows/security.yml) | `workflow-analysis`, `scheduled-advisories`, `scheduled-failure-escalation` | actionlint · zizmor · weekly full-history secret and dependency scan, on the default branch only · a standing issue when a scheduled run goes red | policy self-tests plus `just secrets && just audit` |
 | [`proptest-scheduled.yml`](../../.github/workflows/proptest-scheduled.yml) | `domain-properties`, `scheduled-failure-escalation` | weekly, Tuesday 02:37 UTC: every `pos-domain` property at `PROPTEST_CASES=100000` under a seed printed for replay · a standing issue when a scheduled run goes red | `PROPTEST_CASES=100000 cargo nextest run -p pos-domain -E 'test(/::prop_/)'` |
 | [`cross-platform-canary.yml`](../../.github/workflows/cross-platform-canary.yml) | `build`, `escalate` | weekly, Thursday 04:13 UTC: the four platform-sensitive crates' tests and a real Tauri package build on `ubuntu-22.04`, `macos-latest` and `windows-latest`, never failing fast so the run says *which* platforms broke · a standing issue when a scheduled run goes red | run the platform tests and Tauri build on each supported OS |
 | [`release.yml`](../../.github/workflows/release.yml) | guard, platform signing, publisher, metadata | verified signed exact-tip tag · exact-SHA CI · least-privilege publishing · SBOM/checksums | the release checklist in §15 |
@@ -1146,9 +1146,19 @@ Jordanian weekend. The canary exists because [`ci.yml`](../../.github/workflows/
 was otherwise first seen by a promotion PR whose bisect range is every squash commit since the last
 promotion.
 
+No scheduled lane audits `staging` or `main`. A `schedule` event fires only from the default
+branch, so the weekly advisory scan reads `development`'s pins and nothing else, and an advisory
+against a version `main` pins is reported by no clock — only by `ci.yml`'s `supply-chain` job when a
+promotion PR opens. A matrix job that checked out each flow branch and audited it was written and
+then removed: a scheduled run holds the default branch's privileged cache scope, and checking out
+another ref and executing it there — `pnpm install` runs lifecycle scripts — is a cache-poisoning
+shape CodeQL flags and `schedule` offers no unprivileged context to escape. The gap is accepted
+because it is almost entirely the window in which `main` sits far behind `development`, and the
+repair for that is promotion rather than a second audit lane.
+
 **None of the scheduled jobs may ever become a required status check.** `proptest-scheduled.yml` and
 `cross-platform-canary.yml` trigger on `schedule` and `workflow_dispatch` only, and inside
-`security.yml` the advisory, per-branch and escalation jobs are each guarded to those same events —
+`security.yml` the advisory and escalation jobs are each guarded to those same events —
 so none of them produces a check run on a pull request, and a required-but-absent context blocks a
 pull request forever. The required set stays exactly the six in
 [`03-github-workflow.md`](03-github-workflow.md) §3. These lanes' verdicts are read from the Actions
