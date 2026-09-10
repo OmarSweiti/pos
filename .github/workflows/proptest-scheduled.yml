@@ -2,22 +2,33 @@ name: proptest-scheduled
 
 on:
   schedule:
-    # Weekly high-count coverage without putting the whole CI matrix on a cron.
-    - cron: "37 2 * * 6"
+    # Weekly high-count coverage of every pos-domain property without putting the
+    # whole CI matrix on a cron. Tuesday, not the weekend: Friday and Saturday are
+    # the Jordanian weekend, so a Saturday run that goes red waits until Sunday
+    # for anyone to read it, which turns a weekly lane into a nine-day lane. 02:37
+    # UTC is 05:37 in Amman (UTC+3) — off-peak for runner availability, and landing
+    # a few hours before a working day starts rather than after it ended. GitHub
+    # evaluates cron in UTC and silently drops or delays scheduled runs under load
+    # (jitter observed on this repository: 4.5h and 6.8h), so the minute is a hint
+    # and the day is the only part of this schedule worth reasoning about.
+    - cron: "37 2 * * 2"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: proptest-scheduled-${{ github.ref }}
+  # The event name is part of the group because a schedule event runs on the
+  # default branch, so `github.ref` alone collides with every dispatch on
+  # development. security.yml carries the full explanation of the trap.
+  group: proptest-scheduled-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  money-properties:
+  domain-properties:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -38,19 +49,100 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: ${{ steps.pin.outputs.channel }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # This job deliberately carries no rust-cache. Swatinem's implicit key
+      # includes the job id, so an entry saved here could never be restored by
+      # ci.yml's `rust` job and this job could only ever restore its own previous
+      # week — which the shared 10 GB quota, already at its ceiling, evicts long
+      # before Tuesday comes round again. The cache was therefore write-only: it
+      # spent quota that a required status check needs and returned nothing. A
+      # weekly job that runs for about a minute does not need a warm cache.
       - name: Install the pinned cargo-nextest release
         uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
         with:
           tool: nextest@0.9.143
           fallback: none
 
-      - name: Run the high-count money properties
+      # Every property in the crate, not just money's fifteen. `ids.rs` already
+      # documents this lane as the reason `PROPTEST_CASES` can only be raised,
+      # and a money-only filter quietly left the other twelve properties — ids 3,
+      # audit 4, time 5 — at their committed 4,096 cases. Two of the excluded ones
+      # are precisely the kind where the case count *is* the test:
+      # `prop_seq_ids_never_collide` is a collision search, and
+      # `prop_seq_ids_keep_the_v7_layout` guards invariant 7's identity layout.
+      # The money-only lane cost about 63s, so widening from 15 properties to 27
+      # is seconds of runner time, not minutes.
+      - name: Run the high-count pos-domain properties
         env:
           # Unique per workflow run, stable across rerun attempts, and printed below.
           PROPTEST_RNG_SEED: ${{ github.run_id }}
         run: |
           set -euo pipefail
+          filter='test(/::prop_/)'
           printf 'Replayable seed: PROPTEST_RNG_SEED=%s\n' "$PROPTEST_RNG_SEED"
-          printf 'Replay: PROPTEST_RNG_SEED=%s PROPTEST_CASES=100000 cargo nextest run -p pos-domain money::tests::prop_\n' "$PROPTEST_RNG_SEED"
-          PROPTEST_CASES=100000 cargo nextest run -p pos-domain money::tests::prop_
+          printf "Replay: PROPTEST_RNG_SEED=%s PROPTEST_CASES=100000 cargo nextest run -p pos-domain -E '%s'\n" "$PROPTEST_RNG_SEED" "$filter"
+          PROPTEST_CASES=100000 cargo nextest run -p pos-domain -E "$filter"
+
+  # Nothing was watching this lane. A scheduled run has no pull request and no
+  # author waiting on it, so a red Tuesday is a red checkmark in an empty room
+  # until somebody happens to open the Actions tab — and the value of a weekly
+  # property run is that its verdict can still be read weeks later. So a failed
+  # scheduled run leaves a durable record: one standing issue, reused, with a
+  # comment per failure, rather than 52 issues a year or nothing findable.
+  #
+  # Only `schedule` escalates. A `workflow_dispatch` failure already has a human
+  # reading the log, and filing an issue at them is noise.
+  #
+  # It runs on schedule only, so it never produces a check run on a pull request
+  # and must NEVER be added to a ruleset's required status checks.
+  scheduled-failure-escalation:
+    if: failure() && github.event_name == 'schedule'
+    needs: domain-properties
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Job-scoped on purpose: the top-level grant stays `contents: read`, so the
+    # job that compiles and runs the crate never holds a token that can write to
+    # the issue tracker.
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: File or update the standing property-failure issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # This job checks nothing out — it compiles nothing and reads no file —
+          # so `gh` has no git remote to infer the repository from and must be
+          # told which one it is, or every call fails resolving a base repository.
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # A fixed marker in the title is the entire deduplication mechanism, and
+          # it is deliberately not security.yml's marker: a red advisory week and a
+          # red property week have different causes and different fixes, and one
+          # shared thread would be closed on whichever was repaired first. As
+          # there, the marker carries no punctuation GitHub's search tokenizer
+          # would discard, which would make the lookup miss and file a fresh issue
+          # every week.
+          marker='scheduled-property-failure'
+          filter='test(/::prop_/)'
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          # The seed is the run id, so the replay command below reproduces exactly
+          # the case the runner failed on. It is the first thing anyone triaging
+          # this issue needs and the one thing the Actions log will expire on.
+          body=$(printf '%s\n\n%s\n\n    PROPTEST_RNG_SEED=%s PROPTEST_CASES=100000 cargo nextest run -p pos-domain -E %s%s%s\n' \
+            'The scheduled run of the `proptest-scheduled` workflow failed: a pos-domain property found a counterexample at 100,000 cases, or the job could not build.' \
+            "Run: $run_url" \
+            "$GITHUB_RUN_ID" "'" "$filter" "'")
+          existing=$(gh issue list --state open --search "$marker in:title" \
+            --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+            echo "commented on existing issue #$existing"
+          else
+            # No --label anywhere in this step: gh fails the whole call on a label
+            # the repository does not define, which would lose the report this job
+            # exists to file. Triage labels get applied by a human on the issue.
+            gh issue create \
+              --title "$marker: the weekly pos-domain property run is failing" \
+              --body "$body"
+            echo 'opened a new standing issue'
+          fi
