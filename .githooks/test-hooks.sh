@@ -198,16 +198,31 @@ expect_body 0 "a human using GitHub's private address" \
 
 Co-Authored-By: Jane Smith <jane@users.noreply.github.com>'
 
-# expect_push <expected-exit> <label> <stdin line> [env] [remote]
+# expect_push <expected-exit> <label> <stdin line> [env] [remote] [expected-substring]
+#
+# The sixth argument is why this helper reads output at all. Comparing only `$?`
+# cannot tell WHICH control fired, because every refusal here returns 1 — and that
+# is not theoretical: replacing the entire release-grammar block with a bare
+# `tag_channel=main` left all three grammar assertions green. A test that cannot
+# distinguish one refusal from another cannot notice a deleted guard.
 expect_push() {
-  local want="$1" label="$2" line="$3" envset="${4:-}" remote="${5:-origin}"
-  local got
+  local want="$1" label="$2" line="$3" envset="${4:-}" remote="${5:-origin}" wantmsg="${6:-}"
+  local got out log
+  log=$(mktemp "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX")
   if [ -n "$envset" ]; then
-    got=$(env "$envset" bash -c "printf '%s\n' '$line' | '$HOOKS/pre-push' '$remote' git@x >/dev/null 2>&1; echo \$?")
+    got=$(env "$envset" bash -c "printf '%s\n' '$line' | '$HOOKS/pre-push' '$remote' git@x >'$log' 2>&1; echo \$?")
   else
-    got=$(printf '%s\n' "$line" | "$HOOKS/pre-push" "$remote" git@x >/dev/null 2>&1; echo $?)
+    got=$(printf '%s\n' "$line" | "$HOOKS/pre-push" "$remote" git@x >"$log" 2>&1; echo $?)
   fi
-  [ "$got" -eq "$want" ] && ok "$label" || bad "$label (wanted exit $want, got $got)"
+  out=$(cat "$log" 2>/dev/null)
+  rm -f "$log"
+  if [ "$got" -ne "$want" ]; then
+    bad "$label (wanted exit $want, got $got)"
+  elif [ -n "$wantmsg" ] && ! printf '%s' "$out" | grep -qF -- "$wantmsg"; then
+    bad "$label (exit $want as wanted, but nothing said \"$wantmsg\")"
+  else
+    ok "$label"
+  fi
 }
 
 head_sha=$(git rev-parse HEAD)
@@ -351,6 +366,65 @@ Co-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.c
 refs/heads/topic-a $clean_commit refs/heads/topic-a $zero
 refs/heads/content-db $db_commit refs/heads/content-db $zero" "" upstream
 
+  # A NEW v* tag is the one flow operation with a PERMANENT cost: the
+  # tags-v-append-only ruleset has no bypass actor, so a rejected tag cannot be
+  # moved or deleted by anyone and the version number is spent. That makes this
+  # the chain least able to afford being untested — and until now everything past
+  # the lightweight check was untested, because every tag assertion outside this
+  # fixture passes a COMMIT sha and `git cat-file -t` answers `commit`.
+  #
+  # Tag OBJECTS need no signing key: `git hash-object -t tag` takes the body
+  # verbatim, and the hook's signature test is a literal search for the armour
+  # header, so a fabricated block reaches exactly the branches a real one would.
+  # `git verify-tag` then cannot verify it, which is the WARNING path and not a
+  # refusal — deliberately, because only GitHub's verdict decides that.
+  tag_object() {  # tag_object <name> <target-oid> <target-type> <signed|unsigned>
+    local name="$1" target="$2" type="$3" signed="$4" body
+    body="object $target
+type $type
+tag $name
+tagger Test <t@example.com> 0 +0000
+
+release $name
+"
+    if [ "$signed" = signed ]; then
+      body="$body-----BEGIN PGP SIGNATURE-----
+
+not a real signature, only the armour the hook searches for
+-----END PGP SIGNATURE-----
+"
+    fi
+    printf '%s' "$body" | git hash-object -t tag -w --stdin
+  }
+
+  # The channel comes from the grammar: vX.Y.Z releases from main, vX.Y.Z-rc.N
+  # from staging. Pin origin/main so "at the head" is decided, not inherited from
+  # whatever branch name `git init` chose. No staging ref is created on purpose —
+  # that is the unjudgeable case, and it must warn rather than refuse.
+  git update-ref "refs/remotes/origin/main" "$trunk"
+  signed_at_head=$(tag_object v1.2.3 "$trunk" commit signed)
+  unsigned_tag=$(tag_object v1.2.4 "$trunk" commit unsigned)
+  signed_off_head=$(tag_object v1.2.5 "$first" commit signed)
+  loose_blob=$(printf 'not a commit' | git hash-object -w --stdin)
+  signed_blob=$(tag_object v1.2.6 "$loose_blob" blob signed)
+  signed_prerelease=$(tag_object v1.2.3-rc.1 "$trunk" commit signed)
+
+  echo "pre-push — the release-tag chain past the lightweight check"
+  expect_push 0 "an annotated signed tag at the channel head is allowed" \
+    "refs/tags/v1.2.3 $signed_at_head refs/tags/v1.2.3 $zero" "" origin \
+    "has a signature that this machine cannot verify"
+  expect_push 1 "an annotated but unsigned release tag is refused" \
+    "refs/tags/v1.2.4 $unsigned_tag refs/tags/v1.2.4 $zero" "" origin "carries no signature"
+  expect_push 1 "a signed tag away from the channel head is refused" \
+    "refs/tags/v1.2.5 $signed_off_head refs/tags/v1.2.5 $zero" "" origin \
+    "does not point at the 'main' head"
+  expect_push 1 "a tag that dereferences to a blob fails closed" \
+    "refs/tags/v1.2.6 $signed_blob refs/tags/v1.2.6 $zero" "" origin \
+    "does not resolve to a commit"
+  expect_push 0 "a prerelease with no local staging ref warns rather than refusing" \
+    "refs/tags/v1.2.3-rc.1 $signed_prerelease refs/tags/v1.2.3-rc.1 $zero" "" origin \
+    "cannot be checked against its channel head"
+
   printf '%s %s %s\n' "$pass" "$fail" "$skipped" > "$fixture/.tally"
 )
 if [ -r "$fixture/.tally" ]; then
@@ -368,20 +442,26 @@ expect_push 1 "an environment variable cannot bypass a protected push" \
   "refs/heads/main $head_sha refs/heads/main $head_sha" "POS_ALLOW_PROTECTED_PUSH=1"
 # A NEW v* tag now goes through release.yml's own refusals before it is pushed,
 # because a server-side rejection spends the version number permanently.
+#
+# Each names the control that must fire. These all pass a COMMIT sha, so the
+# lightweight refusal is reached first for every one of them — which is exactly
+# how the deeper chain went unexercised. The tag OBJECT cases live in the fixture
+# above, where objects can be built.
 expect_push 1 "a new lightweight v* tag is refused" \
-  "refs/tags/v9.9.9 $head_sha refs/tags/v9.9.9 $zero"
+  "refs/tags/v9.9.9 $head_sha refs/tags/v9.9.9 $zero" "" origin "is a lightweight tag"
 expect_push 1 "a v* tag outside the release grammar is refused" \
-  "refs/tags/v9.9 $head_sha refs/tags/v9.9 $zero"
+  "refs/tags/v9.9 $head_sha refs/tags/v9.9 $zero" "" origin "is not a release tag grammar"
 expect_push 1 "a v* tag with a leading zero is refused" \
-  "refs/tags/v9.09.9 $head_sha refs/tags/v9.09.9 $zero"
+  "refs/tags/v9.09.9 $head_sha refs/tags/v9.09.9 $zero" "" origin "is not a release tag grammar"
 expect_push 1 "a v* prerelease tag with a zero iteration is refused" \
-  "refs/tags/v9.9.9-rc.0 $head_sha refs/tags/v9.9.9-rc.0 $zero"
+  "refs/tags/v9.9.9-rc.0 $head_sha refs/tags/v9.9.9-rc.0 $zero" "" origin "is not a release tag grammar"
 expect_push 0 "a non-release tag name is not a release tag" \
   "refs/tags/checkpoint-1 $head_sha refs/tags/checkpoint-1 $zero"
 expect_push 1 "moving an existing tag is refused" \
-  "refs/tags/v9.9.9 $head_sha refs/tags/v9.9.9 1111111111111111111111111111111111111111"
+  "refs/tags/v9.9.9 $head_sha refs/tags/v9.9.9 1111111111111111111111111111111111111111" \
+  "" origin "moving existing tag"
 expect_push 1 "deleting an existing tag is refused" \
-  "refs/tags/v9.9.9 $zero refs/tags/v9.9.9 $head_sha"
+  "refs/tags/v9.9.9 $zero refs/tags/v9.9.9 $head_sha" "" origin "deleting existing tag"
 expect_push 1 "an unreadable local commit fails closed" \
   "refs/heads/x 1111111111111111111111111111111111111111 refs/heads/x $zero"
 expect_push 1 "a malformed ref update fails closed" \
