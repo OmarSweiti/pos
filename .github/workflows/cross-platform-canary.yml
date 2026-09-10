@@ -1,0 +1,214 @@
+# The register ships on three operating systems, and nothing currently builds all
+# three outside a promotion. ci.yml's `cross-platform` job is gated to promotion
+# refs, and neither weekly cron this repository already runs — `security` on
+# Monday, `proptest-scheduled` on Tuesday — compiles anything off Linux. So a
+# macOS- or Windows-only break in `development` is first seen by a promotion PR,
+# whose bisect range is every squash commit since the last promotion: 16 of them
+# today. That is the expensive shape of the failure, not the failure itself.
+#
+# ci.yml already records that gating as "a queued change rather than a settled
+# one" and rests it on wall-clock latency now that minutes are unmetered here.
+# A weekly cron does not pay that latency: nobody is waiting on a Thursday
+# morning run, so the argument that keeps the matrix off feature PRs does not
+# also keep it off a schedule. This is the cheap half of that queued change,
+# landed early.
+#
+# It is a separate file rather than a `schedule:` trigger added to ci.yml because
+# phase-1-sellable-mvp.md microstep 1.1.5 asserts that `ci.yml` deliberately has
+# no `schedule:` trigger — that is why the property lane got its own workflow,
+# and the same reasoning applies here. Adding one to ci.yml would make that
+# sentence false and would put all of its jobs on a cron to gain one of them.
+#
+# It runs on schedule and workflow_dispatch only, so it never produces a check
+# run on a pull request and must NEVER be added to a ruleset's required status
+# checks. The six required contexts stay `rust`, `guards`, `web`,
+# `supply-chain`, `protected-paths` and `topology`.
+name: cross-platform-canary
+
+on:
+  schedule:
+    # Thursday, and a different day from the other two weekly lanes on purpose
+    # (`security` Monday 03:23, `proptest-scheduled` Tuesday 02:37) so three
+    # weekly runs never contend for the same window — this one holds three
+    # runners for up to an hour each, which is the largest weekly footprint here.
+    # Friday and Saturday are the Jordanian weekend, so Thursday is the last day
+    # a red matrix can still be read on a working day; the two earlier lanes
+    # already cover the start of the week. 04:13 UTC is 07:13 in Amman (UTC+3):
+    # off-peak for runner availability and waiting when the day starts. GitHub
+    # evaluates cron in UTC and delays or drops scheduled runs under load, so the
+    # minute is a hint and the day is the only part worth reasoning about.
+    - cron: "13 4 * * 4"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Keyed on the event name as well as the ref: a `workflow_dispatch` on
+# `development` and the Thursday cron on `development` share a ref, so a ref-only
+# group lets a manual run and a scheduled run collide in one concurrency slot.
+# `cancel-in-progress` is then guarded rather than flatly true — a cancelled
+# scheduled run is a week with no cross-platform signal, which is the exact gap
+# this workflow exists to close.
+concurrency:
+  group: cross-platform-canary-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      # Never fail fast: the question this workflow answers is *which* platforms
+      # are broken. Cancelling the macOS leg because Windows died first turns
+      # two answers into one.
+      fail-fast: false
+      matrix:
+        # The same three labels ci.yml's `cross-platform` job uses, in the same
+        # order. scripts/watch-pr-checks.sh pins this LABEL list; Linux stays
+        # `ubuntu-22.04` to match release.yml's "build on oldest supported
+        # glibc" target, because a canary that tests a newer glibc than the one
+        # the release ships manufactures confidence about the leg that matters.
+        platform: [ubuntu-22.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up the repository's Python floor on Linux
+        # ubuntu-22.04's ambient interpreter is 3.10, below the 3.11 floor
+        # scripts/run-python.sh enforces; without this the job exits 127 before
+        # compiling anything, which is exactly what the first matrix run hit.
+        if: runner.os == 'Linux'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Install Linux packaging dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config
+      # rust-toolchain.toml is the single source of the pin, read here and handed
+      # to the action. `@stable` would install stable and then let rustup silently
+      # override it from the file — the right toolchain by accident, after paying
+      # to download the wrong one.
+      - name: Read the pinned toolchain
+        id: pin
+        shell: bash
+        run: |
+          set -uo pipefail
+          channel=$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml | head -1)
+          [ -n "$channel" ] || { echo "::error::no channel in rust-toolchain.toml"; exit 1; }
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "pinned toolchain: $channel"
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: ${{ steps.pin.outputs.channel }}
+          # Both macOS slices, because the Tauri build below asks for the
+          # universal binary release.yml ships and a missing slice fails at link
+          # time rather than at rustup time.
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      # Deliberately no Swatinem/rust-cache here, unlike ci.yml's matrix. The
+      # Actions cache for this repository is at its 10 GB ceiling
+      # (10,555,721,908 bytes across 100 entries), and the promotion matrix
+      # already holds 5.11 GiB of that. Adding three more platform caches on a
+      # weekly cron would evict the entry the required `rust` check warms on
+      # every pull request, so a canary nobody waits on pays a cold build
+      # instead of slowing the gate everybody waits on.
+      - name: Install the pinned cargo-nextest release
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        with:
+          tool: nextest@0.9.143
+          fallback: none
+      # The crates that must behave identically on all three: SQLCipher links
+      # OpenSSL differently per platform, and `keyring` is a different credential
+      # store on each one.
+      - run: cargo nextest run --locked -p pos-domain -p pos-db -p pos-sync -p pos-hardware
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Optional native packages vary by OS. Audit the installed graph on every
+      # release platform so a platform-only licence cannot hide in Linux CI.
+      - name: Platform JavaScript dependency licences are reviewed
+        shell: bash
+        run: ./scripts/run-python.sh ./scripts/check-js-licenses.py
+      # Compile and bundle the real desktop application; unit tests alone do not
+      # exercise platform-specific Tauri packaging, which is where the breaks
+      # this workflow is hunting for actually live.
+      - name: Build the Tauri application on the target operating system
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = macOS ]; then
+            pnpm --filter terminal tauri build --target universal-apple-darwin
+          else
+            pnpm --filter terminal tauri build
+          fi
+
+  # A weekly run is a run with no author watching it. Without this job a red
+  # Thursday matrix is exactly the run nobody sees: no PR turns red, no promotion
+  # is blocked, and the break is rediscovered by the next promotion — which is
+  # the failure mode this whole workflow was added to remove. So the canary files
+  # its own report.
+  #
+  # Scheduled runs only. A `workflow_dispatch` has a human at the other end who
+  # is already reading the log, and opening an issue for them is noise.
+  escalate:
+    if: failure() && github.event_name == 'schedule'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The narrowest grant that can file the report: read the tree, write issues,
+    # nothing else. `issues: write` is job-level rather than top-level so the
+    # build matrix — which compiles third-party build scripts and proc macros —
+    # never holds a token that can write to this repository.
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: File or update the standing canary-failure issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # This job deliberately does not check the repository out — it compiles
+          # nothing and reads no file — so `gh` has no git remote to infer the
+          # repository from and must be told which one it is.
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # A fixed marker in the title is the entire deduplication mechanism:
+          # search open issues for it, comment when one is found, create it when
+          # none is. Same shape as security.yml's escalation lane, and the marker
+          # is deliberately a different token from that lane's and from the
+          # proptest lane's — one shared marker would file every weekly failure
+          # onto one issue and lose which lane is actually red.
+          marker='scheduled-cross-platform-failure'
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          body=$(printf '%s\n\n%s\n\n%s\n' \
+            'The weekly cross-platform canary failed: one or more of `ubuntu-22.04`, `macos-latest` or `windows-latest` could not test or bundle the register. The matrix does not fail fast, so the run says which platforms are broken rather than only the first one.' \
+            "Run: $run_url" \
+            'This lane is not a required check and blocks nothing, so a promotion PR will still open against a break this run already found. Read the matrix before promoting.')
+          # Search narrows the candidates and `startswith` decides: GitHub's
+          # search tokenizer is loose enough that a human issue merely mentioning
+          # the marker comes back as a hit, and commenting on that one would put
+          # the canary's report somewhere nobody is looking for it.
+          existing=$(gh issue list --state open --search "$marker in:title" \
+            --json number,title \
+            | MARKER="$marker" jq -r \
+              'map(select(.title | startswith(env.MARKER))) | .[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+            echo "commented on existing issue #$existing"
+          else
+            # No --label anywhere in this step: gh fails the whole call on a label
+            # the repository does not define, which would lose the report this job
+            # exists to file. Triage labels get applied by a human on the issue.
+            gh issue create \
+              --title "$marker: the weekly cross-platform canary is failing" \
+              --body "$body"
+            echo 'opened a new standing issue'
+          fi
