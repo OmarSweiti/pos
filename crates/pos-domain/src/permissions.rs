@@ -1157,7 +1157,7 @@ mod tests {
                 "self approval must not issue".to_owned(),
                 now,
                 0,
-                [0; 16],
+                Uuid::new_v4().into_bytes(),
             )
             .unwrap_err(),
             PermissionError::SelfApprovalBanned(cap::SaleVoid::NAME)
