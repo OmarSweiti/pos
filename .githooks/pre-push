@@ -77,20 +77,27 @@ while IFS=' ' read -r _local_ref local_sha remote_ref remote_sha; do
       refuse=1
     fi
 
-    while IFS= read -r commit_sha; do
-      [ -n "$commit_sha" ] || continue
-      check_status=0
-      "$policy_root/scripts/run-python.sh" \
-        "$attribution_check" --git-commit "$commit_sha" >/dev/null 2>&1 \
-        || check_status=$?
-      [ "$check_status" -eq 0 ] && continue
-      if [ "$check_status" -eq 1 ]; then
-        echo "pre-push: REFUSED — '$branch' carries assistant attribution in commit $commit_sha."
-      else
-        echo "pre-push: ERROR — could not inspect commit $commit_sha; refusing closed." >&2
-      fi
+    # ONE interpreter for the whole push, not one per commit. This used to be a
+    # `while read` loop calling run-python.sh per SHA, and run-python.sh starts
+    # Python twice per call (a version probe, then exec) — measured 1.36 s for a
+    # ten-commit push and 19.16 s for 138, all of it process start-up. The
+    # checker's `--commits-file` mode reads the same set in one `git log` and
+    # names every offending commit rather than only the first, so a rebase that
+    # has to fix four of them is one round trip.
+    #
+    # Its own output is not suppressed: the per-commit SHAs are the only
+    # description of what has to be rewritten.
+    attribution_status=0
+    "$policy_root/scripts/run-python.sh" \
+      "$attribution_check" --commits-file "$commits_file" </dev/null \
+      || attribution_status=$?
+    if [ "$attribution_status" -eq 1 ]; then
+      echo "pre-push: REFUSED — '$branch' carries assistant attribution."
       refuse=1
-    done < "$commits_file"
+    elif [ "$attribution_status" -ne 0 ]; then
+      echo "pre-push: ERROR — could not inspect the pushed commits; refusing closed." >&2
+      refuse=1
+    fi
 
     # The sensitive-path list and the 2 MB blob cap live in exactly one checker
     # and have no server-side equivalent — check-protected-paths.sh inspects

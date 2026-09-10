@@ -84,6 +84,62 @@ def read_commit(commit: str) -> tuple[str, str, str]:
     return fields[0], fields[1], fields[2]
 
 
+def refusal_advice() -> str:
+    return (
+        "  Remove the machine Co-Authored-By/Generated-with line. The exact Dependabot\n"
+        "  author/trailer combination is the only compatibility exception."
+    )
+
+
+def read_commits(commits_file: Path) -> list[tuple[str, str, str, str]]:
+    """Every commit in one `git log`, as (sha, author name, author email, message).
+
+    `.githooks/pre-push` spawned this program once per pushed commit, and
+    `scripts/run-python.sh` starts an interpreter twice per spawn (a version
+    probe, then exec). That is ~150 ms of process start-up per commit and it is
+    all serial: measured 1.36 s for a ten-commit push and 19.16 s for 138.
+
+    `--no-walk` keeps `git log` from following parents, so this reads exactly the
+    commits it is given and nothing else — the caller has already decided the set.
+    """
+    payload = commits_file.read_bytes()
+    if not payload.strip():
+        return []
+    wanted = len([line for line in payload.split(b"\n") if line.strip()])
+
+    completed = subprocess.run(
+        ["git", "log", "--no-walk", "--stdin", "--format=%H%x00%an%x00%ae%x00%B%x00%x00"],
+        check=False,
+        input=payload,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.decode("utf-8", "replace").strip()
+        raise RuntimeError(f"git could not read the pushed commits: {detail}")
+
+    records: list[tuple[str, str, str, str]] = []
+    for chunk in completed.stdout.decode("utf-8", "replace").split("\0\0"):
+        # git log writes a newline between entries, so every chunk after the
+        # first opens with one, and the stream ends with a bare newline.
+        chunk = chunk.lstrip("\n")
+        if not chunk:
+            continue
+        fields = chunk.split("\0", 3)
+        if len(fields) != 4:
+            raise RuntimeError("git returned malformed author metadata in the batch")
+        records.append((fields[0], fields[1], fields[2], fields[3]))
+
+    # Fail closed on a short read. A batch that silently returned fewer commits
+    # than it was handed would wave the rest through, which is the one way this
+    # optimisation could become a hole rather than a speed-up.
+    if len(records) != wanted:
+        raise RuntimeError(
+            f"git described {len(records)} of {wanted} pushed commits; refusing to guess"
+        )
+    return records
+
+
 def self_test() -> int:
     cases = (
         (True, "Claude trailer", "Co-Authored-By: Claude <noreply@anthropic.com>"),
@@ -147,11 +203,38 @@ def main() -> int:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--message-file", type=Path)
     source.add_argument("--git-commit")
+    source.add_argument("--commits-file", type=Path)
     source.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
 
     if args.self_test:
         return self_test()
+
+    if args.commits_file is not None:
+        try:
+            records = read_commits(args.commits_file)
+        except (OSError, RuntimeError) as exc:
+            print(f"attribution-policy: ERROR — {exc}", file=sys.stderr)
+            return 2
+        refused = [
+            sha
+            for sha, name, email, message in records
+            if has_forbidden_attribution(
+                message,
+                matching_dependabot_author=(
+                    name == DEPENDABOT_NAME and email == DEPENDABOT_EMAIL
+                ),
+            )
+        ]
+        if not refused:
+            return 0
+        # Name every offending commit, not just the first: a rebase that has to
+        # rewrite four of them is one operation, and finding them one push at a
+        # time is four round trips.
+        for sha in refused:
+            print(f"attribution-policy: REFUSED — {sha} carries assistant attribution.", file=sys.stderr)
+        print(refusal_advice(), file=sys.stderr)
+        return 1
 
     try:
         matching_dependabot_author = False
@@ -175,14 +258,7 @@ def main() -> int:
         "attribution-policy: REFUSED — coding assistants are tools, not commit co-authors.",
         file=sys.stderr,
     )
-    print(
-        "  Remove the machine Co-Authored-By/Generated-with line. The exact Dependabot",
-        file=sys.stderr,
-    )
-    print(
-        "  author/trailer combination is the only compatibility exception.",
-        file=sys.stderr,
-    )
+    print(refusal_advice(), file=sys.stderr)
     return 1
 
 
