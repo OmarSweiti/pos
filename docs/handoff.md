@@ -10,7 +10,11 @@ There is one handoff — keep updating this file rather than adding a dated one.
 three rulesets landed; no microstep advanced. The gate baselines in §0 were verified at `ff9da7e`
 and are unchanged in kind, but three self-test counts moved: `check-branch-workflow-policy.rb`
 214 → **216**, `check-protected-paths.sh` 13 → **18**, `watch-pr-checks.sh` 47 → **48**, and
-`.githooks/test-hooks.sh` 104 → **108**.
+`.githooks/test-hooks.sh` 104 → **108**. The Actions hardening sweep of **10 September** moves one
+of those again: `watch-pr-checks.sh` is **49**, because `security.yml`'s `paths:` list is now
+mirrored once in the script and both former copies — the changed-path matcher and the self-test's
+sample list — are derived from that single array, so all six mirrored entries are exercised where
+five used to be.
 
 **Read `CLAUDE.md` first.** This document assumes it. Where this file and the repository disagree,
 **the repository is right** — every number here was read from `git`, `gh` or a file, and where
@@ -625,8 +629,27 @@ real debt. It is still not a reason to promote: the maintained runbook opens `st
 **after the candidate has actually been used**, and nothing reads `main` today — the default branch
 is `development`, Dependabot targets it, CodeQL follows it.
 
-The latent risk is a mistaken `v*` tag selecting the stale `release.yml` at that ref. **That is what
-the tag ruleset in #115 closes**, and it is why #115 sequences the tag ruleset first.
+The latent risk is a mistaken `v*` tag selecting the stale `release.yml` at that ref. **The tag
+ruleset does not close that**, and the earlier text here said it did. `tags-v-append-only` carries
+exactly two rules — `deletion` and `update` — with an empty `bypass_actors` list, and **`creation`
+is absent**. A correctly shaped, signed `v0.2.0` on `main`'s head is therefore permitted today, and
+`.githooks/pre-push:213-227` permits it too: the hook's test is whether the tagged commit *is* the
+head of the channel the grammar selects, and for a plain `vX.Y.Z` that channel is `main`, whose
+head it would be. What the ruleset guarantees is only what happens next — nobody, the maintainer
+included, can move or delete that tag afterwards. It makes such a tag **irreversible, not
+impossible.** Sequencing it first was still right, because an irreversible mistake is at least a
+visible one; it is simply not the control.
+
+The controls that actually stand between a mistaken tag and a bad release are upstream of the
+ruleset. The first is `release.yml`'s `guard` job, which refuses the tag before the platform matrix
+starts if the grammar, the annotated-tag object, GitHub's signature verdict, the target commit, the
+channel head, the three in-tree version declarations, the updater configuration, or the exact-SHA CI result is
+wrong. The second is the `staging → main` promotion itself, which is what carries that guarded
+workflow onto the ref: while `main` still holds the `2026-08-20` revision of `release.yml` — `a8bc057`, with 130 commits
+of `development` landed since, the workflow that
+would judge such a tag is that old revision's, so promoting is the repair and no ruleset rule
+substitutes for it. `.github/rulesets/README.md` now records the same conclusion beside the
+definition, under "What the tag ruleset does not do".
 
 **"Synchronised" means the upstream tip is an ancestor and the promoted trees agree — not that
 divergence counts are zero.** Each promotion creates its own merge commit, so `staging` reads
