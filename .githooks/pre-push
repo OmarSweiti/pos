@@ -18,9 +18,6 @@ policy_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 attribution_check="$policy_root/scripts/check-automation-attribution.py"
 staged_policy_check="$policy_root/scripts/check-staged-policy.py"
 
-# Backstop an accidentally skipped pre-commit and scan every reachable commit,
-# including commits introduced by merges. CI repeats this server-side.
-"$policy_root/scripts/scan-secrets.sh" --history "$repo_root" </dev/null
 
 protected='main staging development'
 zero='0000000000000000000000000000000000000000'
@@ -49,6 +46,37 @@ while IFS=' ' read -r _local_ref local_sha remote_ref remote_sha; do
       refuse=1
       continue
     fi
+
+    # Backstop an accidentally skipped pre-commit — a clean merge, a
+    # cherry-pick, a revert and `rebase --continue` all route around it — over
+    # exactly the commits this push publishes.
+    #
+    # This replaced an unconditional whole-history scan, which was not what it
+    # sounded like: with no `--log-opts`, gitleaks walks `--all`, so it charged
+    # every push for the whole repository AND refused a push because of a token
+    # on an unrelated local branch, or in nothing but a `git stash`. Both
+    # measured. Refusing to publish clean content over content you are not
+    # publishing is noise, and noise is what teaches `--no-verify`.
+    #
+    # The whole-history alarm is kept where it costs nothing per push:
+    # `just secrets` (inside `just pre-push`), ci.yml's `supply-chain` job on
+    # every push to a flow branch, and security.yml weekly. If any of those goes
+    # away, this trade has to be revisited.
+    #
+    # `</dev/null` for the reason documented below: a child here would otherwise
+    # inherit Git's ref-update list as stdin.
+    scan_status=0
+    "$policy_root/scripts/scan-secrets.sh" \
+      --pushed "$local_sha" "$remote_name" "$repo_root" </dev/null \
+      || scan_status=$?
+    if [ "$scan_status" -eq 1 ]; then
+      echo "pre-push: REFUSED — '$branch' introduces secret-like content."
+      refuse=1
+    elif [ "$scan_status" -ne 0 ]; then
+      echo "pre-push: ERROR — could not scan the pushed commits for secrets; refusing closed." >&2
+      refuse=1
+    fi
+
     while IFS= read -r commit_sha; do
       [ -n "$commit_sha" ] || continue
       check_status=0

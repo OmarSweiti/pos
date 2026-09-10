@@ -68,7 +68,8 @@ the release build must refuse to honour it.
 
 GitHub's **native** secret scanning and push protection are enabled. They complement the
 independent, content-based Gitleaks gate: `pre-commit` scans the staged index, `pre-push` scans
-reachable history, and CI scans the proposed commit range with fully redacted output. The local
+the commits a push publishes, `just secrets` and the weekly security run scan every ref, and CI
+scans the proposed commit range — all with fully redacted output. The local
 checks remain bypassable with `--no-verify` or in a clone that skipped `just setup`. Since
 9 September 2026 CI is also a merge wall on `development` and `staging`, where six checks are
 required by ruleset; the administrator can still bypass, but only through a pull request and only

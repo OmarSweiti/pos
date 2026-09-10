@@ -436,16 +436,16 @@ else
 fi
 rm -rf "$fixture"
 
-# `.githooks/pre-push:22` scans every reachable commit for secrets, and its own
-# comment names what it is for: backstopping an accidentally skipped pre-commit,
-# and commits introduced by a merge. Nothing exercised it. The fixture above
-# commits only empty commits, and the only secret fixtures in this file drive
-# pre-commit's `--staged` mode — so deleting that one line was an invisible
-# mutation, green suite and all.
+# `.githooks/pre-push` scans the commits a push PUBLISHES for secrets, and its
+# own comment names what it is for: backstopping an accidentally skipped
+# pre-commit, and content a merge, cherry-pick or revert introduces. Nothing
+# exercised it. The fixture above commits only empty commits, and the only secret
+# fixtures in this file drive pre-commit's `--staged` mode — so deleting that one
+# line was an invisible mutation, green suite and all.
 #
-# Its own fixture on purpose: a secret anywhere in reachable history refuses
-# EVERY push from that repository, which would take the tag and attribution cases
-# above down with it and blame the wrong guard.
+# Its own fixture on purpose: the leaked commit has to be ABSENT from the
+# fixture's tracking refs to be in the pushed set at all, which is a different
+# repository shape from the tag and attribution cases above.
 secret_fixture=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX")
 (
   cd "$secret_fixture" || exit 1
@@ -467,9 +467,26 @@ secret_fixture=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX")
   git commit -q --no-verify -m "chore(repo): a commit that skipped the hooks   [—]"
   leaked=$(git rev-parse HEAD)
 
-  echo "pre-push — a secret already in history is caught at push time"
+  echo "pre-push — a secret is caught in the commits a push publishes"
   expect_push 1 "a secret committed with --no-verify is refused at push" \
-    "refs/heads/leak $leaked refs/heads/leak $zero"
+    "refs/heads/leak $leaked refs/heads/leak $zero" "" origin \
+    "introduces secret-like content"
+
+  # The boundary needs both signs. A deletion publishes no content, so scanning
+  # there is pure cost — and a refusal would make the ordinary cleanup of a
+  # merged feature branch impossible once anything secret-shaped exists anywhere.
+  expect_push 0 "deleting a branch whose history holds a secret is not refused" \
+    "refs/heads/leak $zero refs/heads/leak $leaked"
+
+  # And a commit the remote already has is not this push's finding. This is THE
+  # case that fails if the incremental boundary is not real: restoring the old
+  # whole-history call by any route would refuse here, because the leaked commit
+  # is still in this fixture's object graph.
+  git update-ref refs/remotes/origin/development "$leaked"
+  git commit -q --allow-empty -m "chore(repo): a clean commit on top   [—]"
+  expect_push 0 "an already-published secret does not refuse an unrelated push" \
+    "refs/heads/leak $(git rev-parse HEAD) refs/heads/leak $leaked"
+  git update-ref refs/remotes/origin/development "$base"
 
   printf '%s %s %s\n' "$pass" "$fail" "$skipped" > "$secret_fixture/.tally"
 )
