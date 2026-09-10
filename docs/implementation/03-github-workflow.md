@@ -258,11 +258,21 @@ constrain the merge method: squash or merge on `development`, merge commit only 
 [`../../.github/rulesets/`](../../.github/rulesets/), which is also where the diff and restore
 commands live.
 
-Both branch rulesets now carry `strict_required_status_checks_policy: true` — GitHub's "require
-branches to be up to date before merging". It was `false`, for no reason anybody had written down.
-The argument for flipping it is not textual conflict, which was already safe, but the semantic kind
-that a merge-base check cannot see: two pull requests can each pass schema parity or the catalog
-arithmetic against their own snapshot of the tree and collide only once both are in.
+`development-flow` carries `strict_required_status_checks_policy: true` — GitHub's "require
+branches to be up to date before merging" — and `staging-promotion` deliberately does **not**. Both
+were `false`, for no reason anybody had written down. The argument for `development` is not textual
+conflict, which a merge-base check already covers, but the semantic kind it cannot see: two pull
+requests can each pass schema parity or the catalog arithmetic against their own snapshot of the
+tree and collide only once both are in — a race that needs concurrent pull requests, which is what
+`development` takes.
+
+`staging` must stay `false`, and the reason is structural rather than a preference. A promotion
+merges `development` into `staging` with a merge commit that lives only on `staging` and is never
+merged back, so `staging` is permanently ahead of `development` by one commit per prior promotion.
+Strict compares tips rather than trees, so it can never be satisfied by a promotion — PR #148 was
+reported `BEHIND` and refused. Turning it on there buys nothing, because `staging` has one inbound
+route taken one promotion at a time and no race to lose, and costs a contentless back-merge into the
+default branch before every promotion.
 [`../../.github/rulesets/README.md`](../../.github/rulesets/README.md) carries the full reasoning
 and the honest cost, and is the place to change it rather than here.
 

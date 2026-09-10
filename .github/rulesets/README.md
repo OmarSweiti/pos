@@ -20,12 +20,13 @@ ruleset, normalized to the payload shape the API accepts back.
 `main` is unprotected. Read `rulesets`. See
 [`../../docs/implementation/03-github-workflow.md`](../../docs/implementation/03-github-workflow.md) §3.
 
-## Why both branch rulesets are now strict
+## Why `development` is strict and `staging` is not
 
-`strict_required_status_checks_policy` is `true` on `development-flow` and on
-`staging-promotion` — GitHub's "require branches to be up to date before
-merging". It was `false`, and the reason it was `false` was recorded nowhere,
-which is the same gap these files exist to close.
+`strict_required_status_checks_policy` — GitHub's "require branches to be up to
+date before merging" — is `true` on `development-flow` and **`false` on
+`staging-promotion`**. It was `false` on both, for a reason recorded nowhere,
+which is the same gap these files exist to close. It was then briefly `true` on
+both, which was wrong, and the second half of this section is why.
 
 *Textual* collisions were already safe without it:
 [`../../scripts/check-protected-paths.sh`](../../scripts/check-protected-paths.sh)
@@ -46,8 +47,33 @@ is the live, monthly version of exactly that risk.
 
 The cost is real and worth stating: every work pull request that falls behind
 now pays one update-and-rerun, and a rerun of `rust` is a full job, not a
-seconds-long check. Promotion pull requests are current by construction — the
-promotion is created from the tip it promotes — so they pay nothing.
+seconds-long check.
+
+### Why `staging` must stay `false`
+
+The claim that replaced this paragraph said promotion pull requests are "current
+by construction" and pay nothing. That is exactly backwards, and PR #148 proved
+it: opened as `development → staging`, GitHub reported `mergeStateStatus: BEHIND`
+and refused the merge.
+
+The branch model is the reason. A promotion merges `development` into `staging`
+with a **merge commit**, and that commit lives only on `staging` — it is never
+merged back. So `staging` is ahead of `development` by one commit per promotion
+already made, permanently and by design: four of them today. `handoff.md` states
+the same property from the other side — *"'Synchronised' means the upstream tip
+is an ancestor and the promoted trees agree — not that divergence counts are
+zero."* Strict compares tips, not trees, so on `staging` it can never be
+satisfied by a promotion; it can only be satisfied by back-merging `staging` into
+`development` first, which would add a contentless merge commit to the default
+branch before every single promotion.
+
+And the risk it would buy there is nil. The semantic-collision argument above is
+about **concurrent** pull requests racing a base that moves underneath them.
+That happens on `development`, which takes feature branches and up to ten
+Dependabot pull requests a month. `staging` has exactly one inbound route, taken
+one promotion at a time, from a single branch. There is no race on `staging` to
+protect against, so strict there costs a mandatory back-merge and prevents
+nothing.
 
 ## What the tag ruleset does not do
 
