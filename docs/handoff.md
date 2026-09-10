@@ -66,7 +66,7 @@ network), so run it by hand after any dependency change.
 | Open issues | **11** — see §2. **None is `In Progress`: the WIP=1 slot is empty** |
 | Board #4 | 13 items — 10 active, 3 archived. Four views, and a README describing every field. `Status`, `Priority`, `Risk` and `Blocked` on all 13; `Phase`, `Group` and `Microstep` on 11, blank by design on the two items that belong to no microstep |
 | Repository | **PUBLIC** since 30 August 2026, GitHub Free |
-| Rulesets | **`[]`** — nothing server-side. `main` still answers `404 Branch not protected` |
+| Rulesets | **four, all active** — `development-flow`, `staging-promotion`, `main-append-only`, `tags-v-append-only`. Definitions checked in under `.github/rulesets/`. `main` carries `deletion` and `non_fast_forward` only; `branches/main/protection` still answers `404`, which is the legacy API and not evidence of an unprotected branch |
 
 ### Complete: 20 microsteps
 

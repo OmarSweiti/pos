@@ -56,10 +56,12 @@ node-version-check:
 # `development` and `staging` each carry an active ruleset — a pull request is
 # required, six checks must pass, force pushes and deletions are refused, and the
 # merge method is constrained — and `refs/tags/v*` is append-only with no bypass
-# actor at all. So these hooks are the FIRST net, no longer the only one. What
-# they are still alone on: `main` carries no ruleset while its ci.yml predates
-# four of the six checks, and the admin keeps bypass_mode: "pull_request" on both
-# branch rulesets. A clone that never ran this, and `--no-verify`, bypass them.
+# actor at all. `main` refuses force pushes and deletions too, and nothing more:
+# those two rules need no status checks, while its ci.yml predates four of the six.
+# So these hooks are the FIRST net, no longer the only one. What they are still
+# alone on: no check is a merge wall on `main` and no pull request is required
+# there, and the admin keeps bypass_mode: "pull_request" on all three branch
+# rulesets. A clone that never ran this, and `--no-verify`, bypass them.
 #
 # The path stays RELATIVE, and an absolute one was measured and rejected.
 #
@@ -559,8 +561,9 @@ pr $title='' $body='' $milestone='':
 # merge until it was repaired. The `development` ruleset now requires those six
 # checks, so it closes the ordinary case — but the admin holds
 # bypass_mode: "pull_request" on it, which is exactly a red-check merge through a
-# pull request, and `main` carries no ruleset at all. So the merge path still has
-# to refuse, and it refuses for everyone including the actor who could bypass.
+# pull request, and `main`'s ruleset requires no check at all. So the merge path
+# still has to refuse, and it refuses for everyone including the actor who could
+# bypass.
 #
 # The required set is re-derived for THIS PR by the same script `just pr` uses,
 # so a check that has not registered yet cannot be mistaken for a check that
@@ -948,9 +951,10 @@ promote-merge $pr='':
     }
 
     # --merge, never --squash: squashing a promotion forks the branches permanently.
-    # The staging ruleset constrains allowed_merge_methods to ["merge"], and main has
-    # no ruleset yet, so on the staging -> main route this flag is the only guard
-    # until one exists. --match-head-commit binds the reviewed head through the
+    # The staging ruleset constrains allowed_merge_methods to ["merge"]. Main's
+    # ruleset does not constrain the merge method — it carries deletion and
+    # non_fast_forward only — so on the staging -> main route this flag is still
+    # the only guard. --match-head-commit binds the reviewed head through the
     # mutation. The subject keeps the established `promote X to Y (#N)` form.
     printf '%s' "$body" > "$snapshot_file"
     gh pr merge "$pr_url" --match-head-commit "$head_oid" --merge \
