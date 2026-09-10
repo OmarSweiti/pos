@@ -436,6 +436,52 @@ else
 fi
 rm -rf "$fixture"
 
+# `.githooks/pre-push:22` scans every reachable commit for secrets, and its own
+# comment names what it is for: backstopping an accidentally skipped pre-commit,
+# and commits introduced by a merge. Nothing exercised it. The fixture above
+# commits only empty commits, and the only secret fixtures in this file drive
+# pre-commit's `--staged` mode — so deleting that one line was an invisible
+# mutation, green suite and all.
+#
+# Its own fixture on purpose: a secret anywhere in reachable history refuses
+# EVERY push from that repository, which would take the tag and attribution cases
+# above down with it and blame the wrong guard.
+secret_fixture=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX")
+(
+  cd "$secret_fixture" || exit 1
+  pass=0; fail=0; skipped=0
+
+  git init -q .
+  git config user.email t@example.com
+  git config user.name "Test"
+  git config commit.gpgsign false
+  git commit -q --allow-empty -m "chore(repo): fixture base   [—]"
+  base=$(git rev-parse HEAD)
+  git update-ref refs/remotes/origin/development "$base"
+
+  # Split so this file is not itself a finding. --no-verify is the point: this
+  # commit is what a skipped pre-commit leaves behind.
+  token="AK""IAA1B2C3D4E5F6G7H8"
+  printf 'api_key = %s\n' "$token" > leaked.txt
+  git add leaked.txt
+  git commit -q --no-verify -m "chore(repo): a commit that skipped the hooks   [—]"
+  leaked=$(git rev-parse HEAD)
+
+  echo "pre-push — a secret already in history is caught at push time"
+  expect_push 1 "a secret committed with --no-verify is refused at push" \
+    "refs/heads/leak $leaked refs/heads/leak $zero"
+
+  printf '%s %s %s\n' "$pass" "$fail" "$skipped" > "$secret_fixture/.tally"
+)
+if [ -r "$secret_fixture/.tally" ]; then
+  read -r sub_pass sub_fail sub_skipped < "$secret_fixture/.tally"
+  pass=$((pass + sub_pass)); fail=$((fail + sub_fail))
+  skipped=$((skipped + ${sub_skipped:-0}))
+else
+  bad "the pre-push secret-history fixture could not be built"
+fi
+rm -rf "$secret_fixture"
+
 echo "pre-push — feature branches and new tags remain available"
 expect_push 0 "a feature branch"           "refs/heads/x $head_sha refs/heads/phase-1/group-3-tax $head_sha"
 expect_push 1 "an environment variable cannot bypass a protected push" \
@@ -655,6 +701,74 @@ expect_migration 0 "adding the NEXT migration beside it" \
   'printf "CREATE TABLE b (id BLOB);\n" > crates/pos-db/migrations/0002_next.sql; git add -A'
 expect_migration 0 "deleting an UNCOMMITTED migration" \
   'printf "x\n" > crates/pos-db/migrations/0002_next.sql; git add -A; rm crates/pos-db/migrations/0002_next.sql; git add -A'
+
+# expect_dispatch <expected-exit> <label> <action run inside a wired fixture>
+#
+# Everything else in this file invokes a hook as a program. That proves the
+# SCRIPT still refuses and proves nothing about whether Git will ever call it —
+# the two are independent, and the second is what actually breaks: an unset
+# core.hooksPath, a path pointing elsewhere, a hooks directory missing from the
+# working tree, a stale absolute path left by a removed worktree, or a lost exec
+# bit each disable all three hooks with every script still perfect. This suite
+# was green in all five states.
+#
+# These cases go through `git` itself, with core.hooksPath set the way
+# `just setup` sets it, so a break in the WIRING fails here too.
+# `scripts/check-hooks-installed.py` is the check for a developer's clone; this
+# is the check that the hooks are dispatchable at all.
+expect_dispatch() {
+  local want="$1" label="$2" action="$3" tmp got
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX")
+  (
+    cd "$tmp" || exit 1
+    git init -q .
+    git config user.email t@t; git config user.name t
+    git config commit.gpgsign false
+    git config core.hooksPath "$HOOKS"
+    eval "$action" >/dev/null 2>&1
+  )
+  got=$?
+  rm -rf "$tmp"
+  [ "$got" -eq "$want" ] && ok "$label" || bad "$label (wanted exit $want, got $got)"
+}
+
+echo "git dispatch — the hooks are wired, not merely present"
+expect_dispatch 1 "git commit refuses a malformed subject" \
+  'printf x > a.txt; git add a.txt; git commit -m "no grammar at all"'
+expect_dispatch 0 "git commit accepts a conforming subject" \
+  'printf x > a.txt; git add a.txt; git commit -m "chore(repo): a conforming subject   [—]"'
+# Two -m arguments: git joins them with a blank line, which is a body, without
+# any quoting gymnastics inside the eval'd action.
+expect_dispatch 1 "git commit refuses an agent trailer through git itself" \
+  'printf x > a.txt; git add a.txt; git commit -m "chore(repo): tooling   [—]" -m "Co-Authored-By: Claude <noreply@anthropic.com>"'
+# Not .env or a key: an agent sandbox denies reading a secret-shaped path even
+# inside a throwaway fixture, and a case that skips is not a case that passed.
+expect_dispatch 1 "git commit refuses a sensitive path through git itself" \
+  'printf x > payments.sqlite; git add -f payments.sqlite; git commit -m "chore(repo): capture a database   [—]"'
+# Stated as a test rather than left as a footnote: the bypass is real, it is
+# documented, and a suite that never demonstrates it invites the reader to assume
+# the hooks are an enforcement boundary. They are a seatbelt.
+expect_dispatch 0 "--no-verify is a real bypass, and this is what it costs" \
+  'printf x > a.txt; git add a.txt; git commit --no-verify -m "no grammar at all"'
+
+# expect_argv_failure <expected-exit> <label> <hook> [args...]
+#
+# The exit-2 contract — 2 when a hook cannot do its job, 1 only when policy
+# actually refuses — was tested for pre-commit alone. A hook that exits 0 when
+# Git handed it nothing usable is worse than no hook, because it reports success.
+expect_argv_failure() {
+  local want="$1" label="$2"; shift 2
+  local got
+  "$@" >/dev/null 2>&1 </dev/null
+  got=$?
+  [ "$got" -eq "$want" ] && ok "$label" || bad "$label (wanted exit $want, got $got)"
+}
+
+echo "commit-msg and pre-push — a missing argument refuses closed"
+expect_argv_failure 2 "commit-msg with no message file" "$HOOKS/commit-msg"
+expect_argv_failure 2 "commit-msg with an unreadable message file" \
+  "$HOOKS/commit-msg" "${TMPDIR:-/tmp}/pos-test-hooks-no-such-file"
+expect_argv_failure 2 "pre-push with no destination remote" "$HOOKS/pre-push"
 
 echo
 if [ "$fail" -ne 0 ]; then
