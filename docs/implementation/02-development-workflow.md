@@ -175,6 +175,13 @@ Development is three nested loops. Knowing which one you are in tells you which 
 | **Gate** | before every commit | `just lint && just test` | "is the tree healthy" |
 | **Full** | before every push | `just pre-push` | "will CI be green" |
 
+**`git push` does not run `just pre-push`.** Two different gates share that name. The recipe above
+is minutes of work and runs only when `just pr` invokes it or you type it; the hook Git runs on a
+push is [`.githooks/pre-push`](../../.githooks/pre-push), an unrelated policy gate of about a
+second — branch/force/tag rules, attribution, sensitive paths, and a secret scan over the commits
+being published. Neither implies the other. The recipe answers "will CI be green"; the hook answers
+"may this reach the remote at all".
+
 The rule that keeps this cheap: **never run the outer loop to answer an inner-loop question.**
 A 4-second `cargo check -p pos-domain` beats a 90-second `just lint` forty times a day.
 
@@ -214,7 +221,8 @@ just secrets            # Gitleaks over all reachable Git history
 ### 2.3 Full loop
 
 ```bash
-just pre-push           # lint + test + build-web + guards + secret history scan
+just pre-push           # lint + test + build-web + guards + the all-ref secret scan
+                        # (NOT the hook git runs on a push — that is .githooks/pre-push)
 pnpm --filter terminal tauri build     # a real packaged app; slow, do it per group not per commit
 ```
 
@@ -264,7 +272,7 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just secrets` | Gitleaks over every commit reachable from the local repository, with findings redacted |
 | `just guards` | the write guards **and** the git hooks still refuse what they must |
 | `just build-web` | require a build script in all five workspace packages, then `pnpm -r build` — **the only place `tsc` runs** |
-| `just pre-push` | `lint` + `test` + `build-web` + `guards` + full-history secret scan |
+| `just pre-push` | `lint` + `test` + `build-web` + `guards` + `secrets`, the all-ref scan. Not the same gate as `.githooks/pre-push`, which Git runs on a push and which scans only the commits being published |
 | `just bench-gate [budget]` | conventions §7's absolute limits and §7.1's regression rule. **Refuses today** — no reference register exists, so both hardware records are blank; deliberately not part of `pre-push` |
 | `just branch <name>` | fresh `development`, then a branch off it — **needs a clean tree** (§4.2) |
 | `just pr [title] [body-file] [milestone]` | gates → push → PR into `development` → watch CI. Pass the title on a branch with more than one commit (§4.12); the milestone is derived from a `phase-<0-5>/` branch name |

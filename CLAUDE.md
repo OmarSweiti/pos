@@ -146,7 +146,16 @@ reopen silently. Its structural cause is still there and is deliberate: `ci.yml`
 guard steps rather than calling `just guards`, so a failure names the check that failed instead of
 one opaque step. The parity checker is what makes that enumeration safe.
 
-`just pre-push` is the complete local gate. Time-varying advisory checks stay in CI's
+`just pre-push` is the complete local gate, and **`git push` does not run it.** Two different
+gates share that name: this recipe — minutes of work — is invoked by `just pr`, by hand, or by
+nothing at all, while the hook Git actually runs on a push is
+[`.githooks/pre-push`](.githooks/pre-push), a policy gate of about a second whose refusals are in
+the table below. Neither one implies the other: the recipe can be green while the hook refuses the
+push, and the hook passes on a clone where the recipe was never typed. The collision is kept rather
+than renamed because `pre-push` is the name four documents advertise and
+`scripts/check-justfile-policy.py` matches on it; the ambiguity is answered here instead.
+
+Time-varying advisory checks stay in CI's
 `supply-chain` job because they reach the network and can change without a repository change.
 CI also supplies real PostgreSQL and promotion-only macOS/Windows Tauri builds, so report those
 separately instead of claiming the local gate reproduces every runner environment.

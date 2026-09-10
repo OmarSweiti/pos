@@ -19,7 +19,9 @@ Everything here is a pointer. The documents are the authority.
 ```bash
 just setup      # hooks, prerequisite checks, and locked deps — do not skip this
 just check      # seconds: would it build?
-just pre-push   # deterministic local gates, guards, build, and secret history
+just pre-push   # deterministic local gates, guards, build, and the all-ref secret scan
+                # NOT the hook git runs on a push: that is .githooks/pre-push, a
+                # separate ~1s policy gate. Neither one implies the other.
 ```
 
 ## The shape of a change

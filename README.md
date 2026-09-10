@@ -92,7 +92,8 @@ just test     # cargo nextest --locked --workspace · pnpm -r test
 just audit    # Rust advisories/licences · JS licences · npm advisories
 just guards   # prove the write guards still refuse what they must
 just secrets  # content-scan all reachable Git history with Gitleaks
-just pre-push # lint · test · web build · guards · secret history scan
+just pre-push # lint · test · web build · guards · the all-ref secret scan
+              # (not the hook git runs on a push — that is .githooks/pre-push)
 ```
 
 CI repeats the deterministic gates, scans the proposed commit range for secrets,
