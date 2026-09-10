@@ -347,14 +347,19 @@ worth naming explicitly, because [`../../scripts/check-branch-workflow-policy.rb
 freezes **files** — a setting changed in the web UI is not a diff, produces no red check, and is
 invisible to every gate this repository owns.
 
-**CodeQL default setup is enabled, and it is a weekly scan configured entirely server-side.** There
+**CodeQL default setup is enabled, and it is configured entirely server-side.** There
 is no analysis workflow under [`../../.github/workflows/`](../../.github/workflows/) and there
 cannot be one without converting to advanced setup, so nothing in this repository — no policy
-script, no pin, no review — reaches it. It is a further weekly run beyond the three this
-repository schedules for itself: [`02-development-workflow.md`](02-development-workflow.md) §16's
-recency check covers `security`, `proptest-scheduled` and `cross-platform-canary` by filename, and
-cannot cover this one the same way, because there is no file in the repository to name and its
-cadence is GitHub's to keep or change. Live configuration reads `state: configured`,
+script, no pin, no review — reaches it. It runs on **two** cadences, and the second is easy to miss
+because only the first appears in the live configuration: a weekly cron, *and* an analysis on every
+pull request, which arrives as four `Analyze (…)` check runs per language pack. PR #146 carried
+`Analyze (actions)`, `Analyze (javascript-typescript)`, `Analyze (python)` and `Analyze (ruby)`
+alongside the six required contexts. None of them is a required check, so a CodeQL finding
+annotates and does not block. For the weekly half,
+[`02-development-workflow.md`](02-development-workflow.md) §16's recency check covers `security`,
+`proptest-scheduled` and `cross-platform-canary` by filename and cannot cover this one the same
+way, because there is no file in the repository to name and its cadence is GitHub's to keep or
+change. Live configuration reads `state: configured`,
 `query_suite: default`, `threat_model: remote`, `schedule: weekly`, with languages `actions`,
 `javascript`, `javascript-typescript`, `python`, `ruby` and `typescript`. Two consequences follow
 from that language list and both matter:
