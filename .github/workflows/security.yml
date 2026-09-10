@@ -29,7 +29,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: security-${{ github.ref }}
+  # The event name is part of the key on purpose. A `schedule` event fires from
+  # the default branch, so github.ref is `refs/heads/development` — byte-identical
+  # to the ref a push to development produces. With the ref alone in the key both
+  # landed in one group, and any incoming push (event `push`, for which the
+  # expression below is true) cancelled the weekly run in flight: there were six
+  # such pushes on 2026-09-10 alone, and the scheduled advisory lane this file
+  # exists for is precisely the run that kept being killed before it finished.
+  # Keying on the event makes the groups disjoint, after which cancel-in-progress
+  # is correct exactly as written — a superseded push or pull-request run is
+  # wasted compute, while a scheduled run has nothing that supersedes it.
+  group: security-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 jobs:
@@ -75,10 +85,17 @@ jobs:
       - name: Scan the complete repository history for secrets
         run: ./scripts/scan-secrets.sh --history
 
-      - name: Rust advisories, licences, and duplicate or banned crates
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+      # A pinned tool install plus a plain cargo invocation, the same shape
+      # ci.yml's `supply-chain` job now uses; the full reasoning for dropping the
+      # action wrapper is recorded there once rather than in both files.
+      - name: Install the pinned cargo-deny release
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
         with:
-          command: check
+          tool: cargo-deny@0.20.2
+          fallback: none
+      - name: Rust advisories, licences, and duplicate or banned crates
+        # Scope comes from `[graph] all-features` in deny.toml, not from a flag.
+        run: cargo deny check
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -88,3 +105,126 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: npm advisories
         run: pnpm audit --audit-level high
+
+  # The lane above can only ever scan `development`. A `schedule` event fires
+  # from the default branch alone, and every advisory step reads the worktree
+  # that was checked out, so a fresh RUSTSEC against a version `main` pins and
+  # `development` has already bumped past is reported by nothing on a clock:
+  # main's pins are audited when a promotion PR opens and never again. main is
+  # 124 commits behind development today, with roughly 1,863 changed lines in
+  # pnpm-lock.yaml alone, and this job is the first thing in the repository that
+  # will ever say so without a human asking. That closes the gap where the
+  # branch a merchant actually runs was audited only at promotion time.
+  #
+  # A red `main` leg here is the finding, not a defect in this job. It means the
+  # shipped pins carry an advisory that development has already moved past, and
+  # the fix is a promotion, not a change to the matrix.
+  #
+  # Deliberately a separate job rather than a matrix over `scheduled-advisories`:
+  # that job's full-history gitleaks scan takes about seventy seconds and walking
+  # the same history three times buys nothing at all. Only the dependency audits
+  # are per-ref here, because only they read pins.
+  #
+  # It runs on schedule and manual dispatch only, so it never produces a check
+  # run on a pull request and must NEVER be added to a ruleset's required status
+  # checks.
+  scheduled-advisories-per-flow-branch:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: [development, staging, main]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The whole point of the job: each leg audits the pins that ref carries,
+          # not the pins of the default branch the schedule fired from.
+          ref: ${{ matrix.ref }}
+          persist-credentials: false
+
+      # No Swatinem/rust-cache in this job. The Actions cache is already over its
+      # ceiling — 10,555,721,908 bytes across 100 entries against a 10 GB quota —
+      # and a lane that runs once a week gains a few minutes from a warm target
+      # directory while evicting entries the per-pull-request jobs read hourly.
+      - name: Install the pinned cargo-deny release
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        with:
+          tool: cargo-deny@0.20.2
+          fallback: none
+      - name: Rust advisories, licences, and duplicate or banned crates
+        # Scope comes from `[graph] all-features` in deny.toml, not from a flag.
+        run: cargo deny check
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: npm advisories
+        run: pnpm audit --audit-level high
+
+  # Nothing in this repository noticed a weekly lane that stopped reporting.
+  # GitHub does email the repository owner when a scheduled run goes red, so a
+  # failure is not fully silent — but an inbox is not an artifact, and the whole
+  # value of a weekly advisory scan is that somebody reads its verdict weeks
+  # after it was produced. So a failed scheduled run leaves a durable record
+  # here: one standing issue, reused, with a comment per failure, rather than 52
+  # issues a year or nothing anybody can find.
+  #
+  # What no issue can detect: GitHub disables scheduled workflows in a public
+  # repository after 60 days with no repository activity. The run that would file
+  # the issue is the run that never starts, so silence is indistinguishable from
+  # health from inside the workflow. That half is covered from the other side, by
+  # the schedule-recency check being added to
+  # docs/implementation/02-development-workflow.md.
+  #
+  # It runs on schedule only, so it never produces a check run on a pull request
+  # and must NEVER be added to a ruleset's required status checks.
+  scheduled-failure-escalation:
+    if: failure() && github.event_name == 'schedule'
+    needs: [workflow-analysis, scheduled-advisories, scheduled-advisories-per-flow-branch]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Job-scoped on purpose: the top-level grant stays `actions: read` plus
+    # `contents: read`, so the jobs that check out third-party dependency trees
+    # never hold a token that can write to the issue tracker.
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: File or update the standing scheduled-failure issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # This job checks nothing out — it compiles nothing and reads no file —
+          # so `gh` has no git remote to infer the repository from and must be
+          # told which one it is, or every call fails resolving a base repository.
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # A fixed marker in the title is the entire deduplication mechanism:
+          # search open issues for it, comment when one is found, create it when
+          # none is. The marker carries no punctuation because GitHub's search
+          # tokenizer discards it, which would make the lookup silently miss and
+          # file a second issue every week.
+          marker='scheduled-security-failure'
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          body=$(printf '%s\n\n%s\n' \
+            'The scheduled run of the `security` workflow failed. The weekly advisory scan, the full-history secret scan, or a per-flow-branch dependency audit is red — a red `main` leg is a finding about main, not a defect in the workflow.' \
+            "Run: $run_url")
+          existing=$(gh issue list --state open --search "$marker in:title" \
+            --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+            echo "commented on existing issue #$existing"
+          else
+            # No --label anywhere in this step: gh fails the whole call on a label
+            # the repository does not define, which would lose the report this job
+            # exists to file. Triage labels get applied by a human on the issue.
+            gh issue create \
+              --title "$marker: the weekly security workflow is failing" \
+              --body "$body"
+            echo 'opened a new standing issue'
+          fi
