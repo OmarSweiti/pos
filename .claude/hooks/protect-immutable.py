@@ -41,8 +41,23 @@ same path as `rm -rf docs/plan`. A `cd` inside a subshell is assumed to persist,
 which over-approximates; for an immutable file, erring toward refusal is the
 safe direction.
 
+`sqlx migrate revert` is refused outright, wrapped and nested spellings included.
+It is the one rule here with no downstream backstop: it mutates a database and
+produces no commit and no diff, so neither a Git hook nor a CI job can observe
+that it happened. `.claude/hooks/test-protect-immutable.sh` asserts that this
+file and `.codex/hooks/protect-immutable.py` agree on one corpus of spellings —
+the same command was blocked for one agent and permitted for the other until
+that parity was asserted.
+
 Limitations
 -----------
+The known false positive of the revert rule is prose inside backticks or `$(…)`
+in a *shell* command — `SEGMENT` splits on both before `shlex` sees the quoting,
+so a documented mention becomes an apparent command. Ordinary quoting is safe
+(`grep -rn "sqlx migrate revert"` and `echo "…"` both pass, because shlex keeps a
+quoted string as one token), and editing a file that discusses the command
+through Edit/Write is unaffected. Narrow, and the same in the Codex adapter.
+
 An interpreter invocation that literally names a protected path is refused,
 even if the script intended only to read it. Arbitrary code can still construct
 the same path dynamically, and a patch file can name a target the command line
@@ -91,7 +106,10 @@ PLANS = "docs/plan"
 # subprocess. "plan" is here bare, not as "docs/plan", because `cd docs && rm
 # -rf plan` never spells the full path in one string; the cost of the wider net
 # is one `git rev-parse` on a command that happens to contain the word.
-RELEVANT = ("migrations", ".sql", "docs/plan", "plan")
+# `sqlx` earns a place here even though it names no path: `sqlx migrate revert`
+# is refused below, and without this hint the early exit in main() would skip
+# the check entirely — "migrate" does not contain "migrations".
+RELEVANT = ("migrations", ".sql", "docs/plan", "plan", "sqlx")
 
 # A compound command is many commands. Scanning it as one blob lets a write verb
 # quoted in one place — a commit message, a comment — implicate a path named
@@ -126,6 +144,12 @@ WRITE_THROUGH = frozenset(
 
 # Wrappers to look past when identifying the verb.
 TRANSPARENT = frozenset({"sudo", "command", "env", "time", "nohup", "xargs"})
+
+# `sqlx migrate revert` — refused for the same reason a committed migration
+# cannot be edited: migrations are forward-only (conventions §9).
+SQLX = frozenset({"sqlx", "sqlx.exe"})
+SPLIT_STRING = "--split-string="
+NESTED_FLAGS = frozenset({"-c", "/c", "/k", "-command", "-e", "-ex"})
 
 # Inline interpreters can conceal the actual write behind arbitrary source. If
 # one literally names a protected path, refuse it conservatively. A dynamically
@@ -459,6 +483,81 @@ def verb_of(tokens: list[str]) -> str:
     return ""
 
 
+def executable_index(tokens: list[str]) -> int | None:
+    """Index of the command being run, looking past sudo/env-style wrappers."""
+    for index, token in enumerate(tokens):
+        if token.startswith("-") or "=" in token:
+            continue
+        if os.path.basename(token.replace("\\", "/")).lower() in TRANSPARENT:
+            continue
+        return index
+    return None
+
+
+def nested_command(tokens: list[str]) -> str | None:
+    """The command an interpreter or `env --split-string` was handed as a string."""
+    for index, token in enumerate(tokens):
+        if token.startswith(SPLIT_STRING):
+            return token.split("=", 1)[1]
+        name = os.path.basename(token.replace("\\", "/")).casefold()
+        if not INTERPRETER.match(name):
+            continue
+        for flag in range(index + 1, len(tokens) - 1):
+            if tokens[flag].casefold() in NESTED_FLAGS:
+                return tokens[flag + 1]
+    return None
+
+
+def is_sqlx_migration_revert(command: str, depth: int = 0) -> bool:
+    """Recognize the forbidden SQLx subcommand across common argv spellings.
+
+    Mirrors `.codex/hooks/protect-immutable.py`. The two implementations are
+    deliberately separate — each hook is loaded by a different agent through a
+    different launcher, and a shared import is a shared way to fail — so
+    `.claude/hooks/test-protect-immutable.sh` asserts they agree on one corpus
+    of spellings rather than trusting them to.
+    """
+    if depth > 4:  # a bound, not a limit anyone should reach
+        return False
+    for segment in SEGMENT.split(command):
+        tokens = tokenise(segment)
+        if not tokens:
+            continue
+
+        nested = nested_command(tokens)
+        if nested is not None and is_sqlx_migration_revert(nested, depth + 1):
+            return True
+
+        index = executable_index(tokens)
+        if index is None:
+            continue
+        if os.path.basename(tokens[index].replace("\\", "/")).casefold() not in SQLX:
+            continue
+        # SEGMENT splits on `$(` but not on the closing paren, so a substitution
+        # leaves `revert)` as the final word. Strip the shell punctuation that
+        # cannot be part of a subcommand name.
+        arguments = [
+            token.casefold().strip("();&|") for token in tokens[index + 1 :]
+        ]
+        if any(
+            left == "migrate" and right == "revert"
+            for left, right in zip(arguments, arguments[1:], strict=False)
+        ):
+            return True
+    return False
+
+
+def migration_revert_refusal() -> str:
+    return (
+        "BLOCKED: sqlx migrate revert violates this repository's forward-only "
+        "migration policy. Add the next corrective migration instead "
+        "(01-conventions.md §9).\n"
+        "This one is invisible to every other control here: it mutates a database "
+        "and produces no commit and no diff, so no Git hook and no CI job can "
+        "observe that it happened."
+    )
+
+
 def option_targets(tokens: list[str], names: frozenset[str]) -> set[str]:
     """Paths supplied to a named option as `--name path` or `--name=path`."""
     targets: set[str] = set()
@@ -627,7 +726,11 @@ def main() -> int:
     root = repo_root(cwd)
 
     if tool_name in SHELL_TOOLS:
-        reason = check_shell(root, cwd, subject)
+        reason = (
+            migration_revert_refusal()
+            if is_sqlx_migration_revert(subject)
+            else check_shell(root, cwd, subject)
+        )
     else:
         reason = check_file_write(root, cwd, tool_input)
 

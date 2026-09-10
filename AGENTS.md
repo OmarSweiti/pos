@@ -62,8 +62,13 @@ These are what Codex brings to the shared law, and where each one stops.
   history-changing Git, pushes, mutating GitHub commands, publishing, and
   destructive database operations, and forbids `sqlx migrate revert`. Execpolicy
   is exact-prefix escalation policy, not a universal command parser; the
-  PreToolUse adapter separately catches wrapped and nested spellings of that
-  revert, and the Git hooks and CI remain the backstops.
+  PreToolUse adapters on BOTH sides separately catch wrapped and nested spellings
+  of that revert, and `.claude/hooks/test-protect-immutable.sh` asserts the two
+  reach the same verdict on one corpus of spellings. Note that the Git hooks and
+  CI are **not** backstops for this one: the operation mutates a database and
+  produces no commit and no diff, so nothing downstream can observe that it
+  happened. The two PreToolUse refusals and the execpolicy prompt are the only
+  controls there are.
 - `.codex/config.toml` keeps work in a `workspace-write` sandbox with network
   access deliberately on inside that write boundary — reading the world is free,
   writing is visible — and filters credential-shaped environment variables

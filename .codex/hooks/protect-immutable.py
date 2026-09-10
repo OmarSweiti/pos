@@ -217,7 +217,14 @@ def is_sqlx_migration_revert(command: str) -> bool:
         ).casefold()
         if name not in {"sqlx", "sqlx.exe"}:
             continue
-        arguments = [token.casefold() for token in tokens[executable_index + 1 :]]
+        # SHELL_SEGMENT splits on `$(` but not on the closing paren, so a command
+        # substitution leaves `revert)` as the final word. Strip the shell
+        # punctuation that cannot be part of a subcommand name. Found by the
+        # agent-parity cases in .claude/hooks/test-protect-immutable.sh, which
+        # caught this side permitting `echo $(sqlx migrate revert)`.
+        arguments = [
+            token.casefold().strip("();&|") for token in tokens[executable_index + 1 :]
+        ]
         if any(
             left == "migrate" and right == "revert"
             for left, right in itertools.pairwise(arguments)

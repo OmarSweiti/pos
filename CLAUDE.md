@@ -177,7 +177,7 @@ Codex-specific execution policy and hook adapters live under `.codex/`.
 
 | Guard | Refuses |
 |---|---|
-| `.claude/hooks/protect-immutable.py` | writing, deleting, or moving a **committed migration** or anything in `docs/plan/` through Claude write tools, Bash, PowerShell, or Monitor |
+| `.claude/hooks/protect-immutable.py` | writing, deleting, or moving a **committed migration** or anything in `docs/plan/` through Claude write tools, Bash, PowerShell, or Monitor; and the forward-only violation `sqlx migrate revert` in any wrapped or nested spelling, for which no Git hook and no CI job is a backstop — it produces no commit and no diff |
 | `.claude/hooks/docs-links-on-write.py` | leaving a broken cross-reference after Claude changes **any** tracked `.md` — the five root documents included — whatever the link target's extension; the `.sh` file is only an inactive POSIX compatibility wrapper |
 | `.claude/hooks/validate-settings.py` | a session-time weakening of the reviewed project or local Claude settings, or the loss of a required skill contract. The one hook here that **fails closed** |
 | `.codex/hooks/` | immutable-path and forward-only SQLx checks for Codex shell, immutable-path checks for `apply_patch`, and complete documentation-link checks after any Markdown `apply_patch` |
