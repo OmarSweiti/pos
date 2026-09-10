@@ -1669,7 +1669,11 @@ def self_test(default_path)
       "candidate-only Claude settings override" => [".claude/settings.local.json", "{}\n"],
       "candidate-only MCP configuration" => [".mcp.json", "{}\n"],
       "candidate-only worktree include policy" => [".worktreeinclude", ".env\n"],
-      "candidate-only executable Git hook" => [".githooks/post-checkout", "#!/usr/bin/env bash\nexit 0\n"]
+      # NOT a real hook name. The rule under test is "any path under .githooks/
+      # is discoverable policy", which does not care what the file is called —
+      # and a fixture named after a hook someone may legitimately add later
+      # collides with it on disk and crashes this self-test with EEXIST.
+      "candidate-only executable Git hook" => [".githooks/fixture-added-hook", "#!/usr/bin/env bash\nexit 0\n"]
     }
     discoverable_additions.each do |label, (relative, content)|
       added = File.join(candidate_root, relative)
@@ -1756,7 +1760,9 @@ def self_test(default_path)
     end
     FileUtils.rm(codex_rule_symlink)
 
-    candidate_hook_symlink = File.join(candidate_root, ".githooks/post-merge")
+    # See the note above: a fixture name that is also a real hook name would
+    # collide with the checked-out file.
+    candidate_hook_symlink = File.join(candidate_root, ".githooks/fixture-symlinked-hook")
     File.symlink("../scripts/validate-branch-flow.sh", candidate_hook_symlink)
     if check_candidate(trusted_root, candidate_root, quiet: true)
       puts "  FAIL  candidate-only symbolic-link Git hook is rejected"
@@ -2040,7 +2046,7 @@ def self_test(default_path)
         ".claude/settings.local.json", "{}\n", false
       ],
       "symbolic-link Git hook" => [
-        ".githooks/post-merge", "../scripts/validate-branch-flow.sh", true
+        ".githooks/fixture-symlinked-hook", "../scripts/validate-branch-flow.sh", true
       ],
       "symbolic-link Claude command root" => [
         ".claude/commands", "../docs", true

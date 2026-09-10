@@ -815,6 +815,55 @@ expect_argv_failure 2 "commit-msg with an unreadable message file" \
   "$HOOKS/commit-msg" "${TMPDIR:-/tmp}/pos-test-hooks-no-such-file"
 expect_argv_failure 2 "pre-push with no destination remote" "$HOOKS/pre-push"
 
+# expect_advisory <expected-substring|SILENT> <label> <files to change on the side branch>
+#
+# post-merge's exit status is IGNORED by git — measured, a hook exiting 9 still
+# leaves `git merge` at 0 — so an exit-code assertion here would assert nothing.
+# These drive a real `git merge` and assert on the OUTPUT. `SILENT` is a case in
+# its own right: an advisory that fires on merges it has nothing to say about is
+# one the reader learns to skip, which costs more than it saves.
+expect_advisory() {
+  local want="$1" label="$2" paths="$3" tmp out
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX")
+  out=$(
+    cd "$tmp" || exit 1
+    git init -q .
+    git config user.email t@t; git config user.name t
+    git config commit.gpgsign false
+    git config core.hooksPath "$HOOKS"
+    printf base > base.txt
+    git add -A >/dev/null 2>&1
+    git commit -q --no-verify -m "chore(repo): base   [—]" >/dev/null 2>&1
+    git switch -q -c side
+    for path in $paths; do
+      mkdir -p "$(dirname "$path")" 2>/dev/null
+      printf 'x\n' > "$path"
+    done
+    git add -A >/dev/null 2>&1
+    git commit -q --no-verify -m "chore(repo): side   [—]" >/dev/null 2>&1
+    git switch -q - >/dev/null 2>&1
+    git merge -q side 2>&1 >/dev/null
+  )
+  rm -rf "$tmp"
+  if [ "$want" = SILENT ]; then
+    [ -z "$out" ] && ok "$label" || bad "$label (expected silence, got: $out)"
+  elif printf '%s' "$out" | grep -qF -- "$want"; then
+    ok "$label"
+  else
+    bad "$label (nothing said \"$want\")"
+  fi
+}
+
+echo "post-merge — an advisory after the pull, and silence otherwise"
+expect_advisory "just setup"          "a moved pnpm lockfile"      "pnpm-lock.yaml"
+expect_advisory "just setup"          "a moved Cargo lockfile"     "Cargo.lock"
+# NOT plain `just setup`: setup runs check-node-version.py, which is fail-closed
+# against .nvmrc and refuses before installing anything.
+expect_advisory "nvm use"             "a moved Node pin says reprovision first" ".nvmrc"
+expect_advisory "just verify-schema"  "a new SQLite migration"     "crates/pos-db/migrations/9999_fixture.sql"
+expect_advisory "just migrate"        "a new Postgres migration"   "apps/server/migrations/29990101000000_fixture.sql"
+expect_advisory SILENT                "an ordinary change says nothing" "src/main.rs"
+
 echo
 if [ "$fail" -ne 0 ]; then
   echo "git hooks: $pass passed, $fail FAILED${skipped:+, $skipped skipped}"
