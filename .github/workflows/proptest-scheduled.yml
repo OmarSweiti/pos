@@ -128,6 +128,12 @@ jobs:
           # The seed is the run id, so the replay command below reproduces exactly
           # the case the runner failed on. It is the first thing anyone triaging
           # this issue needs and the one thing the Actions log will expire on.
+          # SC2016 fires on the Markdown backticks in the message below. Both
+          # halves are deliberate: the body is issue prose, so `security.yml`
+          # should render as code rather than expand as a command, and single
+          # quotes are what guarantee it. Nothing in these strings is meant to
+          # expand — every runtime value reaches printf as a separate argument.
+          # shellcheck disable=SC2016
           body=$(printf '%s\n\n%s\n\n    PROPTEST_RNG_SEED=%s PROPTEST_CASES=100000 cargo nextest run -p pos-domain -E %s%s%s\n' \
             'The scheduled run of the `proptest-scheduled` workflow failed: a pos-domain property found a counterexample at 100,000 cases, or the job could not build.' \
             "Run: $run_url" \

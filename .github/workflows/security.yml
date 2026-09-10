@@ -161,7 +161,16 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+          # No package-manager cache in THIS job, unlike the lane above, and the
+          # reason is a trust boundary rather than the quota. A `schedule` event
+          # runs in the default branch's context, which is a privileged cache
+          # scope — and this is the one job that then checks out `staging` and
+          # `main` and executes what it finds there: `pnpm install` runs lifecycle
+          # scripts and `cargo deny` resolves a graph. Restoring a cache into that
+          # combination is the poisonable-step shape CodeQL flags, and it was also
+          # flatly inconsistent with the comment above saying this job carries no
+          # cache. `release.yml` refuses the same thing for the same reason.
+          package-manager-cache: false
       - run: pnpm install --frozen-lockfile
       - name: npm advisories
         run: pnpm audit --audit-level high
@@ -211,6 +220,12 @@ jobs:
           # file a second issue every week.
           marker='scheduled-security-failure'
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          # SC2016 fires on the Markdown backticks in the message below. Both
+          # halves are deliberate: the body is issue prose, so `security.yml`
+          # should render as code rather than expand as a command, and single
+          # quotes are what guarantee it. Nothing in these strings is meant to
+          # expand — every runtime value reaches printf as a separate argument.
+          # shellcheck disable=SC2016
           body=$(printf '%s\n\n%s\n' \
             'The scheduled run of the `security` workflow failed. The weekly advisory scan, the full-history secret scan, or a per-flow-branch dependency audit is red — a red `main` leg is a finding about main, not a defect in the workflow.' \
             "Run: $run_url")

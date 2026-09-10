@@ -188,6 +188,12 @@ jobs:
           # onto one issue and lose which lane is actually red.
           marker='scheduled-cross-platform-failure'
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          # SC2016 fires on the Markdown backticks in the message below. Both
+          # halves are deliberate: the body is issue prose, so `security.yml`
+          # should render as code rather than expand as a command, and single
+          # quotes are what guarantee it. Nothing in these strings is meant to
+          # expand — every runtime value reaches printf as a separate argument.
+          # shellcheck disable=SC2016
           body=$(printf '%s\n\n%s\n\n%s\n' \
             'The weekly cross-platform canary failed: one or more of `ubuntu-22.04`, `macos-latest` or `windows-latest` could not test or bundle the register. The matrix does not fail fast, so the run says which platforms are broken rather than only the first one.' \
             "Run: $run_url" \
