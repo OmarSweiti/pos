@@ -367,10 +367,10 @@ jobs:
           fi
           commits="$RUNNER_TEMP/reachable-commits.txt"
           git rev-list HEAD > "$commits"
-          while IFS= read -r commit; do
-            [ -n "$commit" ] || continue
-            "$verifier" --git-commit "$commit"
-          done < "$commits"
+          # One interpreter for the whole history, not one per commit. The
+          # verifier counts the SHAs it was handed and refuses if git described
+          # fewer, so a short read fails closed rather than skipping the rest.
+          "$verifier" --commits-file "$commits"
       - name: Rust advisories, licences, and duplicate/banned crates
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
