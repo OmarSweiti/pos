@@ -410,23 +410,38 @@ qualifications belong with that:
   real updater keypair — which is the point at which the missing checked-in record stops being
   bookkeeping.
 
-**Five repository security settings: three enabled, two still off.** Secret scanning, push
+**Five repository security settings: three enabled, two not offered.** Secret scanning, push
 protection and Dependabot security updates are enabled. `secret_scanning_non_provider_patterns` and
-`secret_scanning_validity_checks` are **disabled**, and both are free on a public repository, which
-makes leaving them off a pure loss. They are recorded here as an open item rather than a completed
-one, because the Actions hardening sweep could not close them: a `PATCH` to
-`/repos/{owner}/{repo}` carrying both fields returns `200` with the payload **unchanged**, so the
-REST surface accepts the request and silently ignores those two keys. They appear to be settable
-only from Settings → Advanced Security, by hand.
+`secret_scanning_validity_checks` read `disabled` and **cannot be enabled from this account** —
+this is a closed item, not an outstanding task. Three things were tried: a `PATCH` to
+`/repos/{owner}/{repo}` carrying both fields, in two different body encodings, returns `200` with
+the payload **unchanged**; the toggles are absent from the repository's own
+Settings → Advanced Security; and they are absent from the account-level
+`github.com/settings/security_analysis` as well. The account is a free personal one and the
+repository is public. Which of those facts is the gate — plan, public-repository scope, or staged
+rollout — was **not** established, and should not be asserted here without evidence; what is
+established is that the setting cannot be changed from this repository or this account.
 
-They are worth the two clicks. Provider patterns match recognisable third-party token shapes, which
-is the easy half; non-provider patterns are what catch generic private keys and database connection
-strings — precisely the class [`../../.claude/rules/security.md`](../../.claude/rules/security.md)
-names as never-log, never-commit (`db_key`, `wrapped_key`, `POS_DB_KEY`), and precisely the class a
-`v*` release will eventually carry real material for. Validity checks ask the provider whether a
-found credential is still live, which turns a finding into a triage decision instead of a question.
-Verify with `gh api repos/:owner/:repo --jq '.security_and_analysis'` and update this paragraph from
-that output, not from an intention.
+The residual exposure is narrower than it first looks, and worth stating precisely so nobody
+re-opens this as a gap. Provider patterns, which **are** enabled and **are** push-protected, cover
+recognisable third-party token shapes. What non-provider patterns would add is the generic class —
+private keys, database connection strings — which is the class
+[`../../.claude/rules/security.md`](../../.claude/rules/security.md) names as never-log,
+never-commit (`db_key`, `wrapped_key`, `POS_DB_KEY`). That class is **already scanned**, by
+Gitleaks: [`../../.gitleaks.toml`](../../.gitleaks.toml) sets `useDefault = true` and adds no custom
+rules, so the full upstream default set applies, including its private-key and generic-high-entropy
+detectors — in `pre-commit`, in `pre-push` over the commits a push publishes, in CI's commit-range
+scan, and in the weekly full-history run.
+
+So what is actually lost is not detection of that class but a **second, independent, server-side**
+detector on it, one that a local `--no-verify` cannot skip. That is defence in depth rather than a
+hole, and the same argument does not rescue validity checks: asking a provider whether a found
+credential is still live has no local equivalent at all. It matters least while no real credential
+exists — `actions/secrets` and `environments/release/secrets` are both `total_count: 0` — and it is
+worth re-testing when microstep 5.5.0/5.5.1 provisions the updater keypair, since that is the first
+moment this repository holds signing material worth validating. Re-check with
+`gh api repos/:owner/:repo --jq '.security_and_analysis'` and update this paragraph from that
+output, not from an intention.
 
 Independent Gitleaks remains defence in depth rather than a substitute: findings are redacted, the
 scanner version and downloaded archive digest are pinned in CI, and operational errors fail closed.
