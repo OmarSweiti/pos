@@ -89,7 +89,7 @@ jobs:
       # ci.yml's `supply-chain` job now uses; the full reasoning for dropping the
       # action wrapper is recorded there once rather than in both files.
       - name: Install the pinned cargo-deny release
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:
           tool: cargo-deny@0.20.2
           fallback: none
