@@ -1011,6 +1011,29 @@ mod tests {
     const NOW_MS: i64 = 1_788_307_200_000;
     const APPROVAL_TTL_MS: i64 = 120_000;
 
+    /// The nonce every test in this module issues handles with.
+    ///
+    /// A literal here is mandatory, not a shortcut. `ApprovalHandle::issue`
+    /// takes `nonce` as a *parameter* for the reason recorded at its definition:
+    /// this crate is pure (I-8) and may not generate randomness, so production
+    /// entropy is the caller's to supply and a test must pass something fixed or
+    /// stop being reproducible. `scripts/check-domain-purity.py` enforces that
+    /// directly — its own self-test asserts `Uuid::new_v4()` is rejected inside
+    /// this crate — and the workspace pins `uuid` with `default-features = false`
+    /// and no `v4`, so the obvious "fix" does not even compile here.
+    ///
+    /// `0xA5` rather than `0` or `1`: `approval_debug_output_redacts_content_hash_and_nonce`
+    /// asserts the raw nonce bytes are ABSENT from `Debug` output. A run of zeroes
+    /// or ones can appear in that output for unrelated reasons, which would make
+    /// the assertion pass without proving redaction. A distinctive repeated byte
+    /// cannot.
+    ///
+    /// CodeQL's `rust/hard-coded-cryptographic-value` flags this line. That alert
+    /// is dismissed as *used in tests* rather than fixed, and Copilot Autofix
+    /// proposed exactly the change this comment exists to refuse — see PRs #154
+    /// and #156, closed unmerged.
+    const TEST_NONCE: [u8; 16] = [0xA5; 16];
+
     fn timestamp(milliseconds: i64) -> Timestamp {
         Timestamp::from_epoch_milliseconds(milliseconds).unwrap()
     }
@@ -1063,7 +1086,7 @@ mod tests {
             "manager confirmed the void".to_owned(),
             now,
             APPROVAL_TTL_MS,
-            [0xA5; 16],
+            TEST_NONCE,
         )
         .unwrap()
     }
@@ -1157,7 +1180,7 @@ mod tests {
                 "self approval must not issue".to_owned(),
                 now,
                 0,
-                [0; 16],
+                TEST_NONCE,
             )
             .unwrap_err(),
             PermissionError::SelfApprovalBanned(cap::SaleVoid::NAME)
@@ -1371,7 +1394,7 @@ mod tests {
                 "zero ttl must not issue".to_owned(),
                 now,
                 0,
-                [1; 16],
+                TEST_NONCE,
             )
             .unwrap_err(),
             PermissionError::ApprovalExpired(now)
