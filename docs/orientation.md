@@ -249,10 +249,21 @@ lines of them decide whether a migration may be edited or a secret may be commit
 `lint-scripts.sh` lints them too.
 
 One honest exception before the table: **`check-staged-policy.py` has no step of its own in
-`ci.yml`.** It inspects the *staged index*, which a CI checkout has no equivalent of, so CI reaches
-it the only way that means anything — through `.githooks/pre-commit`, which
-[`.githooks/test-hooks.sh`](../.githooks/test-hooks.sh) drives against a real index. Every other
-script below runs in CI as well as locally.
+`ci.yml`.** Its index mode inspects the *staged index*, which a CI checkout has no equivalent of.
+An earlier version of this paragraph claimed CI therefore "reaches it the only way that means
+anything" through `.githooks/test-hooks.sh`; that was wrong, and worth naming. Driving the hook
+against a synthetic fixture index proves the *checker* still refuses — it never applies the policy
+to the pull request's own content.
+
+What closes most of the gap is not CI but a second local caller. `.githooks/pre-push` now runs the
+checker's `--commits-file` mode over every commit a push introduces, because Git runs `pre-commit`
+for an ordinary commit and routes around it entirely for a clean merge, a cherry-pick, a revert and
+`rebase --continue`. So the three rules that judge content — the sensitive-path list, the 2 MB blob
+cap, and the migration blob-mode rule — are applied at commit time and again at push time.
+[`scripts/check-protected-paths.sh`](../scripts/check-protected-paths.sh) is the server-side backstop
+for the source-plan and committed-migration rules, judged from the merge base; it inspects neither a
+filename class nor a blob size, so those two remain local-only and one `--no-verify` from gone.
+Every other script below runs in CI as well as locally.
 
 | Script | Contract |
 |---|---|

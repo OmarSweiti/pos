@@ -16,6 +16,7 @@ repo_root=$(git rev-parse --show-toplevel) || {
 }
 policy_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 attribution_check="$policy_root/scripts/check-automation-attribution.py"
+staged_policy_check="$policy_root/scripts/check-staged-policy.py"
 
 # Backstop an accidentally skipped pre-commit and scan every reachable commit,
 # including commits introduced by merges. CI repeats this server-side.
@@ -62,6 +63,41 @@ while IFS=' ' read -r _local_ref local_sha remote_ref remote_sha; do
       fi
       refuse=1
     done < "$commits_file"
+
+    # The sensitive-path list and the 2 MB blob cap live in exactly one checker
+    # and have no server-side equivalent — check-protected-paths.sh inspects
+    # neither a filename class nor a blob size. Git runs `pre-commit` for an
+    # ordinary commit and routes around it entirely for a clean merge, a
+    # cherry-pick, a revert and `rebase --continue`, which is precisely where
+    # conflict resolution authors content nobody has reviewed. So the content
+    # rules are applied again here, where every pushed commit is visible at once.
+    #
+    # One invocation for the whole push: the commit set is already on disk. It is
+    # deliberately OUTSIDE the loop above — a child in there inherits
+    # "$commits_file" as stdin and eats the remaining SHAs.
+    #
+    # `</dev/null` is defence in depth, and it is worth being exact about why,
+    # because the honest version is the useful one. The checker already refuses to
+    # inherit our stdin: its `git()` helper passes DEVNULL and its two plumbing
+    # calls are fed with `input=`. So the redirect is not what saves us today —
+    # it is what keeps a future change INSIDE the checker from reaching Git's
+    # ref-update list, which is still sitting in our stdin. Measured with both
+    # layers removed, a ref carrying a `.env` reached the remote with no refusal
+    # printed at all; `.githooks/test-hooks.sh` is what actually holds that shut.
+    #
+    # Its own output is not suppressed: the per-path messages are the only
+    # description of what was refused.
+    range_status=0
+    "$policy_root/scripts/run-python.sh" \
+      "$staged_policy_check" --commits-file "$commits_file" </dev/null \
+      || range_status=$?
+    if [ "$range_status" -eq 1 ]; then
+      echo "pre-push: REFUSED — '$branch' introduces a sensitive path or an oversized blob."
+      refuse=1
+    elif [ "$range_status" -ne 0 ]; then
+      echo "pre-push: ERROR — could not inspect the pushed commits; refusing closed." >&2
+      refuse=1
+    fi
   fi
 
   # Tags are append-only. Published releases make their associated tags
