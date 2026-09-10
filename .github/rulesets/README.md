@@ -20,6 +20,54 @@ ruleset, normalized to the payload shape the API accepts back.
 `main` is unprotected. Read `rulesets`. See
 [`../../docs/implementation/03-github-workflow.md`](../../docs/implementation/03-github-workflow.md) §3.
 
+## Why both branch rulesets are now strict
+
+`strict_required_status_checks_policy` is `true` on `development-flow` and on
+`staging-promotion` — GitHub's "require branches to be up to date before
+merging". It was `false`, and the reason it was `false` was recorded nowhere,
+which is the same gap these files exist to close.
+
+*Textual* collisions were already safe without it:
+[`../../scripts/check-protected-paths.sh`](../../scripts/check-protected-paths.sh)
+judges a pull request against the **merge base**, not the base tip, so a branch
+that has merely fallen behind is not accused of deleting a migration the base
+merged in the meantime. **Semantic** collisions are not safe. A pull request can
+pass [`../../scripts/verify-schema.py`](../../scripts/verify-schema.py)'s
+exact-ordered-parity check, or
+[`../../scripts/check-test-catalog.py`](../../scripts/check-test-catalog.py)'s
+arithmetic, against its own snapshot of the tree; the base then moves; both
+branches merge clean; and the branch goes red on the post-merge push run, where
+nothing is gating and the breakage is already shared. The migrations are
+sequentially numbered — `0001_init.sql` through `0004_people_and_audit.sql` — so
+two pull requests each adding `0005` each pass alone and collide only once both
+are in. Dependabot is authorized for five cargo and five npm pull requests a
+month against one `Cargo.lock` and one `pnpm-lock.yaml` under `--locked`, which
+is the live, monthly version of exactly that risk.
+
+The cost is real and worth stating: every work pull request that falls behind
+now pays one update-and-rerun, and a rerun of `rust` is a full job, not a
+seconds-long check. Promotion pull requests are current by construction — the
+promotion is created from the tip it promotes — so they pay nothing.
+
+## What the tag ruleset does not do
+
+`tags-v-append-only` has exactly two rules, `deletion` and `update`, and an
+empty `bypass_actors`. **`creation` is absent.** A correctly shaped, signed `v*`
+tag can therefore still be *created* on any commit the branch rules allow —
+including `main`'s head today — and once created it can never be moved or
+deleted, by anyone. The ruleset makes a mistaken tag **irreversible, not
+impossible**, and that is the whole of its guarantee.
+
+Adding `{"type": "creation"}` is the only ruleset-level way to stop a tag from
+being created. It would also require a bypass actor to ship at all, because tags
+are not created through pull requests, and a bypass actor is precisely the
+"binds the maintainer too" property the table above advertises. The trade is not
+worth making. The control against a mistaken tag is therefore upstream of the
+ruleset: the `guard` job in
+[`../workflows/release.yml`](../workflows/release.yml), which refuses a tag whose
+grammar, signature, or branch head is wrong before the platform matrix starts,
+and the `staging → main` promotion that decides what a taggable head contains.
+
 ## Diff live against intended
 
 ```sh

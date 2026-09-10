@@ -10,6 +10,25 @@ set -euo pipefail
 readonly REGISTRATION_ATTEMPTS=60
 readonly REGISTRATION_DELAY_SECONDS=2
 
+# The `paths:` filter of .github/workflows/security.yml, in the workflow's own
+# order and spelling. That filter decides whether `security / workflow-analysis`
+# exists on a PR at all, so the workflow is the source of truth and this array is
+# this script's single mirror of it: `workflow_contract_valid` compares the two
+# and the self-test goes red the moment they disagree. Everything else here that
+# needs the list is derived from this array rather than repeating it — the match
+# in `security_workflow_required` and the per-path self-test — because a seventh
+# entry added to the workflow and to one hand-written copy would leave the other
+# copies behind, and the watcher would then quietly stop expecting a check that
+# GitHub really runs, which is the one failure mode this script exists to prevent.
+readonly SECURITY_WORKFLOW_PATHS=(
+  '.github/**'
+  'scripts/check-branch-workflow-policy.rb'
+  'scripts/gh-actions-policy.sh'
+  'scripts/install-gitleaks-ci.sh'
+  'scripts/scan-secrets.sh'
+  '.gitleaks.toml'
+)
+
 usage() {
   cat >&2 <<'EOF'
 usage: scripts/watch-pr-checks.sh <PR-number-or-URL>
@@ -22,7 +41,7 @@ EOF
 }
 
 security_workflow_required() {
-  local base_ref=$1 path
+  local base_ref=$1 path pattern shell_pattern
   shift
 
   case "$base_ref" in
@@ -31,11 +50,24 @@ security_workflow_required() {
   esac
 
   for path in "$@"; do
-    case "$path" in
-      .github/*|scripts/check-branch-workflow-policy.rb|scripts/gh-actions-policy.sh|scripts/install-gitleaks-ci.sh|scripts/scan-secrets.sh|.gitleaks.toml)
+    for pattern in "${SECURITY_WORKFLOW_PATHS[@]}"; do
+      # A GitHub `paths:` glob and a shell pattern differ in exactly one place
+      # that matters for entries like these: GitHub spells "at any depth" as
+      # `**`, while a shell pattern's `*` already crosses `/`. Collapsing `**`
+      # to `*` is the whole translation, and an entry with no wildcard stays the
+      # exact comparison it reads as. The pattern goes through a variable so the
+      # match sees a pattern rather than a quoted literal.
+      shell_pattern=${pattern//"**"/"*"}
+      # SC2053 is the point, not an oversight: the right-hand side must stay
+      # unquoted so bash treats it as a pattern. Quoting it would turn every
+      # entry into a literal string comparison and `.github/**` would then match
+      # nothing at all, which is the silent under-reporting this function exists
+      # to prevent.
+      # shellcheck disable=SC2053
+      if [[ "$path" == $shell_pattern ]]; then
         return 0
-        ;;
-    esac
+      fi
+    done
   done
   return 1
 }
@@ -223,7 +255,11 @@ row_state_accepted() {
 }
 
 workflow_contract_valid() {
-  ruby -rpsych <<'RUBY'
+  # The mirrored list crosses into Ruby through the environment, never through
+  # the heredoc: the program text stays unexpanded, so nothing in this script is
+  # ever spliced into it.
+  SECURITY_WORKFLOW_PATHS_LIST=$(printf '%s\n' "${SECURITY_WORKFLOW_PATHS[@]}") \
+    ruby -rpsych <<'RUBY'
 def load_workflow(path)
   Psych.safe_load_file(path, aliases: false)
 rescue Psych::Exception, SystemCallError => error
@@ -264,14 +300,10 @@ abort "security.yml workflow name changed" unless security["name"] == "security"
 abort "security.yml lost workflow-analysis" unless security.fetch("jobs").key?("workflow-analysis")
 events = security["on"] || security[true]
 expected_branches = %w[development staging main]
-expected_paths = [
-  ".github/**",
-  "scripts/check-branch-workflow-policy.rb",
-  "scripts/gh-actions-policy.sh",
-  "scripts/install-gitleaks-ci.sh",
-  "scripts/scan-secrets.sh",
-  ".gitleaks.toml"
-]
+# SECURITY_WORKFLOW_PATHS in this script is the one mirror of the filter, and
+# this is the comparison that holds it to the workflow. Both `paths:` blocks are
+# checked, because push and pull_request drifting apart is its own bug.
+expected_paths = ENV.fetch("SECURITY_WORKFLOW_PATHS_LIST").split("\n")
 %w[push pull_request].each do |event|
   config = events.fetch(event)
   abort "security.yml #{event} branches changed" unless config.fetch("branches") == expected_branches
@@ -297,6 +329,7 @@ RUBY
 self_test() {
   local core security ordinary staging_to_development development_to_staging changed_records
   local staging_to_main hotfix_to_main all_core wrong_workflow path tab derived_core
+  local sample
   tab=$'\t'
   SELF_TESTS=0
   SELF_TEST_FAILURES=0
@@ -358,13 +391,14 @@ self_test() {
   assert_has_check '.github changes require workflow analysis' "$security" $'security\tworkflow-analysis'
   assert_incomplete 'missing conditional workflow analysis is refused' "$security" "$core"
 
-  for path in \
-    scripts/check-branch-workflow-policy.rb \
-    scripts/gh-actions-policy.sh \
-    scripts/install-gitleaks-ci.sh \
-    scripts/scan-secrets.sh \
-    .gitleaks.toml; do
-    security=$(expected_checks development feature/policy "$path")
+  # One sample changed path per mirrored `paths:` entry, so a seventh entry is
+  # exercised the moment it is mirrored and there is nothing to edit here. A
+  # literal entry is its own sample; an entry ending in `/**` needs a file under
+  # it, since GitHub never reports a bare directory as a changed path.
+  for path in "${SECURITY_WORKFLOW_PATHS[@]}"; do
+    sample=${path%/\*\*}
+    [ "$sample" = "$path" ] || sample="$sample/sample-changed-file"
+    security=$(expected_checks development feature/policy "$sample")
     assert_has_check "$path triggers workflow analysis" "$security" $'security\tworkflow-analysis'
   done
 
