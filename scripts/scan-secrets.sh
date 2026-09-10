@@ -42,6 +42,35 @@ scan_range() {
   gitleaks git "${common[@]}" --log-opts="$base_commit..$head_commit" "$repo"
 }
 
+# The exact commit set `.githooks/pre-push` is about to publish: everything
+# reachable from the ref being pushed and absent from every tracking ref of the
+# destination remote. Deliberately the SAME revision expression the hook's own
+# `rev-list` uses for the attribution and sensitive-path checks, so all three
+# content gates cover one set by construction rather than by coincidence.
+#
+# gitleaks takes a single `--log-opts` string and word-splits it, so the remote
+# is validated against Git's remote-name grammar first and this stays a named
+# mode rather than a raw passthrough. A push straight to a URL
+# (`git push git@host:repo main`) is not a name, cannot become a meaningful
+# exclusion, and falls back to the whole history — more scanning, never less.
+scan_pushed() {
+  local local_ref="$1" remote="$2" repo="$3" local_commit
+  git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 \
+    || die "$repo is not a readable Git repository"
+  case "$remote" in
+    ''|-*|*[!A-Za-z0-9._/-]*) scan_history "$repo"; return ;;
+  esac
+  local_commit=$(git -C "$repo" rev-parse --verify "$local_ref^{commit}") \
+    || die "cannot resolve pushed commit $local_ref"
+  gitleaks git "${common[@]}" \
+    --log-opts="$local_commit --not --remotes=$remote" "$repo"
+}
+
+# No `--log-opts` at all, which makes gitleaks walk `--all`: every ref, not
+# reachable history. That is wider than it sounds and is why this mode belongs in
+# `just secrets`, CI and the weekly run rather than in the push path — measured,
+# a token on a local-only branch HEAD cannot reach exits 1, and so does a token
+# sitting in nothing but a `git stash`.
 scan_history() {
   local repo="$1"
   git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 \
@@ -100,6 +129,20 @@ self_test() {
   head=$(git -C "$tmp" rev-parse HEAD)
   expect 1 "a CI commit range containing a token is refused" scan_range "$base" "$head" "$tmp"
 
+  # The pushed set: reachable from the ref being pushed, absent from the remote.
+  git -C "$tmp" update-ref refs/remotes/origin/main "$base"
+  expect 1 "an unpushed commit carrying a token is refused" \
+    scan_pushed "$head" origin "$tmp"
+  # Move the tracking ref forward and the same commit stops being this push's
+  # finding. Without this case, restoring the old whole-history call would pass.
+  git -C "$tmp" update-ref refs/remotes/origin/main "$head"
+  expect 0 "a commit the remote already has is not this push's finding" \
+    scan_pushed "$head" origin "$tmp"
+  # A URL destination yields no usable exclusion, so it must WIDEN to the whole
+  # history rather than silently scan nothing.
+  expect 1 "a URL destination falls back to the full history" \
+    scan_pushed "$head" "git@host:repo.git" "$tmp"
+
   printf '\n%s passed, %s failed\n' "$pass" "$fail"
   [ "$fail" -eq 0 ]
 }
@@ -113,6 +156,10 @@ case "${1:---staged}" in
     [ "$#" -ge 3 ] && [ "$#" -le 4 ] || die "usage: $0 --range BASE HEAD [repository]"
     scan_range "$2" "$3" "${4:-.}"
     ;;
+  --pushed)
+    [ "$#" -ge 3 ] && [ "$#" -le 4 ] || die "usage: $0 --pushed LOCAL_SHA REMOTE [repository]"
+    scan_pushed "$2" "$3" "${4:-.}"
+    ;;
   --history)
     [ "$#" -le 2 ] || die "usage: $0 --history [repository]"
     scan_history "${2:-.}"
@@ -122,6 +169,6 @@ case "${1:---staged}" in
     self_test
     ;;
   *)
-    die "usage: $0 --staged [repository] | --range BASE HEAD [repository] | --history [repository] | --self-test"
+    die "usage: $0 --staged [repository] | --range BASE HEAD [repository] | --pushed LOCAL_SHA REMOTE [repository] | --history [repository] | --self-test"
     ;;
 esac

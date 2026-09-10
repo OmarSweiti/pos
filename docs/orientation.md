@@ -231,7 +231,8 @@ scanner failure refuses closed.
 ### `pre-push`
 
 Uses the destination remote Git supplies rather than hardcoding `origin`. It scans every commit
-absent from that remote for assistant attribution, runs Gitleaks over reachable history, and refuses
+absent from that remote for assistant attribution and for sensitive paths, runs Gitleaks over that
+same set of commits rather than over all history, and refuses
 direct, force, and deletion pushes to `development`, `staging`, and `main`. Tags are append-only:
 a new tag is allowed, moving or deleting an existing one is not.
 
@@ -275,7 +276,7 @@ Every other script below runs in CI as well as locally.
 | `check-test-catalog.py` | every catalogued test name resolves to its runner or sits in the shrinking `PLANNED` allowlist with a tombstone for anything retired; every normative reference name has one phase-microstep owner; every `E.n` a phase file claims has a row for that phase; the coverage arithmetic is recomputed from the rows |
 | `check-staged-policy.py` | the staged index carries no plan edit, committed-migration change, sensitive path, or oversized blob |
 | `check-protected-paths.sh` | a pull request does not edit a base-committed migration or source plan |
-| `scan-secrets.sh` | staged, range, or reachable-history content has no known secret |
+| `scan-secrets.sh` | staged, commit-range, pushed-set, or all-ref content has no known secret |
 | `validate-change-title.sh` / `check-automation-attribution.py` | one grammar for commit subjects and pull-request titles, and no coding-assistant attribution anywhere |
 | `gh-actions-policy.sh` | workflow Actions use full SHAs from the repository allowlist; applying any repository-wide Actions setting is a separate live step |
 | `check-branch-workflow-policy.rb` | the read-only trusted pull-request boundary and the frozen policy surface — workflows, Git hooks, both agent entry points, and the `.claude/`/`.codex/` trees — cannot silently weaken themselves |
