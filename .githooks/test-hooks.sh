@@ -245,8 +245,9 @@ zero=0000000000000000000000000000000000000000
 # That sentence used to be true of this fixture and FALSE of the fifteen
 # assertions that sat 250 lines below it, still reading the live clone — which is
 # exactly why nobody re-checked them. Every pre-push assertion now lives in a
-# fixture, so it is true of the whole file, and `git rev-parse HEAD` is no longer
-# read anywhere in it.
+# fixture, so it is true of the whole file. `git rev-parse HEAD` still appears
+# below, twelve times — always inside a fixture subshell, reading THAT
+# repository's tip. None of it reads the developer's clone.
 fixture=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX")
 (
   cd "$fixture" || exit 1
