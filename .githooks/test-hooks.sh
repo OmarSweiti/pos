@@ -225,14 +225,7 @@ expect_push() {
   fi
 }
 
-head_sha=$(git rev-parse HEAD)
 zero=0000000000000000000000000000000000000000
-
-echo "pre-push — the protected branches take pull requests, not pushes"
-expect_push 1 "direct push to main"        "refs/heads/main $head_sha refs/heads/main $head_sha"
-expect_push 1 "direct push to staging"     "refs/heads/staging $head_sha refs/heads/staging $head_sha"
-expect_push 1 "direct push to development" "refs/heads/development $head_sha refs/heads/development $head_sha"
-expect_push 1 "deleting main"              "refs/heads/main $zero refs/heads/main $head_sha"
 
 # The force-push and attribution cases need a history of a particular SHAPE, and
 # they used to read it out of THIS repository. That made them depend on how the
@@ -246,8 +239,14 @@ expect_push 1 "deleting main"              "refs/heads/main $zero refs/heads/mai
 # So the fixture is built rather than borrowed: a throwaway repository with a
 # history of a known shape, and the hook run inside it. Nothing below depends on
 # the depth of the checkout, the current branch, or whether a local-only backup
-# ref happens to exist. That also means neither case can silently skip in CI,
-# and a guard test that skipped is not a guard test that passed.
+# ref happens to exist. That also means no case can silently skip in CI, and a
+# guard test that skipped is not a guard test that passed.
+#
+# That sentence used to be true of this fixture and FALSE of the fifteen
+# assertions that sat 250 lines below it, still reading the live clone — which is
+# exactly why nobody re-checked them. Every pre-push assertion now lives in a
+# fixture, so it is true of the whole file, and `git rev-parse HEAD` is no longer
+# read anywhere in it.
 fixture=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX")
 (
   cd "$fixture" || exit 1
@@ -264,6 +263,65 @@ fixture=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX")
   git commit -q --allow-empty -m "feat(domain): second   [1.1.2]"
   trunk=$(git rev-parse HEAD)
   first=$(git rev-parse HEAD~1)
+
+  # These fifteen used to run against the DEVELOPER'S clone, and both of their
+  # failure modes were measured rather than argued.
+  #
+  # In the ordinary state — every commit already pushed — `git rev-list HEAD
+  # --not --remotes=origin` returns NOTHING, so pre-push's per-commit attribution
+  # loop never iterated: zero `--git-commit` calls in a full run against the real
+  # repository. Nine of the fifteen were therefore asserting an exit code reached
+  # without executing the code they name.
+  #
+  # In a clone whose remote is not called `origin` — a fork, `upstream`, or
+  # `git init` plus `git remote add` — the same expression returns EVERY commit.
+  # One assertion measured 43.3 s there, so fifteen made the suite unusable.
+  # Nothing about the hooks changed between those two runs.
+  #
+  # Keyed on `$trunk`, not the fixture's later HEAD: the attributed and spoofed
+  # commits created below would otherwise refuse these for the wrong reason,
+  # which is the same bug wearing a new hat.
+  echo "pre-push — the protected branches take pull requests, not pushes"
+  expect_push 1 "direct push to main"        "refs/heads/main $trunk refs/heads/main $trunk" \
+    "" origin "takes changes through a pull request"
+  expect_push 1 "direct push to staging"     "refs/heads/staging $trunk refs/heads/staging $trunk" \
+    "" origin "takes changes through a pull request"
+  expect_push 1 "direct push to development" "refs/heads/development $trunk refs/heads/development $trunk" \
+    "" origin "takes changes through a pull request"
+  expect_push 1 "deleting main"              "refs/heads/main $zero refs/heads/main $trunk" \
+    "" origin "That branch is the trunk of the flow"
+
+  echo "pre-push — feature branches and new tags remain available"
+  expect_push 0 "a feature branch" \
+    "refs/heads/x $trunk refs/heads/phase-1/group-3-tax $trunk"
+  expect_push 1 "an environment variable cannot bypass a protected push" \
+    "refs/heads/main $trunk refs/heads/main $trunk" "POS_ALLOW_PROTECTED_PUSH=1"
+  # A NEW v* tag goes through release.yml's own refusals before it is pushed,
+  # because a server-side rejection spends the version number permanently.
+  #
+  # Each names the control that must fire. These all pass a COMMIT sha, so the
+  # lightweight refusal is reached first for every one of them — which is exactly
+  # how the deeper chain went unexercised. The tag OBJECT cases are below, where
+  # objects can be built.
+  expect_push 1 "a new lightweight v* tag is refused" \
+    "refs/tags/v9.9.9 $trunk refs/tags/v9.9.9 $zero" "" origin "is a lightweight tag"
+  expect_push 1 "a v* tag outside the release grammar is refused" \
+    "refs/tags/v9.9 $trunk refs/tags/v9.9 $zero" "" origin "is not a release tag grammar"
+  expect_push 1 "a v* tag with a leading zero is refused" \
+    "refs/tags/v9.09.9 $trunk refs/tags/v9.09.9 $zero" "" origin "is not a release tag grammar"
+  expect_push 1 "a v* prerelease tag with a zero iteration is refused" \
+    "refs/tags/v9.9.9-rc.0 $trunk refs/tags/v9.9.9-rc.0 $zero" "" origin "is not a release tag grammar"
+  expect_push 0 "a non-release tag name is not a release tag" \
+    "refs/tags/checkpoint-1 $trunk refs/tags/checkpoint-1 $zero"
+  expect_push 1 "moving an existing tag is refused" \
+    "refs/tags/v9.9.9 $trunk refs/tags/v9.9.9 1111111111111111111111111111111111111111" \
+    "" origin "moving existing tag"
+  expect_push 1 "deleting an existing tag is refused" \
+    "refs/tags/v9.9.9 $zero refs/tags/v9.9.9 $trunk" "" origin "deleting existing tag"
+  expect_push 1 "an unreadable local commit fails closed" \
+    "refs/heads/x 1111111111111111111111111111111111111111 refs/heads/x $zero"
+  expect_push 1 "a malformed ref update fails closed" \
+    "refs/heads/x $trunk refs/heads/x"
 
   echo "pre-push — a force-push to a protected branch discards published commits"
   # Pushing the FIRST commit over a remote that already has the second: the
@@ -498,37 +556,6 @@ else
   bad "the pre-push secret-history fixture could not be built"
 fi
 rm -rf "$secret_fixture"
-
-echo "pre-push — feature branches and new tags remain available"
-expect_push 0 "a feature branch"           "refs/heads/x $head_sha refs/heads/phase-1/group-3-tax $head_sha"
-expect_push 1 "an environment variable cannot bypass a protected push" \
-  "refs/heads/main $head_sha refs/heads/main $head_sha" "POS_ALLOW_PROTECTED_PUSH=1"
-# A NEW v* tag now goes through release.yml's own refusals before it is pushed,
-# because a server-side rejection spends the version number permanently.
-#
-# Each names the control that must fire. These all pass a COMMIT sha, so the
-# lightweight refusal is reached first for every one of them — which is exactly
-# how the deeper chain went unexercised. The tag OBJECT cases live in the fixture
-# above, where objects can be built.
-expect_push 1 "a new lightweight v* tag is refused" \
-  "refs/tags/v9.9.9 $head_sha refs/tags/v9.9.9 $zero" "" origin "is a lightweight tag"
-expect_push 1 "a v* tag outside the release grammar is refused" \
-  "refs/tags/v9.9 $head_sha refs/tags/v9.9 $zero" "" origin "is not a release tag grammar"
-expect_push 1 "a v* tag with a leading zero is refused" \
-  "refs/tags/v9.09.9 $head_sha refs/tags/v9.09.9 $zero" "" origin "is not a release tag grammar"
-expect_push 1 "a v* prerelease tag with a zero iteration is refused" \
-  "refs/tags/v9.9.9-rc.0 $head_sha refs/tags/v9.9.9-rc.0 $zero" "" origin "is not a release tag grammar"
-expect_push 0 "a non-release tag name is not a release tag" \
-  "refs/tags/checkpoint-1 $head_sha refs/tags/checkpoint-1 $zero"
-expect_push 1 "moving an existing tag is refused" \
-  "refs/tags/v9.9.9 $head_sha refs/tags/v9.9.9 1111111111111111111111111111111111111111" \
-  "" origin "moving existing tag"
-expect_push 1 "deleting an existing tag is refused" \
-  "refs/tags/v9.9.9 $zero refs/tags/v9.9.9 $head_sha" "" origin "deleting existing tag"
-expect_push 1 "an unreadable local commit fails closed" \
-  "refs/heads/x 1111111111111111111111111111111111111111 refs/heads/x $zero"
-expect_push 1 "a malformed ref update fails closed" \
-  "refs/heads/x $head_sha refs/heads/x"
 
 # expect_commit <expected-exit> <label> <path> [content]
 expect_commit() {
