@@ -118,7 +118,7 @@ jobs:
       # every pull request, so a canary nobody waits on pays a cold build
       # instead of slowing the gate everybody waits on.
       - name: Install the pinned cargo-nextest release
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:
           tool: nextest@0.9.143
           fallback: none
