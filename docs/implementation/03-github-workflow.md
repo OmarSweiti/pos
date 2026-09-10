@@ -233,12 +233,13 @@ both refused. Configure and verify the signing identity before attempting the fi
 
 ## 3 · What GitHub and the repository enforce here
 
-This repository has been **public since 30 August 2026**, and since **9 September 2026** three
-rulesets are configured:
+This repository has been **public since 30 August 2026**. Rulesets arrived on `development`,
+`staging` and `refs/tags/v*` on **9 September 2026**, and on `main` on **10 September 2026**:
 
 ```
 $ gh api repos/OmarSweiti/pos/rulesets --jq '.[]|"\(.name) \(.target) \(.enforcement)"'
 development-flow     branch  active
+main-append-only     branch  active
 staging-promotion    branch  active
 tags-v-append-only   tag     active
 
@@ -246,21 +247,33 @@ $ gh api repos/OmarSweiti/pos/branches/main/protection
 404  Branch not protected
 ```
 
-`development` and `staging` now require a pull request and six passing checks — `rust`, `guards`,
+That 404 is **not** evidence that `main` is unprotected. It is the *legacy* branch-protection
+API, a separate surface from rulesets; `main` is covered by `main-append-only` and this endpoint
+cannot see it. Read `rulesets`, not `branches/*/protection`, when answering what is enforced.
+
+`development` and `staging` require a pull request and six passing checks — `rust`, `guards`,
 `web`, `supply-chain`, `protected-paths`, `topology` — block force pushes and deletions, and
 constrain the merge method: squash or merge on `development`, merge commit only into `staging`.
-`refs/tags/v*` is append-only with no bypass actor.
+`refs/tags/v*` is append-only with no bypass actor. All four definitions are checked in under
+[`../../.github/rulesets/`](../../.github/rulesets/), which is also where the diff and restore
+commands live.
 
-Three things are still true and are the reason the table below keeps its "honest limit" column.
-**`main` remains unprotected**, deliberately: its `ci.yml` predates four of the six required jobs,
+`main` is the uneven one, and deliberately so. It carries `deletion` and `non_fast_forward` and
+nothing else: those two rules need no status checks, so they could be applied while the reason for
+having no *required checks* still holds — main's `ci.yml` predates four of the six required jobs,
 so requiring them would leave a `hotfix/*` branch cut from `main` waiting on checks that never
-report. The **admin holds `bypass_mode: "pull_request"`** on both branch rulesets, so a red check
-is still mergeable by the maintainer — through a pull request only, never a direct push, and the
-bypass is logged as an event. And the git hooks stay local and bypassable. So:
+report. Force-pushing or deleting `main` is therefore refused server-side today, while a pull
+request is still not required there and no check is a merge wall. Both arrive when a promotion
+carries the current `ci.yml` onto `main`.
+
+Two limits remain and are the reason the table below keeps its "honest limit" column. The **admin
+holds `bypass_mode: "pull_request"`** on all three branch rulesets, so a red check is still
+mergeable by the maintainer — through a pull request only, never a direct push, and the bypass is
+logged as an event. And the git hooks stay local and bypassable. So:
 
 | Rule | Control | Honest limit |
 |---|---|---|
-| No direct, force, or deletion push to `main`/`staging`/`development` | server-side on `development` and `staging` (ruleset: pull request required, `non_fast_forward`, `deletion`); [`.githooks/pre-push`](../../.githooks/pre-push) for all three, using Git's supplied destination remote | `main` has no ruleset yet, so there it is local only, and `--no-verify` or an unconfigured clone bypasses the hook |
+| No direct, force, or deletion push to `main`/`staging`/`development` | server-side on all three (`non_fast_forward` and `deletion` everywhere; a pull request is additionally required on `development` and `staging`); [`.githooks/pre-push`](../../.githooks/pre-push) for all three, using Git's supplied destination remote | a *direct* push to `main` is not refused server-side — only a force push or a deletion is, because `main` has no `pull_request` rule — so for that case the hook is still the only control, and `--no-verify` or an unconfigured clone bypasses it |
 | Existing tags never move or disappear | server-side for `refs/tags/v*` (`tags-v-append-only`: `update` and `deletion` blocked, **no bypass actor**, so it binds the maintainer too); `.githooks/pre-push` allows a new tag but refuses every update/deletion; the release workflow revalidates the remote annotated-tag object around draft mutation | the ruleset covers `v*` only — any other tag name is hook-only — and draft/tag binding is not atomic until immutable publication |
 | Commit and squash title obey the exact same grammar | [`scripts/validate-change-title.sh`](../../scripts/validate-change-title.sh), called by `commit-msg` and `branch-flow` | `topology` is a required check on `development` and `staging`, so a red title check now blocks the merge button there; the admin can still bypass through a pull request, and that bypass is logged |
 | Coding assistants receive no PR or history attribution; the exact Dependabot metadata/trailer combination remains visible | [`scripts/check-automation-attribution.py`](../../scripts/check-automation-attribution.py), called by Git and trusted CI for commits plus the PR title/body | Git author metadata is spoofable and local hooks are bypassable; `protected-paths` is now a required check on `development` and `staging`, so CI is a merge wall there, subject to the logged admin bypass |
@@ -290,8 +303,9 @@ symlinks), mode changes, and any added local Action are refused, as is adding or
 workflow. Ordinary application and test implementation remains outside this exact-byte boundary.
 A change to the future policy surface is therefore intentionally red
 under the current trusted revision and requires an explicit manual security review before merge.
-That red result is the review signal; because no branch protection or ruleset is configured to make
-it a merge wall, an explicit human review authorises the change. After it lands, its exact
+That red result is the review signal, and on `development` and `staging` the ruleset now makes it
+a merge wall as well — subject to the logged administrator bypass, which is why an explicit human
+review still authorises the change rather than a green check alone. After it lands, its exact
 `github.workflow_sha` becomes the policy used for later PRs. This friction prevents a green
 policy-only PR from silently poisoning the next trusted run; it does not pretend that a red check
 can block the administrator while no server-side rule requires it.

@@ -50,7 +50,8 @@ never add AI attribution trailers. The exact Dependabot bot author/trailer combi
 narrow compatibility exception and uses the same title grammar with `[—]`; Git author metadata
 alone is not cryptographic proof of App identity.
 
-Branch protection is **configured on two of the three flow branches**, since 9 September 2026.
+Branch protection covers **all three flow branches**, unevenly and on purpose — `development` and
+`staging` since 9 September 2026, `main` since 10 September 2026.
 `development` and `staging` each carry an active ruleset: a pull request is required, six status
 checks must pass (`rust`, `guards`, `web`, `supply-chain`, `protected-paths`, `topology`), force
 pushes and deletions are blocked, and the merge method is constrained — squash or merge on
@@ -59,11 +60,19 @@ the squashed promotion that forked the branches once already. A separate tag rul
 `refs/tags/v*` append-only with **no bypass actor at all**: a `v*` tag may be created and can then
 never be moved or deleted, by anyone, which is the one control here that binds the maintainer too.
 
-Three limits are deliberate and must not be overstated. **`main` is still unprotected** —
-`branches/main/protection` answers `404 Branch not protected`, because main's `ci.yml` predates
-four of the six required jobs, so a `hotfix/*` branch cut from `main` would wait forever on checks
-that never report; `main` gets its ruleset only after a promotion carries the current `ci.yml`
-onto it. The repository **admin keeps `bypass_mode: "pull_request"`** on both branch rulesets, so a
+Branch protection is configured on **all three** flow branches, but not equally, and the
+difference is the point. `main` carries `main-append-only`: `deletion` and `non_fast_forward`
+only. Those two rules need no status checks, so they could be applied while the reason `main` has
+no *required checks* still holds — main's `ci.yml` predates four of the six required jobs, and a
+`hotfix/*` branch cut from `main` would wait forever on checks that never report. So force-pushing
+or deleting `main` is refused server-side today, while a pull request is still not required there
+and no check is a merge wall; that arrives when a promotion carries the current `ci.yml` onto it.
+`branches/main/protection` still answers `404 Branch not protected` — that is the *legacy*
+protection API, a separate surface from rulesets, and it is not evidence that `main` is
+unprotected.
+
+Two limits remain and must not be overstated. The repository **admin keeps
+`bypass_mode: "pull_request"`** on all three branch rulesets, so a
 red check can still be merged — but only through a pull request, never a direct push, and GitHub
 records the bypass as an event, which is the review artifact that disabling and re-enabling a
 ruleset would not leave. And the git hooks in `.githooks/` are still the first local net, so

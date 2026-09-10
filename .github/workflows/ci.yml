@@ -413,9 +413,10 @@ jobs:
   # made, and the repair needed a force-push to a flow branch that
   # .githooks/pre-push is written to refuse.
   #
-  # The staging ruleset now constrains allowed_merge_methods to ["merge"], but main
-  # has no ruleset yet — deliberately, because main's ci.yml predates four of the
-  # six required contexts. So this is the backstop for the staging -> main route,
+  # The staging ruleset now constrains allowed_merge_methods to ["merge"]. Main's
+  # ruleset does not constrain the merge method — it carries `deletion` and
+  # `non_fast_forward` only, deliberately, because main's ci.yml predates four of
+  # the six required contexts. So this is the backstop for the staging -> main route,
   # and the only check anywhere that inspects what actually landed rather than what
   # was permitted to land.
   #

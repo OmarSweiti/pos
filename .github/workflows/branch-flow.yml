@@ -1,8 +1,11 @@
 name: branch-flow
 
-# No branch protection or ruleset is configured, so no check is a merge wall.
-# This workflow therefore makes violations visible and logged, but it cannot
-# prevent the repository administrator from merging a red check.
+# On `development` and `staging` this workflow's checks ARE a merge wall: both
+# rulesets require `protected-paths` and `topology` among their six contexts.
+# What it still cannot do is stop the repository administrator, who holds
+# bypass_mode: "pull_request" on all three branch rulesets — a red check remains
+# mergeable through a pull request, and the bypass is logged as an event.
+# `main` requires no check at all, so on that branch this is visibility only.
 # Paid-plan enforcement is intentionally out of scope.
 #
 # `pull_request_target` is load-bearing here: GitHub reads this workflow from the
