@@ -62,6 +62,7 @@ STATIC_POLICY_PATHS = %w[
   scripts/check-node-version.py
   scripts/check-domain-acyclic.py
   scripts/check-domain-purity.py
+  scripts/check-hooks-installed.py
   scripts/check-implementation-frontier.py
   scripts/check-justfile-policy.py
   scripts/check-js-licenses.py

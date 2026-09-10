@@ -93,6 +93,36 @@ expect_body 0 "a commented-out trailer from a template" \
   'feat(domain): tax engine   [1.3.4]
 
 # Co-Authored-By: Claude <noreply@anthropic.com>'
+# `git commit -v` appends the staged diff below a scissors line and strips it
+# AFTER this hook runs. Everything below that line is the diff, not the message,
+# and a diff CONTEXT line is indistinguishable from a trailer once its leading
+# space is absorbed by the checker's own anchor. Seventeen lines of this very
+# file would otherwise refuse a clean commit that merely edits near them — and
+# the obvious escape from a refusal naming a trailer you never wrote is
+# --no-verify, which drops the whole local net.
+expect_body 0 "an attribution trailer below the scissors line is diff, not message" \
+  'test(repo): clarify a hook test label   [—]
+
+# Please enter the commit message for your changes.
+# ------------------------ >8 ------------------------
+diff --git a/.githooks/test-hooks.sh b/.githooks/test-hooks.sh
+--- a/.githooks/test-hooks.sh
++++ b/.githooks/test-hooks.sh
+@@ -63,7 +63,7 @@
+-expect_body 1 "a Claude co-author trailer" \
++expect_body 1 "a Claude co-author trailer (long form)" \
+   '"'"'feat(domain): tax engine   [1.3.4]
+
+ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>'"'"''
+# The cut must not become a way to smuggle one in: the message half is still
+# read in full, so a trailer ABOVE the scissors refuses exactly as before.
+expect_body 1 "a trailer above the scissors line is still the message" \
+  'feat(domain): tax engine   [1.3.4]
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+
+# ------------------------ >8 ------------------------
+diff --git a/a.txt b/a.txt'
 expect_body 1 "Copilot" \
   'feat(domain): tax engine   [1.3.4]
 
@@ -272,6 +302,54 @@ Co-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.c
   spoofed_bot=$(git rev-parse HEAD)
   expect_push 1 "a spoofed Dependabot author does not earn the exception" \
     "refs/heads/spoof $spoofed_bot refs/heads/spoof $zero" "" upstream
+
+  # The sensitive-path list and the 2 MB blob cap live in one checker and have no
+  # server-side equivalent. Git runs `pre-commit` for an ordinary commit and
+  # routes around it for a clean merge, a cherry-pick, a revert and
+  # `rebase --continue` — so pre-push applies them to the pushed range too.
+  #
+  # These paths are deliberately NOT secret-shaped (.sqlite, .bin rather than
+  # .env or id_rsa): an agent sandbox denies reading a secret-shaped path even
+  # inside a throwaway fixture, and a case that skips is not a case that passed.
+  # Each branch starts from the published tip so only its own commit is in range.
+  git update-ref refs/remotes/upstream/development "$spoofed_bot"
+
+  git checkout -q -B content-db "$spoofed_bot"
+  printf 'SQLite format 3' > payments.sqlite
+  git add -f payments.sqlite
+  git commit -q -m "chore(repo): capture a register database   [—]"
+  db_commit=$(git rev-parse HEAD)
+
+  git checkout -q -B content-big "$spoofed_bot"
+  head -c 2100000 /dev/zero > oversized.bin
+  git add -f oversized.bin
+  git commit -q -m "chore(repo): a blob Git keeps forever   [—]"
+  big_commit=$(git rev-parse HEAD)
+
+  git checkout -q -B content-clean "$spoofed_bot"
+  printf 'ok\n' > fine.txt
+  git add fine.txt
+  git commit -q -m "chore(repo): an ordinary file   [—]"
+  clean_commit=$(git rev-parse HEAD)
+
+  echo "pre-push — the content rules judge an already-committed range"
+  expect_push 1 "a database file inside a pushed commit" \
+    "refs/heads/content-db $db_commit refs/heads/content-db $zero" "" upstream
+  expect_push 1 "an oversized blob inside a pushed commit" \
+    "refs/heads/content-big $big_commit refs/heads/content-big $zero" "" upstream
+  expect_push 0 "an ordinary file is not blocked" \
+    "refs/heads/content-clean $clean_commit refs/heads/content-clean $zero" "" upstream
+
+  # THE classic pre-push bug: a child that reads stdin consumes Git's remaining
+  # ref updates, so the loop runs once and the hook exits 0 having inspected one
+  # ref. Measured with the protections removed, a ref carrying a sensitive path
+  # reached the remote with no refusal printed at all. The violation is on the
+  # LAST line on purpose — only a loop that survives all three can refuse it.
+  echo "pre-push — Git's ref-update list survives every child in the loop"
+  expect_push 1 "three refs at once, the violation on the last" \
+    "refs/heads/content-clean $clean_commit refs/heads/content-clean $zero
+refs/heads/topic-a $clean_commit refs/heads/topic-a $zero
+refs/heads/content-db $db_commit refs/heads/content-db $zero" "" upstream
 
   printf '%s %s %s\n' "$pass" "$fail" "$skipped" > "$fixture/.tally"
 )
