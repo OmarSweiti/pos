@@ -1362,6 +1362,7 @@ mod tests {
             now,
         )
         .unwrap();
+        let nonce = Uuid::new_v4().into_bytes();
         assert_eq!(
             ApprovalHandle::issue(
                 approval(207),
@@ -1371,7 +1372,7 @@ mod tests {
                 "zero ttl must not issue".to_owned(),
                 now,
                 0,
-                [1; 16],
+                nonce,
             )
             .unwrap_err(),
             PermissionError::ApprovalExpired(now)
