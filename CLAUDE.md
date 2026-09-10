@@ -60,9 +60,8 @@ the squashed promotion that forked the branches once already. A separate tag rul
 `refs/tags/v*` append-only with **no bypass actor at all**: a `v*` tag may be created and can then
 never be moved or deleted, by anyone, which is the one control here that binds the maintainer too.
 
-Branch protection is configured on **all three** flow branches, but not equally, and the
-difference is the point. `main` carries `main-append-only`: `deletion` and `non_fast_forward`
-only. Those two rules need no status checks, so they could be applied while the reason `main` has
+`main` is the uneven one, and deliberately so. It carries `main-append-only`: `deletion` and
+`non_fast_forward` only. Those two rules need no status checks, so they could be applied while the reason `main` has
 no *required checks* still holds — main's `ci.yml` predates four of the six required jobs, and a
 `hotfix/*` branch cut from `main` would wait forever on checks that never report. So force-pushing
 or deleting `main` is refused server-side today, while a pull request is still not required there
