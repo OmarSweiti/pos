@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Advisory only. Says what a pull just invalidated; refuses nothing.
+#
+# 02-development-workflow.md's session-start ritual is `git switch development &&
+# git pull --ff-only`, then "`just setup` if the lockfiles moved" — the developer
+# is asked to notice a lockfile change BY EYE. This is that noticing, automated.
+#
+# Every path exits 0, and that is discipline rather than mechanism: git ignores
+# this hook's status (measured — a hook exiting 9 still leaves `git merge` at 0).
+# A post-merge hook cannot roll back the merge that already happened, so refusing
+# here would be theatre. Its sibling `post-checkout` is deliberately NOT written:
+# there the exit status is NOT ignored — it propagates to `git clone` and
+# `git worktree add` — so an advisory would carry a real breakage hazard, and it
+# fires on every branch switch, which is how an advisory earns being ignored.
+set -uo pipefail
+
+squash="${1:-0}"
+
+# `merge --squash` does not move HEAD, so ORIG_HEAD..HEAD is empty and the
+# incoming content exists only in the index. Both measured.
+if [ "$squash" = "1" ]; then
+  changed=$(git diff --cached --name-only 2>/dev/null) || exit 0
+else
+  git rev-parse --verify --quiet ORIG_HEAD >/dev/null 2>&1 || exit 0
+  changed=$(git diff --name-only ORIG_HEAD HEAD 2>/dev/null) || exit 0
+fi
+[ -n "$changed" ] || exit 0
+
+held() { printf '%s\n' "$changed" | grep -qxF "$1"; }
+under() { printf '%s\n' "$changed" | grep -q "^$1"; }
+
+notes=''
+add() { notes="${notes}  $1"$'\n'; }
+
+# `just setup` covers these: it re-runs `pnpm install --frozen-lockfile` and
+# `cargo fetch --locked`.
+if held pnpm-lock.yaml || held Cargo.lock; then
+  add "dependencies moved      → just setup"
+fi
+
+# NOT `just setup` on its own. setup runs check-node-version.py, which is
+# fail-closed against .nvmrc: with the wrong Node installed it REFUSES before
+# installing anything, so the runtime has to be re-provisioned first.
+if held .nvmrc; then
+  add "the Node pin moved      → nvm use  (or fnm use), THEN just setup"
+fi
+
+# rustup reads this file and installs the toolchain on the next cargo
+# invocation, so there is nothing to run — but a first build will be slow.
+if held rust-toolchain.toml; then
+  add "the Rust toolchain moved → rustup installs it on the next cargo run"
+fi
+
+# SQLite migrations are applied by the application at runtime, so the useful
+# local check is parity, not a migrate command. The Postgres mirror is the one
+# that needs running.
+if under crates/pos-db/migrations/; then
+  add "SQLite migrations landed → just verify-schema"
+fi
+if under apps/server/migrations/; then
+  add "Postgres migrations landed → just migrate"
+fi
+
+[ -n "$notes" ] || exit 0
+
+# stderr, so a `$(git pull ...)` capture stays clean.
+{
+  echo "post-merge: this pull changed something your environment is pinned to."
+  printf '%s' "$notes"
+} >&2
+exit 0

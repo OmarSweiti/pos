@@ -196,6 +196,14 @@ Codex-specific execution policy and hook adapters live under `.codex/`.
 | `scripts/check-branch-workflow-policy.rb` | weakening the read-only `pull_request_target` boundary, title/body attribution wiring, any workflow definition, or the trusted CI/agent/Git-hook/label/dependency/security/repository-setup policy and helper set without an explicit red/manual review. **This file and `AGENTS.md` are inside that frozen set**, so editing either is deliberately red until a human reads the diff; ordinary application/test code is not byte-pinned |
 | `scripts/gh-actions-policy.sh` | mutable or unapproved external Action references before the post-merge full-SHA repository policy is enabled |
 
+One hook in `.githooks/` is **not** in that table because it refuses nothing:
+`post-merge` prints a single advisory line when a pull moves `pnpm-lock.yaml`,
+`Cargo.lock`, `.nvmrc`, `rust-toolchain.toml` or either migrations directory, and
+is silent otherwise. Git ignores its exit status, so it is advice, not a control.
+Its sibling `post-checkout` is deliberately absent: git does **not** ignore that
+one's status — it propagates to `git clone` and `git worktree add` — and it fires
+on every branch switch, which is how an advisory earns being ignored.
+
 All are negative-tested — `just guards` runs every suite
 (`.claude/hooks/test-settings.py`, `.claude/hooks/test-protect-immutable.sh`,
 `.claude/hooks/test-docs-links.sh`,

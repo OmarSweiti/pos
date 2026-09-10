@@ -1597,7 +1597,7 @@ These are the smallest set that actually works.
 
 | When | Ritual |
 |---|---|
-| **Start of a session** | `git switch development && git pull --ff-only`, `just setup` if the lockfiles moved, then read the microstep you are on out loud. Two minutes; it prevents an hour of building the wrong thing |
+| **Start of a session** | `git switch development && git pull --ff-only`, then read the microstep you are on out loud. Two minutes; it prevents an hour of building the wrong thing. You no longer have to notice a moved lockfile by eye: [`.githooks/post-merge`](../../.githooks/post-merge) prints one advisory line naming what the pull invalidated and exactly what to run. It is advisory — it refuses nothing, because a post-merge hook cannot undo the merge that already happened |
 | **Before each microstep** | its `ref/` sections and its `E.n` rows — §4.1 |
 | **After each microstep** | gates, manual check, commit. Never leave a microstep half-done overnight; finish it or revert it |
 | **End of a session** | `git status` clean or `git stash` with a message. Write the next action as a single sentence in the branch's PR description — future-you starts from a sentence, not from a diff |
