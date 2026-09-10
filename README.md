@@ -77,9 +77,10 @@ dependency step, so a failed install does not leave the clone silently
 unprotected. `development` and `staging` carry active rulesets — a pull request
 and six passing checks are required, force pushes and deletions are blocked — and
 `refs/tags/v*` is append-only with no bypass. The hooks remain a bypassable local
-safety net in front of that. **`main` has no ruleset yet**, deliberately: its
-`ci.yml` predates four of the six required checks. So a clone that skipped setup
-can still push straight to `main`, though no longer to `development` or `staging`.
+safety net in front of that. **`main` blocks force pushes and deletions**, and
+deliberately nothing more: those two rules need no status checks, while its
+`ci.yml` predates four of the six required checks, so requiring them would leave
+a `hotfix/*` waiting forever. A pull request is still not required on `main`.
 `just --list` shows everything else.
 
 ## Quality gates
