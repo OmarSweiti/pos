@@ -62,7 +62,7 @@
             "context": "topology"
           }
         ],
-        "strict_required_status_checks_policy": false
+        "strict_required_status_checks_policy": true
       },
       "type": "required_status_checks"
     }

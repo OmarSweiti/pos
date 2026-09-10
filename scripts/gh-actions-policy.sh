@@ -28,7 +28,6 @@ readonly -a APPROVED_ACTIONS=(
   actions/setup-python
   actions/upload-artifact
   anchore/sbom-action
-  EmbarkStudios/cargo-deny-action
   pnpm/action-setup
   raven-actions/actionlint
   Swatinem/rust-cache

@@ -1120,7 +1120,9 @@ git log --oneline -10           # is the history still readable as a plan?
 
 ## 9 · CI, and reproducing it locally
 
-CI runs on every push to `development`, `staging` and `main`, and on every PR into them:
+CI runs on every push to `development`, `staging` and `main`, and on every PR into them. Two of the
+workflows below run on a cron and nothing else; `security.yml` carries a weekly cron alongside its
+path-filtered pull-request lane. The weekly rows say so:
 
 | Workflow | Job | Steps | Local equivalent |
 |---|---|---|---|
@@ -1131,8 +1133,36 @@ CI runs on every push to `development`, `staging` and `main`, and on every PR in
 | [`ci.yml`](../../.github/workflows/ci.yml) | `cross-platform` | core tests and a real Tauri package build on Linux/macOS/Windows; the packaged-app WebDriver smoke suite is future work owned by 2.9.5 | run the platform tests and Tauri build on each supported OS |
 | [`branch-flow.yml`](../../.github/workflows/branch-flow.yml) | `protected-paths`, `topology` | exact-workflow-revision policy · verified data-only PR head · legal head/base/repository · title and attribution | relevant `just guards` self-tests |
 | [`labeler.yml`](../../.github/workflows/labeler.yml) | `label` | path-derived area/risk plus title-derived type, executing only trusted base code | `bash scripts/validate-change-title.sh --self-test` for normalization and `bash scripts/pr-type-label.sh --self-test` for type selection; GitHub event, path labeling and mutations remain server-only |
-| [`security.yml`](../../.github/workflows/security.yml) | workflow analysis, scheduled advisories | actionlint · zizmor · weekly full-history secret and dependency scan | policy self-tests plus `just secrets && just audit` |
+| [`security.yml`](../../.github/workflows/security.yml) | `workflow-analysis`, `scheduled-advisories`, `scheduled-failure-escalation` | actionlint · zizmor · weekly full-history secret and dependency scan, on the default branch only · a standing issue when a scheduled run goes red | policy self-tests plus `just secrets && just audit` |
+| [`proptest-scheduled.yml`](../../.github/workflows/proptest-scheduled.yml) | `domain-properties`, `scheduled-failure-escalation` | weekly, Tuesday 02:37 UTC: every `pos-domain` property at `PROPTEST_CASES=100000` under a seed printed for replay · a standing issue when a scheduled run goes red | `PROPTEST_CASES=100000 cargo nextest run -p pos-domain -E 'test(/::prop_/)'` |
+| [`cross-platform-canary.yml`](../../.github/workflows/cross-platform-canary.yml) | `build`, `escalate` | weekly, Thursday 04:13 UTC: the four platform-sensitive crates' tests and a real Tauri package build on `ubuntu-22.04`, `macos-latest` and `windows-latest`, never failing fast so the run says *which* platforms broke · a standing issue when a scheduled run goes red | run the platform tests and Tauri build on each supported OS |
 | [`release.yml`](../../.github/workflows/release.yml) | guard, platform signing, publisher, metadata | verified signed exact-tip tag · exact-SHA CI · least-privilege publishing · SBOM/checksums | the release checklist in §15 |
+
+The three weekly crons deliberately fall on three different days — `security` Monday 03:23 UTC, the
+property suite Tuesday 02:37, the cross-platform canary Thursday 04:13 — so no two of them contend
+for runner capacity, and Thursday is the last day a red matrix can still be read before the
+Jordanian weekend. The canary exists because [`ci.yml`](../../.github/workflows/ci.yml)'s
+`cross-platform` job is gated to promotion refs, so a macOS- or Windows-only break in `development`
+was otherwise first seen by a promotion PR whose bisect range is every squash commit since the last
+promotion.
+
+No scheduled lane audits `staging` or `main`. A `schedule` event fires only from the default
+branch, so the weekly advisory scan reads `development`'s pins and nothing else, and an advisory
+against a version `main` pins is reported by no clock — only by `ci.yml`'s `supply-chain` job when a
+promotion PR opens. A matrix job that checked out each flow branch and audited it was written and
+then removed: a scheduled run holds the default branch's privileged cache scope, and checking out
+another ref and executing it there — `pnpm install` runs lifecycle scripts — is a cache-poisoning
+shape CodeQL flags and `schedule` offers no unprivileged context to escape. The gap is accepted
+because it is almost entirely the window in which `main` sits far behind `development`, and the
+repair for that is promotion rather than a second audit lane.
+
+**None of the scheduled jobs may ever become a required status check.** `proptest-scheduled.yml` and
+`cross-platform-canary.yml` trigger on `schedule` and `workflow_dispatch` only, and inside
+`security.yml` the advisory and escalation jobs are each guarded to those same events —
+so none of them produces a check run on a pull request, and a required-but-absent context blocks a
+pull request forever. The required set stays exactly the six in
+[`03-github-workflow.md`](03-github-workflow.md) §3. These lanes' verdicts are read from the Actions
+tab, or from the standing issue each one files on a red scheduled run.
 
 `ci` cancels a superseded run on a work branch, but never on `staging` or `main`: a half-cancelled
 promotion build tells you nothing about whether the candidate was green. Standard hosted-runner
@@ -1603,9 +1633,50 @@ These are the smallest set that actually works.
 | **End of a session** | `git status` clean or `git stash` with a message. Write the next action as a single sentence in the branch's PR description — future-you starts from a sentence, not from a diff |
 | **Per group** | PR into `development`, CI, squash-merge, delete the branch, close the doc loop, run the §5.9 smoke |
 | **Per candidate** | `just flow`, then promote `development → staging` with the promotion template's evidence filled in honestly, tag `-rc.<n>`, and install it somewhere real |
-| **Weekly** | re-read the phase's group graph. Is the order still right? Then the board's **Blocked** view — `gh issue list --label "needs: merchant answer"`. Anything blocked for a week is a risk, not a task |
+| **Weekly** | re-read the phase's group graph. Is the order still right? Then the board's **Blocked** view — `gh issue list --label "needs: merchant answer"`. Anything blocked for a week is a risk, not a task. Then **confirm the three scheduled lanes actually ran** — the commands are below the table |
 | **Per phase** | the exit gate, in full, including the demonstrations. Then re-read the risk register in [`00-master-plan.md`](00-master-plan.md) §6 — every row has a **review date** for exactly this moment — the long-lead register in §6a, the open items in §4a.3, and the accepted risks in [`ref/sync-protocol.md`](ref/sync-protocol.md). Run `just bench-gate` after 1.2.0; from Phase 2 onward, run `just test-soak` only after 2.9.6 creates it |
 | **Quarterly** | the validation re-audit (§14), and re-diff the pinned ISTD manifest against the current official package in the same pass |
+
+### The weekly schedule-recency check
+
+Three workflows carry a weekly cron: `security` on Monday, `proptest-scheduled` on Tuesday,
+`cross-platform-canary` on Thursday — §9 has the inventory. `security.yml` also runs on pushes and
+pull requests that touch `.github/**`, but its advisory jobs are guarded to the schedule, so the
+cron is the only thing that ever runs them. Each of the three now files a standing issue when a
+scheduled run goes red, which covers the case where a lane **ran and failed**. It cannot cover the
+case that matters more, because the run that would file the issue is the run that never starts:
+
+- GitHub **disables scheduled workflows in a public repository after 60 days with no repository
+  activity**, and emails the last committer. That is a plausible gap for this project — a fortnight
+  of hardware waiting, a month on a reference document — and once disabled, a lane is silent in
+  exactly the way a healthy lane is.
+- GitHub also drops or delays scheduled runs under load, in UTC, with no notification. Jitter
+  observed on this repository is **4.5 hours and 6.8 hours** against a 02:37 target, which is why
+  the check below asks about days rather than hours.
+
+So look at when each lane last actually started, not at whether its last run was green:
+
+```bash
+for wf in security.yml proptest-scheduled.yml cross-platform-canary.yml; do
+  printf '%-28s ' "$wf"
+  gh run list --workflow "$wf" --event schedule --limit 1 \
+    --json createdAt,conclusion \
+    --jq '.[0] // {} | "\(.createdAt // "NEVER RAN ON A SCHEDULE") \(.conclusion // "")"'
+done
+gh workflow list --all      # a lane GitHub switched off reports disabled_inactivity here
+```
+
+**If the newest scheduled run of a lane is more than about nine days old, the lane has stopped** —
+seven days for the cadence plus the observed jitter and a margin. Re-enable it and prove it works,
+rather than waiting a week to find out:
+
+```bash
+gh workflow enable proptest-scheduled.yml          # per lane, as needed
+gh workflow run proptest-scheduled.yml --ref development
+```
+
+A `workflow_dispatch` run is deliberately *not* an escalation trigger in any of the three — a human
+is already reading the log — so a dispatched run confirms the lane executes but files no issue.
 
 Two habits that pay for themselves:
 

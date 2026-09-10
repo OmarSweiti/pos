@@ -73,7 +73,17 @@ jobs:
         with:
           toolchain: ${{ steps.pin.outputs.channel }}
           components: rustfmt, clippy
+      # Restore everywhere, save only from the default branch. A pull-request run
+      # that saves its own copy of what `development` is about to save duplicates a
+      # multi-gigabyte entry, and this repository is already at its cache ceiling —
+      # 10,555,721,908 bytes across 100 entries against a 10 GB limit, which is the
+      # point where eviction starts deleting the entries that were worth keeping.
+      # GitHub already scopes a cache written on a pull-request ref so the base
+      # branch can never read it, so this is a capacity control and not a security
+      # one.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/development' }}
       - name: Install the pinned cargo-nextest release
         uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
         with:
@@ -371,12 +381,49 @@ jobs:
           # verifier counts the SHAs it was handed and refuses if git described
           # fewer, so a short read fails closed rather than skipping the rest.
           "$verifier" --commits-file "$commits"
-      - name: Rust advisories, licences, and duplicate/banned crates
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+      # This job needs a Rust toolchain now, and did not before: the Dockerfile
+      # action carried its own cargo inside the container. `cargo deny` shells out
+      # to `cargo metadata` to build the dependency graph that `[graph]
+      # all-features` in deny.toml asks for, so cargo has to be here — and if the
+      # step is absent, the runner's ambient cargo reads rust-toolchain.toml and
+      # rustup downloads the pinned channel mid-step anyway. That is the same
+      # "right toolchain by accident, after paying to download the wrong one"
+      # this file rejects for the `rust` job, so the pin is declared rather than
+      # stumbled into. No rust-cache: this job compiles nothing, and an entry that
+      # buys nothing still costs quota the required checks need.
+      - name: Read the pinned toolchain
+        id: pin
+        run: |
+          set -uo pipefail
+          channel=$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml | head -1)
+          [ -n "$channel" ] || { echo "::error::no channel in rust-toolchain.toml"; exit 1; }
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "pinned toolchain: $channel"
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          # Scope comes from `[graph] all-features` in deny.toml, not a flag:
-          # `cargo deny check --all-features` is not a valid invocation.
-          command: check
+          toolchain: ${{ steps.pin.outputs.channel }}
+      # `cargo deny` is the only thing anywhere in this repository that fails a
+      # build on a RustSec advisory or a licence the project cannot ship, so how
+      # the binary that makes that decision arrives on the runner is part of the
+      # control. EmbarkStudios/cargo-deny-action is a Dockerfile action that fetched
+      # its own cargo-deny tarball with `curl | tar` and no integrity check of any
+      # kind: pinning its SHA pinned the wrapper, never the executable that did the
+      # deciding. install-action verifies each download with sha256sum against a
+      # manifest baked into the action at the pinned revision, and 0.20.2 is the
+      # version already recorded in 02-development-workflow.md:111 — so CI now runs
+      # the byte-identical `cargo deny check` that justfile:286 runs locally,
+      # instead of whatever the upstream tarball happens to be today.
+      - name: Install the pinned cargo-deny release
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        with:
+          tool: cargo-deny@0.20.2
+          fallback: none
+      - name: Rust advisories, licences, and duplicate/banned crates
+        # Scope comes from `[graph] all-features` in deny.toml, not a flag:
+        # `cargo deny check --all-features` is not a valid invocation.
+        run: |
+          set -euo pipefail
+          cargo deny check
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -392,13 +439,15 @@ jobs:
   # gate now rests on latency alone — a weaker argument than the one it was written
   # with, and the reason removing it is a queued change rather than a settled one.
   #
-  # The Linux runner is `ubuntu-latest`, like every other job here. It was pinned
-  # to `ubuntu-22.04`, whose Python is 3.10 — below the 3.11 floor
-  # `scripts/run-python.sh` enforces — so the licence step exited 127 with
-  # "Python 3.11+ was not found" before compiling anything. Nothing caught it
-  # because this job runs only on promotion PRs, and until 2026-08-29 there had
-  # never been one. If an older glibc target is ever wanted for the Linux bundle,
-  # it needs a Python set up alongside it rather than an older runner alone.
+  # The Linux leg is pinned to `ubuntu-22.04` for the glibc reason recorded below,
+  # and that pin has a cost the first matrix run paid in full: the runner's ambient
+  # Python is 3.10, below the 3.11 floor `scripts/run-python.sh` enforces, so the
+  # licence step exited 127 with "Python 3.11+ was not found" before compiling
+  # anything. Nothing caught it earlier because this job runs only on promotion
+  # PRs, and until 2026-08-29 there had never been one. It is resolved by the
+  # `actions/setup-python` step that now runs alongside the Linux leg, not by
+  # unpinning the runner: the interpreter was the half that was too old, and the
+  # runner is the half that must not move.
   # So the matrix runs where a break is expensive rather than merely annoying: on
   # the promotion PRs into staging and main, and on those branches themselves.
   # Without this, `release.yml` is the FIRST multi-platform build and a
@@ -482,11 +531,28 @@ jobs:
         run: |
           set -uo pipefail
           channel=$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml | head -1)
+          [ -n "$channel" ] || { echo "::error::no channel in rust-toolchain.toml"; exit 1; }
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "pinned toolchain: $channel"
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: ${{ steps.pin.outputs.channel }}
+          # Both macOS slices, because the bundle this leg builds is the universal
+          # one release.yml ships; release.yml:244 installs the same pair for the
+          # same reason. Without them the universal build below fails looking for an
+          # x86_64 standard library instead of quietly producing half a binary.
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      # Restore on every leg, save only from the two promotion branches. This job
+      # holds the largest single share of the cache quota — measured at 5.11 GiB
+      # across 9 entries — for a job that only ever runs on a promotion, so letting
+      # a promotion PR save a copy of what the promotion push is about to save
+      # doubles the most expensive entries in the repository against a ceiling that
+      # is already full. GitHub scopes a cache written on a pull-request ref so the
+      # base branch can never read it, so this is a capacity control and not a
+      # security one.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main') }}
       - name: Install the pinned cargo-nextest release
         uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
         with:
@@ -509,5 +575,29 @@ jobs:
         run: ./scripts/run-python.sh ./scripts/check-js-licenses.py
       # Compile and bundle the real desktop application before tag time; unit
       # tests alone do not exercise platform-specific Tauri packaging.
+      #
+      # macOS builds the universal bundle, because that is what release.yml:204
+      # actually ships. A bare `tauri build` on an arm64 `macos-latest` compiles
+      # aarch64 alone, so the x86_64 half of the shipped .dmg would be compiled for
+      # the very first time at tag time — the one moment this job exists to make
+      # boring.
+      #
+      # Branching on `$RUNNER_OS` inside the body rather than interpolating an
+      # argument string keeps two properties that are cheaper to hold as flat
+      # rules than to re-argue per site: no `${{ }}` reaches a `run:` anywhere in
+      # this repository, and no word-splitting an empty variable, which is what an
+      # unquoted `$ARGS` would rely on for the Linux and Windows legs.
+      #
+      # What this still cannot cover is updater signing. That keypair is
+      # deliberately absent until microstep 5.5.1 (release.yml:262-266), so a green
+      # leg here proves the bundle compiles and packages on the platform, not that
+      # it is signable there.
       - name: Build the Tauri application on the target operating system
-        run: pnpm --filter terminal tauri build
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = macOS ]; then
+            pnpm --filter terminal tauri build --target universal-apple-darwin
+          else
+            pnpm --filter terminal tauri build
+          fi

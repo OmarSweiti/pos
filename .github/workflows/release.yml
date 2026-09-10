@@ -23,7 +23,12 @@ jobs:
   # cost is now wall-clock and runner capacity rather than metered minutes.
   guard:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The exact-commit CI wait below budgets 90 attempts at 20 seconds — thirty
+    # minutes — so anything under that would kill the job mid-wait and turn a
+    # patient guard back into the misleading failure it was. Forty leaves ten
+    # minutes of headroom for the tag, signature, branch-head and configuration
+    # checks that run before the wait ever starts.
+    timeout-minutes: 40
     permissions:
       actions: read
       contents: read
@@ -142,7 +147,22 @@ jobs:
 
           # A branch push and its tag can arrive together. Wait for that exact
           # branch CI run rather than accepting a green run for another commit.
-          for attempt in $(seq 1 40); do
+          #
+          # The budget lives in these two variables and is never spelled out as a
+          # word anywhere below, because it drifted once already: the loop waited
+          # ten minutes for the run it awaits on staging or main, which carries
+          # the cross-platform matrix at `timeout-minutes: 60` and was measured at
+          # 19m59s with the Windows leg alone taking 19m54s. The guard failed
+          # closed, so nothing shipped unverified — it simply announced that CI
+          # had never gone green while CI was still compiling, at the most
+          # stressful moment this repository has. The runbook still says to watch
+          # branch CI to completion before tagging
+          # (docs/implementation/02-development-workflow.md); thirty minutes is
+          # the net under that habit, not a replacement for it. Change either
+          # number and the error message below follows it.
+          attempts=90
+          interval=20
+          for attempt in $(seq 1 "$attempts"); do
             runs=$(gh api --method GET "$endpoint" \
               -f branch="$expected_branch" \
               -f event=push \
@@ -170,11 +190,20 @@ jobs:
               exit 1
             fi
 
-            echo "waiting for exact-commit CI ($attempt/40)"
-            sleep 15
+            # `active` and `completed` are already computed above, so say which
+            # of the two silences this is. "In progress" means keep waiting;
+            # "no run found yet" means the branch push may never have happened,
+            # and that is the maintainer's cue to go looking for it rather than
+            # to sit out the whole budget.
+            if [ "$active" -gt 0 ]; then
+              echo "waiting for exact-commit CI: run in progress ($attempt/$attempts)"
+            else
+              echo "waiting for exact-commit CI: no run found yet ($attempt/$attempts)"
+            fi
+            sleep "$interval"
           done
 
-          echo "::error::no successful ci.yml push run appeared for $GITHUB_SHA on $expected_branch within ten minutes."
+          echo "::error::no successful ci.yml push run appeared for $GITHUB_SHA on $expected_branch within $(( attempts * interval / 60 )) minutes."
           exit 1
 
   build:
@@ -238,11 +267,21 @@ jobs:
           channel=$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml | head -1)
           [ -n "$channel" ] || { echo "::error::no channel in rust-toolchain.toml"; exit 1; }
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "pinned toolchain: $channel"
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: ${{ steps.pin.outputs.channel }}
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      # This job restores NO cache, on purpose, and that is the one non-obvious
+      # decision in it: no `Swatinem/rust-cache`, and `package-manager-cache`
+      # off on setup-node below. A cache entry is mutable state, and on GitHub a
+      # branch — including a pull request's branch — can write entries that a
+      # later run on a tag is allowed to read. This is the single job whose
+      # output a merchant installs and whose process holds the updater signing
+      # key, so it takes nothing it did not fetch from the lockfiles under this
+      # exact tag. The slow cold build IS the feature: do not "fix" it with a
+      # one-line PR that adds a cache step back.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
