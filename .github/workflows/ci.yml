@@ -199,6 +199,8 @@ jobs:
         run: ./scripts/check-workspace-lints.py --self-test
       - name: Node contract still rejects runtime and configuration drift
         run: ./scripts/check-node-version.py --self-test
+      - name: Hook installation check still rejects every silent-disable state
+        run: ./scripts/check-hooks-installed.py --self-test
       - name: Recursive web builds still refuse an omitted workspace package
         run: ./scripts/check-web-build-coverage.py --self-test
       - name: JavaScript licence policy still fails closed
