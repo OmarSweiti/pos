@@ -93,6 +93,36 @@ expect_body 0 "a commented-out trailer from a template" \
   'feat(domain): tax engine   [1.3.4]
 
 # Co-Authored-By: Claude <noreply@anthropic.com>'
+# `git commit -v` appends the staged diff below a scissors line and strips it
+# AFTER this hook runs. Everything below that line is the diff, not the message,
+# and a diff CONTEXT line is indistinguishable from a trailer once its leading
+# space is absorbed by the checker's own anchor. Seventeen lines of this very
+# file would otherwise refuse a clean commit that merely edits near them — and
+# the obvious escape from a refusal naming a trailer you never wrote is
+# --no-verify, which drops the whole local net.
+expect_body 0 "an attribution trailer below the scissors line is diff, not message" \
+  'test(repo): clarify a hook test label   [—]
+
+# Please enter the commit message for your changes.
+# ------------------------ >8 ------------------------
+diff --git a/.githooks/test-hooks.sh b/.githooks/test-hooks.sh
+--- a/.githooks/test-hooks.sh
++++ b/.githooks/test-hooks.sh
+@@ -63,7 +63,7 @@
+-expect_body 1 "a Claude co-author trailer" \
++expect_body 1 "a Claude co-author trailer (long form)" \
+   '"'"'feat(domain): tax engine   [1.3.4]
+
+ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>'"'"''
+# The cut must not become a way to smuggle one in: the message half is still
+# read in full, so a trailer ABOVE the scissors refuses exactly as before.
+expect_body 1 "a trailer above the scissors line is still the message" \
+  'feat(domain): tax engine   [1.3.4]
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+
+# ------------------------ >8 ------------------------
+diff --git a/a.txt b/a.txt'
 expect_body 1 "Copilot" \
   'feat(domain): tax engine   [1.3.4]
 
