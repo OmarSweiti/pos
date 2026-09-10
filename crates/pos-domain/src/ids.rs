@@ -529,7 +529,12 @@ mod tests {
         // the repository's recorded seed, and a minimized failing case persisted
         // under crates/pos-domain/proptest-regressions/ids.txt to be committed.
         // `PROPTEST_CASES` raises the count and can never lower it, which is what
-        // makes the scheduled PROPTEST_CASES=100000 lane mean what it says.
+        // makes the scheduled PROPTEST_CASES=100000 lane mean what it says. That
+        // lane selects `-E 'test(/::prop_/)'` over the whole crate, so every
+        // property below is in it, and the `prop_` prefix on each name is the
+        // only thing that puts it there: rename one out of that prefix and it
+        // keeps passing at 4,096 cases while silently leaving the high-count
+        // lane. The names are load-bearing selection, not a naming convention.
         // Owned by microstep 1.1.0; conventions §5.1 is the rule.
         #![proptest_config(domain_proptest_config())]
 

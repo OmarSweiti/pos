@@ -195,5 +195,49 @@ expect_warning "repository discovery failure emits systemMessage" \
 expect_warning "HEAD enumeration failure emits systemMessage" \
   "$(printf '{"tool_name":"Bash","cwd":"%s","tool_input":{"command":"rm crates/pos-db/migrations/0001_init.sql"}}' "$EMPTY_REPO")"
 
+# Agent parity. `sqlx migrate revert` was refused by the Codex adapter from its
+# first version and permitted here — the same command blocked for one agent and
+# waved through for the other, which is the worst shape a policy can take: it
+# reads as enforced and is not. `AGENTS.md` even backstopped it with "the Git
+# hooks and CI remain the backstops", which cannot hold for an operation that
+# mutates a database and produces no commit and no diff.
+#
+# The two implementations stay separate on purpose — each hook is loaded by a
+# different agent through a different launcher, and a shared import is a shared
+# way to fail — so the invariant is asserted behaviourally instead: both must
+# reach the same verdict on one corpus of spellings. That kills the drift without
+# coupling the code, and it does not care how either side is written.
+CODEX_GUARD="$ROOT/.codex/hooks/protect-immutable.py"
+
+expect_parity() {    # expect_parity <want-code> <label> <command>
+  local want=$1 label=$2 command=$3 payload claude_got codex_got
+  payload=$(bash_ "$command")
+  printf '%s' "$payload" | "$PYTHON" "$GUARD" >/dev/null 2>&1
+  claude_got=$?
+  printf '%s' "$payload" | "$PYTHON" "$CODEX_GUARD" >/dev/null 2>&1
+  codex_got=$?
+  if [ "$claude_got" -eq "$want" ] && [ "$codex_got" -eq "$want" ]; then
+    printf '  ok    %s\n' "$label"; pass=$((pass+1))
+  else
+    printf '  FAIL  %s  (wanted %s; claude %s, codex %s)\n' \
+      "$label" "$want" "$claude_got" "$codex_got"; fail=$((fail+1))
+  fi
+}
+
+echo "protect-immutable.py — Claude and Codex refuse the same forward-only violation"
+expect_parity 2 "sqlx migrate revert"                  'sqlx migrate revert'
+expect_parity 2 "with a trailing option"               'sqlx migrate revert --target-version 3'
+expect_parity 2 "past a sudo wrapper"                  'sudo sqlx migrate revert'
+expect_parity 2 "by absolute path"                     '/usr/local/bin/sqlx migrate revert'
+expect_parity 2 "behind env --split-string"            "env --split-string='sqlx migrate revert'"
+expect_parity 2 "nested in bash -c"                    "bash -c 'sqlx migrate revert'"
+expect_parity 2 "after an unrelated first command"     'echo ready && sqlx migrate revert'
+expect_parity 2 "inside a command substitution"        'echo $(sqlx migrate revert)'
+# The allow side is as load-bearing as the deny side: a guard that refuses
+# `migrate run` stops the one command every developer needs, and gets disabled.
+expect_parity 0 "sqlx migrate run is untouched"        'sqlx migrate run'
+expect_parity 0 "sqlx database create is untouched"    'sqlx database create'
+expect_parity 0 "the word revert alone is untouched"   'git revert HEAD'
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -50,7 +50,8 @@ never add AI attribution trailers. The exact Dependabot bot author/trailer combi
 narrow compatibility exception and uses the same title grammar with `[—]`; Git author metadata
 alone is not cryptographic proof of App identity.
 
-Branch protection is **configured on two of the three flow branches**, since 9 September 2026.
+Branch protection covers **all three flow branches**, unevenly and on purpose — `development` and
+`staging` since 9 September 2026, `main` since 10 September 2026.
 `development` and `staging` each carry an active ruleset: a pull request is required, six status
 checks must pass (`rust`, `guards`, `web`, `supply-chain`, `protected-paths`, `topology`), force
 pushes and deletions are blocked, and the merge method is constrained — squash or merge on
@@ -59,11 +60,18 @@ the squashed promotion that forked the branches once already. A separate tag rul
 `refs/tags/v*` append-only with **no bypass actor at all**: a `v*` tag may be created and can then
 never be moved or deleted, by anyone, which is the one control here that binds the maintainer too.
 
-Three limits are deliberate and must not be overstated. **`main` is still unprotected** —
-`branches/main/protection` answers `404 Branch not protected`, because main's `ci.yml` predates
-four of the six required jobs, so a `hotfix/*` branch cut from `main` would wait forever on checks
-that never report; `main` gets its ruleset only after a promotion carries the current `ci.yml`
-onto it. The repository **admin keeps `bypass_mode: "pull_request"`** on both branch rulesets, so a
+`main` is the uneven one, and deliberately so. It carries `main-append-only`: `deletion` and
+`non_fast_forward` only. Those two rules need no status checks, so they could be applied while the reason `main` has
+no *required checks* still holds — main's `ci.yml` predates four of the six required jobs, and a
+`hotfix/*` branch cut from `main` would wait forever on checks that never report. So force-pushing
+or deleting `main` is refused server-side today, while a pull request is still not required there
+and no check is a merge wall; that arrives when a promotion carries the current `ci.yml` onto it.
+`branches/main/protection` still answers `404 Branch not protected` — that is the *legacy*
+protection API, a separate surface from rulesets, and it is not evidence that `main` is
+unprotected.
+
+Two limits remain and must not be overstated. The repository **admin keeps
+`bypass_mode: "pull_request"`** on all three branch rulesets, so a
 red check can still be merged — but only through a pull request, never a direct push, and GitHub
 records the bypass as an event, which is the review artifact that disabling and re-enabling a
 ruleset would not leave. And the git hooks in `.githooks/` are still the first local net, so
@@ -138,7 +146,16 @@ reopen silently. Its structural cause is still there and is deliberate: `ci.yml`
 guard steps rather than calling `just guards`, so a failure names the check that failed instead of
 one opaque step. The parity checker is what makes that enumeration safe.
 
-`just pre-push` is the complete local gate. Time-varying advisory checks stay in CI's
+`just pre-push` is the complete local gate, and **`git push` does not run it.** Two different
+gates share that name: this recipe — minutes of work — is invoked by `just pr`, by hand, or by
+nothing at all, while the hook Git actually runs on a push is
+[`.githooks/pre-push`](.githooks/pre-push), a policy gate of about a second whose refusals are in
+the table below. Neither one implies the other: the recipe can be green while the hook refuses the
+push, and the hook passes on a clone where the recipe was never typed. The collision is kept rather
+than renamed because `pre-push` is the name four documents advertise and
+`scripts/check-justfile-policy.py` matches on it; the ambiguity is answered here instead.
+
+Time-varying advisory checks stay in CI's
 `supply-chain` job because they reach the network and can change without a repository change.
 CI also supplies real PostgreSQL and promotion-only macOS/Windows Tauri builds, so report those
 separately instead of claiming the local gate reproduces every runner environment.
@@ -168,16 +185,24 @@ Codex-specific execution policy and hook adapters live under `.codex/`.
 
 | Guard | Refuses |
 |---|---|
-| `.claude/hooks/protect-immutable.py` | writing, deleting, or moving a **committed migration** or anything in `docs/plan/` through Claude write tools, Bash, PowerShell, or Monitor |
+| `.claude/hooks/protect-immutable.py` | writing, deleting, or moving a **committed migration** or anything in `docs/plan/` through Claude write tools, Bash, PowerShell, or Monitor; and the forward-only violation `sqlx migrate revert` in any wrapped or nested spelling, for which no Git hook and no CI job is a backstop — it produces no commit and no diff |
 | `.claude/hooks/docs-links-on-write.py` | leaving a broken cross-reference after Claude changes **any** tracked `.md` — the five root documents included — whatever the link target's extension; the `.sh` file is only an inactive POSIX compatibility wrapper |
 | `.claude/hooks/validate-settings.py` | a session-time weakening of the reviewed project or local Claude settings, or the loss of a required skill contract. The one hook here that **fails closed** |
 | `.codex/hooks/` | immutable-path and forward-only SQLx checks for Codex shell, immutable-path checks for `apply_patch`, and complete documentation-link checks after any Markdown `apply_patch` |
 | `.githooks/commit-msg` | a title outside `<type>(<scope>): <summary>  [N.N.N\|N.N.Nx\|N.N.N–N.N.N\|—]`, or coding-assistant attribution |
 | `.githooks/pre-commit` | protected/sensitive paths, oversized staged blobs, plan or committed-migration edits, and Gitleaks findings in staged content |
-| `.githooks/pre-push` | direct/force/deletion pushes to the three flow branches, moving/deleting an existing tag, assistant attribution, or a secret anywhere in reachable history |
+| `.githooks/pre-push` | direct/force/deletion pushes to the three flow branches, moving/deleting an existing tag, assistant attribution, a sensitive path or oversized blob, or a secret — the last three over the commits the push **publishes**, not all history. `just secrets`, CI's `supply-chain` job and the weekly security run keep the whole-history scan, which walks `--all` and so also sees a stash |
 | `scripts/check-protected-paths.sh` | a pull request that edits a source plan or a migration already present in its base; `branch-flow.yml` runs policy from the exact trusted workflow revision |
 | `scripts/check-branch-workflow-policy.rb` | weakening the read-only `pull_request_target` boundary, title/body attribution wiring, any workflow definition, or the trusted CI/agent/Git-hook/label/dependency/security/repository-setup policy and helper set without an explicit red/manual review. **This file and `AGENTS.md` are inside that frozen set**, so editing either is deliberately red until a human reads the diff; ordinary application/test code is not byte-pinned |
 | `scripts/gh-actions-policy.sh` | mutable or unapproved external Action references before the post-merge full-SHA repository policy is enabled |
+
+One hook in `.githooks/` is **not** in that table because it refuses nothing:
+`post-merge` prints a single advisory line when a pull moves `pnpm-lock.yaml`,
+`Cargo.lock`, `.nvmrc`, `rust-toolchain.toml` or either migrations directory, and
+is silent otherwise. Git ignores its exit status, so it is advice, not a control.
+Its sibling `post-checkout` is deliberately absent: git does **not** ignore that
+one's status — it propagates to `git clone` and `git worktree add` — and it fires
+on every branch switch, which is how an advisory earns being ignored.
 
 All are negative-tested — `just guards` runs every suite
 (`.claude/hooks/test-settings.py`, `.claude/hooks/test-protect-immutable.sh`,

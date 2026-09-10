@@ -53,13 +53,42 @@ setup-tools-check:
 node-version-check:
     {{ python }} ./scripts/check-node-version.py
 
-# No branch protection or ruleset is configured, so nothing server-side refuses a
-# push. These hooks are the first local safety net; a machine that has not run
-# this can push straight to main, and `--no-verify` can bypass them.
+# `development` and `staging` each carry an active ruleset — a pull request is
+# required, six checks must pass, force pushes and deletions are refused, and the
+# merge method is constrained — and `refs/tags/v*` is append-only with no bypass
+# actor at all. `main` refuses force pushes and deletions too, and nothing more:
+# those two rules need no status checks, while its ci.yml predates four of the six.
+# So these hooks are the FIRST net, no longer the only one. What they are still
+# alone on: no check is a merge wall on `main` and no pull request is required
+# there, and the admin keeps bypass_mode: "pull_request" on all three branch
+# rulesets. A clone that never ran this, and `--no-verify`, bypass them.
+#
+# The path stays RELATIVE, and an absolute one was measured and rejected.
+#
+# Git resolves a relative core.hooksPath against each working tree, so `.githooks`
+# silently resolves to nothing wherever the directory is absent — a sparse
+# checkout, or a revision older than the hooks. An absolute path looks like the
+# fix and is worse: core.hooksPath is SHARED across linked worktrees, so running
+# this recipe inside one repoints the whole repository at that worktree. Measured
+# end to end — `just setup` in a worktree, then `git worktree remove` — and the
+# main tree then committed a grammar-free subject with no refusal printed, which
+# is the same silent disable arriving by a new route. Relative also gives each
+# worktree its own hooks, which is what you want when the hooks are the diff.
+#
+# So the fix is detection, not a cleverer path: the second line is the read-back.
+# An echo restates intent; it never consults git, and this recipe's printed line
+# was a developer's only evidence that anything happened.
 # Point git at the committed hooks (commit-msg, pre-commit, pre-push)
 hooks:
     git config core.hooksPath .githooks
-    @echo "core.hooksPath = .githooks  (commit-msg, pre-commit, pre-push)"
+    {{ python }} ./scripts/check-hooks-installed.py
+
+# Enforcement is impossible: `--no-verify` and a clone that never ran `just setup`
+# are both outside any check's reach. DETECTION is one command, which is why the
+# honest limit is "the hooks are bypassable" and not "nothing can be done" — the
+# same reasoning that put `node-version-check` in front of the gates below.
+hooks-installed-check:
+    {{ python }} ./scripts/check-hooks-installed.py
 
 # This is a PERSONAL project, and it is authored under a personal address — not
 # whatever a work laptop happens to carry in its global git config.
@@ -263,11 +292,11 @@ secrets:
     bash ./scripts/scan-secrets.sh --history
 
 # ── deterministic local quality gates (mirrored by CI) ───────────────────
-test: node-version-check
+test: node-version-check hooks-installed-check
     cargo nextest run --locked --workspace
     pnpm -r --if-present test
 
-lint: node-version-check
+lint: node-version-check hooks-installed-check
     cargo fmt --all --check
     cargo clippy --locked --workspace --all-targets -- -D warnings
     {{ python }} ./scripts/check-workspace-lints.py
@@ -308,6 +337,7 @@ guards:
     {{ python }} ./scripts/check-domain-purity.py --self-test
     {{ python }} ./scripts/check-workspace-lints.py --self-test
     {{ python }} ./scripts/check-node-version.py --self-test
+    {{ python }} ./scripts/check-hooks-installed.py --self-test
     {{ python }} ./scripts/check-web-build-coverage.py --self-test
     {{ python }} ./scripts/check-js-licenses.py --self-test
     {{ python }} ./scripts/check-justfile-policy.py
@@ -528,8 +558,12 @@ pr $title='' $body='' $milestone='':
 # This is the gap that cost this repository a day. `just pr` watches CI when it
 # OPENS a pull request, and nothing watched the moment that matters: #18 was
 # merged with `rust` failing, and `just lint` was red on development from that
-# merge until it was repaired. No configured ruleset closes this today, so the
-# merge path has to.
+# merge until it was repaired. The `development` ruleset now requires those six
+# checks, so it closes the ordinary case — but the admin holds
+# bypass_mode: "pull_request" on it, which is exactly a red-check merge through a
+# pull request, and `main`'s ruleset requires no check at all. So the merge path
+# still has to refuse, and it refuses for everyone including the actor who could
+# bypass.
 #
 # The required set is re-derived for THIS PR by the same script `just pr` uses,
 # so a check that has not registered yet cannot be mistaken for a check that
@@ -917,9 +951,10 @@ promote-merge $pr='':
     }
 
     # --merge, never --squash: squashing a promotion forks the branches permanently.
-    # The staging ruleset constrains allowed_merge_methods to ["merge"], and main has
-    # no ruleset yet, so on the staging -> main route this flag is the only guard
-    # until one exists. --match-head-commit binds the reviewed head through the
+    # The staging ruleset constrains allowed_merge_methods to ["merge"]. Main's
+    # ruleset does not constrain the merge method — it carries deletion and
+    # non_fast_forward only — so on the staging -> main route this flag is still
+    # the only guard. --match-head-commit binds the reviewed head through the
     # mutation. The subject keeps the established `promote X to Y (#N)` form.
     printf '%s' "$body" > "$snapshot_file"
     gh pr merge "$pr_url" --match-head-commit "$head_oid" --merge \

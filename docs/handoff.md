@@ -1,10 +1,20 @@
 # Handoff — the single current one
 
-**Reflects `development` @ `ff9da7e`, 8 September 2026.**
+**Reflects `development` @ `1929b83`, 9 September 2026.**
 
-This file **replaces** the 7 September handoff. Everything from it that is still true has been
-carried forward; the rest was superseded by the four pull requests below and is deliberately gone.
+This file **replaces** the 8 September handoff. Everything from it that is still true has been
+carried forward; the rest was superseded by the pull requests below and is deliberately gone.
 There is one handoff — keep updating this file rather than adding a dated one.
+
+**9 September changed the governance layer, not the product.** Six pull requests (#124–#129) and
+three rulesets landed; no microstep advanced. The gate baselines in §0 were verified at `ff9da7e`
+and are unchanged in kind, but three self-test counts moved: `check-branch-workflow-policy.rb`
+214 → **216**, `check-protected-paths.sh` 13 → **18**, `watch-pr-checks.sh` 47 → **48**, and
+`.githooks/test-hooks.sh` 104 → **108**. The Actions hardening sweep of **10 September** moves one
+of those again: `watch-pr-checks.sh` is **49**, because `security.yml`'s `paths:` list is now
+mirrored once in the script and both former copies — the changed-path matcher and the self-test's
+sample list — are derived from that single array, so all six mirrored entries are exercised where
+five used to be.
 
 **Read `CLAUDE.md` first.** This document assumes it. Where this file and the repository disagree,
 **the repository is right** — every number here was read from `git`, `gh` or a file, and where
@@ -58,9 +68,9 @@ network), so run it by hand after any dependency change.
 | Phase 1 | **20 of 112** executable microsteps (~18%) — verified by the frontier checker at `ff9da7e` |
 | Open PRs | **0** |
 | Open issues | **11** — see §2. **None is `In Progress`: the WIP=1 slot is empty** |
-| Board #4 | 13 items, all fields populated, four views |
+| Board #4 | 13 items — 10 active, 3 archived. Four views, and a README describing every field. `Status`, `Priority`, `Risk` and `Blocked` on all 13; `Phase`, `Group` and `Microstep` on 11, blank by design on the two items that belong to no microstep |
 | Repository | **PUBLIC** since 30 August 2026, GitHub Free |
-| Rulesets | **`[]`** — nothing server-side. `main` still answers `404 Branch not protected` |
+| Rulesets | **four, all active** — `development-flow`, `staging-promotion`, `main-append-only`, `tags-v-append-only`. Definitions checked in under `.github/rulesets/`. `main` carries `deletion` and `non_fast_forward` only; `branches/main/protection` still answers `404`, which is the legacy API and not evidence of an unprotected branch |
 
 ### Complete: 20 microsteps
 
@@ -83,7 +93,20 @@ complete. Read live from `phase-1-sellable-mvp.md`:
 
 ---
 
-## 2 · What landed on 8 September — four pull requests
+## 2 · What landed on 9 September — six pull requests and the governance layer
+
+| PR | What |
+|---|---|
+| **#124** | `protected-paths` steps 5–7 were **cancelled** by the frozen-policy step above them, so the source-plan/migration immutability wall was skipped on 18 of the last 22 red runs. Guarded with `if: ${{ !cancelled() }}` and pinned in `EXPECTED_IF`. Also: `check-protected-paths.sh` now compares against the **merge base**, so a stale branch is no longer accused of deleting a migration it never opened; and the policy reports **every** changed path, attributed to this branch or to base drift, instead of the first one only |
+| **#125** | The `0005` ICV window: an `⚠️ OPEN` block above `doc_sequence`, the `0010` block widened to name `1.9.1` as the structural blocker, and #113's four options in the `1.9.1` body. Plus `SECURITY.md` §5 → §6 with three missing field names and the suffix rule, `0.3.2` → `5.5.0`, this handoff tracked, and `pos-test-support` added to the crate map |
+| **#126** | Eight statements across six standing documents said no ruleset was configured. Corrected |
+| **#127** | `allow_auto_merge` on; all four issue forms target board #4; the PR template asks what it closes |
+| **#128** | `just promote-merge <pr>`, and a push-only `promotion-shape` job asserting a release branch advances only by a merge commit |
+| **#129** | The updater signing key scoped to the `release` environment (`tag: v*`), and a new release tag validated **before** it is pushed — a server-side rejection spends the version number |
+
+**Nothing here advanced a microstep.** Phase 1 is where it was.
+
+### What landed on 8 September — four pull requests
 
 All four are merged into `development`. **#117 is closed** (by #118) and the board's built-in
 "Item closed" workflow moved it to `Done` with no intervention.
@@ -161,10 +184,12 @@ Also verified: **the harness is absent from the shipped bundle**
 
 ---
 
-## 3 · The eleven open issues
+## 3 · The ten open issues, and one closed with a remainder
 
-Two are new, opened 8 September. All are on board #4 with `Phase`, `Group`, `Microstep`,
-`Priority`, `Risk` and `Blocked` set. `Target` is deliberately unset everywhere — the board contract
+Two are new, opened 8 September. All are on board #4 with `Priority`, `Risk` and `Blocked` set.
+`Phase`, `Group` and `Microstep` are set on 11 of 13 and **deliberately blank on #114 and #115**,
+which are repository-governance items belonging to no microstep — an empty Microstep is information,
+not an omission. `Target` is deliberately unset everywhere — the board contract
 says a fictional date is worse than none.
 
 | # | Title | Prio | Risk | Blocked | Blocks |
@@ -177,7 +202,7 @@ says a fictional date is worse than none.
 | 111 | `decision: does deactivating an approver revoke an already-issued handle?` | P1 | security | decision | the 1.8.x approval handler, so `1.6.4`'s last file |
 | 112 | `decision: the three manual discount caps (merchant decisions 3.1–3.3)` | P1 | money path | merchant answer | `1.4.5` |
 | 114 | `gap: the agent read-deny blocks the memory directory and workflow resume` | P2 | none | decision | agent memory, workflow resume |
-| 115 | `gap: branch protection is available and unconfigured, and no ruleset exists` | P1 | security | not blocked | nothing; a standing risk |
+| ~~115~~ | `gap: branch protection is available and unconfigured, and no ruleset exists` | P1 | security | **CLOSED 9 Sep** | the three rulesets were applied, so the gap it was opened for is gone. **But its own closing condition was not met**: it also asked for a rewrite of `scripts/gh-protect.sh` against the rulesets API plus negative tests. That script still refuses and exits 3, so the rulesets remain live configuration with no checked-in definition — nobody can diff or restore them. That remainder is now tracked by nothing; reopen or re-file it |
 | **119** | `gap: the back office's Testing Library cleanup never registers` — **new** | P2 | none | not blocked | nothing today; the next back-office screen test |
 | **120** | `gap: conventions §5 has no DOM-component layer, and the workflow doc has ten rows to its nine` — **new** | P2 | none | not blocked | nothing; a two-document inconsistency |
 
@@ -419,7 +444,7 @@ Keep this section current; it saves an hour every session.
 
 ### Board #4 `POS delivery`
 
-Project id `PVT_kwHOCn5KRs4BhoZ-`, user `OmarSweiti`. Private board, public repo. **13 items.**
+Project id `PVT_kwHOCn5KRs4BhoZ-`, user `OmarSweiti`. Private board, public repo. **13 items — 10 active, 3 archived.** `shortDescription` and `readme` set 9 September; the README is the field contract, so read it before adding a field.
 
 | Field | Field id | Options (id) |
 |---|---|---|
@@ -479,14 +504,26 @@ allow_squash_merge      true       has_issues              true
 allow_merge_commit      true       has_projects            true
 allow_rebase_merge      FALSE      has_wiki                false
 delete_branch_on_merge  true       has_discussions         false
-allow_auto_merge        FALSE      visibility              public
+allow_auto_merge        true       visibility              public
 allow_update_branch     true       default_branch          development
 squash/merge title      PR_TITLE   license   NOASSERTION (deliberate)
 squash/merge message    PR_BODY
 ```
 
-`rulesets` = **`[]`**. `autolinks` = `[]`. 49 labels. Six phase milestones — and milestone
-`closed_issues` counts PRs.
+`rulesets` = **three, all active**: `development-flow` and `staging-promotion` (pull request
+required, six checks — `rust`, `guards`, `web`, `supply-chain`, `protected-paths`, `topology` —
+force pushes and deletions blocked, `squash,merge` on `development` and `merge` only into
+`staging`, administrator bypass at `bypass_mode: "pull_request"`), and `tags-v-append-only`
+(`refs/tags/v*`, `update` and `deletion` blocked, **no bypass actor**). `main` carries **no
+ruleset**, deliberately: its `ci.yml` declares only `rust` and `web`, so four of the six contexts
+would never report on a `hotfix/*` branch cut from it.
+
+One **environment**, `release`, with a single `tag: v*` deployment policy and no reviewers; the
+`build` job in `release.yml` declares it, so the updater signing key must be an environment secret
+and is unreachable from any other ref. `autolinks` = `[]`. **40 labels** — nine unused GitHub
+defaults were deleted; `accessibility` was kept as deliberately created. Six phase milestones — and
+milestone `closed_issues` counts PRs. All four issue forms carry `projects: ["OmarSweiti/4"]`, so a
+new issue reaches the board at creation.
 
 ### Security posture
 
@@ -506,17 +543,29 @@ contributions are even accepted.
 
 ---
 
-## 7 · Four things that need a human — the API cannot do them
+## 7 · Five things that need a human — the API cannot do them
 
 1. **Board view grouping and sorting.** Project #4 → each view: `Board — now` group by **Status**;
    `Phase plan` group by **Phase**, sort by **Microstep** ascending. Confirmed unreachable by any
    API; PR #122 wrote that down in both `03-github-workflow.md` and `gh-project.sh`.
-2. **Board Auto-add.** Project #4 → ⋯ → Workflows → Auto-add → set the repository and a filter such
-   as `is:issue is:open`. Until then, add every new issue by hand.
-3. **`secret_scanning_non_provider_patterns`.** Settings → Code security → Secret scanning. **The
+2. ~~**Board Auto-add.**~~ **Solved 9 Sep without it.** All four issue forms now carry
+   `projects: ["OmarSweiti/4"]`, which works because Project #4 is linked to the repository, so a
+   new issue reaches the board at creation. That deliberately replaced the `actions/add-to-project`
+   workflow, which would have needed a new workflow file, an `APPROVED_ACTIONS` edit in the frozen
+   `gh-actions-policy.sh`, **and** a fine-grained PAT as a secret — the default `GITHUB_TOKEN`
+   cannot write to a *user-level* Project v2. The only thing still done by hand is adding a **pull
+   request** to the board, which for short-lived squash-merged branches is not worth a secret.
+3. **Tag signing.** `release.yml` requires a GitHub-**verified** signed tag and no signing identity
+   exists, so **the first release cannot be cut until this is done**. Both halves are outside agent
+   reach: `~/.ssh` is not readable, and the token lacks `admin:ssh_signing_key` to register a
+   Signing Key. `tag.gpgsign` was deliberately left unset rather than pointed at a signer file that
+   does not exist, which would break `git tag -a` outright. The full sequence is a comment on PR
+   #129 — note `gpg.ssh.allowedSignersFile`, without which `git verify-tag` fails even on a valid
+   signature, and do **not** set `commit.gpgsign`.
+4. **`secret_scanning_non_provider_patterns`.** Settings → Code security → Secret scanning. **The
    API silently no-ops this** — a PATCH returns success and the value stays `disabled`, reproduced
    with both form fields and a JSON body. Read settings back; a 200 is not evidence of a change.
-4. **`secret_scanning_validity_checks` — a decision, not a chore.** Enabling it transmits candidate
+5. **`secret_scanning_validity_checks` — a decision, not a chore.** Enabling it transmits candidate
    secrets to the issuing provider for verification. Left disabled deliberately.
 
 Also human-only: **#114**, because an agent editing its own permission grants would defeat the
@@ -533,27 +582,39 @@ control, and the permission-mode classifier refuses it. A **mode** change does n
 | The `0005` documentation preconditions | **done** — PR #116 |
 | The twelve queued documentation corrections | **done** — PRs #118, #121, #122, #123 |
 | The issue slate | **done** — §3 |
-| **Ruleset control** | **not done** — #115, and the operator was asked and has not answered. Do the **tag ruleset first**: it is the only one with no self-lockout risk and it closes the only gap that reaches a user |
+| **Ruleset control** | **DONE 9 Sep** — tag ruleset first, then `development`, then `staging`. #115 stays open only for the checked-in definition. Superseded text: it is the only one with no self-lockout risk and it closes the only gap that reaches a user |
 | **Issues exception-only** | **not done, and now precisely diagnosed.** `.github/ISSUE_TEMPLATE/01-microstep.yml:2` says a microstep issue is *"the normal way work enters this repo"*, while `03-github-workflow.md:310` says an issue is for *"the microstep you are starting now (one at a time — WIP = 1)"* and explicitly **not** *"every microstep in the phase, in advance"*. §4's opening says copying 400 microsteps into Issues *"would create a second, worse copy of the plan."* **`.github/ISSUE_TEMPLATE/` is NOT in `STATIC_POLICY_PATHS`**, so this is a one-line green PR — no deliberate red |
 | **Claude read-only permissions** | **not done** — #114. `.claude/settings.local.json` is `{}`, the workaround not the fix. **`git checkout` / `git pull` / broad `git fetch` are NOT read-only; do not add them** |
 | **Matrix on every PR** | **not done.** Removing `cross-platform`'s promotion-only `if:` — do it **last**. Minutes are unmetered on a public repo, so the gate rests on latency alone |
-| External enforcement | apply `development` ruleset → promote → apply `staging` ruleset |
+| External enforcement | **done for two of three branches.** `staging` was applied *before* the next promotion rather than after, deliberately: `allowed_merge_methods: ["merge"]` is the only server-side guard against the squashed promotion that forked `staging` on PR #74, and `development` is already ahead. `main` waits for a promotion to carry the current `ci.yml` |
+| **Promotion tooling** | **done** — `just promote-merge <pr>` mirrors `just merge`'s evidence discipline for the route that recipe refuses, and a push-only `promotion-shape` job asserts the new tip of `staging`/`main` is a merge commit. Verified discriminating: `4de6415`, PR #74's squashed promotion, fails it |
+| **The two promotions** | **not done, and they need a person.** The promotion template requires the ten-minute smoke on a fresh database, the drills including a performed restore, the Arabic/RTL pass and the keyboard-only pass. `development` is 12 ahead of `staging`; `staging` is 99 ahead of `main`, carrying 6 migrations and 7 terminal UI files |
+| **Tag signing** | **not done, and it needs a human.** `release.yml` requires a GitHub-**verified** signed tag and no signing identity exists. `~/.ssh` and the `admin:ssh_signing_key` scope are both outside agent reach; `tag.gpgsign` was deliberately left unset rather than pointed at a signer file that does not exist. Sequence on PR #129 |
 
 ---
 
 ## 9 · Promotion, rulesets, and the self-lockout trap
 
+> **Updated 9 Sep.** The self-lockout trap this section was written about is resolved: the two
+> branch rulesets carry `bypass_mode: "pull_request"` for the administrator, so a frozen-surface PR
+> is still mergeable — through a pull request only, never a direct push — and GitHub logs the bypass
+> as an **event**, which disabling and re-enabling a ruleset would not. `main` is deliberately
+> unprotected. `allowed_merge_methods: ["merge"]` on `staging` now enforces the merge commit this
+> section asks for by hand, and `just promote-merge` is the guarded path.
+
 ### `development → staging`
 
-`staging` is **6 behind**. Open a promotion when you want the cross-platform matrix over the current
-tip:
+`staging` is **12 behind**. Open a promotion when you want the cross-platform matrix over the
+current tip:
 
 ```bash
 mise exec -- just promote-staging     # opens the PR; it does NOT merge
+mise exec -- just promote-merge <pr>  # route, checks, re-snapshot, then --merge
 ```
 
-**Merge it with a MERGE COMMIT, never squash.** Squashing a promotion forks the branches
-permanently; that happened to PR #74 and cost a force-reset. Verify:
+**Merge it with a MERGE COMMIT, never squash** — `just promote-merge` does, and the `staging`
+ruleset now refuses anything else. Squashing a promotion forks the branches permanently; that
+happened to PR #74 and cost a force-reset. Verify:
 
 ```bash
 git rev-list --parents -n 1 <the promotion commit> | wc -w      # 3 = merge commit
@@ -568,8 +629,27 @@ real debt. It is still not a reason to promote: the maintained runbook opens `st
 **after the candidate has actually been used**, and nothing reads `main` today — the default branch
 is `development`, Dependabot targets it, CodeQL follows it.
 
-The latent risk is a mistaken `v*` tag selecting the stale `release.yml` at that ref. **That is what
-the tag ruleset in #115 closes**, and it is why #115 sequences the tag ruleset first.
+The latent risk is a mistaken `v*` tag selecting the stale `release.yml` at that ref. **The tag
+ruleset does not close that**, and the earlier text here said it did. `tags-v-append-only` carries
+exactly two rules — `deletion` and `update` — with an empty `bypass_actors` list, and **`creation`
+is absent**. A correctly shaped, signed `v0.2.0` on `main`'s head is therefore permitted today, and
+`.githooks/pre-push:213-227` permits it too: the hook's test is whether the tagged commit *is* the
+head of the channel the grammar selects, and for a plain `vX.Y.Z` that channel is `main`, whose
+head it would be. What the ruleset guarantees is only what happens next — nobody, the maintainer
+included, can move or delete that tag afterwards. It makes such a tag **irreversible, not
+impossible.** Sequencing it first was still right, because an irreversible mistake is at least a
+visible one; it is simply not the control.
+
+The controls that actually stand between a mistaken tag and a bad release are upstream of the
+ruleset. The first is `release.yml`'s `guard` job, which refuses the tag before the platform matrix
+starts if the grammar, the annotated-tag object, GitHub's signature verdict, the target commit, the
+channel head, the three in-tree version declarations, the updater configuration, or the exact-SHA CI result is
+wrong. The second is the `staging → main` promotion itself, which is what carries that guarded
+workflow onto the ref: while `main` still holds the `2026-08-20` revision of `release.yml` — `a8bc057`, with 130 commits
+of `development` landed since, the workflow that
+would judge such a tag is that old revision's, so promoting is the repair and no ruleset rule
+substitutes for it. `.github/rulesets/README.md` now records the same conclusion beside the
+definition, under "What the tag ruleset does not do".
 
 **"Synchronised" means the upstream tip is an ancestor and the promoted trees agree — not that
 divergence counts are zero.** Each promotion creates its own merge commit, so `staging` reads

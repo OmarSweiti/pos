@@ -231,7 +231,8 @@ scanner failure refuses closed.
 ### `pre-push`
 
 Uses the destination remote Git supplies rather than hardcoding `origin`. It scans every commit
-absent from that remote for assistant attribution, runs Gitleaks over reachable history, and refuses
+absent from that remote for assistant attribution and for sensitive paths, runs Gitleaks over that
+same set of commits rather than over all history, and refuses
 direct, force, and deletion pushes to `development`, `staging`, and `main`. Tags are append-only:
 a new tag is allowed, moving or deleting an existing one is not.
 
@@ -249,10 +250,21 @@ lines of them decide whether a migration may be edited or a secret may be commit
 `lint-scripts.sh` lints them too.
 
 One honest exception before the table: **`check-staged-policy.py` has no step of its own in
-`ci.yml`.** It inspects the *staged index*, which a CI checkout has no equivalent of, so CI reaches
-it the only way that means anything — through `.githooks/pre-commit`, which
-[`.githooks/test-hooks.sh`](../.githooks/test-hooks.sh) drives against a real index. Every other
-script below runs in CI as well as locally.
+`ci.yml`.** Its index mode inspects the *staged index*, which a CI checkout has no equivalent of.
+An earlier version of this paragraph claimed CI therefore "reaches it the only way that means
+anything" through `.githooks/test-hooks.sh`; that was wrong, and worth naming. Driving the hook
+against a synthetic fixture index proves the *checker* still refuses — it never applies the policy
+to the pull request's own content.
+
+What closes most of the gap is not CI but a second local caller. `.githooks/pre-push` now runs the
+checker's `--commits-file` mode over every commit a push introduces, because Git runs `pre-commit`
+for an ordinary commit and routes around it entirely for a clean merge, a cherry-pick, a revert and
+`rebase --continue`. So the three rules that judge content — the sensitive-path list, the 2 MB blob
+cap, and the migration blob-mode rule — are applied at commit time and again at push time.
+[`scripts/check-protected-paths.sh`](../scripts/check-protected-paths.sh) is the server-side backstop
+for the source-plan and committed-migration rules, judged from the merge base; it inspects neither a
+filename class nor a blob size, so those two remain local-only and one `--no-verify` from gone.
+Every other script below runs in CI as well as locally.
 
 | Script | Contract |
 |---|---|
@@ -264,7 +276,7 @@ script below runs in CI as well as locally.
 | `check-test-catalog.py` | every catalogued test name resolves to its runner or sits in the shrinking `PLANNED` allowlist with a tombstone for anything retired; every normative reference name has one phase-microstep owner; every `E.n` a phase file claims has a row for that phase; the coverage arithmetic is recomputed from the rows |
 | `check-staged-policy.py` | the staged index carries no plan edit, committed-migration change, sensitive path, or oversized blob |
 | `check-protected-paths.sh` | a pull request does not edit a base-committed migration or source plan |
-| `scan-secrets.sh` | staged, range, or reachable-history content has no known secret |
+| `scan-secrets.sh` | staged, commit-range, pushed-set, or all-ref content has no known secret |
 | `validate-change-title.sh` / `check-automation-attribution.py` | one grammar for commit subjects and pull-request titles, and no coding-assistant attribution anywhere |
 | `gh-actions-policy.sh` | workflow Actions use full SHAs from the repository allowlist; applying any repository-wide Actions setting is a separate live step |
 | `check-branch-workflow-policy.rb` | the read-only trusted pull-request boundary and the frozen policy surface — workflows, Git hooks, both agent entry points, and the `.claude/`/`.codex/` trees — cannot silently weaken themselves |
@@ -457,8 +469,8 @@ the hotfix path, are in
 | compiler/lints/tests | domain, money, schema, frontend, and behavior checks | only the behavior actually encoded is proved |
 | agent permissions, the Codex sandbox, and Claude/Codex hooks | safer agent execution and immediate immutable/docs feedback | Claude shell subprocesses have ambient host access; client support and lexical parsing limits apply |
 | Git hooks | staged policy, content scanning, message/history policy, branch-push safety | local and intentionally bypassable |
-| GitHub workflows | trusted-base policy, CI, security analysis, releases, logged evidence | six checks are required by ruleset on `development` and `staging`; the administrator can still bypass through a pull request, and that bypass is logged; `main` has no ruleset |
-| GitHub live settings | read-only default token posture, native secret scanning and push protection, private vulnerability reporting, immutable published releases, three active rulesets (`development`, `staging`, `refs/tags/v*`) | `main` is unprotected by design until a promotion carries the current `ci.yml`; the two branch rulesets carry a pull-request-scoped administrator bypass; no CODEOWNERS review assignment or enforcement is claimed |
+| GitHub workflows | trusted-base policy, CI, security analysis, releases, logged evidence | six checks are required by ruleset on `development` and `staging`; the administrator can still bypass through a pull request, and that bypass is logged; `main`'s ruleset requires no check, so no check is a merge wall there |
+| GitHub live settings | read-only default token posture, native secret scanning and push protection, private vulnerability reporting, immutable published releases, four active rulesets (`development`, `staging`, `main`, `refs/tags/v*`), checked in as data under [`.github/rulesets/`](../.github/rulesets/) | `main` carries `deletion` and `non_fast_forward` only — no required checks and no required pull request — until a promotion carries the current `ci.yml`; the three branch rulesets carry a pull-request-scoped administrator bypass; nothing enforces agreement between the checked-in definitions and the live configuration; no CODEOWNERS review assignment or enforcement is claimed |
 
 No compliance validation is complete. No text in this repository should claim PCI DSS, SAQ, JoFotara
 certification, or PDPL registration without the evidence required by

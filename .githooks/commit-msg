@@ -14,12 +14,37 @@ git rev-parse --show-toplevel >/dev/null || {
 }
 policy_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 
+# Under `git commit -v` (or commit.verbose=true) Git appends the staged diff
+# below a scissors line and strips it AFTER this hook runs — so the raw file is
+# message PLUS diff. Checking that unsliced would read the diff as if it were
+# the message: an unchanged CONTEXT line is indistinguishable from a trailer,
+# because the leading space a context line carries is absorbed by the checker's
+# own `^[ \t]*` anchor. Editing within three lines of one of this repository's
+# own attribution fixtures would then refuse a clean commit and name a trailer
+# the author never wrote — and the obvious escape from that is --no-verify.
+#
+# The literal is Git's cut_line from wt-status.c, matched exactly as
+# wt_status_locate_end() matches it. `auto` resolves per message, so fall back
+# to the character Git picks unless the body forces another.
+comment_prefix=$(git config --get core.commentString 2>/dev/null || true)
+[ -n "$comment_prefix" ] || comment_prefix=$(git config --get core.commentChar 2>/dev/null || true)
+[ -n "$comment_prefix" ] && [ "$comment_prefix" != auto ] || comment_prefix='#'
+scissors="$comment_prefix ------------------------ >8 ------------------------"
+
+checked_msg=$(mktemp "${TMPDIR:-/tmp}/pos-commit-msg.XXXXXX") || {
+  echo "commit-msg: ERROR — cannot create a temporary file; refusing closed." >&2
+  exit 2
+}
+trap 'rm -f "$checked_msg"' EXIT
+awk -v s="$scissors" '{ line = $0; sub(/\r$/, "", line); if (line == s) exit; print }' \
+  "$msg_file" > "$checked_msg"
+
 "$policy_root/scripts/run-python.sh" \
-  "$policy_root/scripts/check-automation-attribution.py" --message-file "$msg_file"
+  "$policy_root/scripts/check-automation-attribution.py" --message-file "$checked_msg"
 
 # Git's own machinery and rebase helpers generate these subjects. Attribution
 # was checked first, so a merge/revert cannot smuggle a machine trailer through.
-subject=$(sed -e 's/\r$//' "$msg_file" | sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' | sed -n '1p')
+subject=$(sed -e 's/\r$//' "$checked_msg" | sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' | sed -n '1p')
 case "$subject" in
   Merge\ *|Revert\ *|fixup!*|squash!*|amend!*|"Initial commit") exit 0 ;;
 esac

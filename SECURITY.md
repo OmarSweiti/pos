@@ -68,11 +68,13 @@ the release build must refuse to honour it.
 
 GitHub's **native** secret scanning and push protection are enabled. They complement the
 independent, content-based Gitleaks gate: `pre-commit` scans the staged index, `pre-push` scans
-reachable history, and CI scans the proposed commit range with fully redacted output. The local
+the commits a push publishes, `just secrets` and the weekly security run scan every ref, and CI
+scans the proposed commit range — all with fully redacted output. The local
 checks remain bypassable with `--no-verify` or in a clone that skipped `just setup`. Since
 9 September 2026 CI is also a merge wall on `development` and `staging`, where six checks are
 required by ruleset; the administrator can still bypass, but only through a pull request and only
-as a logged event, and `main` has no ruleset yet. A finding means rotate the credential first,
+as a logged event. `main` carries `deletion` and `non_fast_forward` only — no required checks and
+no required pull request. A finding means rotate the credential first,
 then handle history as a separate, explicitly authorised operation.
 
 `just pre-push` runs the deterministic local gates plus a full-history secret scan. CI repeats
@@ -93,7 +95,8 @@ scrubbing, metadata-endpoint denial, or OS containment under this policy. This i
 developer-convenience tradeoff, not an application-security or secret-exfiltration boundary.
 Git hooks and CI remain cross-platform backstops and visible signals. On `development` and
 `staging` a red required check now blocks the merge button; the administrator retains a
-pull-request-scoped bypass, which GitHub logs, and `main` is still unprotected.
+pull-request-scoped bypass, which GitHub logs. `main` refuses force pushes and deletions but
+requires no check and no pull request, so no check is a merge wall there.
 
 ## Known gaps, stated plainly
 

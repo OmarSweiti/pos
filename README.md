@@ -1,5 +1,8 @@
 # POS
 
+[![ci](https://github.com/OmarSweiti/pos/actions/workflows/ci.yml/badge.svg?branch=development)](https://github.com/OmarSweiti/pos/actions/workflows/ci.yml)
+[![security](https://github.com/OmarSweiti/pos/actions/workflows/security.yml/badge.svg?branch=development)](https://github.com/OmarSweiti/pos/actions/workflows/security.yml)
+
 Cross-platform, offline-first point of sale for the Jordanian market.
 
 A register keeps trading when the internet does not. Sales are captured locally
@@ -74,9 +77,10 @@ dependency step, so a failed install does not leave the clone silently
 unprotected. `development` and `staging` carry active rulesets — a pull request
 and six passing checks are required, force pushes and deletions are blocked — and
 `refs/tags/v*` is append-only with no bypass. The hooks remain a bypassable local
-safety net in front of that. **`main` has no ruleset yet**, deliberately: its
-`ci.yml` predates four of the six required checks. So a clone that skipped setup
-can still push straight to `main`, though no longer to `development` or `staging`.
+safety net in front of that. **`main` blocks force pushes and deletions**, and
+deliberately nothing more: those two rules need no status checks, while its
+`ci.yml` predates four of the six required checks, so requiring them would leave
+a `hotfix/*` waiting forever. A pull request is still not required on `main`.
 `just --list` shows everything else.
 
 ## Quality gates
@@ -88,7 +92,8 @@ just test     # cargo nextest --locked --workspace · pnpm -r test
 just audit    # Rust advisories/licences · JS licences · npm advisories
 just guards   # prove the write guards still refuse what they must
 just secrets  # content-scan all reachable Git history with Gitleaks
-just pre-push # lint · test · web build · guards · secret history scan
+just pre-push # lint · test · web build · guards · the all-ref secret scan
+              # (not the hook git runs on a push — that is .githooks/pre-push)
 ```
 
 CI repeats the deterministic gates, scans the proposed commit range for secrets,

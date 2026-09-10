@@ -93,6 +93,36 @@ expect_body 0 "a commented-out trailer from a template" \
   'feat(domain): tax engine   [1.3.4]
 
 # Co-Authored-By: Claude <noreply@anthropic.com>'
+# `git commit -v` appends the staged diff below a scissors line and strips it
+# AFTER this hook runs. Everything below that line is the diff, not the message,
+# and a diff CONTEXT line is indistinguishable from a trailer once its leading
+# space is absorbed by the checker's own anchor. Seventeen lines of this very
+# file would otherwise refuse a clean commit that merely edits near them — and
+# the obvious escape from a refusal naming a trailer you never wrote is
+# --no-verify, which drops the whole local net.
+expect_body 0 "an attribution trailer below the scissors line is diff, not message" \
+  'test(repo): clarify a hook test label   [—]
+
+# Please enter the commit message for your changes.
+# ------------------------ >8 ------------------------
+diff --git a/.githooks/test-hooks.sh b/.githooks/test-hooks.sh
+--- a/.githooks/test-hooks.sh
++++ b/.githooks/test-hooks.sh
+@@ -63,7 +63,7 @@
+-expect_body 1 "a Claude co-author trailer" \
++expect_body 1 "a Claude co-author trailer (long form)" \
+   '"'"'feat(domain): tax engine   [1.3.4]
+
+ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>'"'"''
+# The cut must not become a way to smuggle one in: the message half is still
+# read in full, so a trailer ABOVE the scissors refuses exactly as before.
+expect_body 1 "a trailer above the scissors line is still the message" \
+  'feat(domain): tax engine   [1.3.4]
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+
+# ------------------------ >8 ------------------------
+diff --git a/a.txt b/a.txt'
 expect_body 1 "Copilot" \
   'feat(domain): tax engine   [1.3.4]
 
@@ -168,26 +198,34 @@ expect_body 0 "a human using GitHub's private address" \
 
 Co-Authored-By: Jane Smith <jane@users.noreply.github.com>'
 
-# expect_push <expected-exit> <label> <stdin line> [env] [remote]
+# expect_push <expected-exit> <label> <stdin line> [env] [remote] [expected-substring]
+#
+# The sixth argument is why this helper reads output at all. Comparing only `$?`
+# cannot tell WHICH control fired, because every refusal here returns 1 — and that
+# is not theoretical: replacing the entire release-grammar block with a bare
+# `tag_channel=main` left all three grammar assertions green. A test that cannot
+# distinguish one refusal from another cannot notice a deleted guard.
 expect_push() {
-  local want="$1" label="$2" line="$3" envset="${4:-}" remote="${5:-origin}"
-  local got
+  local want="$1" label="$2" line="$3" envset="${4:-}" remote="${5:-origin}" wantmsg="${6:-}"
+  local got out log
+  log=$(mktemp "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX")
   if [ -n "$envset" ]; then
-    got=$(env "$envset" bash -c "printf '%s\n' '$line' | '$HOOKS/pre-push' '$remote' git@x >/dev/null 2>&1; echo \$?")
+    got=$(env "$envset" bash -c "printf '%s\n' '$line' | '$HOOKS/pre-push' '$remote' git@x >'$log' 2>&1; echo \$?")
   else
-    got=$(printf '%s\n' "$line" | "$HOOKS/pre-push" "$remote" git@x >/dev/null 2>&1; echo $?)
+    got=$(printf '%s\n' "$line" | "$HOOKS/pre-push" "$remote" git@x >"$log" 2>&1; echo $?)
   fi
-  [ "$got" -eq "$want" ] && ok "$label" || bad "$label (wanted exit $want, got $got)"
+  out=$(cat "$log" 2>/dev/null)
+  rm -f "$log"
+  if [ "$got" -ne "$want" ]; then
+    bad "$label (wanted exit $want, got $got)"
+  elif [ -n "$wantmsg" ] && ! printf '%s' "$out" | grep -qF -- "$wantmsg"; then
+    bad "$label (exit $want as wanted, but nothing said \"$wantmsg\")"
+  else
+    ok "$label"
+  fi
 }
 
-head_sha=$(git rev-parse HEAD)
 zero=0000000000000000000000000000000000000000
-
-echo "pre-push — the protected branches take pull requests, not pushes"
-expect_push 1 "direct push to main"        "refs/heads/main $head_sha refs/heads/main $head_sha"
-expect_push 1 "direct push to staging"     "refs/heads/staging $head_sha refs/heads/staging $head_sha"
-expect_push 1 "direct push to development" "refs/heads/development $head_sha refs/heads/development $head_sha"
-expect_push 1 "deleting main"              "refs/heads/main $zero refs/heads/main $head_sha"
 
 # The force-push and attribution cases need a history of a particular SHAPE, and
 # they used to read it out of THIS repository. That made them depend on how the
@@ -201,8 +239,15 @@ expect_push 1 "deleting main"              "refs/heads/main $zero refs/heads/mai
 # So the fixture is built rather than borrowed: a throwaway repository with a
 # history of a known shape, and the hook run inside it. Nothing below depends on
 # the depth of the checkout, the current branch, or whether a local-only backup
-# ref happens to exist. That also means neither case can silently skip in CI,
-# and a guard test that skipped is not a guard test that passed.
+# ref happens to exist. That also means no case can silently skip in CI, and a
+# guard test that skipped is not a guard test that passed.
+#
+# That sentence used to be true of this fixture and FALSE of the fifteen
+# assertions that sat 250 lines below it, still reading the live clone — which is
+# exactly why nobody re-checked them. Every pre-push assertion now lives in a
+# fixture, so it is true of the whole file. `git rev-parse HEAD` still appears
+# below, twelve times — always inside a fixture subshell, reading THAT
+# repository's tip. None of it reads the developer's clone.
 fixture=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX")
 (
   cd "$fixture" || exit 1
@@ -219,6 +264,65 @@ fixture=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX")
   git commit -q --allow-empty -m "feat(domain): second   [1.1.2]"
   trunk=$(git rev-parse HEAD)
   first=$(git rev-parse HEAD~1)
+
+  # These fifteen used to run against the DEVELOPER'S clone, and both of their
+  # failure modes were measured rather than argued.
+  #
+  # In the ordinary state — every commit already pushed — `git rev-list HEAD
+  # --not --remotes=origin` returns NOTHING, so pre-push's per-commit attribution
+  # loop never iterated: zero `--git-commit` calls in a full run against the real
+  # repository. Nine of the fifteen were therefore asserting an exit code reached
+  # without executing the code they name.
+  #
+  # In a clone whose remote is not called `origin` — a fork, `upstream`, or
+  # `git init` plus `git remote add` — the same expression returns EVERY commit.
+  # One assertion measured 43.3 s there, so fifteen made the suite unusable.
+  # Nothing about the hooks changed between those two runs.
+  #
+  # Keyed on `$trunk`, not the fixture's later HEAD: the attributed and spoofed
+  # commits created below would otherwise refuse these for the wrong reason,
+  # which is the same bug wearing a new hat.
+  echo "pre-push — the protected branches take pull requests, not pushes"
+  expect_push 1 "direct push to main"        "refs/heads/main $trunk refs/heads/main $trunk" \
+    "" origin "takes changes through a pull request"
+  expect_push 1 "direct push to staging"     "refs/heads/staging $trunk refs/heads/staging $trunk" \
+    "" origin "takes changes through a pull request"
+  expect_push 1 "direct push to development" "refs/heads/development $trunk refs/heads/development $trunk" \
+    "" origin "takes changes through a pull request"
+  expect_push 1 "deleting main"              "refs/heads/main $zero refs/heads/main $trunk" \
+    "" origin "That branch is the trunk of the flow"
+
+  echo "pre-push — feature branches and new tags remain available"
+  expect_push 0 "a feature branch" \
+    "refs/heads/x $trunk refs/heads/phase-1/group-3-tax $trunk"
+  expect_push 1 "an environment variable cannot bypass a protected push" \
+    "refs/heads/main $trunk refs/heads/main $trunk" "POS_ALLOW_PROTECTED_PUSH=1"
+  # A NEW v* tag goes through release.yml's own refusals before it is pushed,
+  # because a server-side rejection spends the version number permanently.
+  #
+  # Each names the control that must fire. These all pass a COMMIT sha, so the
+  # lightweight refusal is reached first for every one of them — which is exactly
+  # how the deeper chain went unexercised. The tag OBJECT cases are below, where
+  # objects can be built.
+  expect_push 1 "a new lightweight v* tag is refused" \
+    "refs/tags/v9.9.9 $trunk refs/tags/v9.9.9 $zero" "" origin "is a lightweight tag"
+  expect_push 1 "a v* tag outside the release grammar is refused" \
+    "refs/tags/v9.9 $trunk refs/tags/v9.9 $zero" "" origin "is not a release tag grammar"
+  expect_push 1 "a v* tag with a leading zero is refused" \
+    "refs/tags/v9.09.9 $trunk refs/tags/v9.09.9 $zero" "" origin "is not a release tag grammar"
+  expect_push 1 "a v* prerelease tag with a zero iteration is refused" \
+    "refs/tags/v9.9.9-rc.0 $trunk refs/tags/v9.9.9-rc.0 $zero" "" origin "is not a release tag grammar"
+  expect_push 0 "a non-release tag name is not a release tag" \
+    "refs/tags/checkpoint-1 $trunk refs/tags/checkpoint-1 $zero"
+  expect_push 1 "moving an existing tag is refused" \
+    "refs/tags/v9.9.9 $trunk refs/tags/v9.9.9 1111111111111111111111111111111111111111" \
+    "" origin "moving existing tag"
+  expect_push 1 "deleting an existing tag is refused" \
+    "refs/tags/v9.9.9 $zero refs/tags/v9.9.9 $trunk" "" origin "deleting existing tag"
+  expect_push 1 "an unreadable local commit fails closed" \
+    "refs/heads/x 1111111111111111111111111111111111111111 refs/heads/x $zero"
+  expect_push 1 "a malformed ref update fails closed" \
+    "refs/heads/x $trunk refs/heads/x"
 
   echo "pre-push — a force-push to a protected branch discards published commits"
   # Pushing the FIRST commit over a remote that already has the second: the
@@ -273,6 +377,113 @@ Co-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.c
   expect_push 1 "a spoofed Dependabot author does not earn the exception" \
     "refs/heads/spoof $spoofed_bot refs/heads/spoof $zero" "" upstream
 
+  # The sensitive-path list and the 2 MB blob cap live in one checker and have no
+  # server-side equivalent. Git runs `pre-commit` for an ordinary commit and
+  # routes around it for a clean merge, a cherry-pick, a revert and
+  # `rebase --continue` — so pre-push applies them to the pushed range too.
+  #
+  # These paths are deliberately NOT secret-shaped (.sqlite, .bin rather than
+  # .env or id_rsa): an agent sandbox denies reading a secret-shaped path even
+  # inside a throwaway fixture, and a case that skips is not a case that passed.
+  # Each branch starts from the published tip so only its own commit is in range.
+  git update-ref refs/remotes/upstream/development "$spoofed_bot"
+
+  git checkout -q -B content-db "$spoofed_bot"
+  printf 'SQLite format 3' > payments.sqlite
+  git add -f payments.sqlite
+  git commit -q -m "chore(repo): capture a register database   [—]"
+  db_commit=$(git rev-parse HEAD)
+
+  git checkout -q -B content-big "$spoofed_bot"
+  head -c 2100000 /dev/zero > oversized.bin
+  git add -f oversized.bin
+  git commit -q -m "chore(repo): a blob Git keeps forever   [—]"
+  big_commit=$(git rev-parse HEAD)
+
+  git checkout -q -B content-clean "$spoofed_bot"
+  printf 'ok\n' > fine.txt
+  git add fine.txt
+  git commit -q -m "chore(repo): an ordinary file   [—]"
+  clean_commit=$(git rev-parse HEAD)
+
+  echo "pre-push — the content rules judge an already-committed range"
+  expect_push 1 "a database file inside a pushed commit" \
+    "refs/heads/content-db $db_commit refs/heads/content-db $zero" "" upstream
+  expect_push 1 "an oversized blob inside a pushed commit" \
+    "refs/heads/content-big $big_commit refs/heads/content-big $zero" "" upstream
+  expect_push 0 "an ordinary file is not blocked" \
+    "refs/heads/content-clean $clean_commit refs/heads/content-clean $zero" "" upstream
+
+  # THE classic pre-push bug: a child that reads stdin consumes Git's remaining
+  # ref updates, so the loop runs once and the hook exits 0 having inspected one
+  # ref. Measured with the protections removed, a ref carrying a sensitive path
+  # reached the remote with no refusal printed at all. The violation is on the
+  # LAST line on purpose — only a loop that survives all three can refuse it.
+  echo "pre-push — Git's ref-update list survives every child in the loop"
+  expect_push 1 "three refs at once, the violation on the last" \
+    "refs/heads/content-clean $clean_commit refs/heads/content-clean $zero
+refs/heads/topic-a $clean_commit refs/heads/topic-a $zero
+refs/heads/content-db $db_commit refs/heads/content-db $zero" "" upstream
+
+  # A NEW v* tag is the one flow operation with a PERMANENT cost: the
+  # tags-v-append-only ruleset has no bypass actor, so a rejected tag cannot be
+  # moved or deleted by anyone and the version number is spent. That makes this
+  # the chain least able to afford being untested — and until now everything past
+  # the lightweight check was untested, because every tag assertion outside this
+  # fixture passes a COMMIT sha and `git cat-file -t` answers `commit`.
+  #
+  # Tag OBJECTS need no signing key: `git hash-object -t tag` takes the body
+  # verbatim, and the hook's signature test is a literal search for the armour
+  # header, so a fabricated block reaches exactly the branches a real one would.
+  # `git verify-tag` then cannot verify it, which is the WARNING path and not a
+  # refusal — deliberately, because only GitHub's verdict decides that.
+  tag_object() {  # tag_object <name> <target-oid> <target-type> <signed|unsigned>
+    local name="$1" target="$2" type="$3" signed="$4" body
+    body="object $target
+type $type
+tag $name
+tagger Test <t@example.com> 0 +0000
+
+release $name
+"
+    if [ "$signed" = signed ]; then
+      body="$body-----BEGIN PGP SIGNATURE-----
+
+not a real signature, only the armour the hook searches for
+-----END PGP SIGNATURE-----
+"
+    fi
+    printf '%s' "$body" | git hash-object -t tag -w --stdin
+  }
+
+  # The channel comes from the grammar: vX.Y.Z releases from main, vX.Y.Z-rc.N
+  # from staging. Pin origin/main so "at the head" is decided, not inherited from
+  # whatever branch name `git init` chose. No staging ref is created on purpose —
+  # that is the unjudgeable case, and it must warn rather than refuse.
+  git update-ref "refs/remotes/origin/main" "$trunk"
+  signed_at_head=$(tag_object v1.2.3 "$trunk" commit signed)
+  unsigned_tag=$(tag_object v1.2.4 "$trunk" commit unsigned)
+  signed_off_head=$(tag_object v1.2.5 "$first" commit signed)
+  loose_blob=$(printf 'not a commit' | git hash-object -w --stdin)
+  signed_blob=$(tag_object v1.2.6 "$loose_blob" blob signed)
+  signed_prerelease=$(tag_object v1.2.3-rc.1 "$trunk" commit signed)
+
+  echo "pre-push — the release-tag chain past the lightweight check"
+  expect_push 0 "an annotated signed tag at the channel head is allowed" \
+    "refs/tags/v1.2.3 $signed_at_head refs/tags/v1.2.3 $zero" "" origin \
+    "has a signature that this machine cannot verify"
+  expect_push 1 "an annotated but unsigned release tag is refused" \
+    "refs/tags/v1.2.4 $unsigned_tag refs/tags/v1.2.4 $zero" "" origin "carries no signature"
+  expect_push 1 "a signed tag away from the channel head is refused" \
+    "refs/tags/v1.2.5 $signed_off_head refs/tags/v1.2.5 $zero" "" origin \
+    "does not point at the 'main' head"
+  expect_push 1 "a tag that dereferences to a blob fails closed" \
+    "refs/tags/v1.2.6 $signed_blob refs/tags/v1.2.6 $zero" "" origin \
+    "does not resolve to a commit"
+  expect_push 0 "a prerelease with no local staging ref warns rather than refusing" \
+    "refs/tags/v1.2.3-rc.1 $signed_prerelease refs/tags/v1.2.3-rc.1 $zero" "" origin \
+    "cannot be checked against its channel head"
+
   printf '%s %s %s\n' "$pass" "$fail" "$skipped" > "$fixture/.tally"
 )
 if [ -r "$fixture/.tally" ]; then
@@ -284,30 +495,68 @@ else
 fi
 rm -rf "$fixture"
 
-echo "pre-push — feature branches and new tags remain available"
-expect_push 0 "a feature branch"           "refs/heads/x $head_sha refs/heads/phase-1/group-3-tax $head_sha"
-expect_push 1 "an environment variable cannot bypass a protected push" \
-  "refs/heads/main $head_sha refs/heads/main $head_sha" "POS_ALLOW_PROTECTED_PUSH=1"
-# A NEW v* tag now goes through release.yml's own refusals before it is pushed,
-# because a server-side rejection spends the version number permanently.
-expect_push 1 "a new lightweight v* tag is refused" \
-  "refs/tags/v9.9.9 $head_sha refs/tags/v9.9.9 $zero"
-expect_push 1 "a v* tag outside the release grammar is refused" \
-  "refs/tags/v9.9 $head_sha refs/tags/v9.9 $zero"
-expect_push 1 "a v* tag with a leading zero is refused" \
-  "refs/tags/v9.09.9 $head_sha refs/tags/v9.09.9 $zero"
-expect_push 1 "a v* prerelease tag with a zero iteration is refused" \
-  "refs/tags/v9.9.9-rc.0 $head_sha refs/tags/v9.9.9-rc.0 $zero"
-expect_push 0 "a non-release tag name is not a release tag" \
-  "refs/tags/checkpoint-1 $head_sha refs/tags/checkpoint-1 $zero"
-expect_push 1 "moving an existing tag is refused" \
-  "refs/tags/v9.9.9 $head_sha refs/tags/v9.9.9 1111111111111111111111111111111111111111"
-expect_push 1 "deleting an existing tag is refused" \
-  "refs/tags/v9.9.9 $zero refs/tags/v9.9.9 $head_sha"
-expect_push 1 "an unreadable local commit fails closed" \
-  "refs/heads/x 1111111111111111111111111111111111111111 refs/heads/x $zero"
-expect_push 1 "a malformed ref update fails closed" \
-  "refs/heads/x $head_sha refs/heads/x"
+# `.githooks/pre-push` scans the commits a push PUBLISHES for secrets, and its
+# own comment names what it is for: backstopping an accidentally skipped
+# pre-commit, and content a merge, cherry-pick or revert introduces. Nothing
+# exercised it. The fixture above commits only empty commits, and the only secret
+# fixtures in this file drive pre-commit's `--staged` mode — so deleting that one
+# line was an invisible mutation, green suite and all.
+#
+# Its own fixture on purpose: the leaked commit has to be ABSENT from the
+# fixture's tracking refs to be in the pushed set at all, which is a different
+# repository shape from the tag and attribution cases above.
+secret_fixture=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX")
+(
+  cd "$secret_fixture" || exit 1
+  pass=0; fail=0; skipped=0
+
+  git init -q .
+  git config user.email t@example.com
+  git config user.name "Test"
+  git config commit.gpgsign false
+  git commit -q --allow-empty -m "chore(repo): fixture base   [—]"
+  base=$(git rev-parse HEAD)
+  git update-ref refs/remotes/origin/development "$base"
+
+  # Split so this file is not itself a finding. --no-verify is the point: this
+  # commit is what a skipped pre-commit leaves behind.
+  token="AK""IAA1B2C3D4E5F6G7H8"
+  printf 'api_key = %s\n' "$token" > leaked.txt
+  git add leaked.txt
+  git commit -q --no-verify -m "chore(repo): a commit that skipped the hooks   [—]"
+  leaked=$(git rev-parse HEAD)
+
+  echo "pre-push — a secret is caught in the commits a push publishes"
+  expect_push 1 "a secret committed with --no-verify is refused at push" \
+    "refs/heads/leak $leaked refs/heads/leak $zero" "" origin \
+    "introduces secret-like content"
+
+  # The boundary needs both signs. A deletion publishes no content, so scanning
+  # there is pure cost — and a refusal would make the ordinary cleanup of a
+  # merged feature branch impossible once anything secret-shaped exists anywhere.
+  expect_push 0 "deleting a branch whose history holds a secret is not refused" \
+    "refs/heads/leak $zero refs/heads/leak $leaked"
+
+  # And a commit the remote already has is not this push's finding. This is THE
+  # case that fails if the incremental boundary is not real: restoring the old
+  # whole-history call by any route would refuse here, because the leaked commit
+  # is still in this fixture's object graph.
+  git update-ref refs/remotes/origin/development "$leaked"
+  git commit -q --allow-empty -m "chore(repo): a clean commit on top   [—]"
+  expect_push 0 "an already-published secret does not refuse an unrelated push" \
+    "refs/heads/leak $(git rev-parse HEAD) refs/heads/leak $leaked"
+  git update-ref refs/remotes/origin/development "$base"
+
+  printf '%s %s %s\n' "$pass" "$fail" "$skipped" > "$secret_fixture/.tally"
+)
+if [ -r "$secret_fixture/.tally" ]; then
+  read -r sub_pass sub_fail sub_skipped < "$secret_fixture/.tally"
+  pass=$((pass + sub_pass)); fail=$((fail + sub_fail))
+  skipped=$((skipped + ${sub_skipped:-0}))
+else
+  bad "the pre-push secret-history fixture could not be built"
+fi
+rm -rf "$secret_fixture"
 
 # expect_commit <expected-exit> <label> <path> [content]
 expect_commit() {
@@ -497,6 +746,123 @@ expect_migration 0 "adding the NEXT migration beside it" \
   'printf "CREATE TABLE b (id BLOB);\n" > crates/pos-db/migrations/0002_next.sql; git add -A'
 expect_migration 0 "deleting an UNCOMMITTED migration" \
   'printf "x\n" > crates/pos-db/migrations/0002_next.sql; git add -A; rm crates/pos-db/migrations/0002_next.sql; git add -A'
+
+# expect_dispatch <expected-exit> <label> <action run inside a wired fixture>
+#
+# Everything else in this file invokes a hook as a program. That proves the
+# SCRIPT still refuses and proves nothing about whether Git will ever call it —
+# the two are independent, and the second is what actually breaks: an unset
+# core.hooksPath, a path pointing elsewhere, a hooks directory missing from the
+# working tree, a stale absolute path left by a removed worktree, or a lost exec
+# bit each disable all three hooks with every script still perfect. This suite
+# was green in all five states.
+#
+# These cases go through `git` itself, with core.hooksPath set the way
+# `just setup` sets it, so a break in the WIRING fails here too.
+# `scripts/check-hooks-installed.py` is the check for a developer's clone; this
+# is the check that the hooks are dispatchable at all.
+expect_dispatch() {
+  local want="$1" label="$2" action="$3" tmp got
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX")
+  (
+    cd "$tmp" || exit 1
+    git init -q .
+    git config user.email t@t; git config user.name t
+    git config commit.gpgsign false
+    git config core.hooksPath "$HOOKS"
+    eval "$action" >/dev/null 2>&1
+  )
+  got=$?
+  rm -rf "$tmp"
+  [ "$got" -eq "$want" ] && ok "$label" || bad "$label (wanted exit $want, got $got)"
+}
+
+echo "git dispatch — the hooks are wired, not merely present"
+expect_dispatch 1 "git commit refuses a malformed subject" \
+  'printf x > a.txt; git add a.txt; git commit -m "no grammar at all"'
+expect_dispatch 0 "git commit accepts a conforming subject" \
+  'printf x > a.txt; git add a.txt; git commit -m "chore(repo): a conforming subject   [—]"'
+# Two -m arguments: git joins them with a blank line, which is a body, without
+# any quoting gymnastics inside the eval'd action.
+expect_dispatch 1 "git commit refuses an agent trailer through git itself" \
+  'printf x > a.txt; git add a.txt; git commit -m "chore(repo): tooling   [—]" -m "Co-Authored-By: Claude <noreply@anthropic.com>"'
+# Not .env or a key: an agent sandbox denies reading a secret-shaped path even
+# inside a throwaway fixture, and a case that skips is not a case that passed.
+expect_dispatch 1 "git commit refuses a sensitive path through git itself" \
+  'printf x > payments.sqlite; git add -f payments.sqlite; git commit -m "chore(repo): capture a database   [—]"'
+# Stated as a test rather than left as a footnote: the bypass is real, it is
+# documented, and a suite that never demonstrates it invites the reader to assume
+# the hooks are an enforcement boundary. They are a seatbelt.
+expect_dispatch 0 "--no-verify is a real bypass, and this is what it costs" \
+  'printf x > a.txt; git add a.txt; git commit --no-verify -m "no grammar at all"'
+
+# expect_argv_failure <expected-exit> <label> <hook> [args...]
+#
+# The exit-2 contract — 2 when a hook cannot do its job, 1 only when policy
+# actually refuses — was tested for pre-commit alone. A hook that exits 0 when
+# Git handed it nothing usable is worse than no hook, because it reports success.
+expect_argv_failure() {
+  local want="$1" label="$2"; shift 2
+  local got
+  "$@" >/dev/null 2>&1 </dev/null
+  got=$?
+  [ "$got" -eq "$want" ] && ok "$label" || bad "$label (wanted exit $want, got $got)"
+}
+
+echo "commit-msg and pre-push — a missing argument refuses closed"
+expect_argv_failure 2 "commit-msg with no message file" "$HOOKS/commit-msg"
+expect_argv_failure 2 "commit-msg with an unreadable message file" \
+  "$HOOKS/commit-msg" "${TMPDIR:-/tmp}/pos-test-hooks-no-such-file"
+expect_argv_failure 2 "pre-push with no destination remote" "$HOOKS/pre-push"
+
+# expect_advisory <expected-substring|SILENT> <label> <files to change on the side branch>
+#
+# post-merge's exit status is IGNORED by git — measured, a hook exiting 9 still
+# leaves `git merge` at 0 — so an exit-code assertion here would assert nothing.
+# These drive a real `git merge` and assert on the OUTPUT. `SILENT` is a case in
+# its own right: an advisory that fires on merges it has nothing to say about is
+# one the reader learns to skip, which costs more than it saves.
+expect_advisory() {
+  local want="$1" label="$2" paths="$3" tmp out
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pos-test-hooks.XXXXXX")
+  out=$(
+    cd "$tmp" || exit 1
+    git init -q .
+    git config user.email t@t; git config user.name t
+    git config commit.gpgsign false
+    git config core.hooksPath "$HOOKS"
+    printf base > base.txt
+    git add -A >/dev/null 2>&1
+    git commit -q --no-verify -m "chore(repo): base   [—]" >/dev/null 2>&1
+    git switch -q -c side
+    for path in $paths; do
+      mkdir -p "$(dirname "$path")" 2>/dev/null
+      printf 'x\n' > "$path"
+    done
+    git add -A >/dev/null 2>&1
+    git commit -q --no-verify -m "chore(repo): side   [—]" >/dev/null 2>&1
+    git switch -q - >/dev/null 2>&1
+    git merge -q side 2>&1 >/dev/null
+  )
+  rm -rf "$tmp"
+  if [ "$want" = SILENT ]; then
+    [ -z "$out" ] && ok "$label" || bad "$label (expected silence, got: $out)"
+  elif printf '%s' "$out" | grep -qF -- "$want"; then
+    ok "$label"
+  else
+    bad "$label (nothing said \"$want\")"
+  fi
+}
+
+echo "post-merge — an advisory after the pull, and silence otherwise"
+expect_advisory "just setup"          "a moved pnpm lockfile"      "pnpm-lock.yaml"
+expect_advisory "just setup"          "a moved Cargo lockfile"     "Cargo.lock"
+# NOT plain `just setup`: setup runs check-node-version.py, which is fail-closed
+# against .nvmrc and refuses before installing anything.
+expect_advisory "nvm use"             "a moved Node pin says reprovision first" ".nvmrc"
+expect_advisory "just verify-schema"  "a new SQLite migration"     "crates/pos-db/migrations/9999_fixture.sql"
+expect_advisory "just migrate"        "a new Postgres migration"   "apps/server/migrations/29990101000000_fixture.sql"
+expect_advisory SILENT                "an ordinary change says nothing" "src/main.rs"
 
 echo
 if [ "$fail" -ne 0 ]; then

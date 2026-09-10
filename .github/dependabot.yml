@@ -55,13 +55,30 @@ updates:
     directory: "/"
     schedule: { interval: monthly }
     cooldown: { default-days: 7 }
+    open-pull-requests-limit: 5
     target-branch: development
     commit-message:
       prefix: "chore(repo)"
     labels: ["type: chore", "area: repo", "meta: dependencies"]
+    # Split by update type, like cargo and npm above, rather than one grouped PR
+    # carrying every pinned action. A single group is atomic: one bump that can
+    # never go green strands the other fourteen for a month, and PR #24 is the
+    # precedent — closed red on four checks because one major could not pass the
+    # Node pin. A setup-node or pnpm/action-setup major is exactly that shape,
+    # since scripts/check-node-version.py reconciles .nvmrc, package.json, the
+    # pnpm override *and* every setup-node workflow step, so the action bump and
+    # the runtime move have to land as one deliberate change.
+    #
+    # Only version updates are grouped here. Dependabot security updates are
+    # enabled repository-side and arrive as their own ungrouped pull request, so
+    # a real advisory is never waiting behind a monthly patch or minor batch.
     groups:
-      actions:
-        patterns: ["*"]
+      actions-patch:
+        applies-to: version-updates
+        update-types: ["patch"]
+      actions-minor:
+        applies-to: version-updates
+        update-types: ["minor"]
 
   # Docker Compose is its own supported ecosystem; the generic `docker`
   # ecosystem does not discover image references in compose files.
