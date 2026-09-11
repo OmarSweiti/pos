@@ -1028,10 +1028,18 @@ mod tests {
     /// the assertion pass without proving redaction. A distinctive repeated byte
     /// cannot.
     ///
-    /// CodeQL's `rust/hard-coded-cryptographic-value` flags this line. That alert
-    /// is dismissed as *used in tests* rather than fixed, and Copilot Autofix
-    /// proposed exactly the change this comment exists to refuse — see PRs #154
-    /// and #156, closed unmerged.
+    /// CodeQL's `rust/hard-coded-cryptographic-value` flags this line at critical
+    /// severity, and the alert is dismissed as *used in tests* rather than fixed.
+    /// Copilot Autofix proposed exactly the change this comment exists to refuse —
+    /// see PRs #154 and #156, closed unmerged.
+    ///
+    /// **A dismissal does not survive moving this constant.** It is recorded against
+    /// an alert, not against the code: consolidating three literals into this one
+    /// produced a fourth alert, open on `development` until it was dismissed by
+    /// hand. So relocating or renaming `TEST_NONCE` costs one more dismissal, and
+    /// leaving that undone leaves an open critical alert on the default branch of
+    /// the money crate. Check with
+    /// `gh api 'repos/:owner/:repo/code-scanning/alerts?state=open'` after any move.
     const TEST_NONCE: [u8; 16] = [0xA5; 16];
 
     fn timestamp(milliseconds: i64) -> Timestamp {
