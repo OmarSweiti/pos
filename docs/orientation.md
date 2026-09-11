@@ -239,9 +239,11 @@ a new tag is allowed, moving or deleting an existing one is not.
 It remains a local safety belt. `--no-verify` or a clone that skipped setup bypasses it, and the
 repository deliberately offers no environment-variable override. Since 9 September 2026 rulesets
 back it server-side on `development` and `staging`, and `refs/tags/v*` is append-only there with no
-bypass actor at all. Two gaps remain by design: `main` has no ruleset, and on the two protected
-branches the administrator keeps a pull-request-scoped bypass — so red evidence can still be
-overridden, but only through a pull request and only as an event GitHub records.
+bypass actor at all. Since 10 September 2026 `main` also carries `main-append-only`, which refuses
+force pushes and deletions server-side. Two gaps remain by design: `main` requires no pull request
+and no check, and on the two fully protected branches the administrator keeps a pull-request-scoped
+bypass — so red evidence can still be overridden, but only through a pull request and only as an
+event GitHub records.
 
 ## 7. Repository verification: `scripts/`
 
@@ -381,10 +383,11 @@ the project-specific evidence a reviewer needs.
 `CODEOWNERS` records intended ownership; this repository does not treat automatic review assignment
 or a CODEOWNERS approval as a merge gate — no ruleset requires a review, because a sole developer
 cannot approve their own pull request. Red checks now block the merge button on `development` and
-`staging`, subject to a logged administrator bypass; `main` has no ruleset. GitHub-native secret scanning and push protection
+`staging`, subject to a logged administrator bypass; `main` carries a deletion/force-push ruleset
+only, so no check is a merge wall there. GitHub-native secret scanning and push protection
 are enabled alongside independent Gitleaks scanning. Every `uses:` is a full commit SHA from the
-repository allowlist and policy checks enforce that checked-in surface; applying any repository-wide
-selected-Action setting is a separate live configuration step.
+repository allowlist and policy checks enforce that checked-in surface; repository-wide SHA pinning
+is already enabled live, and selected-Action allowlisting remains a separate, unconfigured step.
 
 ## 9. Code and application directories
 
