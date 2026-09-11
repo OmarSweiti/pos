@@ -308,14 +308,14 @@ logged as an event. And the git hooks stay local and bypassable. So:
 | Existing tags never move or disappear | server-side for `refs/tags/v*` (`tags-v-append-only`: `update` and `deletion` blocked, **no bypass actor**, so it binds the maintainer too); `.githooks/pre-push` allows a new tag but refuses every update/deletion; the release workflow revalidates the remote annotated-tag object around draft mutation | the ruleset covers `v*` only — any other tag name is hook-only — and draft/tag binding is not atomic until immutable publication |
 | Commit and squash title obey the exact same grammar | [`scripts/validate-change-title.sh`](../../scripts/validate-change-title.sh), called by `commit-msg` and `branch-flow` | `topology` is a required check on `development` and `staging`, so a red title check now blocks the merge button there; the admin can still bypass through a pull request, and that bypass is logged |
 | Coding assistants receive no PR or history attribution; the exact Dependabot metadata/trailer combination remains visible | [`scripts/check-automation-attribution.py`](../../scripts/check-automation-attribution.py), called by Git and trusted CI for commits plus the PR title/body | Git author metadata is spoofable and local hooks are bypassable; `protected-paths` is now a required check on `development` and `staging`, so CI is a merge wall there, subject to the logged admin bypass |
-| Protected source plans and committed migrations do not change | Claude/Codex hooks, staged-index policy, and `branch-flow` | `pull_request_target` loads the trusted default-branch definition, policy is checked out at its exact `github.workflow_sha`, and the verified PR head is materialized only as data; no configured server-side rule makes a red check a merge wall |
+| Protected source plans and committed migrations do not change | Claude/Codex hooks, staged-index policy, and `branch-flow` | `pull_request_target` loads the trusted default-branch definition, policy is checked out at its exact `github.workflow_sha`, and the verified PR head is materialized only as data; `protected-paths` is a required check on `development` and `staging`, so a red one blocks the merge button there, subject to the logged administrator bypass — but no rule requires it on `main` |
 | Sensitive paths, oversized blobs, and Git inspection failures are refused | [`.githooks/pre-commit`](../../.githooks/pre-commit) with NUL-safe staged-index inspection, and [`.githooks/pre-push`](../../.githooks/pre-push) again over every commit a push introduces (`check-staged-policy.py --commits-file`) | local only, and deliberately twice: Git runs `pre-commit` for an ordinary commit but not for a clean merge, a cherry-pick, a revert or `rebase --continue`. `check-protected-paths.sh` backstops the plan and migration rules server-side; it inspects no filename class and no blob size, so these two are the refusals with no server-side equivalent at all |
 | Secret-like content is detected independently of its filename | GitHub-native secret scanning and push protection are enabled; Gitleaks runs in pre-commit, pre-push, CI commit-range scanning, and the weekly security workflow | local scans can be skipped, so the native controls remain an independent backstop rather than a substitute for the repository-owned range and history gates |
-| Tests, lint, domain purity, schema parity, real PostgreSQL, web build, docs, guards and supply-chain policy run | `ci.yml` | `rust`, `guards`, `web` and `supply-chain` are required checks on `development` and `staging`, so a red one blocks the merge button there; `main` has no ruleset, and the administrator keeps a logged pull-request bypass |
+| Tests, lint, domain purity, schema parity, real PostgreSQL, web build, docs, guards and supply-chain policy run | `ci.yml` | `rust`, `guards`, `web` and `supply-chain` are required checks on `development` and `staging`, so a red one blocks the merge button there; `main` carries `main-append-only`, which requires no check and no pull request, so no check is a merge wall there, and the administrator keeps a logged pull-request bypass on the other two |
 | The coverage matrix reconciles with the suite, the phase files, normative reference names, and its own arithmetic | [`scripts/check-test-catalog.py`](../../scripts/check-test-catalog.py): `just lint` runs the real reconciliation; `just guards` runs `--self-test` | the `rust` job runs the reconciliation and `guards` runs `--self-test`, so a push that skipped `just lint` is still caught. The reconciliation runs inside the `rust` job and `--self-test` inside `guards`, both of which are required checks on `development` and `staging` |
 | The release signing key is never on a step that compiles third-party code | **still nothing for the same-step problem.** `release.yml` passes `TAURI_SIGNING_PRIVATE_KEY` and its password to the same step that builds the frontend and the Rust binary. What *is* now controlled is the ref surface: the `build` job declares `environment: release`, whose one deployment policy is `tag: v*`, so the key must be an environment secret and a run on any other ref cannot obtain it — and each run leaves a deployment record. That environment has no checked-in definition and withholds nothing yet, because no secret exists to withhold; the subsection below has the three qualifications in full | this row is a **requirement, not a control**. [`ref/security-compliance.md`](ref/security-compliance.md) §6b specifies the split — an unsigned job that compiles and reaches the network, then a signing step that receives artifact digests and holds the key with no checkout, no dependency installation and no compilation. Until it lands, any build script or proc macro in the dependency graph can read the key. It is one reason the first external release is deliberately blocked |
 | Workflow syntax and Actions security are audited | `security.yml` using actionlint and zizmor | findings are annotations and check failures. `workflow-analysis` is deliberately **not** a required check: `security.yml` is path-filtered, so a PR touching nothing under `.github/**` produces no check run at all and a required-but-absent context would block it forever |
-| Third-party Actions are immutable in tracked workflows | every external `uses:` is a complete commit SHA from the repository allowlist, enforced by repository policy | repository-wide Action selection and SHA settings are separate live configuration; `gh-actions-policy.sh` owns their checked post-merge activation |
+| Third-party Actions are immutable in tracked workflows | every external `uses:` is a complete commit SHA from the repository allowlist, enforced by repository policy | repository-wide SHA pinning is enabled live (`sha_pinning_required: true`) and its target is checked into `gh-actions-policy.sh`; selected-Action allowlisting is not configured (`allowed_actions: all`). No gate reads either value back |
 | A release identifies the exact validated branch tip | `release.yml` validates SemVer/RC grammar, annotated tag object, branch tip, versions and successful CI for the same SHA | release signing secrets and OS signing still have to be provisioned before an external release |
 
 `branch-flow.yml` checks its candidate replacement with the trusted revision of
@@ -346,13 +346,13 @@ default-branch checker cannot protect the commit before that checker exists ther
 The practical rule remains **`just setup` on every machine, always**. It installs hooks before
 networked dependency setup and refuses early if Gitleaks is missing. Server workflows then repeat
 the policy from trusted code. This is professional defence in depth, but it is not branch
-protection: `main` has no ruleset, and on `development`/`staging` the administrator keeps a bypass,
-or makes CODEOWNERS a review requirement. Nothing in this repository claims those server-side
-controls were completed.
+protection: `main`'s ruleset requires no check and no pull request, and on `development`/`staging`
+the administrator keeps a bypass, or makes CODEOWNERS a review requirement. Nothing in this
+repository claims those server-side controls were completed.
 
 ### Live configuration that no file in this repository holds
 
-The four rulesets have checked-in definitions. Three other controls do not, and they are the ones
+The four rulesets have checked-in definitions. Four other live controls have none, and they are the ones
 worth naming explicitly, because [`../../scripts/check-branch-workflow-policy.rb`](../../scripts/check-branch-workflow-policy.rb)
 freezes **files** — a setting changed in the web UI is not a diff, produces no red check, and is
 invisible to every gate this repository owns.
@@ -362,35 +362,54 @@ is no analysis workflow under [`../../.github/workflows/`](../../.github/workflo
 cannot be one without converting to advanced setup, so nothing in this repository — no policy
 script, no pin, no review — reaches it. It runs on **two** cadences, and the second is easy to miss
 because only the first appears in the live configuration: a weekly cron, *and* an analysis on every
-pull request, which arrives as four `Analyze (…)` check runs per language pack. PR #146 carried
-`Analyze (actions)`, `Analyze (javascript-typescript)`, `Analyze (python)` and `Analyze (ruby)`
-alongside the six required contexts. None of them is a required check, so a CodeQL finding
-annotates and does not block. For the weekly half,
+pull request, which arrives as one `Analyze (…)` check run per language pack — **five** today —
+plus a separate `CodeQL` summary run. PR #155 carried `Analyze (actions)`,
+`Analyze (javascript-typescript)`, `Analyze (python)`, `Analyze (ruby)` and `Analyze (rust)`
+alongside the six required contexts; PR #146, before Rust was in the list, carried four. None of
+them is a required check, so a CodeQL finding annotates and does not block. For the weekly half,
 [`02-development-workflow.md`](02-development-workflow.md) §16's recency check covers `security`,
 `proptest-scheduled` and `cross-platform-canary` by filename and cannot cover this one the same
 way, because there is no file in the repository to name and its cadence is GitHub's to keep or
 change. Live configuration reads `state: configured`,
-`query_suite: default`, `threat_model: remote`, `schedule: weekly`, with languages `actions`,
-`javascript`, `javascript-typescript`, `python`, `ruby` and `typescript`. Two consequences follow
-from that language list and both matter:
+`query_suite: extended`, `threat_model: remote`, `schedule: weekly`, `runner_type: standard`, with
+languages `actions`, `javascript`, `javascript-typescript`, `python`, `ruby`, `rust` and
+`typescript`. The suite was moved from `default` to `extended` on 11 September 2026, which adds
+every default query plus a set with slightly lower precision and severity: on a public repository
+it costs nothing but triage, and the crate it most affects is the one where a missed finding is a
+financial one. The `PATCH` is accepted asynchronously — `query_suite` still reads `default` until
+the `CodeQL Setup` run it triggers completes, which is why a single read immediately afterwards
+looks like the silent no-op the two secret-scanning fields below genuinely are. Two consequences
+follow from that language list and both matter:
 
 - The `actions` pack means CodeQL independently analyses every workflow file in the repository,
   which partly overlaps what zizmor already does in `security.yml`'s `workflow-analysis` job. The
   overlap is not waste — two engines with different query sets — but it is the reason a workflow
   finding may arrive twice, from two places, only one of which this repository controls.
-- **Rust is not in the list.** Whether default setup can be made to include it was not
-  established — the sweep's attempt to `PATCH` the language list was not carried out — so treat
-  "add Rust" as an untested option rather than a closed door. As configured today, `pos-domain` — the
+- **Rust is in the list, and it earns its place.** The language list last changed on
+  10 September 2026 (`updated_at: 2026-09-10T14:07:29Z`) and `rust` is in it, so `pos-domain` — the
   crate that holds the money rules, and the only code in this project where an arithmetic mistake
-  is a financial one — is not analysed by CodeQL at all. Its coverage story is Clippy under
-  `-D warnings`, the forbidden float lint, and the property suite; not this.
+  is a financial one — *is* analysed by CodeQL. Every finding so far is the same one:
+  `rust/hard-coded-cryptographic-value`, critical, on the test nonce in
+  [`../../crates/pos-domain/src/permissions.rs`](../../crates/pos-domain/src/permissions.rs).
+  Three were raised against three separate literals and dismissed as *used in tests*; PR #157 then
+  consolidated those literals into one `TEST_NONCE` constant carrying the reason, and
+  CodeQL raised a **fourth** alert against the constant, dismissed on the same grounds on
+  11 September 2026. That is the durable shape, not an accident: relocating the literal produces a
+  new alert number, so each move costs one more dismissal. Its coverage story is now Clippy under
+  `-D warnings`, the forbidden float lint, the property suite, **and** this.
 
-It is also the largest single consumer of the shared Actions cache: **81 of the 100 entries and
-0.709 GB**, written by a job this repository cannot add a `save-if` to. Any future cache arithmetic
-has to start from that total rather than from the workflows alone. Pruning the language list would
-reclaim none of it — all 81 keys parse to exactly three distinct values, `javascript` 27,
-`python` 27 and `ruby` 27 — so the unused entries in the list cost nothing and there is nothing to
-trim.
+It is also the largest consumer of the shared Actions cache **by entry count and by nothing else**.
+CodeQL holds the clear majority of live entries and well under a tenth of the bytes, written by a
+job this repository cannot add a `save-if` to. The bytes are the Rust builds — `v0-rust-rust-*` and
+the three `v0-rust-cross-platform-*` platforms together account for most of the total — and the
+repository sits close to GitHub's documented 10 GB per-repository allowance, so **eviction, not
+CodeQL, is what future cache arithmetic has to start from**. Pruning the language list would
+reclaim none of the CodeQL share anyway: its keys parse to exactly three distinct values,
+`javascript`, `python` and `ruby`, and neither `actions` nor `rust` writes an overlay-base-database
+entry at all — so the unused entries in the list cost nothing and there is nothing to trim.
+The live numbers are `gh api repos/:owner/:repo/actions/cache/usage` and
+`gh api --paginate repos/:owner/:repo/actions/caches`; read them there rather than from this
+paragraph, which is why no figure is frozen into it.
 
 **The `release` environment is the only ref-surface control over the updater signing key.**
 [`../../.github/workflows/release.yml`](../../.github/workflows/release.yml)'s `build` job declares
@@ -446,6 +465,25 @@ output, not from an intention.
 Independent Gitleaks remains defence in depth rather than a substitute: findings are redacted, the
 scanner version and downloaded archive digest are pinned in CI, and operational errors fail closed.
 
+**Private vulnerability reporting is on, and nothing here says so.**
+`gh api repos/:owner/:repo/private-vulnerability-reporting` returns `{"enabled": true}`, which is
+what makes the "Report a vulnerability" advisory link in
+[`../../SECURITY.md`](../../SECURITY.md) resolve rather than 404. It is a single repository boolean,
+it can be turned off in the web UI in one click, and no gate here would notice — so the one-line
+`gh api` read above is the only way to confirm the disclosure route the security policy promises is
+actually open.
+
+**Repository-wide Actions SHA pinning is already on, and no gate reads it back.**
+`gh api repos/:owner/:repo/actions/permissions` returns `enabled: true`, `allowed_actions: "all"`,
+`sha_pinning_required: true`. Unlike the entries above it, this one *does* have a checked-in target:
+[`../../scripts/gh-actions-policy.sh`](../../scripts/gh-actions-policy.sh) hard-codes exactly that
+flag and deliberately leaves `allowed_actions` as it finds it, so the control is **applied and
+re-appliable**, not pending. What no gate does is read the live value back — `--check` is offline by
+design and inspects the `.github` tree, not the repository setting — so a flip in the web UI is
+still invisible here. Selected-Action allowlisting is separately *not* configured: `allowed_actions`
+is `all`, and `actions/permissions/selected-actions` answers
+`409 All actions and workflows are allowed on this repository`.
+
 ---
 
 ## 4 · Issues — what earns one
@@ -479,7 +517,7 @@ The `Done when` field is the one that earns its keep. "The tax engine works" is 
 
 ### Labels are a query language
 
-Six families. `area:` and `risk:` are applied **by path**
+Seven families. `area:` and `risk:` are applied **by path**
 ([`.github/labeler.yml`](../../.github/labeler.yml)); `type:` is applied **from the PR title**
 ([`scripts/pr-type-label.sh`](../../scripts/pr-type-label.sh)).
 
@@ -978,18 +1016,18 @@ Honest list, same spirit as [workflow §17](02-development-workflow.md).
 
 | Not set up | Why, and what closes it |
 |---|---|
-| A ruleset on `main` | `development` and `staging` are configured (§3); `main` is deliberately not, because its `ci.yml` predates four of the six required contexts, so a `hotfix/*` branch cut from it would wait forever on checks that never report. Closed by a promotion carrying the current `ci.yml`, then the third payload |
+| Required checks or a required pull request on `main` | **The ruleset itself landed 10 September 2026** — `main-append-only` refuses deletions and force pushes, and needs no status check to do it. What is still absent is a `pull_request` rule and required contexts, because main's `ci.yml` predates four of the six, so a `hotfix/*` branch cut from it would wait forever on checks that never report. Closed by a promotion carrying the current `ci.yml`, then extending the checked-in [`main-append-only.json`](../../.github/rulesets/main-append-only.json) |
 | Required reviewers | no ruleset requires an approval, and none can: a sole developer cannot approve their own pull request, so `required_approving_review_count` is `0` everywhere. `CODEOWNERS` stays maintained metadata rather than a merge control. Six checks *are* required on `development` and `staging`, subject to a logged administrator bypass — §3 |
 | GitHub Discussions | off. With one developer it is a second inbox. Turn it on when there are pilot merchants with questions |
 | Wiki / Pages publication | no publication workflow is configured, and none is wanted: a wiki is editable with no pull request and `check-doc-links.py` would not gate it, which would put a hole in the discipline the rest of the doc set depends on. Engineering docs stay versioned and reviewed with the code — §10 |
-| A checked-in definition of the three rulesets | **partly closed.** [`.github/rulesets/`](../../.github/rulesets/) now carries the applicable configuration of each live ruleset, normalized to the payload the API accepts back, so the configuration can be diffed and restored by hand — the commands are in its README, and all three matched live when they were written. What is still missing is enforcement of that agreement: no gate runs the diff, so drift is detectable rather than prevented, and the payloads have not been round-tripped. `scripts/gh-protect.sh` still refuses and exits 3 because it predates the rulesets API; rewriting it to apply these files, with the negative tests `scripts/test-gh-setup.sh` requires, is the remaining work. Note issue #115 is **closed** — it tracked "no ruleset exists", which the three rulesets settled; the diff-and-restore half it also named outlived it, which is why this row does not point at it |
+| A checked-in definition of the four rulesets | **partly closed.** [`.github/rulesets/`](../../.github/rulesets/) now carries the applicable configuration of each live ruleset, normalized to the payload the API accepts back, so the configuration can be diffed and restored by hand — the commands are in its README, and all four matched live on 10 September 2026, when the diff loop was last run. What is still missing is enforcement of that agreement: no gate runs the diff, so drift is detectable rather than prevented, and the payloads have not been round-tripped. `scripts/gh-protect.sh` still refuses and exits 3 because it predates the rulesets API; rewriting it to apply these files, with the negative tests `scripts/test-gh-setup.sh` requires, is the remaining work. Note issue #115 is **closed** — it tracked "no ruleset exists", which the rulesets settled; the diff-and-restore half it also named outlived it, which is why this row does not point at it |
 | A staging deployment of `apps/server` | there is no hosted environment yet. `staging` currently means "a tagged candidate", not "a running system" |
 | Jira | free and connectable, deliberately deferred until someone outside engineering needs it — §9 |
 | Protected release-environment enforcement | not claimed. Release jobs instead separate read-only signing from the minimal write-only publisher |
 | Release signing material | verified signed tags, updater secrets/public configuration, and platform signing/notarisation must be configured before the intentionally blocked first external release |
 | The signing/build split | the updater key currently reaches the step that compiles third-party code. [`ref/security-compliance.md`](ref/security-compliance.md) §6b specifies the two-job shape that fixes it; it is a workflow change with its own reviewed edit, and it lands before any external release — §3 |
 | Signed ordinary commits | optional before external contributors; release tags are a separate required policy |
-| Repository-level selected-Action allowlisting | its live capability and state are not asserted here. Every tracked `uses:` reference is a full SHA and policy checks enforce that; repository-wide configuration remains the separate checked post-merge step below |
+| Repository-level selected-Action allowlisting | `allowed_actions` is `all`, so no allowlist is configured. The repository-wide **SHA** half is already applied (`sha_pinning_required: true`, §3); only the allowlist is outstanding. Every tracked `uses:` reference is a full SHA and policy checks enforce that independently |
 | Auto-merge | enabled 9 September 2026, once six checks became required on `development`. `gh pr merge --auto --squash` waits for the required set, which includes the `topology` and `protected-paths` walls, so it does not bypass the route, title and attribution validation `just merge` performs locally — it defers the merge to them |
 
 Immutable releases **are** configured live. Repository-wide Actions settings are separate live
@@ -1022,7 +1060,7 @@ just gh-bootstrap         # labels, milestones, merge behaviour, default branch
 just gh-project           # the board and its fields; views by hand (grouping has no API)
 ./scripts/gh-actions-policy.sh --dry-run  # preflight now; no live mutation
 # after this hardened setup is merged on the default branch:
-./scripts/gh-actions-policy.sh            # enable and verify GitHub SHA-only Actions
+./scripts/gh-actions-policy.sh            # re-apply and verify SHA-only Actions (idempotent; already true)
 ```
 
 `just gh-protect` now refuses and exits 3, and that refusal is the point. The script was written

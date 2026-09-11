@@ -59,7 +59,10 @@ and refused the merge.
 The branch model is the reason. A promotion merges `development` into `staging`
 with a **merge commit**, and that commit lives only on `staging` — it is never
 merged back. So `staging` is ahead of `development` by one commit per promotion
-already made, permanently and by design: four of them today. `handoff.md` states
+already made, permanently and by design. `git rev-list --count
+origin/development..origin/staging` is the live count, read there rather than
+frozen into this sentence, which would go stale on the next promotion.
+`handoff.md` states
 the same property from the other side — *"'Synchronised' means the upstream tip
 is an ancestor and the promoted trees agree — not that divergence counts are
 zero."* Strict compares tips, not trees, so on `staging` it can never be

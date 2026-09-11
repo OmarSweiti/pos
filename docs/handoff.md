@@ -202,7 +202,7 @@ says a fictional date is worse than none.
 | 111 | `decision: does deactivating an approver revoke an already-issued handle?` | P1 | security | decision | the 1.8.x approval handler, so `1.6.4`'s last file |
 | 112 | `decision: the three manual discount caps (merchant decisions 3.1–3.3)` | P1 | money path | merchant answer | `1.4.5` |
 | 114 | `gap: the agent read-deny blocks the memory directory and workflow resume` | P2 | none | decision | agent memory, workflow resume |
-| ~~115~~ | `gap: branch protection is available and unconfigured, and no ruleset exists` | P1 | security | **CLOSED 9 Sep** | the three rulesets were applied, so the gap it was opened for is gone. **But its own closing condition was not met**: it also asked for a rewrite of `scripts/gh-protect.sh` against the rulesets API plus negative tests. That script still refuses and exits 3, so the rulesets remain live configuration with no checked-in definition — nobody can diff or restore them. That remainder is now tracked by nothing; reopen or re-file it |
+| ~~115~~ | `gap: branch protection is available and unconfigured, and no ruleset exists` | P1 | security | **CLOSED 9 Sep** | the three rulesets were applied, so the gap it was opened for is gone. **But its own closing condition was not met**: it also asked for a rewrite of `scripts/gh-protect.sh` against the rulesets API plus negative tests. That remainder is **partly closed**: `.github/rulesets/` now carries all four payloads with a diff-and-restore procedure in its README, verified matching live on 10 September 2026. What is still open is enforcement — no gate runs the diff, the payloads have not been round-tripped, and `scripts/gh-protect.sh` still refuses and exits 3. Re-file that narrower remainder |
 | **119** | `gap: the back office's Testing Library cleanup never registers` — **new** | P2 | none | not blocked | nothing today; the next back-office screen test |
 | **120** | `gap: conventions §5 has no DOM-component layer, and the workflow doc has ten rows to its nine` — **new** | P2 | none | not blocked | nothing; a two-document inconsistency |
 
@@ -532,7 +532,7 @@ new issue reaches the board at creation.
 | Secret scanning · push protection | **enabled** |
 | Dependabot security updates | **enabled** |
 | Private vulnerability reporting | **enabled** |
-| CodeQL | analysing `development`; five analyses pass per PR (actions, javascript-typescript, python, ruby, plus the CodeQL check) |
+| CodeQL | analysing `development`; six check runs per PR — `Analyze` for actions, javascript-typescript, python, ruby and rust, plus the `CodeQL` summary run |
 | `secret_scanning_non_provider_patterns` | **disabled** — see §7 |
 | `secret_scanning_validity_checks` | **disabled**, deliberately — see §7 |
 
