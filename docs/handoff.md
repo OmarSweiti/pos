@@ -1,23 +1,22 @@
 # Handoff — the single current one
 
-**Reflects `development` @ `1929b83`, 9 September 2026.**
+**Reflects `development` @ `9acc1f3`, 11 September 2026.**
 
-This file **replaces** the 8 September handoff. Everything from it that is still true has been
-carried forward; the rest was superseded by the pull requests below and is deliberately gone.
-There is one handoff — keep updating this file rather than adding a dated one.
+This file **replaces** the 9 September handoff. Everything from it that is still true has been
+carried forward; the rest was superseded by the twenty-six pull requests below and is deliberately
+gone. There is one handoff — keep updating this file rather than adding a dated one.
 
-**9 September changed the governance layer, not the product.** Six pull requests (#124–#129) and
-three rulesets landed; no microstep advanced. The gate baselines in §0 were verified at `ff9da7e`
-and are unchanged in kind, but three self-test counts moved: `check-branch-workflow-policy.rb`
-214 → **216**, `check-protected-paths.sh` 13 → **18**, `watch-pr-checks.sh` 47 → **48**, and
-`.githooks/test-hooks.sh` 104 → **108**. The Actions hardening sweep of **10 September** moves one
-of those again: `watch-pr-checks.sh` is **49**, because `security.yml`'s `paths:` list is now
-mirrored once in the script and both former copies — the changed-path matcher and the self-test's
-sample list — are derived from that single array, so all six mirrored entries are exercised where
-five used to be.
+**9–11 September changed the governance layer again, and the product not at all.** Twenty-six pull
+requests merged into `development` (#131–#159, less the two closed unmerged), two promotions reached
+`staging` (#130, #148), and **no microstep advanced**. The only three commits that touch `crates/`
+source touch nothing outside `#[cfg(test)] mod tests`. Phase 1 is exactly where it was: **20 of 112**.
+
+**The tree is green.** `just pre-push` exits 0 in 1:29.90 on a warm cache, every one of the 37
+`just guards` steps passes, and CI run `34613826217` is green on `9acc1f3`. There is no fire to put
+out. **The WIP=1 slot is empty**: 0 open pull requests, and all ten board items read `Todo`.
 
 **Read `CLAUDE.md` first.** This document assumes it. Where this file and the repository disagree,
-**the repository is right** — every number here was read from `git`, `gh` or a file, and where
+**the repository is right** — every number here was read from `git`, `gh` or a command, and where
 something is unverified it says so.
 
 ---
@@ -27,34 +26,63 @@ something is unverified it says so.
 ```bash
 cd ~/My_Projects/pos
 git checkout development && git pull --ff-only
+git fetch --all --prune            # your local staging is 51 commits stale — see §14
 mise exec -- just setup
-mise exec -- just pre-push          # passes at ff9da7e
+mise exec -- just pre-push          # passes at 9acc1f3, 1:29.90 warm
 ```
 
 **`just setup` without `mise exec --` fails.** The shell's Node is `v26.4.0`; `.nvmrc` pins
 `24.19.0` exactly and the check is fail-closed. This is the first thing that goes wrong every time.
 
-**Sanity-check the settings file:** `.claude/settings.json` must be **4,426 bytes** and
-`python3 .claude/hooks/test-settings.py` must read **30 passed**. Both verified at `ff9da7e`.
+**One operational gotcha, measured:** `mise exec -- <cmd>` fails with `couldn't exec process: No
+such file or directory` if the same Bash invocation does `cd` first. Run it from the working
+directory with an absolute script path, and never build the command in a shell variable — the whole
+string is passed as `argv[0]`.
 
-### Verified gate baselines at `ff9da7e`
+### Verified gate baselines at `9acc1f3`
 
-Re-measured after the four PRs. Use these as the "nothing is broken" reference:
+Every row re-measured on 11 September. Use these as the "nothing is broken" reference.
 
 | Command | Reads |
 |---|---|
-| `just pre-push` | exit 0 |
-| `just build-web` | exit 0 — the only place `tsc` runs |
-| `pnpm --filter terminal exec vitest run` | **Test Files 3 passed, Tests 18 passed** |
-| `pnpm --filter terminal exec vitest run src/screens/Sale.test.tsx` | **1 file, 3 tests** — `1.11.0`'s Done-when |
-| `python3 scripts/check-js-licenses.py` | **142 package releases, 11 reviewed expressions**, exit 0 |
-| `python3 scripts/check-implementation-frontier.py` | reconciles: phase 1: 112, 2: 61, 3: 45, 4: 42, 5: 36 |
-| `python3 scripts/check-test-catalog.py` | reconciles, **92 cases** |
-| `bash scripts/test-gh-setup.sh` | **69 passed, 0 failed** |
+| `just pre-push` | **exit 0** — `lint test build-web guards secrets`, `justfile:368`, 1:29.90 warm |
+| `just check` | exit 0 — all **seven** workspace members |
+| `just lint` | exit 0 — 2 prerequisites + 14 body steps = **16 checkers** |
+| `just test` | exit 0 — **241 tests run: 241 passed, 2 skipped**; JS **5 files / 30 tests** |
+| `just build-web` | exit 0 — `tsc -b` + vite 8.2.2 across 5 packages |
+| `just guards` | exit 0 — **37 steps** |
+| `just verify-schema` | exit 0 — **4 migrations, 32 tables, 300 columns** |
+| `just verify-pg` | exit 0 — **the engine pass RAN** via the Docker fallback |
+| `just secrets` | exit 0 — gitleaks 8.30.1, `--history` |
+| `just audit` | exit 0 — cargo-deny clean; **135 package releases, 11 reviewed expressions** |
+| `just bench-gate` | **REFUSED, exit 3** — no reference register. Correct, not broken |
+| `pnpm --filter terminal exec vitest run` | **3 files, 18 tests**, vitest **5.0.0** |
+| `pnpm --filter backoffice exec vitest run` | 1 file, 2 tests |
+| `check-implementation-frontier.py` | phase 1: **112**, 2: 61, 3: 45, 4: 42, 5: 36 |
+| `check-test-catalog.py` | reconciles, **92 cases** |
+| `check-js-licenses.py` | **135** package releases, 11 reviewed expressions |
+| `test-gh-setup.sh` | **69 passed, 0 failed** |
+| `check-branch-workflow-policy.rb --self-test` | **219 passed, 0 failed** |
+| `.githooks/test-hooks.sh` | **136 passed** |
+| `check-protected-paths.sh --self-test` | 18 passed · `watch-pr-checks.sh --self-test` **49** |
+| `test-settings.py` | **30 passed**; `.claude/settings.json` is **4,426 bytes** |
 
-The licence figure moved 133 → 142 on 8 September: `1.11.0` added exactly nine package releases,
-all MIT. **`pre-push` deliberately omits the licence pass** (both halves of `just audit` reach the
-network), so run it by hand after any dependency change.
+Three counts moved since 9 September and are the ones a stale document will get wrong:
+`check-branch-workflow-policy.rb` 216 → **219**, `.githooks/test-hooks.sh` 108 → **136** (#134,
+#137, #142), and the JavaScript licence count 142 → **135** (the Dependabot bumps and vitest 5).
+
+**Toolchain actually in use:** rustc 1.97.1, cargo-nextest 0.9.143, node v24.19.0, pnpm 11.22.0,
+vitest 5.0.0, gitleaks 8.30.1, Docker Engine 29.5.2.
+
+### Two things the gate table does not say
+
+* **`just verify-pg` ran the real engine pass here**, because `$DATABASE_URL` is unset *and* Docker
+  is running, so the Docker fallback fired (`postgres:18-alpine`, pinned by digest at
+  `scripts/verify-pg-migrations.py:66-70`). With Docker stopped it prints that it skipped the engine
+  pass and still exits 0. **Read the output line, not the exit code.**
+* **Doctests run nowhere.** `just test` is `cargo nextest`, which does not execute them, and no CI
+  job does either. There are 10 doc-example fences across `pos-db/src/repo/outbox.rs` and
+  `pos-domain/src/{catalog,ids,audit}.rs`. They can rot silently.
 
 ---
 
@@ -62,389 +90,495 @@ network), so run it by hand after any dependency change.
 
 | | |
 |---|---|
-| `development` | **`ff9da7e`** — green |
-| `staging` | `6ac5d49` — **6 behind**, 3 ahead (its own promotion merges) |
-| `main` | `24a0283` — **102 behind**, untouched since 20 August |
-| Phase 1 | **20 of 112** executable microsteps (~18%) — verified by the frontier checker at `ff9da7e` |
+| `development` | **`9acc1f3`** — green; CI run `34613826217` all-success |
+| `staging` | **`531ea04`** — **10 behind** `development`, 5 ahead (its own five promotion merges) |
+| `main` | `24a0283` — **138 behind** `development`, **133 behind** `staging`, untouched since 20 August |
+| Phase 1 | **20 of 112** executable microsteps (~18%) — unchanged since 8 September |
 | Open PRs | **0** |
-| Open issues | **11** — see §2. **None is `In Progress`: the WIP=1 slot is empty** |
-| Board #4 | 13 items — 10 active, 3 archived. Four views, and a README describing every field. `Status`, `Priority`, `Risk` and `Blocked` on all 13; `Phase`, `Group` and `Microstep` on 11, blank by design on the two items that belong to no microstep |
-| Repository | **PUBLIC** since 30 August 2026, GitHub Free |
-| Rulesets | **four, all active** — `development-flow`, `staging-promotion`, `main-append-only`, `tags-v-append-only`. Definitions checked in under `.github/rulesets/`. `main` carries `deletion` and `non_fast_forward` only; `branches/main/protection` still answers `404`, which is the legacy API and not evidence of an unprotected branch |
+| Open issues | **10** — see §3. **None is `In Progress`: the WIP=1 slot is empty** |
+| Board #4 | the API's default listing returns **10 items, every one `Todo`**. Archived items are excluded from that listing and their count is not readable through it |
+| Rulesets | **four, all active**, and all four now checked in under `.github/rulesets/`, byte-matching live |
+| Tags / releases | **zero of each.** The append-only tag ruleset has never been exercised |
+| Repository | **PUBLIC**, GitHub Free, `OmarSweiti` the sole collaborator (admin) |
 
 ### Complete: 20 microsteps
 
-Read live from the frontier region, in its own order:
+Read live from the frontier region, `docs/implementation/README.md:22-39`, in its own order:
 
 `1.1.0` `1.1.1` `1.1.2a` `1.1.6` `1.1.3` `1.1.4` `1.1.2b` `1.1.7` `1.1.5` `1.1.8` `1.2.1` `1.2.2`
-`1.3.1` `1.8.9` `1.8.5` `1.11.2` `1.6.5` `1.6.1` `1.6.3` **`1.11.0`**
+`1.3.1` `1.8.9` `1.8.5` `1.11.2` `1.6.5` `1.6.1` `1.6.3` `1.11.0`
 
-### Partially delivered — still three, and the frontier checker enforces the distinction
+**When the 21st lands, the region must read `21 of 112 executable microsteps fully complete
+(~19%)`.** The checker computes `round(100 * done / total)` and `round(100*21/112) == 19`; leaving
+`~18%` is a hard `just lint` failure, not a rounding quibble. The same denominators appear on three
+surfaces the checker reconciles — the region, `00-master-plan.md:96`, and
+`status-page.html:464-504` — so a denominator change lands in all three or the gate reds.
 
-A `**Full-step status:**` marker in a phase file mechanically means "partial" whatever its prose,
-and `scripts/check-implementation-frontier.py` refuses to let a step carrying one be declared
-complete. Read live from `phase-1-sellable-mvp.md`:
+### Partially delivered — still three
+
+A `**Full-step status:**` marker mechanically means "partial" whatever its prose, and
+`scripts/check-implementation-frontier.py` refuses to let such a step be declared complete.
 
 | Step | Marker | What is missing |
 |---|---|---|
-| `1.1.9` | `:190` | the database half, gated on `1.9.1` creating `trusted_time_state` |
-| `1.2.0` | `:222` | a reference register exists nowhere — **#68** |
-| `1.6.4` | `:691` | only the 1.8.x terminal handler — and it is gated on the **#111** decision |
+| `1.1.9` | `phase-1:190` | the database half, gated on `1.9.1` creating `trusted_time_state` |
+| `1.2.0` | `phase-1:222` | a reference register exists nowhere — **#68**. `bench-gate --check-profile` exits 3 |
+| `1.6.4` | `phase-1:691` | only the 1.8.x terminal handler — gated on **#111** and on 1.8.x wiring `pos-db` into the terminal |
+
+Rule 8 of the checker is the non-obvious half: every `**Full-step status:**` id must also still
+appear as a backticked id in `README.md`. Completing one means deleting **both** the marker and the
+README prose in the same change; delete one and the checker errors from the other direction.
 
 ---
 
-## 2 · What landed on 9 September — six pull requests and the governance layer
+## 2 · What landed 9–11 September — twenty-six pull requests, zero microsteps
+
+Thirty commits, 47 files, +3195/−630. Nine files added, none deleted. Classified: **19**
+governance/docs/CI, **5** Dependabot, **2** domain PRs that touch only `#[cfg(test)] mod tests`.
+**No shipping product code changed anywhere.**
+
+### The five rulings that matter
+
+**1 · `main` has a ruleset (#136).** `main-append-only`, id `22744344`, active since 10 September,
+`deletion` + `non_fast_forward` only. Eleven places said it had none. The old reasoning survives but
+applies **only to `required_status_checks`**: main's `ci.yml` predates four of the six contexts, so
+a `hotfix/*` cut from main would wait forever on checks that never report — while `deletion` and
+`non_fast_forward` need no checks at all, which is why they could be applied first. The correct
+sentence is *"force-push and deletion are refused server-side on `main` today, while a pull request
+is still not required and no check is a merge wall"* — **not** "main is protected". And
+`branches/main/protection` answering `404` is the **legacy** API, which cannot see a ruleset;
+`repos/.../branches` reports `main protected=true`.
+
+**2 · `strict_required_status_checks_policy` is `true` on `development` and must stay `false` on
+`staging` (#146 set both, #153 reverted staging).** This is structural, not bad luck: a promotion's
+merge commit lives only on `staging` and is never merged back, so `staging` runs permanently ahead
+by one commit per prior promotion. Strict compares branch **tips**, so on `staging` it can never be
+satisfied — PR #148 opened as `BEHIND` and could not be merged. Strict also buys nothing there: it
+guards concurrent PRs racing a moving base, which is a `development` phenomenon.
+
+**3 · A CodeQL dismissal binds to an alert number, not to code (#157, #159).** Alerts #4/#5/#6 were
+`rust/hard-coded-cryptographic-value`, critical, on three nonce literals in
+`crates/pos-domain/src/permissions.rs`. #157 consolidated them into one constant
+`TEST_NONCE: [u8; 16] = [0xA5; 16]` at `:1043`, inside `#[cfg(test)] mod tests`. **That produced a
+brand-new alert #7** at the new location — created 15:12Z on 10 September, hand-dismissed 14:26Z on
+11 September — while the comment #157 added in the same commit already asserted it was dismissed.
+So **any future move or rename of `TEST_NONCE` costs one more manual dismissal**, and leaving it
+undone leaves an open critical alert on the default branch of the money crate. The check is
+`gh api 'repos/:owner/:repo/code-scanning/alerts?state=open'`.
+
+Why the fixed literal is mandatory, so nobody "fixes" it again: `ApprovalHandle::issue`
+(`permissions.rs:747`) takes `nonce` as a **parameter** because invariant I-8 forbids `pos-domain`
+from generating randomness. It is enforced twice — `check-domain-purity.py`'s self-test rejects
+`Uuid::new_v4()` in this crate, and `Cargo.toml:67` pins `uuid` without the `v4` feature, so the
+suggested fix **cannot compile here**. The value is `0xA5` and not `0` or `1` because
+`approval_debug_output_redacts_content_hash_and_nonce` asserts the raw bytes are *absent* from
+`Debug` output, and a run of zeroes could appear there for unrelated reasons — passing the assertion
+without proving redaction.
+
+**Copilot Autofix PRs #154 and #156 were closed unmerged**, for six independently disqualifying
+reasons: they do not compile (`E0599`, no `new_v4`); they violate I-8; they carry
+`Co-authored-by: Copilot Autofix powered by AI`, which reds `supply-chain`; branches
+`alert-autofix-5/6` are illegal routes, which reds `topology`; the titles are outside the §8
+grammar; and they randomise a value the tests never read. **Do not reopen them.**
+
+**4 · `.githooks/pre-push` now scans only what a push publishes (#140, #143, #144).** It no longer
+runs `scan-secrets.sh --history` — gitleaks with no `--log-opts` walks `--all`, so a token on an
+unrelated local branch or in a stash refused a clean push. It now runs
+`scan-secrets.sh --pushed LOCAL_SHA REMOTE`, deliberately the same revision expression the
+attribution and sensitive-path checks already use, so all three content gates cover one commit set
+by construction. Measured: median 0.516s → 0.044s; attribution on a 132-commit push 11.26s → 1.55s;
+CI's `supply-chain` scan 7.72s → 0.07s over 142 commits.
+
+`--pushed` is a **named mode, not a `--log-opts` passthrough** — gitleaks word-splits that string
+and an arbitrary caller value would be git-log argument injection. A push straight to a URL falls
+back to `--history`, widening the scan, never narrowing it. **The one accepted loss:** a secret that
+reached the remote by another route no longer alarms on your next unrelated push. Four gates keep
+that alarm — `just secrets` (all-ref, inside `just pre-push`), CI's `supply-chain`, `security.yml`'s
+weekly full-history run, and GitHub push protection. **Remove any of them and this trade needs
+revisiting.**
+
+**5 · Both agents now refuse `sqlx migrate revert` (#138).** `.claude/hooks/protect-immutable.py`
+contained zero occurrences of `sqlx` or `revert` — the same command was blocked for Codex and waved
+through for Claude, measured at `exit=0` for the bare form, `bash -c '…'` and `sudo …`. It is now
+refused across eleven spellings, asserted behaviourally by driving **both** hooks and requiring the
+same verdict. `RELEVANT` at `:112` had to gain `"sqlx"`, without which the matcher was unreachable.
+**No Git hook and no CI job can backstop this**: it mutates a database and produces no commit and no
+diff, so nothing downstream can observe it.
+
+### The rest, in one table
 
 | PR | What |
 |---|---|
-| **#124** | `protected-paths` steps 5–7 were **cancelled** by the frozen-policy step above them, so the source-plan/migration immutability wall was skipped on 18 of the last 22 red runs. Guarded with `if: ${{ !cancelled() }}` and pinned in `EXPECTED_IF`. Also: `check-protected-paths.sh` now compares against the **merge base**, so a stale branch is no longer accused of deleting a migration it never opened; and the policy reports **every** changed path, attributed to this branch or to base drift, instead of the first one only |
-| **#125** | The `0005` ICV window: an `⚠️ OPEN` block above `doc_sequence`, the `0010` block widened to name `1.9.1` as the structural blocker, and #113's four options in the `1.9.1` body. Plus `SECURITY.md` §5 → §6 with three missing field names and the suffix rule, `0.3.2` → `5.5.0`, this handoff tracked, and `pos-test-support` added to the crate map |
-| **#126** | Eight statements across six standing documents said no ruleset was configured. Corrected |
-| **#127** | `allow_auto_merge` on; all four issue forms target board #4; the PR template asks what it closes |
-| **#128** | `just promote-merge <pr>`, and a push-only `promotion-shape` job asserting a release branch advances only by a merge commit |
-| **#129** | The updater signing key scoped to the `release` environment (`tag: v*`), and a new release tag validated **before** it is pushed — a server-side rejection spends the version number |
+| **#131, #132** | the board describes itself; the record counts right |
+| **#133** | the release page gets categories |
+| **#134** | `scripts/check-hooks-installed.py` — `core.hooksPath` proven installed, wired into `just lint`, `just test` and `just setup`. Also: `git commit -v` used to refuse clean messages (the hook saw message **plus diff** because Git strips the scissors section *after* the hook runs); fixed by cutting on Git's own `cut_line` at `.githooks/commit-msg:32`/`:39` |
+| **#135** | the release-tag chain is exercised — it was **entirely untested** before; rulesets become checked-in data |
+| **#136** | `main-append-only`, and eleven documents corrected |
+| **#137, #142** | the suite proves the wiring, not only the scripts; every push assertion owns its fixture |
+| **#138** | both agents refuse the revert that leaves no diff |
+| **#139, #141** | one paragraph per claim; the two gates that share the name `pre-push` are disambiguated |
+| **#140, #143, #144** | the push and CI scans narrowed to the published range |
+| **#145** | `.githooks/post-merge` — an advisory line after a pull that moved your pins |
+| **#146** | Actions hardening: `cargo-deny` via `taiki-e/install-action` pinned to a full SHA instead of a Dockerfile action that did `curl \| tar` with no integrity check; `rust-cache` `save-if` only from a restorable branch |
+| **#147, #149, #150, #151, #152** | Dependabot. **vitest 4.1.11 → 5.0.0 landed cleanly and broke nothing** |
+| **#153** | strict status checks belong on `development` alone |
+| **#155** | the two secret-scanning settings are **not offered on this account** — see §7 |
+| **#157, #159** | `TEST_NONCE`, and the dismissal-per-move finding |
+| **#158** | sixteen live-state corrections across four documents |
 
-**Nothing here advanced a microstep.** Phase 1 is where it was.
+### Two new traps this window created
 
-### What landed on 8 September — four pull requests
+**A · Every Dependabot Action-SHA bump reds `protected-paths` by construction.**
+`check-branch-workflow-policy.rb` byte-freezes every workflow definition, and a `uses:` bump edits
+`.github/workflows/*.yml`. Confirmed on **#149** and **#151**: the failing step is *"The next
+workflow retains this trusted-workflow boundary"*, every other step green. Both merged through the
+admin bypass. **This recurs monthly** — `.github/dependabot.yml` runs a `github-actions` ecosystem
+at `interval: monthly`, `open-pull-requests-limit: 5`.
 
-All four are merged into `development`. **#117 is closed** (by #118) and the board's built-in
-"Item closed" workflow moved it to `Done` with no intervention.
-
-| PR | Commit | What |
-|---|---|---|
-| **#118** | `d264aec` | **microstep `1.11.0`** — the register DOM component-test harness |
-| **#121** | `39cf4d4` | five documents said `clippy::float_arithmetic` was `"deny"`; `Cargo.toml:49` says `"forbid"` |
-| **#122** | `7cdd7dc` | `gh-project.sh` claimed the Projects API cannot create views; only grouping and sorting is a real gap |
-| **#123** | `ff9da7e` | `ref/security-compliance.md` described the pre-#116 `trusted_time_state` and misattributed the lease anchor to `high_water` |
-
-**All twelve of the documentation corrections the 7 September audit queued are now landed** —
-correction 11 inside #118, corrections 6–10 in #121, corrections 2–5 in #122, and corrections 1 and
-12 in #123. That appendix is discharged; do not go looking for it.
-
-### #118 — what `1.11.0` actually delivers
-
-`apps/terminal` now has a working DOM component-test harness:
-
-* `apps/terminal/vite.config.ts` — `environment: "jsdom"`, `setupFiles: ["./src/test/setup.ts"]`,
-  and `environmentOptions.jsdom.html` read from **`index.html` itself** with `readFileSync`.
-* `apps/terminal/src/test/setup.ts` — `renderWithProviders`, `afterEach(cleanup)`, the jest-dom
-  matcher registration, and the fake-timer bridge.
-* `apps/terminal/src/screens/Sale.test.tsx` — three tests. One is the plan's named canary.
-* Four devDependencies: `@testing-library/jest-dom ^7.0.1`, `@testing-library/react ^16.3.0`,
-  `@testing-library/user-event ^14.6.7`, `jsdom ^30.0.1`. The two `^16.3.0` / `^30.0.1` strings are
-  **byte-identical to `apps/backoffice/package.json`** on purpose — a range that excludes `16.3.2`
-  forces a second copy of `@testing-library/react` across the two front ends.
-
-**Three defects the plan did not anticipate were found by a workflow before any code was written,
-measured, and fixed inside the step.** Each fails later as something other than itself, which is why
-they are worth reading:
-
-1. **The harness leaked the DOM between tests.** `@testing-library/react` 16.3.2 registers its
-   automatic `cleanup` only behind a `typeof afterEach === 'function'` guard, and vitest's `globals`
-   is off here on purpose — every test in this repository imports `describe`/`expect`/`it`
-   explicitly. Without an explicit `afterEach(cleanup)`, every render inside one file accumulates in
-   the same `document.body`, and the **second** rendering test in a file fails with *"Found multiple
-   elements with the role …"* — a message that reads as a bad selector. A one-test canary cannot
-   expose it. **`1.11.4` would have hit it first** (its `Lock.test.tsx` is the first multi-render
-   file in group order), not one of the four steps #117 named.
-2. **Fake timers did not work at all.** Testing Library gates its async wrapper's clock advance on a
-   global `jest`, which vitest never defines, so under `vi.useFakeTimers()` the wrapper awaits a
-   `setTimeout(…, 0)` the frozen clock never fires and **every** `await user.*()` hangs. Measured:
-   `Error: Test timed out in 5000ms`. `setup.ts` now defines a minimal `jest` global exposing only
-   `advanceTimersByTime`, delegating to `vi`. **A call site must still pass `advanceTimers` to
-   `userEvent.setup()`** — that half is unavoidable and belongs to the call site (`1.11.6`, `1.11.8`).
-3. **jest-dom's bare specifier throws.** `dist/index.mjs` ends in a top-level `expect.extend(…)`
-   with no import of `expect`, so under `globals: false` it is `ReferenceError: expect is not
-   defined` at import time. It must be `@testing-library/jest-dom/vitest`. **TypeScript accepts
-   either spelling**, so `tsc` cannot catch the wrong one.
-
-**Every guard was proven to fail when its subject breaks**, then restored — the repository's law is
-that a guard nobody has seen fail is a guard nobody should trust:
-
-| Broken | Observed |
-|---|---|
-| `index.html` → `dir="ltr"` | `AssertionError: expected 'en' to be 'ar'` |
-| `afterEach(cleanup)` commented out | `AssertionError: expected [ …(2) ] to have a length of 1 but got 2` |
-| the `jest` bridge renamed away | `Error: Test timed out in 5000ms` |
-
-**The canary is anchored in product code**, not in the fixture. `#117` rejected mutating the
-document root in `setup.ts` as circular and was right — but a hand-copied `dir="rtl"` literal in the
-config is the same circle relocated, and measured, it leaves the canary green when `index.html`
-regresses. Reading the file is the only variant that detects the regression the test is named after.
-Both assertions resolve through `directionFor(DEFAULT_LOCALE)`.
-
-**What the canary does not prove, stated in the file:** a subtree that sets no `dir` inherits the
-root's, so it catches an explicit `dir="ltr"` override and **not** *"no product code ever
-establishes direction."* Applying the locale at boot is `1.11.1`'s deliverable — nothing calls
-`setLocale` today. Rendering the real screen is `1.11.5`'s.
-
-Also verified: **the harness is absent from the shipped bundle**
-(`grep -c "testing-library\|renderWithProviders" apps/terminal/dist/assets/*.js` → 0).
+**B · Two commits on `development` carry titles the repo's own `commit-msg` hook refuses.**
+`5c53f60 chore(repo): bump the js-patch group with 5 updates` and
+`941d820 chore(repo): bump the actions-patch group with 2 updates` — both missing the mandatory
+`[<step>]` token. `./scripts/validate-change-title.sh --validate` refuses each. They landed because
+**#149 and #150 were merged with merge commits, not squashes**, and a merge-commit merge drags the
+raw bot commits across. Nothing catches it: `development-flow` permits
+`allowed_merge_methods: ["squash","merge"]`, `.githooks/commit-msg` never sees a server-side merge,
+and CI's grammar gate (`branch-flow.yml:157`) validates only the **PR title**, which becomes the
+*squash* commit. **#131 was also merged with a merge commit** — 3 of 26. Squash a work PR.
 
 ---
 
-## 3 · The ten open issues, and one closed with a remainder
+## 3 · The ten open issues
 
-Two are new, opened 8 September. All are on board #4 with `Priority`, `Risk` and `Blocked` set.
-`Phase`, `Group` and `Microstep` are set on 11 of 13 and **deliberately blank on #114 and #115**,
-which are repository-governance items belonging to no microstep — an empty Microstep is information,
-not an omission. `Target` is deliberately unset everywhere — the board contract
-says a fictional date is worse than none.
+All ten are on board #4, all `Todo`, all assigned. **Eight of the ten are blocked on a human**;
+only **#119** and **#120** are `not blocked`.
 
 | # | Title | Prio | Risk | Blocked | Blocks |
 |---|---|---|---|---|---|
-| **113** | `decision: ICV scope, before migration 0005 freezes it (merchant decision 6.9)` | P1 | migration · compliance | decision | **`1.9.1` — read before any SQL** |
-| 68 | `hardware: buy the reference register, scanner and both printers` | P1 | none | hardware | `1.2.0` deferred half, group 1.7, four budgets |
-| 69 | `decision: the legal entity, its TIN, and ISTD registration for JoFotara` | P1 | compliance | decision | all of group 2.7 |
-| 70 | `decision: a tax adviser's written opinion on the four group-1.3 questions` | P1 | money path | merchant answer | `1.3.4`, and the Phase-1 exit gate |
-| 71 | `decision: JSMO on trade-scale verification evidence and reverification cadence` | P1 | compliance | decision | `1.2.4`'s DB half |
+| **113** | `decision: ICV scope, before migration 0005 freezes it (merchant decision 6.9)` | P1 | migration · compliance | decision | **the `doc_sequence` half of `1.9.1` — read before any SQL** |
+| 68 | `hardware: buy the reference register, scanner and both printers` | — | — | hardware | `1.2.0`'s deferred half, group 1.7, and four budgets |
+| 69 | `decision: the legal entity, its TIN, and ISTD registration for JoFotara` | — | — | decision | **group 2.7, not a Phase-1 microstep** — see below |
+| 70 | `decision: a tax adviser's written opinion on the four group-1.3 questions` | — | — | merchant answer | `1.3.4`, `1.3.7`, and the Phase-1 exit gate |
+| 71 | `decision: JSMO on trade-scale verification evidence and reverification cadence` | — | — | decision | `1.2.4`'s DB half **and Phase-1 exit demonstration 2** |
 | 111 | `decision: does deactivating an approver revoke an already-issued handle?` | P1 | security | decision | the 1.8.x approval handler, so `1.6.4`'s last file |
 | 112 | `decision: the three manual discount caps (merchant decisions 3.1–3.3)` | P1 | money path | merchant answer | `1.4.5` |
-| 114 | `gap: the agent read-deny blocks the memory directory and workflow resume` | P2 | none | decision | agent memory, workflow resume |
-| ~~115~~ | `gap: branch protection is available and unconfigured, and no ruleset exists` | P1 | security | **CLOSED 9 Sep** | the three rulesets were applied, so the gap it was opened for is gone. **But its own closing condition was not met**: it also asked for a rewrite of `scripts/gh-protect.sh` against the rulesets API plus negative tests. That remainder is **partly closed**: `.github/rulesets/` now carries all four payloads with a diff-and-restore procedure in its README, verified matching live on 10 September 2026. What is still open is enforcement — no gate runs the diff, the payloads have not been round-tripped, and `scripts/gh-protect.sh` still refuses and exits 3. Re-file that narrower remainder |
-| **119** | `gap: the back office's Testing Library cleanup never registers` — **new** | P2 | none | not blocked | nothing today; the next back-office screen test |
-| **120** | `gap: conventions §5 has no DOM-component layer, and the workflow doc has ten rows to its nine` — **new** | P2 | none | not blocked | nothing; a two-document inconsistency |
+| 114 | `gap: the agent read-deny blocks the memory directory and workflow resume` | P2 | — | decision | agent memory, workflow resume |
+| **119** | `gap: the back office's Testing Library cleanup never registers` | P2 | — | **not blocked** | nothing today; the next back-office screen test |
+| **120** | `gap: conventions §5 has no DOM-component layer` | P2 | — | **not blocked** | nothing; a two-document inconsistency |
 
-#114, #115, #119 and #120 are **unmilestoned on purpose** — repository and documentation hygiene,
-not Phase-1 exit requirements.
+**#69 does not gate a Phase-1 microstep.** Its own body says it blocks *"all of group 2.7 and the
+22 ⚠️ OPEN items microstep 2.7.0 owns"*, and `phase-1:1055` says the opposite of gating: *"Owner:
+2.7.0 ratifies 6.9 via #69, on a timeline outside this project's control, **so this microstep cannot
+wait for it**."* It is a long lead ordered in Phase 1, not a Phase-1 blocker.
 
-### #119 — the back office carries the identical cleanup defect, in committed code
+**Two divergences nothing reconciles.** Issues **#68, #69, #70 and #71 carry no `priority:` and no
+`risk:` label at all**, while the board shows all four as P1 with a Risk value. And **#113 carries
+two risk labels** (`migration` *and* `compliance`) while the board's single-select Risk field holds
+only `migration` — the field is structurally incapable of holding both, and the loss is silent.
+Decide which surface is authoritative and make them agree, or stop reading one of them.
 
-`apps/backoffice/vite.config.ts` has `environment: "jsdom"` and `@testing-library/react`, and sets
-**neither `globals` nor `setupFiles`** — so its automatic cleanup never registers either. It is
-green only because `App.test.tsx` has two tests and **only one of them renders**. It detonates on
-whoever adds a second rendering test to any back-office file.
+### Two ⚠️ OPEN items gate Phase-1 microsteps and **no issue tracks them**
 
-**Not fixed in #118 deliberately:** `apps/backoffice/vite.config.ts` was on `1.11.0`'s `Files:` list
-only for its justifying comment, and a cleanup fix plus a new test is not a comment. Conventions §6
-rule 6 owns that boundary. Either fix works and both are gate-clean — a mirrored
-`src/test/setup.ts` plus `setupFiles` (preferred, symmetric with the register), or `globals: true`
-(smaller, but diverges from the explicit-import convention). **Add a second rendering test in the
-same change**, because a one-render file cannot prove the fix.
+* `ref/plan-validation.md:324` — **blocks `1.8.1`**: the SQLCipher/SQLite WAL-reset corruption
+  question and the two minimum version constants `1.8.0` must pin and hash.
+* `ref/security-compliance.md:413` — **blocks `1.6.2`**: what second factor exists on a Jordanian
+  minimarket counter. **Buying #68's hardware does not unblock `1.6.2`** — it is blocked twice.
 
-### #120 — the engineering law has no DOM-component layer
+A search of every issue, open and closed, for WAL / SQLCipher / storage / second factor returns
+nothing. File them, or record deliberately that they live only in the reference documents.
 
-`01-conventions.md:114` says *"Nine layers"* and its nine rows (`:118-126`) contain no Vitest or
-DOM-component row: `grep -nic "vitest\|jsdom\|testing-library" 01-conventions.md` → **0**. Meanwhile
-`02-development-workflow.md:387` says *"Pick the layer from conventions §5:"* and prints a table
-with a **tenth** row at `:396` — the Vitest row — that conventions §5 does not have. Fifteen Phase-1
-microsteps name a `.test.tsx` path, and `ref/ui-spec.md:291` places DOM component tests as a named
-rung of the RTL ladder.
+### #115's remainder is still partly open
 
-Closing it means adding a row **and** changing "Nine" to "Ten" in the same edit.
-`git grep "Nine layers"` returns exactly one occurrence tree-wide and nothing in `scripts/`,
-`.claude/` or `.codex/` — **the numeral is hand-maintained and nothing catches a miss.**
-
-### What is deliberately NOT an issue
-
-`03-github-workflow.md` §4 governs this and forbids issue-per-microstep. Recorded so nobody
-re-litigates: the 17 executable microsteps with no `Done when` line (conventions §6 already requires
-one *written in the PR that builds it*); `PROJECT-GUIDE.md`'s fate (§11); "matrix on every PR"
-(explicitly *do it last*); `0004`'s Postgres mirror covering `capability` only (already in the
-mirror's own deferral block); Dependabot squash-body verification (a one-command check); and every
-remaining `⚠️ OPEN` item (each is owned by a named microstep — the phase file *can* hold it).
+The four ruleset payloads exist under `.github/rulesets/` and byte-match live as of 11 September.
+What is still open is **enforcement**: no gate runs the diff, the payloads have never been
+round-tripped (no restore has been executed), and `scripts/gh-protect.sh` still refuses at **exit
+3**. It refuses correctly — its legacy-API `PUT` would now apply three verified defects (a required
+list omitting `guards`, `supply-chain` and `protected-paths`; `require_code_owner_reviews: true`
+against a sole-developer CODEOWNERS with 0 required approvals plus `enforce_admins` on main; and the
+legacy API cannot express `allowed_merge_methods` at all). **No issue tracks this remainder.**
 
 ---
 
-## 4 · What is next — the WIP=1 slot is EMPTY, and the choice is not yet made
+## 4 · What is next — the WIP=1 slot is EMPTY
 
-**This is the first thing to settle in the next session.** `1.11.0` is done and `#117` is closed.
-Nothing is `In Progress`. Per `03-github-workflow.md` §4, the next step is: pick one microstep, open
-one `Microstep` issue for it, add it to board #4 by hand, set it `In Progress`, then build it.
+Nothing is `In Progress`. Per `03-github-workflow.md` §4: pick **one** microstep, open **one**
+`Microstep` issue, add it to board #4 by hand, set it `In Progress`, then build it. Note that
+`.github/ISSUE_TEMPLATE/01-microstep.yml` has **eight required fields**, including a proving command
+(*"The command that proves it. Not a description of the command."*) and a *Test-catalog rows closed*
+field — so a microstep with no `Done when` line cannot even be filed without authoring one first.
 
-### A workflow to answer this was launched and STOPPED unfinished
+### Recommended first: `1.11.3` — formatting helpers
 
-Two dimensions — **next-microstep sequencing** and a **stale-documentation sweep** over every
-tracked `.md` plus `status-page.html`. It was stopped at the operator's request before returning
-anything, exactly as the four earlier runs were.
+It is the **only** genuinely unblocked UI candidate, and it is small: two new TypeScript files
+(`apps/terminal/src/lib/format.ts` and `format.test.ts`, neither exists), four named tests, a real
+`Done when` at `phase-1:1208`, no Rust, no migration, no IPC, no hardware. Every dependency is on
+disk — `1.11.0`'s harness is green, `Locale` is at `lib/direction.ts:13` and `DEFAULT_LOCALE` at
+`:17`, and `packages/money` exports `Currency` (`:23`), `JOD` with exponent 3 (`:31`), `toMinor`
+(`:51`) and `formatMinor` (`:75`). **No `⚠️ OPEN` item anywhere names `1.11.3`**, and group 1.11
+carries no build-order note.
 
-```
-Run ID:      wf_66e36e49-b48
-Script:      ~/.claude/projects/-Users-omar---sweiti-My-Projects-pos/
-             60fd2cf3-4437-47bf-b436-dbf1a357ba43/workflows/scripts/
-             post-1110-sequencing-and-staleness-wf_66e36e49-b48.js
-```
+Three things its PR owes:
 
-**That path is unreadable while `Read(~/.claude/**)` stands (#114), so it cannot be resumed.** The
-fix that works is in §12: relaunch from a script kept in the working tree. Both dimensions are
-described well enough above to rewrite from scratch in a few minutes.
+1. **The `1.11.12` ownership edit** — see §5. Strike
+   `latin_runs_inside_arabic_text_are_bidi_isolated` from `1.11.3`'s Tests line
+   (**`phase-1:1207`**) and trim the third clause of its `Done when` (**`:1208`**).
+2. **Decide `formatMoney` vs `packages/money`'s `formatMinor`.** The phase file says only *"Never
+   `toLocaleString` inline"*; `ui-spec` §9 puts `MoneyDisplay`/`ShelfPrice` in `packages/ui`, which
+   `1.11.3`'s `Files:` line does not include. Wrap or re-implement — choose and write it down.
+3. **Check `check-test-catalog.py` before pushing.** It enumerates **vitest** tests too
+   (`:1280`, `:1309`, `:1315-1325`), not only nextest, so four new test names enter its input. Its
+   assertions read catalog → runner, so an unnamed extra test is *probably* fine — this is the one
+   gate that could red an otherwise-clean PR, and it was **not** executed against a hypothetical
+   `1.11.3` diff.
 
-### Candidates, with what is known so far — NOT a decision
+### Recommended second, and higher-leverage: answer **#113**
 
-| Candidate | State |
-|---|---|
-| `1.11.3` — formatting helpers | **Now unblocked.** It was blocked by `1.11.0`, via `latin_runs_inside_arabic_text_are_bidi_isolated`. Its PR also owes the ownership edit in §5 |
-| `1.11.4` — Lock / PIN screen | `1.11.0` was built for this. It is the first multi-render DOM file (three tests), so it is the first real consumer of the harness |
-| `1.11.1` — i18n infrastructure | Blocked in part: its `Done when` demands the UI resolve "the exact font asset proven by 1.7.2", which does not exist. **Whether the catalogue half can ship alone was never established** |
-| `1.9.1` — migration `0005` | **Blocked by #113.** See below |
-| `1.3.3` — `compute_line_tax`, exclusive mode | Has **no `Done when` line** — `phase-1:371–374` is four lines. One must be authored before its code, per conventions §6. Delivers the **non-default** price mode (merchant decision 2.4 is **inclusive**) |
-| `1.6.2`, `1.3.2`, `1.6.4`'s last file | Blocked by #68, #70, and #111 respectively |
+One unmade decision gates the entire database frontier — `0005`, `0006`, `0007`, `1.2.3`,
+`1.9.2`–`1.9.5`, `1.10.2`–`1.10.5`, the `1.1.9` DB half and the `1.2.4` DB half — because
+`scripts/verify-schema.py:259` requires migration numbers contiguous from `0001`.
 
-### `1.9.1` (migration `0005`) is still NOT safe to write
+**But read it precisely: #113 blocks the `doc_sequence` half of `0005`, not all of `0005`.** The
+⚠️ OPEN at `phase-1:1055` is headed *"blocks the `doc_sequence` half of this migration"*, and **two
+of its four options need no external party at all**:
 
-Its schema authority is correct as of #116, but **#113 blocks it.** `doc_sequence.scope_kind`
-depends on unanswered merchant decision 6.9 (`ref/merchant-decisions.md:152`, default `store`,
-answer column **empty**, owner `2.7.0`), and migrations are forward-only and never edited — so
-writing `0005` now freezes an unratified default into a file that can never be corrected, only
-superseded. #113 lists four options, two of which let `0005` proceed honestly. **Read #113 before
-writing any SQL.**
+* **Option 2** — widen the `CHECK` to all five candidate scopes and constrain the choice in code.
+  #113's own body: *"Costs nothing structurally and keeps `0005` honest."*
+* **Option 3** — defer `doc_sequence` out of `0005` entirely.
+
+Either is takeable today, by one person, in one sitting. That is the single highest-value thing in
+this repository right now, and it is not code.
 
 Two further traps for that work when it comes:
 
-* `schema.md:1671`'s `## 0005` heading must gain **`· SHIPPED`** in the same commit that lands the
+* `schema.md`'s `## 0005` heading must gain **`· SHIPPED`** in the same commit that lands the
   migration. `scripts/verify-schema.py:405` skips re-executing a section whose heading contains
   `SHIPPED`; without it the second pass re-runs the DDL against the schema it just built. `0002`,
   `0003` and `0004` all carry the marker; `0005` does not yet.
 * The microstep also needs the Postgres mirror, the `lib.rs` `MIGRATIONS` registration, the
   `tests/common/mod.rs` `reference_blocks_at_or_after(5)` → `6` change, and the test file.
 
-### Three decisions were put to the operator and are UNANSWERED
+### Other candidates, with what is actually true of each
 
-Asked at the end of the 8 September session; no answer was given. **These block nothing in the code
-and everything in the repository queue.**
+| Candidate | State |
+|---|---|
+| `1.2.4` **pure half** | **Unblocked and the largest unblocked domain step** — the gateway to group 1.4, since `CartLine` needs `PriceOrigin` and `DerivedWeight`. But it is big (14 tests, a new module, a trybuild pair) and its full `Done when` at `phase-1:302` chains commands unreachable before `0007`, so the issue's required proving command must be rewritten for the half |
+| `1.6.6` — `AuditRepository` | **A dark horse nobody named.** Fully unblocked: `0004` shipped `audit_log`, and `1.6.5` and `1.8.9` landed. **No `Done when` line** — one must be authored first |
+| `1.11.1` — i18n | **Blocked by `1.7.2`.** `assets/fonts/` does not exist, no font file is tracked anywhere, `pos-hardware/src` is only `lib.rs`. One of its two tests and half its `Done when` cannot pass |
+| `1.11.4` — Lock / PIN | **Soft-blocked.** All four IPC commands it drives (`auth_login_pin`, `auth_switch_user`, `session_state`, `health_status`, `ui-spec.md:53`) are absent — `src-tauri/src` has no `commands/`, and `src/lib/ipc.ts` does not exist. It would be tested entirely against invented mocks |
+| `1.11.5` — Sale screen | **Blocked.** `CartSnapshot` does not exist (`packages/api-types/src/index.ts` is `export {};`), and it would rewrite the green `1.11.0` canary |
+| `1.9.1` — migration `0005` | **Blocked by #113** on its `doc_sequence` half. See above |
+| `1.3.3` — `compute_line_tax` exclusive | Technically buildable, but **no `Done when` line**; document order puts the externally-blocked `1.3.2` first; both edit the same file; and it is one test of value alone |
+| `1.6.2` — Argon2id PINs | **Blocked twice**, neither time by code: `just bench-gate pin-verify` refuses until #68, **and** `ref/security-compliance.md:413` |
+| `1.2.3`, `1.2.6` | Blocked three migrations deep |
 
-1. **Rulesets (#115).** Apply the tag ruleset only, tag + `development`, or leave alone? §9 has the
-   sequencing and the self-lockout trap. The bypass-actor decision concerns the operator's own
-   account, which is why it was not taken unilaterally.
-2. **Promotion `development → staging`.** `staging` is 6 behind and has never seen the four PRs.
-   Open it and leave the merge, open and merge it, or not yet? The only thing it buys today is the
-   cross-platform macOS/Windows Tauri matrix, which runs on promotions only.
-3. **`PROJECT-GUIDE.md`.** Delete, measure the drift first, or leave untracked? See §11.
+**Eighteen executable Phase-1 microsteps carry no `Done when` line at all** — `1.3.2` `1.3.3`
+`1.4.1` `1.4.2` `1.4.3` `1.4.4` `1.4.5` `1.4.7` `1.4.8` `1.4.10` `1.5.1` `1.5.2` `1.5.4` `1.6.6`
+`1.7.1` `1.7.4` `1.7.6` `1.7.8`. Checker rule 4 refuses to let any of them be declared complete
+until one is written, and the issue form will not accept the microstep without a proving command.
+Each is a documentation prerequisite to its own delivery.
+
+### Or close a P2 — both verify exactly as written, and both are small
+
+**#119** — `apps/backoffice/vite.config.ts` still sets **neither `globals` nor `setupFiles`**
+(grep exits 1; line 13 is `test: { environment: "jsdom" },`). Re-verified at `9acc1f3`. Either fix
+works and both are gate-clean: a mirrored `src/test/setup.ts` plus `setupFiles` (preferred,
+symmetric with the register) or `globals: true` (smaller, diverges from the explicit-import
+convention). **Add a second rendering test in the same change** — a one-render file cannot prove the
+fix.
+
+**#120** — a 2-file docs edit: add a DOM-component row to `01-conventions.md` §5 and change
+**"Nine layers"** (`:114`) to **"Ten"** in the same edit. Three of the issue's own citations have
+since drifted and must be corrected while closing it: *"Pick the layer from conventions §5"* is now
+`02-development-workflow.md:396` (not `:387`), the Vitest row is `:405` (not `:396`), and the
+ui-spec DOM-component rung is `ref/ui-spec.md:292` (not `:291` — `:291` is the Logical-CSS row).
+**#120's row arithmetic is also wrong**: the §4.3 table has **six** data rows, not ten; the real gap
+is a layer-count mismatch, not a row-count one. And its evidence line *"`git grep "Nine layers"`
+returns exactly one occurrence"* is now false — it returns three, because this handoff copied the
+numeral twice.
 
 ---
 
-## 5 · Rulings and findings carried forward — read before touching group 1.11
+## 5 · Rulings carried forward — read before touching group 1.11
 
 ### Ruling: `1.11.12` owns `latin_runs_inside_arabic_text_are_bidi_isolated`
 
-Strike it from `1.11.3`'s Tests line (`:1203`) and trim the third clause of its `Done when`
-(`:1204`), leaving `1.11.3` with three tests. Evidence: `ref/test-catalog.md:314` files the name
-under the DOM harness; `ref/ui-spec.md:292` places it on the DOM-component rung; and the
-**arithmetic decides it** — `1.11.12`'s `Done when` (`:1304`) says "all **five** named
-rendered-state tests" and its Tests line names exactly five, so striking it *there* breaks a counted
+Strike it from `1.11.3`'s Tests line (**`phase-1:1207`**) and trim the third clause of its
+`Done when` (**`:1208`**), leaving `1.11.3` with three tests. Evidence: `ref/test-catalog.md:314`
+files the name under the DOM harness; `ref/ui-spec.md:292` places it on the DOM-component rung; and
+the **arithmetic decides it** — `1.11.12`'s `Done when` says "all **five** named rendered-state
+tests" and its Tests line (`:1307`) names exactly five, so striking it *there* breaks a counted
 condition, whereas `1.11.3`'s carries it as prose that trims cleanly.
 
 **Do it in `1.11.3`'s own PR**, not elsewhere — it touches another microstep's contract, which
-conventions §6's amendment licence does not cover. **Confirmed by measurement:** leaving it alone
-keeps every checker green, and so would striking it; the only reason to wait is rule 6.
-
-**Do not read the gate's silence as permission.** `check-test-catalog.py` exits 0 with the duplicate
-present because the harness table's header is `| Harness | Unblocks |` while the collector requires
-`header[0] in {"Test","Property"}`, and the row parser reads only the first cell.
+conventions §6's amendment licence does not cover. **Do not read the gate's silence as permission**:
+`check-test-catalog.py` exits 0 with the duplicate present because the harness table's header is
+`| Harness | Unblocks |` while the collector requires `header[0] in {"Test","Property"}`.
 
 ### The safe-rewrite rule for `ref/test-catalog.md`'s harness row
 
 `check-test-catalog.py` scans prose in **table cells** for two patterns, either of which makes the
-four names in the `Unblocks` cell compete with their owning `Tests:` lines and trips assertion 7:
-
-* `REFERENCE_TEST_MENTION` (`:1079-1080`) — a capital `Tests?` immediately before a backticked
-  identifier.
-* `REFERENCE_TEST_COVER` (`:1082-1084`) — `Tests?` … `cover(s|ed)\s+` followed immediately by a
-  backtick, tolerating up to 100 backtick-free characters in between.
-
-Measured safe: lowercase `tests \`id\``; and a form where a word intervenes before the backtick.
-**Neither `ui-spec.md` nor `test-catalog.md` may claim the tests now exist — only the harness does.**
-`check_reference_contracts` tests only that a collected name has exactly one owner; **existence is
-never checked**, so an over-claim would pass.
+names in the `Unblocks` cell compete with their owning `Tests:` lines and trips assertion 7:
+`REFERENCE_TEST_MENTION` (`:1079-1080`) — a capital `Tests?` immediately before a backticked
+identifier — and `REFERENCE_TEST_COVER` (`:1082-1084`). Both still compile at exactly those lines.
+Measured safe: lowercase `` tests `id` ``, and a form where a word intervenes before the backtick.
+**Neither `ui-spec.md` nor `test-catalog.md` may claim the tests now exist** — only the harness does.
+`check_reference_contracts` never checks existence, so an over-claim would pass.
 
 ### Six things in the 1.11.x block a future PR must NOT touch
 
-1. `:1228` — `1.11.5`'s `Files:` names `Sale.test.tsx` **without** `(new)`, while `:1177` names it
-   **with** it. That asymmetry is the plan's only record that `1.11.0` creates the file and `1.11.5`
-   extends it. Do not "fix" either.
-2. `:1230-1231` — `1.11.5`'s three tests and its Done-when must not absorb the canary.
-3. `:1236` — *"both use fake timers from 1.11.0"* is now true, and truer than before.
-4. `:1190-1192` — `1.11.1` owns `<html dir="rtl" lang="ar">` **by default** and *"Arabic as the
-   rendered default"*. Supplying `dir="rtl"` to jsdom is a test-fixture fact, not that deliverable.
-5. `:941`, `:1086`, `:1133` — the three `Scheduled in:` lines. Their wording is **not** identical:
-   `:1086` and `:1133` read *"run its screen assertions after 1.11.0"*, but `:941` reads *"run its
-   provisioning-screen assertions after 1.11.0 creates the DOM harness"*. `:31` is a fourth record.
+1. `1.11.5`'s `Files:` names `Sale.test.tsx` **without** `(new)`, while `1.11.0`'s names it **with**
+   it. That asymmetry is the plan's only record that `1.11.0` creates the file and `1.11.5` extends
+   it. Do not "fix" either.
+2. `1.11.5`'s three tests and its `Done when` must not absorb the canary.
+3. *"both use fake timers from 1.11.0"* is now true, and truer than before.
+4. `1.11.1` owns `<html dir="rtl" lang="ar">` **by default** and *"Arabic as the rendered default"*.
+   Supplying `dir="rtl"` to jsdom is a test-fixture fact, not that deliverable.
+5. The three `Scheduled in:` lines are **not** identically worded. Two read *"run its screen
+   assertions after 1.11.0"*; `1.9.5`'s reads *"run its provisioning-screen assertions after 1.11.0
+   creates the DOM harness"*. There is a fourth record in the group header.
 6. `.claude/rules/frontend.md` is byte-pinned and is **not** falsified by `1.11.0` — leave it.
 
-### Traps in the terminal test area, measured and not yet hit
-
-Every one of these was verified by running it. They are latent for the next UI microstep:
+### Traps in the terminal test area, measured and still unhit
 
 * **`scripts/check-logical-css.sh` scans `.tsx` files** (`:82`) with no test-file exemption, and its
-  `:43` regex refuses a bare `right:` or `left:`. **The canonical DOM-test rect stub trips it** —
-  `{ top: 0, left: 0, right: 320, bottom: 48 }`. `getBoundingClientRect` appears nowhere in the tree
-  today; the collision arrives with `1.11.4` onward. The only escape is `physical-ok: <reason>` on
-  the same line, and a bare marker is refused.
-* **Biome's recommended a11y rules police a test fixture as production JSX.** A `<div onClick>` plus
-  an untyped button trips `noStaticElementInteractions`, `useKeyWithClickEvents` and `useButtonType`
-  — and `pnpm biome explain` reports **`No fix available.`** for all three. `1.11.0`'s fixture is
-  deliberately non-interactive to have no a11y surface at all.
-* **`just fmt` does NOT fix `organizeImports`.** `justfile:287-289` is `cargo fmt --all` plus
-  `pnpm biome format --write .`, and **assists are applied only by `biome check --write`**, which no
-  `just` recipe wraps. `biome ci --error-on-warnings` (in `just lint` and CI's `web` job) enforces
-  them. This fired during #118: the fix is `pnpm biome check --write <files>` by hand. Biome sorts on
-  the specifier **name**, with the `type` keyword travelling with it — `{ cleanup, type
-  RenderOptions, type RenderResult, render }`.
-* **`biome.json` cannot be narrowed to exclude tests.** `check-branch-workflow-policy.rb:812-816`
-  refuses any `files.includes` negation outside four approved exclusions, and `:807-811` requires
+  bare-side regex (now **`:44`**) refuses a bare `right:` or `left:`. **The canonical DOM-test rect
+  stub trips it** — `{ top: 0, left: 0, right: 320, bottom: 48 }`. `getBoundingClientRect` is still
+  absent from `apps/` and `packages/`, so the collision arrives with `1.11.4` onward. The only
+  escape is `physical-ok: <reason>` on the same line; a bare marker is refused.
+* **Biome's a11y rules police a test fixture as production JSX.** A `<div onClick>` plus an untyped
+  button trips `noStaticElementInteractions`, `useKeyWithClickEvents` and `useButtonType`, and
+  `pnpm biome explain` reports **`No fix available.`** for all three.
+* **`just fmt` does NOT fix `organizeImports`.** The recipe is now **`justfile:315-317`** — `cargo
+  fmt --all` plus `pnpm biome format --write .` — and assists are applied only by
+  `biome check --write`, which **no `just` recipe wraps**, while `biome ci --error-on-warnings`
+  enforces them. Fix by hand: `pnpm biome check --write <files>`. Biome sorts on the specifier
+  **name**, with `type` travelling with it.
+* **`biome.json` cannot be narrowed to exclude tests.** `check-branch-workflow-policy.rb:823`
+  refuses any `files.includes` negation outside four approved exclusions, and `:825-827` requires
   `apps/**` and `packages/**` to stay covered.
-* **`environment` and the jsdom options are effectively untyped.** vitest types `environment` as
-  `BuiltinEnvironment | (string & Record<never, never>)` so custom environments are assignable, and
-  jsdom 30 ships **no types at all**, so `JSDOMOptions` resolves to `any` for everything except the
-  seven keys vitest declares itself. `environment: "jsdom-typo"` typechecks and dies at run time.
-  `html?: string | ArrayBufferLike` **is** one of the seven and is really enforced.
-* **`src/**` in `apps/terminal` has no Node types under `tsc -b`.** `tsconfig.app.json` declares no
-  `types` field, and TypeScript 7.0.2 does not auto-include `@types/node`, so `readFileSync` in a
-  test fails `TS2591`. `tsconfig.node.json` **does** set `"types": ["node"]` and includes
-  `vite.config.ts`, which is why the fixture is read there and not in the test.
-* **Vite rewrites `new URL("<literal>", import.meta.url)`** into a client asset URL in a
-  browser-like module graph, so under jsdom it evaluates to `http://localhost:3000/…` and `node:fs`
-  throws `TypeError: The URL must be of scheme file`. The same line under `--environment node` reads
-  the file fine. Bare `import.meta.url` is never rewritten.
-* **Nothing enforces a `.tsx` test's name.** `check-test-catalog.py` reconciles catalogue identifier
-  → runner set, never the reverse, so an extra unnamed vitest test is permitted — which is what let
-  `1.11.0` ship its two harness self-proofs. Nothing checks a phase-file `Tests:` name against the
-  runner either.
-
-### Two claims from #117 that are measurably FALSE — do not revive them
-
-1. **The jsdom "cross-workspace coupling" severity claim.** #117 said a backoffice diff dropping
-   jsdom would *silently* break the terminal's DOM suite with `document is not defined`. Measured:
-   **both words are wrong under every resolution path.** vitest fails loudly before any test runs —
-   `MISSING DEPENDENCY  Cannot find dependency 'jsdom'`, `ERR_MODULE_NOT_FOUND`, `Errors 3 errors`,
-   exit 1. It names the missing package. (The declaration in `1.11.0` is still right, and `:1183`
-   instructs it anyway — but for the plan's reason, not that one.)
-2. **`pnpm-lock.yaml:114` is not "the shared vitest peer key".** The real wiring is vitest's own
-   snapshot `optionalDependencies` at `:2387-2389`, and `autoInstallPeers` is **not** the mechanism —
-   pnpm auto-installs only missing **non-optional** peers, and only the two optional peers an
-   importer actually declares reach that block, out of vitest's twelve.
+* **`environment` and the jsdom options are effectively untyped.** `environment: "jsdom-typo"`
+  typechecks and dies at run time. `html?: string | ArrayBufferLike` **is** really enforced.
+* **`src/**` in `apps/terminal` has no Node types under `tsc -b`** — read repository files in
+  `vite.config.ts`, which `tsconfig.node.json` already types.
+* **Vite rewrites `new URL("<literal>", import.meta.url)`** into a client asset URL under jsdom, so
+  `node:fs` throws `TypeError: The URL must be of scheme file`. Bare `import.meta.url` is never
+  rewritten.
+* **Nothing enforces a `.tsx` test's name.** `check-test-catalog.py` reconciles catalogue → runner,
+  never the reverse.
 
 ### Supply-chain facts worth not rediscovering
 
-* **The "Lockfile passes supply-chain policies" line is pnpm's, not a repository script.**
-  `grep -rn "Lockfile passes"` returns **zero** hits tree-wide. `just setup` prints it only because
-  `justfile:15` runs `pnpm install --frozen-lockfile`.
-* **pnpm's policy is `minimumReleaseAge: 1440`** — its own 24-hour default; nothing in `.npmrc`,
-  `pnpm-workspace.yaml` or `package.json` sets it. So a version published in the last day is
-  refused, and a brand-new release cannot be added today.
 * **`allowBuilds` is pinned to exactly `esbuild` and `@tailwindcss/oxide`** by
-  `check-branch-workflow-policy.rb:775-782`, asserted by exact equality and negatively self-tested.
-  A new dependency with an install lifecycle script would have forced an edit to
-  `pnpm-workspace.yaml` **and** to that pinned literal — itself inside the frozen script surface.
-  None of `1.11.0`'s nine has one.
+  `check-branch-workflow-policy.rb:797-799`, asserted by exact equality. A dependency with an
+  install lifecycle script forces an edit to `pnpm-workspace.yaml` **and** to that pinned literal —
+  itself inside the frozen script surface.
+* **pnpm's `minimumReleaseAge` is 1440** — its own 24-hour default; nothing in the repository sets
+  it. A version published in the last day is refused.
+* **There is no pnpm catalog here**, and a `catalog:` reference would break the frozen
+  `@types/node` equality check.
 * **`apps/terminal/package.json`, `biome.json`, `package.json` and `pnpm-workspace.yaml` are
-  STRUCTURAL policy paths, not byte-pinned** — adding devDependencies is permitted. The only content
-  assertion is that both front-end manifests' `@types/node` equals `pnpm-workspace.yaml`'s
-  `overrides.@types/node` (`24.13.3`), whose major must equal `.nvmrc`'s.
-* **There is no pnpm catalog in this repository**, and a `catalog:` reference would break that
-  frozen `@types/node` equality check.
+  STRUCTURAL policy paths, not byte-pinned** — adding devDependencies is permitted.
 * `pnpm-lock.yaml` and `apps/terminal/vite.config.ts` are in **no** policy set.
 
 ---
 
 ## 6 · GitHub — the verified inventory
 
-Keep this section current; it saves an hour every session.
+Measured live 11 September. Keep this current; it saves an hour every session.
+
+### Rulesets — four, all active
+
+| Ruleset | id | Target | Rules |
+|---|---|---|---|
+| `development-flow` | 22650197 | `refs/heads/development` | `deletion`, `non_fast_forward`, `pull_request` (0 approvals, `allowed_merge_methods: ["squash","merge"]`), `required_status_checks` — **`strict: true`** |
+| `staging-promotion` | 22650570 | `refs/heads/staging` | same four, but `allowed_merge_methods: ["merge"]` only and **`strict: false`** |
+| `main-append-only` | 22744344 | `refs/heads/main` | **`deletion` and `non_fast_forward` only.** No PR rule, no checks |
+| `tags-v-append-only` | 22650129 | `refs/tags/v*` | `deletion` and `update`. **`bypass_actors: []`** — `current_user_can_bypass: "never"` |
+
+The six required contexts on both branch rulesets: **`rust · guards · web · supply-chain ·
+protected-paths · topology`**. All three branch rulesets keep one bypass actor —
+`{actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "pull_request"}`.
+
+Both PR rules also set **`require_extra_approval_for_unattributed_changes: true`**, which no
+document mentioned. With 0 required approvals and a single admin collaborator, an unattributed
+change would demand an approval no second account can supply.
+
+### ⚠️ The bypass is the routine merge path, not an exception
+
+```bash
+gh api 'repos/:owner/:repo/rulesets/rule-suites?per_page=100&time_period=month'
+```
+
+**33 evaluations since the rulesets were created: 23 bypass, 9 pass, 1 fail.** 22 bypasses on
+`development`, 1 on `staging`. The endpoint defaults to `time_period=day`, which is why an
+unqualified call shows two — pass `time_period=month` or you will conclude the opposite.
+
+* **The current `development` HEAD was a bypass.** Rule suite `4038065660`: PR #159,
+  `result: bypass`, `required_status_checks` fail — *"5 of 6 required status checks are in
+  progress."* It merged **35 seconds** after #158, and under `strict: true` a rebased branch
+  restarts all six checks.
+* **The last promotion was a bypass.** Rule suite `4021711258`: PR #148 into `staging`,
+  *"2 of 6 required status checks are in progress."*
+* **The ruleset has one recorded live refusal**, which is the guard-nobody-has-seen-fail evidence
+  the repository's law asks for. Rule suite `4021702008`: a direct force-push to `development`
+  refused server-side on 10 September — `non_fast_forward` *"Cannot force-push to this branch"*,
+  `pull_request` *"Changes must be made through a pull request."*
+
+**Most of those bypasses are the byte-frozen-surface review mechanism working as documented** —
+#146's own body says *"`protected-paths` will be RED, by design … That red is the review."* But
+merging while checks are still *in progress* is a different thing, and it is not that. `just merge`
+waits; the fast back-to-back merges did not. Recording the ledger in §16's weekly ritual is still an
+open change, and the merge habit it points at is not a documentation fix.
+
+### Repository configuration
+
+```
+visibility              public      has_issues              true     allow_squash_merge   true
+default_branch          development has_projects            true     allow_merge_commit   true
+delete_branch_on_merge  true        has_wiki                false    allow_rebase_merge   FALSE
+allow_auto_merge        true        has_discussions         false    allow_update_branch  true
+squash/merge title      PR_TITLE    license  NOASSERTION (deliberate)
+squash/merge message    PR_BODY     collaborators  OmarSweiti (admin), sole
+```
+
+One **environment**, `release`, with a single `tag: v*` deployment policy, **no reviewers and no
+wait timer** — the tag-pattern scoping is its entire protection. **0 secrets in it.** `autolinks` =
+`[]`. **40 labels** (one, `accessibility`, is declared by no checked-in file — #158's body calls it
+stray). **Six milestones**; Phase 1 reads **open 9 / closed 27**, and `closed_issues` counts PRs.
+All four issue forms carry `projects: ["OmarSweiti/4"]`, so a new issue reaches the board at
+creation. Nine workflows, all active.
+
+### Security posture
+
+| Feature | State |
+|---|---|
+| Secret scanning · push protection | **enabled** |
+| Dependabot security updates | **enabled** |
+| Private vulnerability reporting | **enabled** — it is what makes `SECURITY.md`'s advisory link resolve |
+| Actions: `sha_pinning_required` | **TRUE** — the repository-wide full-SHA policy is **applied**, not pending |
+| Actions: `allowed_actions` | `"all"` — selected-Action allowlisting remains unconfigured |
+| Default workflow permissions | `read`, `can_approve_pull_request_reviews: false` |
+| CodeQL | default setup, `state: configured`, **`query_suite: extended`**, weekly, seven languages including **`rust`** |
+| `secret_scanning_non_provider_patterns` | **disabled** — and cannot be enabled. §7 |
+| `secret_scanning_validity_checks` | **disabled** — and cannot be enabled. §7 |
+
+**0 open code-scanning alerts. 0 open Dependabot alerts. 0 secret-scanning alerts.** Four CodeQL
+alerts exist (#4–#7), all dismissed as *used in tests*, all `rust/hard-coded-cryptographic-value` in
+`pos-domain/src/permissions.rs`. **The single dismissed Dependabot alert is gone** — the alerts
+endpoint now returns `[]` in every state, so the old `GHSA-wrw7-89jp-8q8g` glib record no longer
+exists to cite.
+
+A PR carries **five `Analyze` runs plus a `CodeQL` summary**. The summary reports `neutral`, not
+`success`; it is not a required context and does not gate a merge.
+
+**Trap:** the CodeQL default-setup `PATCH` is accepted **asynchronously**. `query_suite` keeps
+reading `default` until the `CodeQL Setup` run it triggers finishes — which looks exactly like the
+silent no-op the two secret-scanning fields genuinely are. Do not conclude a CodeQL setting was
+ignored from an immediate re-read.
 
 ### Board #4 `POS delivery`
 
-Project id `PVT_kwHOCn5KRs4BhoZ-`, user `OmarSweiti`. Private board, public repo. **13 items — 10 active, 3 archived.** `shortDescription` and `readme` set 9 September; the README is the field contract, so read it before adding a field.
+Project id `PVT_kwHOCn5KRs4BhoZ-`, user `OmarSweiti`. Private board, public repo. It is the **only**
+project that exists, open or closed.
 
 | Field | Field id | Options (id) |
 |---|---|---|
@@ -455,13 +589,7 @@ Project id `PVT_kwHOCn5KRs4BhoZ-`, user `OmarSweiti`. Private board, public repo
 | `Priority` | `PVTSSF_lAHOCn5KRs4BhoZ-zhgjqX0` | P0 `952302e9` · P1 `00584313` · P2 `98f4223d` |
 | `Risk` | `PVTSSF_lAHOCn5KRs4BhoZ-zhgjqX4` | money path `11636174` · migration `53da4eea` · security `3b34bad4` · compliance `df4f887e` · immutable `4800cc22` · none `ace6a93f` |
 | `Blocked` | `PVTSSF_lAHOCn5KRs4BhoZ-zhgjqX8` | merchant answer `6420eac0` · decision `617fa9da` · hardware `c7becb76` · not blocked `1110b92f` |
-| `Target` | `PVTF_lAHOCn5KRs4BhoZ-zhgjqZw` | date |
-
-Item ids, all prefixed `PVTI_lAHOCn5KRs4BhoZ-`: #68 `…zg5DatI` · #69 `…zg5Dau8` · #70 `…zg5Daw0` ·
-#71 `…zg5Da0E` · #110 `…zg50Sg0` · #111 `…zg50Shw` · #112 `…zg50SjI` · #113 `…zg50SkM` ·
-#114 `…zg50SlM` · #115 `…zg50SmA` · **#119 `…zg57L-0`** · **#120 `…zg57MAs`**
-
-The exact recipe used on 8 September to populate a new item's fields:
+| `Target` | `PVTF_lAHOCn5KRs4BhoZ-zhgjqZw` | date — **unset on all ten, deliberately** |
 
 ```bash
 PROJ=PVT_kwHOCn5KRs4BhoZ-
@@ -472,105 +600,34 @@ gh project item-edit --id <ITEM_ID> --project-id "$PROJ" \
   --field-id <FIELD_ID> --text "1.11"                              # text fields
 ```
 
-Views: 1 `Board — now` BOARD `-status:Done` · 2 `Phase plan` TABLE · 3 `Blocked` TABLE
-`blocked:"merchant answer","decision","hardware"` · 4 `Money & compliance` TABLE
-`risk:"money path","migration","compliance"`.
-
-**What the Projects API can and cannot do** — established by introspection, corrected in PR #122, so
-do not re-litigate:
-
-```
-createProjectV2View:  projectId, name, layout, configuration
-updateProjectV2View:  viewId, name, layout, filter, configuration
-deleteProjectV2View:  exists
-linkProjectV2ToRepository: exists — and the repository IS already linked (totalCount 1)
-ProjectV2ViewConfigurationInput:  visibleFieldIds  ← THE ONLY FIELD
-ProjectV2ViewLayout:  BOARD_LAYOUT | TABLE_LAYOUT | ROADMAP_LAYOUT
-```
-
-So name, layout, filter and visible columns are automatable. **Grouping and sorting are not, and
-never will be** — there is no such input anywhere in the schema. Verified live 8 September:
-`groupByFields` and `sortByFields` are **empty on all four views**.
-
-**Built-in workflows: five work, one does not.** "Item closed" moved #110 **and #117** to `Done` on
-merge with no intervention. **"Auto-add" does nothing** — every issue ever opened here, including
-#119 and #120 today, had to be added with `gh project item-add`. So **every new issue must be added
-by hand** until it is configured. Do not assume the others are broken.
-
-### Repository configuration
-
-```
-allow_squash_merge      true       has_issues              true
-allow_merge_commit      true       has_projects            true
-allow_rebase_merge      FALSE      has_wiki                false
-delete_branch_on_merge  true       has_discussions         false
-allow_auto_merge        true       visibility              public
-allow_update_branch     true       default_branch          development
-squash/merge title      PR_TITLE   license   NOASSERTION (deliberate)
-squash/merge message    PR_BODY
-```
-
-`rulesets` = **three, all active**: `development-flow` and `staging-promotion` (pull request
-required, six checks — `rust`, `guards`, `web`, `supply-chain`, `protected-paths`, `topology` —
-force pushes and deletions blocked, `squash,merge` on `development` and `merge` only into
-`staging`, administrator bypass at `bypass_mode: "pull_request"`), and `tags-v-append-only`
-(`refs/tags/v*`, `update` and `deletion` blocked, **no bypass actor**). `main` carries **no
-ruleset**, deliberately: its `ci.yml` declares only `rust` and `web`, so four of the six contexts
-would never report on a `hotfix/*` branch cut from it.
-
-One **environment**, `release`, with a single `tag: v*` deployment policy and no reviewers; the
-`build` job in `release.yml` declares it, so the updater signing key must be an environment secret
-and is unreachable from any other ref. `autolinks` = `[]`. **40 labels** — nine unused GitHub
-defaults were deleted; `accessibility` was kept as deliberately created. Six phase milestones — and
-milestone `closed_issues` counts PRs. All four issue forms carry `projects: ["OmarSweiti/4"]`, so a
-new issue reaches the board at creation.
-
-### Security posture
-
-| Feature | State |
-|---|---|
-| Secret scanning · push protection | **enabled** |
-| Dependabot security updates | **enabled** |
-| Private vulnerability reporting | **enabled** |
-| CodeQL | analysing `development`; six check runs per PR — `Analyze` for actions, javascript-typescript, python, ruby and rust, plus the `CodeQL` summary run |
-| `secret_scanning_non_provider_patterns` | **disabled** — see §7 |
-| `secret_scanning_validity_checks` | **disabled**, deliberately — see §7 |
-
-Dependabot alerts: **1, dismissed** (`GHSA-wrw7-89jp-8q8g`, `glib` `VariantStrIter` unsoundness,
-medium). **No open vulnerability.** Community profile health **85%**; the only missing file is
-`CODE_OF_CONDUCT.md` — undecided, and read `CONTRIBUTING.md` first to see whether outside
-contributions are even accepted.
+**Grouping and sorting are unreachable by any API** and never will be — there is no such input
+anywhere in the schema. `visibleFieldIds` is the only `ProjectV2ViewConfigurationInput` field.
+Established by introspection and corrected in #122; do not re-litigate.
 
 ---
 
-## 7 · Five things that need a human — the API cannot do them
+## 7 · What needs a human
 
 1. **Board view grouping and sorting.** Project #4 → each view: `Board — now` group by **Status**;
-   `Phase plan` group by **Phase**, sort by **Microstep** ascending. Confirmed unreachable by any
-   API; PR #122 wrote that down in both `03-github-workflow.md` and `gh-project.sh`.
-2. ~~**Board Auto-add.**~~ **Solved 9 Sep without it.** All four issue forms now carry
-   `projects: ["OmarSweiti/4"]`, which works because Project #4 is linked to the repository, so a
-   new issue reaches the board at creation. That deliberately replaced the `actions/add-to-project`
-   workflow, which would have needed a new workflow file, an `APPROVED_ACTIONS` edit in the frozen
-   `gh-actions-policy.sh`, **and** a fine-grained PAT as a secret — the default `GITHUB_TOKEN`
-   cannot write to a *user-level* Project v2. The only thing still done by hand is adding a **pull
-   request** to the board, which for short-lived squash-merged branches is not worth a secret.
-3. **Tag signing.** `release.yml` requires a GitHub-**verified** signed tag and no signing identity
-   exists, so **the first release cannot be cut until this is done**. Both halves are outside agent
-   reach: `~/.ssh` is not readable, and the token lacks `admin:ssh_signing_key` to register a
-   Signing Key. `tag.gpgsign` was deliberately left unset rather than pointed at a signer file that
-   does not exist, which would break `git tag -a` outright. The full sequence is a comment on PR
-   #129 — note `gpg.ssh.allowedSignersFile`, without which `git verify-tag` fails even on a valid
-   signature, and do **not** set `commit.gpgsign`.
-4. **`secret_scanning_non_provider_patterns`.** Settings → Code security → Secret scanning. **The
-   API silently no-ops this** — a PATCH returns success and the value stays `disabled`, reproduced
-   with both form fields and a JSON body. Read settings back; a 200 is not evidence of a change.
-5. **`secret_scanning_validity_checks` — a decision, not a chore.** Enabling it transmits candidate
-   secrets to the issuing provider for verification. Left disabled deliberately.
+   `Phase plan` group by **Phase**, sort by **Microstep** ascending. Confirmed unreachable by API.
+2. **Tag signing is DONE — this row is closed.** `tag.gpgsign=true`, `gpg.format=ssh`, and the key
+   was registered on GitHub 9 September. **The release blocker is elsewhere** — see §9.
+3. **`secret_scanning_non_provider_patterns` and `secret_scanning_validity_checks` cannot be enabled
+   from this account** (#155). A `PATCH` returns 200 with the payload unchanged (tried twice, both
+   forms), and the toggles are absent from the repository's Settings → Advanced Security **and** from
+   `github.com/settings/security_analysis`. This is **not** a chore anyone can do. The earlier claim
+   that they are "free on a public repository, which makes leaving them off a pure loss" was wrong.
 
-Also human-only: **#114**, because an agent editing its own permission grants would defeat the
-control, and the permission-mode classifier refuses it. A **mode** change does not lift a deny rule
-— confirmed. Settings are snapshotted at session start, so a restart is required after any change.
+   The residual exposure was also overstated. Provider patterns **are** enabled and **are**
+   push-protected, and the generic class non-provider patterns would add is already scanned locally
+   because `.gitleaks.toml` sets `[extend] useDefault = true` with **zero** custom rules — so the
+   full upstream default rule set applies in pre-commit, in pre-push over the pushed commits, in
+   CI's range scan and in the weekly full-history run. What is genuinely lost is a second,
+   independent, server-side detector that a local `--no-verify` cannot skip. **Validity checks are
+   the real loss** (no local equivalent); flagged for re-testing at `5.5.0`/`5.5.1`.
+4. **#114**, because an agent editing its own permission grants would defeat the control, and the
+   permission-mode classifier refuses it. A **mode** change does not lift a deny rule. Settings are
+   snapshotted at session start, so a restart is required after any change.
 
 ---
 
@@ -579,32 +636,28 @@ control, and the permission-mode classifier refuses it. A **mode** change does n
 | Item | State |
 |---|---|
 | Board sync, four views, repo description and topics | **done** |
-| The `0005` documentation preconditions | **done** — PR #116 |
-| The twelve queued documentation corrections | **done** — PRs #118, #121, #122, #123 |
-| The issue slate | **done** — §3 |
-| **Ruleset control** | **DONE 9 Sep** — tag ruleset first, then `development`, then `staging`. #115 stays open only for the checked-in definition. Superseded text: it is the only one with no self-lockout risk and it closes the only gap that reaches a user |
-| **Issues exception-only** | **not done, and now precisely diagnosed.** `.github/ISSUE_TEMPLATE/01-microstep.yml:2` says a microstep issue is *"the normal way work enters this repo"*, while `03-github-workflow.md:310` says an issue is for *"the microstep you are starting now (one at a time — WIP = 1)"* and explicitly **not** *"every microstep in the phase, in advance"*. §4's opening says copying 400 microsteps into Issues *"would create a second, worse copy of the plan."* **`.github/ISSUE_TEMPLATE/` is NOT in `STATIC_POLICY_PATHS`**, so this is a one-line green PR — no deliberate red |
-| **Claude read-only permissions** | **not done** — #114. `.claude/settings.local.json` is `{}`, the workaround not the fix. **`git checkout` / `git pull` / broad `git fetch` are NOT read-only; do not add them** |
-| **Matrix on every PR** | **not done.** Removing `cross-platform`'s promotion-only `if:` — do it **last**. Minutes are unmetered on a public repo, so the gate rests on latency alone |
-| External enforcement | **done for two of three branches.** `staging` was applied *before* the next promotion rather than after, deliberately: `allowed_merge_methods: ["merge"]` is the only server-side guard against the squashed promotion that forked `staging` on PR #74, and `development` is already ahead. `main` waits for a promotion to carry the current `ci.yml` |
-| **Promotion tooling** | **done** — `just promote-merge <pr>` mirrors `just merge`'s evidence discipline for the route that recipe refuses, and a push-only `promotion-shape` job asserts the new tip of `staging`/`main` is a merge commit. Verified discriminating: `4de6415`, PR #74's squashed promotion, fails it |
-| **The two promotions** | **not done, and they need a person.** The promotion template requires the ten-minute smoke on a fresh database, the drills including a performed restore, the Arabic/RTL pass and the keyboard-only pass. `development` is 12 ahead of `staging`; `staging` is 99 ahead of `main`, carrying 6 migrations and 7 terminal UI files |
-| **Tag signing** | **not done, and it needs a human.** `release.yml` requires a GitHub-**verified** signed tag and no signing identity exists. `~/.ssh` and the `admin:ssh_signing_key` scope are both outside agent reach; `tag.gpgsign` was deliberately left unset rather than pointed at a signer file that does not exist. Sequence on PR #129 |
+| The `0005` documentation preconditions | **done** — #116 |
+| The twelve queued documentation corrections | **done** — #118, #121, #122, #123 |
+| Ruleset control | **done** — four rulesets, all active, all checked in and byte-matching live |
+| Promotion tooling | **done** — `just promote-merge <pr>` plus a push-only `promotion-shape` job |
+| Hook installation proof | **done** — #134, `scripts/check-hooks-installed.py` |
+| Actions SHA pinning | **done** — `sha_pinning_required: true`, repository-wide |
+| Tag signing | **done** — key registered 9 September |
+| **`#115`'s enforcement remainder** | **not done, and untracked.** No gate diffs `.github/rulesets/` against live; no restore has been round-tripped; `gh-protect.sh` still exits 3 |
+| **The bypass ledger in §16's weekly ritual** | **not done.** 23 of 33 evaluations were bypasses |
+| **Selected-Action allowlisting** | **not done** — `allowed_actions: "all"` |
+| **Issues exception-only** | **not done.** `01-microstep.yml:2` still says "the normal way work enters this repo"; `ISSUE_TEMPLATE` is in no policy set, so it is a one-line green PR |
+| **Claude read-only permissions** | **not done** — #114. `.claude/settings.local.json` is `{}` |
+| **Matrix on every PR** | **not done.** Removing `cross-platform`'s promotion-only `if:` — do it **last** |
+| **The `staging → main` promotion** | **not done, and it needs a person.** See §9 — it is now the single highest-value follow-up in the repository |
 
 ---
 
-## 9 · Promotion, rulesets, and the self-lockout trap
-
-> **Updated 9 Sep.** The self-lockout trap this section was written about is resolved: the two
-> branch rulesets carry `bypass_mode: "pull_request"` for the administrator, so a frozen-surface PR
-> is still mergeable — through a pull request only, never a direct push — and GitHub logs the bypass
-> as an **event**, which disabling and re-enabling a ruleset would not. `main` is deliberately
-> unprotected. `allowed_merge_methods: ["merge"]` on `staging` now enforces the merge commit this
-> section asks for by hand, and `just promote-merge` is the guarded path.
+## 9 · Promotion and the release path
 
 ### `development → staging`
 
-`staging` is **12 behind**. Open a promotion when you want the cross-platform matrix over the
+`staging` is **10 behind**. Open a promotion when you want the cross-platform matrix over the
 current tip:
 
 ```bash
@@ -612,78 +665,94 @@ mise exec -- just promote-staging     # opens the PR; it does NOT merge
 mise exec -- just promote-merge <pr>  # route, checks, re-snapshot, then --merge
 ```
 
-**Merge it with a MERGE COMMIT, never squash** — `just promote-merge` does, and the `staging`
-ruleset now refuses anything else. Squashing a promotion forks the branches permanently; that
-happened to PR #74 and cost a force-reset. Verify:
+**Merge with a MERGE COMMIT, never squash.** `just promote-merge` does, and the `staging` ruleset
+now refuses anything else. Squashing a promotion forks the branches permanently; that happened to
+**#74** on 29 August and cost a force-reset — its merge commit `4de6415` has **one** parent and is
+unreachable from every ref today. All five real promotions (**#91 `f2edbb6`, #106 `8dc85cd`, #108
+`6ac5d49`, #130 `ad59023`, #148 `531ea04`**) have two parents. Verify:
 
 ```bash
 git rev-list --parents -n 1 <the promotion commit> | wc -w      # 3 = merge commit
 ```
 
-#91, #106 and #108 were all merged correctly and each has two parents.
-
-### `staging → main` — not yet, and not for a synchronisation reason
-
-`main` carries only `ci.yml` (jobs `rust` and `web`) and a **102-commit-old** `release.yml`. That is
-real debt. It is still not a reason to promote: the maintained runbook opens `staging → main` only
-**after the candidate has actually been used**, and nothing reads `main` today — the default branch
-is `development`, Dependabot targets it, CodeQL follows it.
-
-The latent risk is a mistaken `v*` tag selecting the stale `release.yml` at that ref. **The tag
-ruleset does not close that**, and the earlier text here said it did. `tags-v-append-only` carries
-exactly two rules — `deletion` and `update` — with an empty `bypass_actors` list, and **`creation`
-is absent**. A correctly shaped, signed `v0.2.0` on `main`'s head is therefore permitted today, and
-`.githooks/pre-push:213-227` permits it too: the hook's test is whether the tagged commit *is* the
-head of the channel the grammar selects, and for a plain `vX.Y.Z` that channel is `main`, whose
-head it would be. What the ruleset guarantees is only what happens next — nobody, the maintainer
-included, can move or delete that tag afterwards. It makes such a tag **irreversible, not
-impossible.** Sequencing it first was still right, because an irreversible mistake is at least a
-visible one; it is simply not the control.
-
-The controls that actually stand between a mistaken tag and a bad release are upstream of the
-ruleset. The first is `release.yml`'s `guard` job, which refuses the tag before the platform matrix
-starts if the grammar, the annotated-tag object, GitHub's signature verdict, the target commit, the
-channel head, the three in-tree version declarations, the updater configuration, or the exact-SHA CI result is
-wrong. The second is the `staging → main` promotion itself, which is what carries that guarded
-workflow onto the ref: while `main` still holds the `2026-08-20` revision of `release.yml` — `a8bc057`, with 130 commits
-of `development` landed since, the workflow that
-would judge such a tag is that old revision's, so promoting is the repair and no ruleset rule
-substitutes for it. `.github/rulesets/README.md` now records the same conclusion beside the
-definition, under "What the tag ruleset does not do".
-
 **"Synchronised" means the upstream tip is an ancestor and the promoted trees agree — not that
 divergence counts are zero.** Each promotion creates its own merge commit, so `staging` reads
-"N ahead" where N is the number of promotions.
+"N ahead" where N is the number of promotions. Today N is 5.
 
-### The self-lockout trap — read before enabling any ruleset
+**The justfile's own prose is wrong here and should not be trusted as-is.** `justfile:776-778`
+asserts *"two of four promotions landed with a required check red"*. Re-measured: #91, #108 and #130
+were fully green; #106's only failure was `workflow-analysis`, which is not one of the six; and
+#148's `supply-chain` failure post-dates its own merge by ten minutes. **On current API data, zero
+promotions merged with a required context red at merge time.**
 
-`protected-paths` is **deliberately red** for every frozen-surface change. That red *is* the review
-mechanism, and it fires routinely — **twice on 8 September alone**, on #121 (`CLAUDE.md`) and #122
-(`scripts/gh-project.sh`). Make it a required check with `bypass_actors: []` and **you can never
-merge a policy change again** without disabling the ruleset, which leaves no audit trace.
+### `staging → main` — the expensive one, and now the most valuable
 
-**The decided fix:** add yourself as a bypass actor with **`bypass_mode: "pull_request"`** — never
-`"always"`. GitHub logs a bypass as an event; disable-then-re-enable does not.
+**No promotion has ever reached `main`.** `gh pr list --state merged --base main` returns `[]`.
+`main` is a strict ancestor of `staging`, **133 commits and 22 days behind**. The gap is **232 files,
++70,260/−3,777**, carrying SQLite migrations `0002`, `0003`, `0004` (main has only `0001_init.sql`),
+their three Postgres mirrors, and **24 distinct microstep tokens** (`1.1.0`–`1.11.2`).
+
+It also carries the entire modern CI surface. **`branch-flow.yml`, `security.yml`, `labeler.yml`,
+`proptest-scheduled.yml` and `cross-platform-canary.yml` do not exist on `main` at all**, and
+`main`'s `ci.yml` declares just two jobs, `rust` and `web`.
+
+**The sharpest reason to do it, which no earlier handoff stated:** `main`'s `release.yml` is a
+**different, 53-line workflow with no `guard` job** — against 635 lines on `development`. It has one
+job, **mutable action refs** (`actions/checkout@v4`, `dtolnay/rust-toolchain@stable`,
+`tauri-apps/tauri-action@v0`), `permissions: contents: write`, **no `environment: release`**, and
+`releaseDraft: true`. A tag push runs the workflow **at the tagged commit**. So a correctly shaped,
+signed `v0.1.0` on `main`'s head — whose `Cargo.toml` and `tauri.conf.json` both read `0.1.0` — would
+run *that* unguarded file: no signature check, no version check, no updater-config check, no
+exact-commit CI wait, no environment gate.
+
+`tags-v-append-only` does **not** close this. It carries `deletion` and `update` only; **`creation`
+is absent**, so such a tag is permitted, and what the ruleset guarantees is that nobody — the
+maintainer included — can move or delete it afterwards. It makes the mistake **irreversible, not
+impossible.** The promotion is the repair; no ruleset rule substitutes for it.
+
+**Nothing server-side stops the promotion itself being squash-merged**, repeating #74's fork on
+`main` this time: ruleset `22744344` has no `pull_request` rule, hence no `allowed_merge_methods`.
+The only guards are local — `justfile:960` hard-codes `--merge` — plus `branch-flow.yml`'s advisory
+`promotion-notice` job and `ci.yml`'s after-the-fact `promotion-shape`. **Use `just promote-merge`.**
+
+The runbook still says to open `staging → main` only **after the candidate has actually been used**,
+and that remains right. The counterweight is now explicit and should be weighed deliberately: the
+longer it waits, the longer `main` holds a release workflow that would publish unguarded.
+
+### A release cannot be cut today, and signing is not the reason
+
+Signing is configured. The two real blockers:
+
+1. `apps/terminal/src-tauri/tauri.conf.json` has **no `bundle.createUpdaterArtifacts` and no
+   `plugins.updater.pubkey`**, which fails `release.yml`'s `guard` step at `:126`.
+2. The `release` environment holds **0 secrets**, so `TAURI_SIGNING_PRIVATE_KEY` is absent for the
+   `build` job.
 
 ### Required contexts — exactly six
-
-Derived from `scripts/watch-pr-checks.sh`; do not hand-maintain a second list.
 
 ```
 rust · guards · web · supply-chain · protected-paths · topology
 ```
 
+Derived from `scripts/watch-pr-checks.sh`; do not hand-maintain a second list. They come from **two**
+workflows — `ci.yml` supplies `rust`, `guards`, `web`, `supply-chain`; `branch-flow.yml`
+(`pull_request_target`) supplies `protected-paths` and `topology`. **A push-only run therefore
+reports 4 of 6**; the other two exist only on a pull request. That is not a gap.
+
+Because `branch-flow.yml` triggers on `pull_request_target`, GitHub reads it from the **default
+branch**. So `protected-paths` and `topology` will report on a `staging → main` PR from
+`development`'s copy even though `main` has no `branch-flow.yml` — but `main`'s ruleset requires
+none of them, so they are visibility only.
+
 **Never require `workflow-analysis`** — `security.yml` is path-filtered, so a PR touching nothing
 under `.github/**` produces no check run at all, and a required-but-absent context blocks forever.
-Conditionally-skipped jobs (`cross-platform`, `promotion-notice`) *do* produce a check run with
-`conclusion: skipped`, which GitHub treats as satisfied.
+Conditionally-skipped jobs *do* produce a run with `conclusion: skipped`, which GitHub treats as
+satisfied.
 
-`main` must not get a ruleset until a promotion carries the current `ci.yml` through.
+`main` must not get **required checks** until a promotion carries the current `ci.yml` through. It
+already has a ruleset; what it lacks is required checks and a required pull request.
 
-**`scripts/gh-protect.sh` refuses and exits 3.** Do not try to make it run; rewriting it against the
-rulesets API is part of #115.
-
-### Merging a deliberately-red policy PR — the exact recipe, used twice on 8 September
+### Merging a deliberately-red policy PR — the exact recipe
 
 `just merge` fails closed on `protected-paths`, correctly. Mirror its validations by hand, then
 merge with `--match-head-commit`:
@@ -703,111 +772,113 @@ gh pr merge <N> --match-head-commit "$OID" --squash --delete-branch \
   --subject "$LIVE (#<N>)" --body-file /tmp/body.txt
 ```
 
-**Before merging, confirm the red names only the pinned file and nothing else:**
-
-```bash
-gh run view <RUN_ID> --log-failed | grep -iE "FAIL:|violation"
-# expected, and nothing more:
-#   branch workflow policy FAIL: candidate changed trusted policy blob or mode
-#   <path>; policy changes require an explicit red/manual security review
-```
-
-**Put a "Manual review note" section in the PR body** stating what changed, that no gate is
-weakened, and which suites were run. Both #121 and #122 did.
+**Before merging, confirm the red names only the pinned file and nothing else**, and put a
+"Manual review note" section in the PR body stating what changed, that no gate is weakened, and
+which suites were run.
 
 ---
 
 ## 10 · Decisions taken — do not re-litigate
 
-1. **`bypass_actors` uses `bypass_mode: "pull_request"`**, never `"always"` — §9.
+1. **`bypass_actors` uses `bypass_mode: "pull_request"`**, never `"always"`.
 2. **`0004` seeds 128 explicit decision rows.** An absent row would mean both "denied" and "nobody
    decided", which the forward-only law would make permanent.
 3. **`decision` is three-valued**, no default.
 4. **`role.id` values are deterministic UUIDv7-shaped literals.**
-5. **Positioning is operational and minimal-footprint.** Proprietary-and-public is coherent, and
-   `NOASSERTION` from GitHub is the correct result.
+5. **Positioning is operational and minimal-footprint.** `NOASSERTION` is the correct result.
 6. **The title check's ambiguous positional form was removed, not reordered.**
 7. **`just merge` is the enforceable guarantee, not CI.**
 8. **The Dependabot fix adds no `canonical-title` job.**
 9. **`branch-flow` reads the PR title live** and tolerates a normalizable Dependabot title.
 10. **Every script the justfile invokes must be in the frozen policy surface.**
 11. **`staging → main` is not a synchronisation exercise.** §9.
-12. **A SHA pin's version comment must name a tag that resolves to that exact SHA.** Never a branch
-    name. Recorded in `03-github-workflow.md` §8.
-13. **No local checker was added for that.** The audit needs the network, and `CLAUDE.md`
-    deliberately leaves time-varying network checks in CI.
-14. **The `# master` staleness was NOT a Dependabot problem.** dependabot-core's parser resolves the
-    `uses:` ref through repository tags and never consults the comment. **Do not revive this.**
-15. **`pos-db` MAY name `pos-domain` types, and does.** Conventions §3 line 78 mandates it.
-16. **`DbError` gains no `From<PermissionError>`.** An automatic conversion would let `?` move
-    business policy into the storage adapter unnoticed.
+12. **A SHA pin's version comment must name a tag that resolves to that exact SHA.** Never a branch.
+13. **No local checker was added for that** — the audit needs the network.
+14. **The `# master` staleness was NOT a Dependabot problem.** dependabot-core resolves the `uses:`
+    ref through repository tags and never consults the comment. **Do not revive this.**
+15. **`pos-db` MAY name `pos-domain` types, and does.** Conventions §3 mandates it.
+16. **`DbError` gains no `From<PermissionError>`.**
 17. **`deactivated_user_denied` belongs to 1.8.3, not 1.6.4.**
-18. **"One migration per session" is not repository law.** The maintained law is WIP = 1 microstep
-    plus forward-only migrations.
+18. **"One migration per session" is not repository law.** The law is WIP = 1 microstep plus
+    forward-only migrations.
 19. **`1.6.4` shipped as ONE pull request, not two.**
-20. **The `sale` foreign keys are repaired by triggers, not a rebuild.** PR #116 has the three
-    reasons; the load-bearing one is that `PRAGMA foreign_keys` is a no-op inside a transaction and
-    the migration runner wraps every file in one.
-21. **`store_credit.is_internal` is seeded `0` and recorded as `⚠️ OPEN`, not guessed.** Still open:
-    what `is_internal` means for the four codes other than `exchange`. `domain-api.md` §7.1 leaves
-    it blank; `phase-2-money-grade.md:261` says `1`. Safe to defer — `store_credit` is seeded
-    `is_active = 0`, and `tender_type` carries **no** immutability trigger, so a later migration may
-    `UPDATE` it before activation without reopening `0005`. Owner: the Phase-2 microstep that
-    activates `store_credit`. **Settle the semantics for all six codes, not just the one row.**
+20. **The `sale` foreign keys are repaired by triggers, not a rebuild.** `PRAGMA foreign_keys` is a
+    no-op inside a transaction and the runner wraps every file in one.
+21. **`store_credit.is_internal` is seeded `0` and recorded as `⚠️ OPEN`, not guessed.** Settle the
+    semantics for all six codes, not just `exchange`.
 22. **The board's `Phase` field tracks §6a's *order by*, not the microstep's own phase.** §11.
-
-### Taken on 8 September
-
-23. **`1.11.0`'s `src/test/setup.ts` stays a `.ts`**, as its `Files:` line names it, so the provider
-    tree is `React.createElement` rather than JSX. Vite 8 runs on **Oxc**, which refuses JSX in a
-    `.ts` file, and — unlike Vite 5–7's `esbuild: { loader: "tsx" }` — offers **no** per-file
-    override; `react({ include })` and `oxc: { include }` were both measured and both still fail.
-    Renaming to `.tsx` was the alternative; keeping the named file satisfies conventions §6 rule 1
-    literally.
-24. **The harness declares `setupFiles`** rather than relying on the test file's import of
-    `renderWithProviders` to pull it in. The import does work today; a future file that renders with
-    bare `render` would silently get no cleanup and no matchers.
-25. **The provider tree is passed as `wrapper`, not wrapped around `ui`**, so the returned `rerender`
-    keeps the providers. A **fresh `QueryClient` per call with `retry: false`** — `main.tsx`'s
-    module-scope client is right for an application and wrong for a suite, and the default three
-    retries with exponential backoff spend about seven seconds before a query settles, past every
-    timeout in the stack. **react-query v5 has no `logger`**; the v4 option is genuinely gone, and
-    the replacements are `queryCache: new QueryCache({ onError })` or a `console.error` spy.
-26. **`1.11.0` includes `React.StrictMode`** in the wrapper, matching `main.tsx`. A harness that
-    renders differently from production is a harness that lies.
+23. **`1.11.0`'s `src/test/setup.ts` stays a `.ts`.** Vite 8 runs on Oxc, which refuses JSX in a
+    `.ts` file with no per-file override.
+24. **The harness declares `setupFiles`** rather than relying on a test file's import.
+25. **The provider tree is passed as `wrapper`**, with a fresh `QueryClient` per call and
+    `retry: false`. react-query v5 has no `logger`.
+26. **`1.11.0` includes `React.StrictMode`.** A harness that renders differently from production
+    lies.
 27. **`1.11.0` ships three tests where its `Tests:` line names one.** The other two are the harness
-    proving itself — they are what would have caught the cleanup and fake-timer defects — and no
-    checker refuses an unnamed vitest test. The `Tests:` line was **not** amended.
-28. **The fake-timer `jest` bridge lives in the harness, not at each call site.** The microstep's own
-    prose promises fake timers work, so the step that makes the promise makes it true.
-    `vi.useFakeTimers({ shouldAdvanceTime: true })` was rejected: it advances `Date.now()` across an
-    `await` with no explicit advance, reintroducing exactly the scheduler dependence the microstep
-    cites fake timers to remove.
-29. **`phase-0-closeout.md:120` and `:129` keep `= "deny"`.** `README.md:13-15` designates that file
-    historical evidence, and it accurately records what was written at the time. Editing it would
-    falsify a dated record.
+    proving itself. The `Tests:` line was **not** amended.
+28. **The fake-timer `jest` bridge lives in the harness, not at each call site.**
+    `vi.useFakeTimers({ shouldAdvanceTime: true })` was rejected — it reintroduces the scheduler
+    dependence fake timers exist to remove.
+29. **`phase-0-closeout.md` keeps `= "deny"`.** It is designated historical evidence; editing it
+    would falsify a dated record.
 30. **`store_credit.is_internal` was NOT folded into `00-master-plan.md` §4a.3**, whose scope is
-    *"the ones that can change an architecture rather than a value"*. `0` or `1` is a value.
+    corrections that change an architecture rather than a value.
+
+### Taken 9–11 September
+
+31. **`core.hooksPath` stays RELATIVE.** Making it absolute looks like the fix and is worse — the
+    setting is shared across linked worktrees, so `just setup` inside one repoints the whole
+    repository. Measured end to end: after `git worktree remove`, the main tree committed a
+    grammar-free subject with **no refusal**. Detection (#134's checker) is the fix.
+32. **`post-checkout` is PERMANENTLY DECLINED.** The premise that both hooks' exit statuses are
+    ignored is **false** for it, measured: exit 9 leaves `git merge` at 0 but gives `git switch`
+    exit 1, `git clone` exit 9 and `git worktree add` exit 9. An advisory that can break a fresh
+    clone inside any `set -e` script is a bad trade.
+33. **`just pre-push` will NOT be renamed to `just verify`.** 124 `pre-push` hits across 26 files
+    (46 recipe, 78 hook, no grep separates them); `scripts/check-justfile-policy.py:190` hardcodes
+    `pr_body.find("just pre-push")` and fails closed, so a rename reds `just guards` and CI's
+    `guards` job — and that checker is itself byte-pinned. The collision is answered in prose.
+34. **`branch-flow.yml` keeps its per-commit attribution loop.** Its step bodies are byte-pinned
+    inside `check-branch-workflow-policy.rb`, and there is nothing to win — the last ten merged PRs
+    carried 1–3 commits each, ≈0.15s.
+35. **A new flag on a policy script CI runs from the base needs a two-PR bootstrap.** `ci.yml:370`
+    deliberately runs the **base** revision's verifier so a PR cannot supply the policy that judges
+    it. That is why #144 could not be folded into #143.
+36. **The scheduled per-flow-branch advisory job was REMOVED, not reshaped (#146).** CodeQL raised
+    three high-severity `actions/cache-poisoning/poisonable-step` alerts and was right about the
+    shape: a `schedule` run holds the default branch's privileged cache scope, and that job checked
+    out another ref and executed it. `schedule` has no unprivileged variant, so no placement kept
+    the feature and cleared the finding. **The real repair is the `staging → main` promotion.**
+37. **No CodeQL badge in the README.** CodeQL runs as default setup, so
+    `.github/workflows/codeql.yml` is a 404 and the badge would render permanently broken.
+38. **`check-branch-workflow-policy.rb`'s adversarial fixtures must never be named after real
+    hooks.** They used `.githooks/post-merge` and `.githooks/post-checkout`; creating the real
+    `post-merge` collided with `File.symlink: File exists (Errno::EEXIST)` and took the self-test
+    from 217 passed to a crash at 96. They are now `fixture-added-hook` and `fixture-symlinked-hook`.
+39. **A moved `.nvmrc` cannot be fixed by `just setup` alone** — `setup` runs the fail-closed
+    `check-node-version.py` and refuses **before** installing anything. The advice is `nvm use` (or
+    `fnm use`) **then** `just setup`.
+40. **SQLite migrations are NOT applied by `just migrate`** — that runs `sqlx migrate run` against
+    the **Postgres mirror only**. The register's SQLite chain is applied by the application at
+    runtime; the useful local command is `just verify-schema`.
 
 ---
 
 ## 11 · The board `Phase` field — why #69 reads Phase 1 with Microstep 2.7.0
 
-Not a contradiction. `00-master-plan.md:296` is *§6a · The long-lead register*, whose columns are
+Not a contradiction. `00-master-plan.md` §6a is *The long-lead register*, whose columns are
 **`Item | Order by | Needed for | If it is late`**, with the note *"**Order by** is when the request
-goes out, not when the item is used."*
+goes out, not when the item is used."* So `Phase` = *order by*, `Microstep` = *needed for*.
 
-So `Phase` = *order by*, `Microstep` = *needed for*. All four external blockers are Phase 1 because
-that is when the request must go out.
+**Five** rows are ordered in Phase 1, not four: the legal entity, the official ISTD package, written
+ISTD Directorate answers, **the acquirer conversation and a physical test terminal**, and Jordanian
+counsel plus the merchant's tax advisor on retainer. Two rows are ordered *before group 1.7*: the
+thermal printers plus one scanner, and the reference register itself.
 
-`Risk` follows `03-github-workflow.md:341`, which defines the family as *"how it must be reviewed"* —
-`money path` means a property test, `migration` a Postgres mirror and data-migration test,
-`compliance` a claim needing evidence.
-
-`Priority` is P1 on the external blockers because `:340` defines only P0 — *"wrong money, lost sale,
-corrupted data, compliance breach"*. **#114, #119 and #120 are P2**, which is the first deliberate
-P1/P2 spread on this board: each is repository or documentation hygiene that costs a confusing hour,
-not money. If you want a fuller rule, decide it deliberately and write it down.
+`Risk` follows `03-github-workflow.md`, which defines the family as *"how it must be reviewed"*.
+`Priority` is P1 on the external blockers because only P0 is defined — *"wrong money, lost sale,
+corrupted data, compliance breach"*. #114, #119 and #120 are P2. **#68–#71 carry no priority or risk
+label on the issue at all** — see §3.
 
 ---
 
@@ -815,144 +886,153 @@ not money. If you want a fuller rule, decide it deliberately and write it down.
 
 | Trap | What to do |
 |---|---|
-| The shell's Node fails the fail-closed `.nvmrc` pin | Prefix every recipe with `mise exec --`. Never edit `.nvmrc` |
-| **Commit subjects are capped at 72 characters before the step tag** | `bash scripts/validate-change-title.sh --validate '<title>  [—]'` before committing. Note the **`--validate`** — without it the script echoes the title and exits 0, which reads as a pass. A 74-character subject was refused twice, during #116 and again during #118 |
+| The shell's Node fails the fail-closed `.nvmrc` pin | Prefix every recipe with `mise exec --`. Never edit `.nvmrc`. Fix a moved pin with `nvm use` first — `just setup` refuses before installing |
+| `mise exec --` fails after a `cd` in the same invocation | Run it from the working directory with an absolute script path; never build the command in a shell variable |
+| **Commit subjects are capped at 72 characters before the step tag** | `bash scripts/validate-change-title.sh --validate '<title>  [—]'`. Note the **`--validate`** — without it the script echoes the title and exits 0, which reads as a pass |
 | The step grammar **admits a letter** | `[1.1.2a]` is valid and 13 Phase-1 microsteps require it |
-| **`just branch` refuses `feat/…`** | No `feat/` prefix exists. Microstep work uses `phase-<0-5>/group-<m>-<kebab-slug>`; also allowed are `fix/`, `docs/`, `refactor/`, `perf/`, `test/`, `chore/`, `hotfix/` |
+| **`just branch` refuses `feat/…`** | Microstep work uses `phase-<0-5>/group-<m>-<kebab-slug>`; also allowed are `fix/`, `docs/`, `refactor/`, `perf/`, `test/`, `chore/`, `hotfix/`. `just pr` derives the milestone from the `phase-<0-5>/` prefix |
 | `just pr`'s `$body` is a **file path**, not text | `just pr 'title' path/to/body.md` |
 | `just branch` runs `git pull` internally | On a network stall it fails *silently* under `\| tail -1` and leaves you on `development`. Check `git rev-parse --abbrev-ref HEAD` after |
-| `just pr` / `just merge` fail on **transient TLS timeouts** | They fail closed, correctly. Retry |
-| **A deliberately-red policy PR cannot go through `just merge`** | It fails closed on `protected-paths`, correctly. §9 has the exact recipe, used twice |
-| **A stale branch reds `protected-paths` on files it never touched** | Merge `development` in. The policy compares blobs, so a branch *missing* a pinned file's newer content reads as having changed it |
-| **`just fmt` does not fix `organizeImports`** | It is a Biome *assist*, applied only by `biome check --write`, which no `just` recipe wraps — while `biome ci --error-on-warnings` enforces it. Run `pnpm biome check --write <files>` by hand |
-| `git add -A` sweeps in **`PROJECT-GUIDE.md` and this file** | `git add <only the files for this concern>`. The repository's law already forbids `git add -A` |
-| **`tests/common/mod.rs`'s `full_schema` weakens the connection** | It disables foreign keys and layers on unshipped reference blocks from migration 5 onward. Open the **registered chain** through `pos_db::open` in any test meant as evidence — `approval.rs` and `role_matrix.rs` are the precedents. And note that **triggers still fire** there, so a new reference-schema trigger changes test behaviour |
-| **A successful API response is not evidence of a change** | `secret_scanning_non_provider_patterns` returned `200` twice and stayed `disabled`. Read the value back after every mutation |
-| **Emptying `.claude/settings.json` to relax permissions** | It relaxes nothing and reds the gate. `test-settings.py` runs inside `just guards` and inside the `guards` CI job — one of the six required contexts — so `{}` means 5 failures and 16 errors on every future PR. It also deletes all three hook groups, the 47 credential denies and the 32 pre-approved gate commands. Repair: `git checkout -- .claude/settings.json`, then confirm 30 passed. The real fix is #114 |
-| **The permission-mode classifier refuses some writes, and it is in no settings file** | It declined to edit `.claude/settings.json`, to `cp` a file out of `~/.claude`, and to `ls ~/.claude`. A **mode** change does not lift a **deny** rule |
-| **A settings edit does not take effect mid-session** | Permission settings are snapshotted at session start. Restart after changing them |
-| **A version comment on a SHA pin goes stale with no repository change** | It names a branch. `zizmor` reds `workflow-analysis` on the next `.github/**` PR. Reproduce with the pinned version: `pipx install zizmor==1.29.0`, then `GH_TOKEN="$(gh auth token)" zizmor --persona regular --collect all -- .github`. `--fix=all` writes the correct comment |
-| **The swiftly `cc` shim** can break every Rust build | `cc` resolves through `~/.swiftly/bin` to Apple clang and is currently fine. A future `swiftly install`/`use` silently repoints it; fix with `swiftly use --global-default xcode`. Never prepend `/usr/bin` — it shadows Homebrew's Python with macOS 3.9 and fails the fail-closed 3.11 floor |
+| **A deliberately-red policy PR cannot go through `just merge`** | It fails closed on `protected-paths`, correctly. §9 has the exact recipe |
+| **Merging a work PR with a merge commit drags raw bot commits across** | Two malformed titles are already on `development` this way. **Squash a work PR**; the server permits both |
+| **Every Dependabot Action-SHA bump reds `protected-paths`** | By construction. Expect it monthly; read the diff, then merge through the bypass |
+| **`just fmt` does not fix `organizeImports`** | Biome *assists* are applied only by `biome check --write`, which no recipe wraps. Run `pnpm biome check --write <files>` by hand |
+| `git add -A` sweeps in **`PROJECT-GUIDE.md`** | `git add <only the files for this concern>`. This file is tracked; `PROJECT-GUIDE.md` is not |
+| **`tests/common/mod.rs`'s `full_schema` weakens the connection** | It disables foreign keys and layers on unshipped reference blocks. Open the **registered chain** through `pos_db::open` in any test meant as evidence. Triggers still fire there |
+| **A successful API response is not evidence of a change** | The secret-scanning fields return `200` and stay `disabled`. Read the value back. But note the inverse for CodeQL: its `PATCH` is accepted **asynchronously** and reads stale until the setup run finishes |
+| **Emptying `.claude/settings.json` to relax permissions** | It relaxes nothing and reds the gate — `test-settings.py` runs in `just guards` and in the `guards` CI job. Repair with `git checkout --`, then confirm 30 passed |
+| **A settings edit does not take effect mid-session** | Permission settings are snapshotted at session start. Restart |
+| **The swiftly `cc` shim** can break every Rust build | `cc` resolves through `~/.swiftly/bin`. Fix with `swiftly use --global-default xcode`. Never prepend `/usr/bin` — it shadows Homebrew's Python with macOS 3.9 |
 | **`pnpm install` aborts with no TTY** after lockfile merges | `CI=true mise exec -- pnpm install --frozen-lockfile` |
-| **A dependency change makes `--frozen-lockfile` fail everywhere** | `--frozen-lockfile` compares importer specifier sets, so the lockfile must be regenerated **in the same commit**: `mise exec -- pnpm install` at the repository root. `--filter <app>` also works (pnpm resolves all importers anyway), but prefer the unfiltered root install because that is what the gates run |
+| **A dependency change makes `--frozen-lockfile` fail everywhere** | Regenerate the lockfile **in the same commit**: `mise exec -- pnpm install` at the repository root |
 | A fresh worktree has **no `node_modules`** | `pnpm install --frozen-lockfile` before believing any JS gate |
-| **Reading a repository file from inside a jsdom test** | Two independent traps, both measured: no Node types in `src/**` under `tsc -b`, and Vite rewrites `new URL("<literal>", import.meta.url)` into an `http://` asset URL so `node:fs` throws. Read the file in `vite.config.ts` instead — `tsconfig.node.json` already sets `"types": ["node"]` |
+| **Reading a repository file from inside a jsdom test** | No Node types in `src/**` under `tsc -b`, and Vite rewrites `new URL("<literal>", import.meta.url)`. Read it in `vite.config.ts` |
+| **Prose naming the forward-only SQLx revert inside backticks within a *shell* command is refused** | Known false positive; the hook's segmenter splits before `shlex` sees the quoting. Ordinary quoting is safe, and editing a file that discusses it through Edit/Write is unaffected. Deliberately not softened |
+
+**One trap from the last handoff is now half obsolete.** *"A stale branch reds `protected-paths` on
+files it never touched"* no longer applies to the source-plan/migration wall —
+`check-protected-paths.sh` resolves the merge base at `:197` and diffs `$merge_base..$head`. The blob
+comparison survives only in `check-branch-workflow-policy.rb`, whose trusted root is
+`github.workflow_sha`. **The trap is now specific to the frozen-policy surface, not to migrations.**
 
 ---
 
-## 13 · Workflows — what six runs have taught, stated fairly
+## 13 · Workflows — what seven runs have taught
 
-Six audit workflows have now been launched across four sessions.
+Seven audit workflows have now been launched across five sessions. **The 11 September run finished**:
+nine dimensions, twenty agents, 1,107 tool calls, each dimension followed by an adversarial verifier
+whose default verdict was REFUTED. It produced this document, and **69 of its load-bearing claims
+were refuted or corrected on re-measurement.**
 
-**What worked, for the first time, on 8 September.** A **four-dimension, 58-agent** run
-(`wf_1862ae9c-9fa`) scoped microstep `1.11.0` **before any code was written** and returned **52
-verified claims and 2 refutations**. It found all three defects in §2 that the issue and the plan had
-missed, each measured rather than argued, and it refuted two claims the issue asserted confidently.
-Its dimensions were *gates*, *harness*, *docs* and *supply-chain*, each followed by a per-claim
-adversarial refuter whose default verdict was REFUTED.
-
-**Why that one finished and the earlier five did not.** It was narrow in subject (one microstep) even
-though wide in agents, and it ran while the operator was reading its inputs rather than waiting on
-it. The five that returned nothing were all **stopped by operator request**, not by failure — none
-crashed, timed out or errored. The sixth (`wf_66e36e49-b48`, §4) was also stopped.
-
-What **is** established:
+What is established:
 
 - **A workflow earns its keep on a wide, read-heavy, parallel question with no single command as
-  oracle** — pre-implementation scoping, build sequencing, the stale-documentation sweep. `1.11.0`
-  is the proof: the three defects it found would each have surfaced two to four microsteps later, as
-  a message naming the wrong thing.
-- **A workflow adds little when a gate is the oracle.** PR #116 was deterministic: read four
-  documents, transcribe two contracts, write SQL, let `just verify-schema` execute it. SQL that runs
-  is stronger evidence than agent consensus.
-- **Make the refuter's default REFUTED and demand a command.** Of 54 claims, 2 were refuted outright
-  and roughly a third were confirmed only with a corrected detail — a wrong line number, a wrong
-  version, an overstated consequence. Without that pass the handoff would have carried all of them.
-- **Tell the agents which files are not evidence.** The 8 September runs were told explicitly to
-  ignore `HANDOFF.md` and `PROJECT-GUIDE.md`. One earlier verifier still cited `HANDOFF.md:231` as a
-  second occurrence of a test name, which is exactly the circularity that instruction prevents.
-- **Tell them not to write in the repository.** One agent in the first run left an untracked
-  `apps/terminal/src/test/setup.ts` behind, which then contaminated its own "baseline" measurement.
-  Check `git status --porcelain` after every run.
-- **Workflow resume is impossible while `Read(~/.claude/**)` stands** (#114): `scriptPath` must be
-  readable and every persisted script lives under that denied prefix. Copying one out with `cp` is
-  refused separately by the classifier. **The fix that works:** keep the script in the working tree —
-  a workflow launched from a repo-relative path resumes and relaunches fine.
+  oracle** — state surveys, pre-implementation scoping, stale-documentation sweeps.
+- **A workflow adds little when a gate is the oracle.** SQL that runs is stronger evidence than
+  agent consensus.
+- **Make the refuter's default REFUTED and demand a command.** This is the highest-value half of the
+  harness by a distance. In this run the refuters caught: a wrong count of workspace members (4 vs
+  **7**), a wrong checker count (17 vs **16**), an endpoint queried with the wrong default window
+  (2 bypasses vs **23**), a blocker overstated from "the `doc_sequence` half of `0005`" to "all of
+  `0005`", an issue (**#70**) credited with blocking two microsteps it does not name, another
+  (**#69**) credited with gating Phase 1 when its own body says group 2.7, and **roughly thirty
+  off-by-one line citations**. Without that pass this handoff would have carried every one.
+- **Tell the agents which files are not evidence.** `docs/handoff.md`, `PROJECT-GUIDE.md` and
+  `docs/orientation.md` are secondary. One verifier still surfaced a `handoff.md` line as a "second
+  occurrence" of a phrase — which is exactly the circularity the instruction prevents, and exactly
+  how §5's "returns exactly one occurrence" claim became false.
+- **Tell them not to write in the repository.** Check `git status --porcelain` after every run.
+  This run left the tree byte-identical.
+- **Give the heavy builds to exactly one agent.** Nine agents running `cargo` concurrently contend
+  on the target directory lock.
+- **Workflow resume is still impossible while the `~/.claude` read-deny stands** (#114): every
+  persisted script lives under that denied prefix, and copying one out is refused separately.
+  **The fix that works:** keep the script in the working tree.
 
-Dimensions written but never run, worth reviving narrowly: the **stale-documentation sweep** and
-**next-microstep sequencing** (both in the stopped `wf_66e36e49-b48` — §4), the
-deliberate-rejections inventory, and the GitHub-standards sweep (Actions hygiene, caching,
-concurrency, SHA-pin re-verification).
+Dimensions worth reviving narrowly: the deliberate-rejections inventory, and a sweep of the
+documentation surface **no gate reads** (`status-page.html`'s prose — see §14).
 
 ---
 
 ## 14 · Loose ends
 
-- **`PROJECT-GUIDE.md`** — untracked, 123,758 bytes, self-disclosed as a snapshot of `6d997f2` from
-  28 August. **Its drift has never been measured.** Either correct it and commit as
-  `docs/orientation-guide.md`, or delete it — **do not commit it as-is**. Worth asking first whether
-  a third orientation document earns its maintenance cost when `docs/implementation/` is already the
-  plan of record and `CLAUDE.md` is already the entry point; committing a drifting parallel copy is
-  the exact failure `03-github-workflow.md` §4 warns about for issues. **Put to the operator on
-  8 September; unanswered.** Note it still carries the `float_arithmetic = "deny"` error at `:189`
-  that PR #121 fixed everywhere tracked.
-- **Local branch hygiene, cosmetic.** Many local branches have `[gone]` upstreams and `git branch -d`
-  refuses them because squash merges break ancestry. **Do not delete `backup-before-rewrite`, `pr77`
-  or `pr78`** — they preserve pre-squash history. The four branches from 8 September
-  (`phase-1/group-11-dom-component-harness`, `fix/float-arithmetic-forbid`,
-  `fix/projects-api-honest-limit`, `fix/trusted-time-state-shape`) were all deleted on merge by
-  `--delete-branch`, remotely and locally.
+- **`docs/implementation/status-page.html:525` is stale and no gate can see it.** It still reads
+  *"`main` is deliberately unprotected until a promotion carries the current `ci.yml`"*. `main` has
+  carried `main-append-only` since 10 September. `check-doc-links.py` filters on `.md`, and
+  `check-implementation-frontier.py` reconciles only the page's per-phase **step counts**, never its
+  prose — which is the structural reason this one sentence survived while #136 corrected eleven
+  places and #158 corrected four documents. **This is the smallest real bug in the tree.**
+- **`PROJECT-GUIDE.md`** — untracked, 123,758 bytes, 2,265 lines, self-dated to `6d997f2`
+  (28 August). **78 commits separate that from HEAD.** Of 17 factual claims spot-checked, **11 are
+  now false**, three of which contradict `CLAUDE.md` outright — including the
+  `float_arithmetic = "deny"` error at `:189` that #121 fixed everywhere tracked. **Do not commit it
+  as-is.** It *is* already link-clean (`check-doc-links.py --working-tree` → 49 files, exit 0, and
+  that mode is what both agent write-guards invoke), so committing costs nothing in link findings —
+  the cost is maintaining a drifting parallel copy of a plan of record that already exists. Before
+  deleting it, **extract the gaps in it that are still accurate**: `:2216`'s claim that
+  `.github/ISSUE_TEMPLATE/05-drill-result.yml` does not exist is still true. **Put to the operator
+  on 8 September and again on 9 September; still unanswered.**
+- **Local branch hygiene.** The warning in the last handoff protected three branches
+  (`backup-before-rewrite`, `pr77`, `pr78`) that **no longer exist in this clone**. What does exist:
+  **nine feature branches with `[gone]` upstreams** from the 9–11 September work, a
+  `refs/original/refs/heads/main` filter-branch backup at `a7c2379`, and seven
+  `refs/codex/turn-diffs/checkpoints/*` refs. `git branch -d` refuses the nine because squash merges
+  break ancestry; `git branch -D` is safe for all nine — each is merged content on `development`.
+- **Your local `staging` is 51 commits stale** — it still sits at #91's promotion merge, four
+  promotions behind. `just promote-staging` without fetching first works from the wrong base.
 - **One stash remains:** `stash@{0}: On fix/float-arithmetic-forbid: codex scanner approach,
-  superseded by forbid`. It is the deliberately-rejected alternative to PR #121, which has now
-  landed, so the stash is safe to drop whenever you like.
-- **This file and `PROJECT-GUIDE.md` are untracked.** `git add -A` would sweep them in.
+  superseded by forbid`. PR #121 landed, so it is safe to drop whenever you like.
+- **`scripts/check-domain-acyclic.py` has no `--self-test`**, and it **silently ignores any
+  argument** — passing `--self-test` exits 0 while printing the live graph. It is a real merge wall:
+  `just lint` runs it and so does `ci.yml:108`, inside the `rust` job. So `CLAUDE.md`'s blanket
+  *"All are negative-tested"* is **false for the checker that enforces invariant 8's acyclicity**,
+  and `just guards` never touches it. `scripts/check-staged-policy.py` has no `--self-test` either;
+  it is exercised only indirectly through `.githooks/test-hooks.sh`.
+- **`just lint`'s clippy carries no `--all-features`**, so feature-gated code is unlinted locally.
+  Not a failure today; just do not overstate clippy's scope.
+- **`@pos/ui` and `@pos/api-types` declare no `test` script**, so `pnpm -r --if-present test` runs
+  zero tests for them. They are covered only by `tsc --noEmit`. `pos-sync` is still a 27-line stub
+  with **zero tests** — the only workspace crate with none.
 - **`1.6.4`'s five stated limits are in the phase file, not here.** The load-bearing two: `0004`'s
-  matching trigger does **not** compare `content_hash`, so no content-hash-bearing capability may
-  ship until the prepared-intent tables arrive; and `approval_consumption.effect_id` has no foreign
-  key, so the rollback test proves shared-transaction plumbing, **not** that a consumption requires
-  a financial effect — that is `1.8.3`'s.
-- **`ApprovalHandle` no longer derives `Deserialize`**, and a `trybuild` case keeps it that way. What
-  remains is limit 3: a validated `restore` proves structural validity, not that the approver
-  authenticated. Rust has no friend-crate visibility, so `pos-db` is a trusted boundary by
-  convention.
-- **The `0004` Postgres mirror covers `capability` only** — not `role` or `role_capability`, which
-  are tenant-owned and would ship without `org_id`, RLS and tenant FKs. Both are named in the
-  mirror's deferral block. Worth a second look at Phase 3.
-- **Server-side body formatting is VERIFIED for the human path** — #109's squash body was
-  byte-identical to its stored PR body. **The Dependabot half is still unverified** and needs an
-  actual Dependabot squash to compare.
-- **The merge body is bound; two paths are not.** Deliberately-red policy PRs merged through raw
-  `gh pr merge` (#121, #122), and promotion and hotfix PRs, bypass `just merge` entirely. A future
-  merge queue would need re-auditing — GitHub documents that queued merges may ignore supplied
-  commit-message fields.
-- **`autoMode.environment` in the user-level Claude settings describes the wrong project** — it is
-  entirely about `Datakite-ai/RN-SDK`. Not this repository's problem, but it will keep misfiring.
+  matching trigger does **not** compare `content_hash`; and `approval_consumption.effect_id` has no
+  foreign key, so the rollback test proves shared-transaction plumbing, **not** that a consumption
+  requires a financial effect — that is `1.8.3`'s.
+- **`ApprovalHandle` no longer derives `Deserialize`**, and a `trybuild` case keeps it that way.
+- **The `0004` Postgres mirror covers `capability` only** — not `role` or `role_capability`. Both are
+  named in the mirror's deferral block. Worth a second look at Phase 3.
+- **The Dependabot squash-body half is still unverified** and needs an actual Dependabot squash to
+  compare. The human path was verified at #109.
+- **`autoMode.environment` in the user-level Claude settings describes the wrong project.**
+  Unverifiable from a session, because reading anything under `~/.claude` is refused (#114). Carried
+  forward unconfirmed.
 
 ---
 
 ## 15 · The lessons this project keeps re-learning
 
 1. **Sweep the defect class across the repository, not the file where it surfaced — and search by
-   subject, not by phrase.** PR #121 is the clearest case: the class was exactly five live sites, and
-   the sweep also had to run **in the reverse direction** to avoid introducing the mirror-image error
-   in the two rows that correctly say `deny`.
-2. **Verify a finding against the source before recording it.** Several of the most
-   confident-looking findings across these sessions were wrong, and each took one command to
-   disprove. Two were in a *handoff*, which is why this file says where every number came from. A
-   handoff is a secondary source; `git`, `gh` and the files are primary and one command away.
-3. **Prove the guard fails.** `1.11.0`'s three assertions were each broken deliberately and the
-   failure observed before the commit. Two of them — cleanup and fake timers — were guarding defects
-   that a one-test canary could not have exposed at all, so without that exercise the harness would
-   have shipped broken and green.
-4. **Check `git diff` before believing a file's contents are the repository's intent.** A locally
-   emptied file once looked like a stale document; an agent-created scratch file once contaminated a
-   baseline.
-5. **A successful API response is not evidence of a change.** Read the value back.
+   subject, not by phrase.** #136 is the clearest case yet: one wrong belief about `main` had
+   **eleven** live sites.
+2. **Verify a finding against the source before recording it.** In the survey behind this document,
+   69 load-bearing claims were refuted or corrected on re-measurement, and roughly thirty of those
+   were line numbers that had drifted by one. A handoff is a secondary source; `git`, `gh` and the
+   files are primary and one command away.
+3. **Prove the guard fails.** #135's five new tag cases exist because the release-tag chain past the
+   lightweight check was **entirely untested** — every assertion passed a commit SHA, so the refusal
+   at `pre-push:115` fired first and five refusal branches never executed. That is the least
+   affordable chain to leave untested: `tags-v-append-only` has **no bypass actor**, so a rejected
+   tag cannot be moved or deleted by anyone and the version number is permanently spent.
+4. **Check `git diff` before believing a file's contents are the repository's intent.**
+5. **A successful API response is not evidence of a change. Read the value back** — and know that
+   the inverse also happens: CodeQL's `PATCH` is accepted asynchronously and reads stale.
 6. **Prefer the check that answers in one command over the harness that answers better eventually** —
-   but do not mistake an interrupted tool for a broken one (§13).
-7. **When a document specifies a design, transcribe it; do not redesign it.** PR #116's four table
-   changes were all specified somewhere. The work was reading properly, not inventing.
+   but do not mistake an interrupted tool for a broken one.
+7. **When a document specifies a design, transcribe it; do not redesign it.**
 8. **When a document's own prose makes a promise the tree does not keep, the step that makes the
-   promise makes it true.** `1.11.0`'s spec sentence asserted that fake timers give deterministic
-   scan-burst timing. They hung. Fixing that inside the step was cheaper than letting `1.11.6`
-   discover it, and the phase file now records why the bridge exists so nobody deletes it.
+   promise makes it true.**
+9. **A control that fires on every merge is not a control; it is a habit.** 23 of 33 ruleset
+   evaluations were administrator bypasses. Most were the byte-frozen-surface review working as
+   designed — but "most" is the word that makes a ledger necessary, because nothing distinguishes
+   the designed reds from the impatient ones except reading them.
+10. **The document nobody's gate can read is the document that goes stale.** Four documents were
+    corrected on 11 September; the one sentence that survived is in the HTML file no checker parses.
