@@ -402,7 +402,8 @@ does not exist yet. Pick the layer from conventions §5:
 | Receipt bytes, fiscal XML | golden file | `crates/*/tests/golden/` | `cargo nextest run -p <crate>` |
 | A repository, a migration, a transaction | integration, real SQLite | `crates/*/tests/` | `cargo nextest run -p pos-db` |
 | Sync convergence under replay/drop/reorder | chaos | `crates/pos-sync/tests/` | `cargo nextest run -p pos-sync` |
-| A React helper, a formatter, a store, or a rendered screen | Vitest | `apps/*/src/**/*.test.ts`, `apps/*/src/**/*.test.tsx` | `pnpm --filter terminal exec vitest run` |
+| A React helper, a formatter, or a store | example test, Vitest | `apps/*/src/**/*.test.ts` | `pnpm --filter terminal exec vitest run` |
+| A rendered screen or component | DOM component, Vitest in `jsdom` | `apps/*/src/**/*.test.tsx` | `pnpm --filter terminal exec vitest run` |
 
 Name them exactly as the microstep says — `<subject>_<behaviour>` for examples, `prop_<invariant>`
 for properties. The names are referenced from [`ref/test-catalog.md`](ref/test-catalog.md); a

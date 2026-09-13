@@ -111,7 +111,7 @@ Every repository is a struct holding `&Connection`, with methods returning `Resu
 
 ## 5. Testing
 
-Nine layers. A microstep is not done until every applicable layer is green.
+Ten layers. A microstep is not done until every applicable layer is green.
 
 | Layer | Tool | Where | Rule |
 |---|---|---|---|
@@ -121,6 +121,7 @@ Nine layers. A microstep is not done until every applicable layer is green.
 | Integration | real SQLite / real Postgres | `crates/*/tests/` | Migrations run; repositories round-trip; transactions roll back on error |
 | Concurrency | barriers or `loom` | beside the owning repository | Force the contested interleaving; never use sleeps or scheduler luck for sequence, audit or lease correctness |
 | Fuzz | `cargo-fuzz` | `crates/*/fuzz/` | Every parser reachable from a scanner, renderer input or network; crashes become committed corpus regressions |
+| DOM component | `vitest` in `jsdom` + `@testing-library/react` / `user-event`, with fake timers | `apps/*/src/**/*.test.tsx` | Keyboard reachability, scan routing and burst timing, bidi isolation of a Latin SKU inside an Arabic name, the min-size guard, and that each edge state renders the copy and the disabled controls [`ref/ui-spec.md`](ref/ui-spec.md) §8 describes. Never pixels — mirroring, truncation side and overflow are the screenshot rung of that file's §8a. The harness landed at 1.11.0; **a harness is not a layer**, so this row is green only where the tests are written |
 | Packaged app | WebdriverIO + `tauri-driver` | `apps/terminal/tests/e2e/` | Launch the artifact a merchant runs and cross the real IPC boundary; Playwright cannot drive a Tauri webview |
 | Chaos | scripted | `crates/pos-sync/tests/` | Replay, drop, duplicate and reorder; prove `prop_server_facts_equal_the_union_of_register_outboxes`, `prop_reference_tables_converge_across_all_three_nodes` and `prop_apply_is_idempotent_under_any_replay_order` against the canonical semantic dump in [`ref/sync-protocol.md`](ref/sync-protocol.md), never storage bytes |
 | Soak / long chaos | `cargo nextest run --profile soak` | `crates/*/tests/soak.rs`, `chaos.rs` | Excluded from default `just test`; nightly and phase-gate only, so the three-minute inner loop remains usable |
