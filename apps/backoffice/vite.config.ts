@@ -10,5 +10,11 @@ export default defineConfig({
   // The back office renders components, so its tests need a DOM. So does the
   // terminal, since microstep 1.11.0 gave it the harness its screen tests need;
   // its own config owns the document fixture and setup file that harness adds.
-  test: { environment: "jsdom" },
+  test: {
+    environment: "jsdom",
+    // Unconditional, not left to each test file's import graph: without it
+    // `@testing-library/react`'s automatic cleanup never registers, because it
+    // installs only behind a global `afterEach` and `globals` is off here.
+    setupFiles: ["./src/test/setup.ts"],
+  },
 });
