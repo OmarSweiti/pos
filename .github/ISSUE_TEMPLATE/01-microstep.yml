@@ -1,5 +1,5 @@
 name: Microstep
-description: One numbered unit of work from a phase file — the normal way work enters this repo.
+description: One numbered unit of work from a phase file. Work enters through the phase files; this tracks the one microstep in flight.
 title: "[<phase>.<group>.<step>] "
 labels: ["type: feat"]
 projects: ["OmarSweiti/4"]

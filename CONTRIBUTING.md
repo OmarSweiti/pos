@@ -78,7 +78,7 @@ Use a form — blank issues are turned off, because the fields are the parts peo
 
 | Form | For |
 |---|---|
-| **Microstep** | a numbered unit of work from a phase file. The normal way work enters the repo |
+| **Microstep** | a numbered unit of work from a phase file. Work enters through the phase files; an issue tracks the one in flight |
 | **Bug** | wrong behaviour. Money bugs are P0 by default, and need a property test |
 | **Merchant decision** | a question only the merchant can answer. Never guess one in code |
 | **Toolchain gap** | a command that cannot work yet — a §17 row |
