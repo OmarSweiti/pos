@@ -16,11 +16,11 @@ The buildable plan for this POS: what to type, in what order, and how you will k
 
 Then work the phase you are in, consulting `ref/` as the microsteps point you there.
 
-**Current implementation frontier (8 September 2026):** Phase 0 is closed by transfer: `0.3.2`
+**Current implementation frontier (13 September 2026):** Phase 0 is closed by transfer: `0.3.2`
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **20 of 112 executable microsteps fully complete (~18%)**: `1.1.0`
+Phase 1 has **21 of 112 executable microsteps fully complete (~19%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -33,9 +33,11 @@ in a release build), `1.11.2` (the RTL lint, whose escape hatch now requires its
 (the audit hash chain, and the external anchor that closes what a chain alone cannot detect),
 `1.6.1` (migration `0004`, the people and audit tables, and a role/capability matrix in which a
 denial is a row rather than an absence), `1.6.3` (the capability grid, and the test that holds
-all 128 seeded cells to it), and `1.11.0` (the register's DOM component-test harness — a jsdom
+all 128 seeded cells to it), `1.11.0` (the register's DOM component-test harness — a jsdom
 environment whose document fixture is `index.html` itself, `renderWithProviders`, explicit
-cleanup, and the bridge that makes a fake clock usable).
+cleanup, and the bridge that makes a fake clock usable), and `1.11.3` (the formatting helpers —
+a transaction amount at the currency's own exponent, a catalogue form that shortens only where
+shortening is exact, and Western Arabic digits in an Arabic locale).
 <!-- frontier:end -->
 Group 1.1 has **no immediately buildable work remaining**:
 `1.1.9`'s pure-domain time values, clock policy, and terminal IANA-zone resolution have landed, but

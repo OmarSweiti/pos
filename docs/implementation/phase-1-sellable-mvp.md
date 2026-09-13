@@ -1202,10 +1202,10 @@ Extend the existing guard that `just lint` and CI's `web` job run. Ban physical 
 **Done when:** using `pl-4` fails `just lint`.
 
 ### 1.11.3 — Formatting helpers
-**Files:** `apps/terminal/src/lib/format.ts`, `apps/terminal/src/lib/format.test.ts` (new)
+**Files:** `apps/terminal/src/lib/format.ts`, `apps/terminal/src/lib/format.test.ts` (new) · [`README.md`](README.md) (implementation frontier) · this file (this microstep's `Tests:` line and `Done when`, from which the bidi test is struck — 1.11.12 owns it)
 `formatMoney(minor, currency, locale)`, `formatQty(milli, weighed)`, `formatDate(iso, tz, locale)`. Western Arabic digits. Never `toLocaleString` inline. Transaction totals use the currency exponent; a shorter catalogue display is allowed only when exact.
-**Tests:** `formats_jod_at_the_currency_exponent` · `catalog_short_format_refuses_to_hide_fils` · `uses_western_digits_in_arabic_locale` · `latin_runs_inside_arabic_text_are_bidi_isolated`
-**Done when:** `pnpm --filter terminal exec vitest run src/lib/format.test.ts` exits zero for exact JOD fils, Arabic locale digits and an isolated Latin SKU inside Arabic text.
+**Tests:** `formats_jod_at_the_currency_exponent` · `catalog_short_format_refuses_to_hide_fils` · `uses_western_digits_in_arabic_locale`
+**Done when:** `pnpm --filter terminal exec vitest run src/lib/format.test.ts` exits zero for exact JOD fils and Arabic locale digits.
 
 ### 1.11.4 — Lock / PIN screen (D1)
 **Files:** `apps/terminal/src/screens/Lock.tsx`, `apps/terminal/src/screens/Lock.test.tsx` (new)
