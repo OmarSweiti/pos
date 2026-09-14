@@ -2648,24 +2648,29 @@ BEGIN
 END;
 ```
 
-> ⚠️ **OPEN — blocks `1.9.1`, and structurally, because it is frozen by migration `0005`.** What is
-> the authoritative ICV namespace — register, store, income source, credential, or one TIN across
-> stores? This is unratified merchant decision 6.9. Its answer lands in `doc_sequence.scope_kind`
-> immediately below, and the `CHECK (scope_kind IN ('register','store'))` written there is the
-> running default, **not** a ratified answer. Migrations are forward-only and are never edited once
-> committed, so that `CHECK` becomes structural and uneditable the moment `0005` commits; a later
-> correction is a second migration, plus — if the wrong scope has already issued counter values — a
-> data repair on a sequence that is required to be gapless. That is what separates this row from the
-> other items owned by `2.7.0`: most of them change code or a default, and this one changes a
-> `CHECK` in a file that can never be edited. Default until answered: the store-scoped counter keyed
-> `('store', store_id, 'fiscal_icv')` described under `0010`.
-> Owner: `2.7.0` ratifies 6.9, arriving through #69 on a timeline outside this project's control —
-> so `1.9.1` must choose **deliberately** rather than inherit the default by transcription. Tracked
-> as **#113**, which sets out four options: answer from the official package; widen the `CHECK` to
-> all five candidate scopes and constrain the choice in code until 6.9 is ratified; defer
-> `doc_sequence` out of `0005` entirely; or freeze `store` and accept a second forward-only
-> migration if it is wrong. Source that settles it: the official ISTD business rules or a written
-> ISTD E-Invoicing Directorate ruling.
+> ⚠️ **OPEN — now binds `2.7.4`, and the `CHECK` below is already frozen.** What is the
+> authoritative ICV namespace — register, store, income source, credential, or one TIN across
+> stores? This is still unratified merchant decision 6.9, and `ref/merchant-decisions.md` row 6.9's
+> Answer cell is still **empty**: only the official ISTD package can fill it, and a hedge recorded
+> as an answer is exactly the failure that ledger exists to catch.
+> What has changed is that the question no longer blocks anything in Phase 1. On 13 September 2026
+> **#113 took option 4 — freeze `store`, knowingly** — and `0005` shipped
+> `CHECK (scope_kind IN ('register','store'))` under `1.9.1`. Migrations are forward-only and are
+> never edited once committed, so that `CHECK` is now structural and uneditable.
+> Why the choice could not be deferred: this one table serves two counters. `('register',
+> register_id, 'receipt')` numbers receipts for `1.9.3`, a Phase-1 selling capability, and deferring
+> the table to wait on a fiscal answer would have taken receipt numbering with it.
+> Why the mistake stays cheap, and for how long: no ICV is ever allocated at checkout, and none is
+> allocated at all before `2.7.4`. **Until the first `fiscal_icv` row exists**, a wrong scope is
+> repaired by one further forward-only migration and no data repair. After it, it is a migration
+> plus a repair on a sequence required to be gapless — so `2.7.4` MUST re-check 6.9 before it
+> allocates the first value. That standing obligation is what this block now carries.
+> Default until answered: the store-scoped counter keyed `('store', store_id, 'fiscal_icv')`
+> described under `0010`.
+> Owner: `2.7.0` ratifies 6.9, arriving through #69 on a timeline outside this project's control.
+> Tracked as **#113**, which stays **open**: what is settled is what `0005` does, not what the ICV
+> namespace is. Source that settles it: the official ISTD business rules or a written ISTD
+> E-Invoicing Directorate ruling.
 
 ```sql
 -- Sequence integrity (G-2). Counters, never derived from time (E.6).
@@ -4247,8 +4252,9 @@ guide/XSD/code lists, records their package version and hash, then resolves or
 preserves every provisional field below. A reconstruction is not an approvable
 package.
 
-> ⚠️ **OPEN — blocks 2.7.0, and structurally blocks `1.9.1` (migration `0005`).** Is the authoritative ICV namespace per register, store/income source, or one TIN across stores? Default until answered: allocate from one store-scoped counter keyed as `('store', store_id, 'fiscal_icv')`; Phase 2 uses the single register's in-process allocator, Phase 3 uses a server-issued one-value lease, and no register advances an independent register-scoped ICV counter. **The structural deadline is earlier than this section implies:** the answer lands in `doc_sequence.scope_kind`, which `0005` creates under `1.9.1` in Phase 1 — see the OPEN block above that table in the `0005` section. Once `0005` commits, the `CHECK` is uneditable.
-> Owner: 2.7.0 ratifies it; `1.9.1` must choose deliberately first. Tracked as #113. Source that settles it: the official ISTD business rules or a written ISTD E-Invoicing Directorate ruling.
+> ⚠️ **OPEN — blocks 2.7.0, and carries a standing obligation on `2.7.4`.** Is the authoritative ICV namespace per register, store/income source, or one TIN across stores? Default until answered: allocate from one store-scoped counter keyed as `('store', store_id, 'fiscal_icv')`; Phase 2 uses the single register's in-process allocator, Phase 3 uses a server-issued one-value lease, and no register advances an independent register-scoped ICV counter. **The structural deadline has already passed:** the answer lands in `doc_sequence.scope_kind`, and `0005` shipped that `CHECK` under `1.9.1` on 14 September 2026 as #113's option 4 — freeze `store`, knowingly. Migrations are never edited once committed, so it is uneditable now. See the OPEN block above that table in the `0005` section for the full reasoning.
+> The reversal window is still open and closes at `2.7.4`: no ICV is allocated at checkout and none at all before that microstep, so until the first `fiscal_icv` row exists a wrong scope costs one further forward-only migration and no data repair. After it, a migration plus a repair on a gapless sequence. **`2.7.4` must re-check 6.9 before it allocates the first value.**
+> Owner: 2.7.0 ratifies it. Tracked as #113, which stays open — what is settled is what `0005` does, not what the namespace is. Source that settles it: the official ISTD business rules or a written ISTD E-Invoicing Directorate ruling.
 
 > ⚠️ **OPEN — blocks 2.7.0.** Does ISTD permit asynchronous reporting during an outage, what artifact may be handed to the customer, when is the legal issuance event, what is the submission deadline, and how are backdating and later rejection handled? Default until answered: complete the sale, print only a non-fiscal payment acknowledgement, and issue the fiscal invoice only through the approved clearance path.
 > Owner: 2.7.0. Source that settles it: the official ISTD outage procedure or a written ruling from the ISTD E-Invoicing Directorate.
