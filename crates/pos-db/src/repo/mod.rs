@@ -18,4 +18,5 @@
 //! fact.
 
 pub mod approval;
+pub mod clock;
 pub mod outbox;
