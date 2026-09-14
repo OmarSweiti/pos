@@ -649,6 +649,80 @@ mod outbox {
         );
     }
 
+    /// #174. A canonical sale payload carries `buyer_name`, `buyer_id_value` and
+    /// a customer `phone` — three registry entries in `ref/security-compliance.md`
+    /// §6, which redacts them at any nesting depth, and a JSON string holding
+    /// them is exactly that nesting.
+    ///
+    /// The fixture below is deliberately shaped like a real one rather than
+    /// abstract: the test is worth nothing if the string it looks for is not
+    /// the string that would actually leak.
+    #[test]
+    fn a_canonical_payload_never_reaches_a_debug_string() {
+        let phone = "0791234567";
+        let buyer = "سامية عبد الله";
+        let payload = format!(
+            r#"{{"buyer_id_value":"9876543","buyer_name":"{buyer}","id":"x","phone":"{phone}"}}"#
+        );
+        let ids = [0u8; 16];
+        let member = FactMember {
+            change_id: &ids,
+            entity: "sale",
+            entity_id: &ids,
+            payload: &payload,
+        };
+
+        let printed = format!("{member:?}");
+        for secret in [phone, buyer, "9876543"] {
+            assert!(
+                !printed.contains(secret),
+                "a registry field reached a Debug string: {printed}"
+            );
+        }
+        assert!(
+            printed.contains(&format!("{} bytes", payload.len())),
+            "the length is kept on purpose — a manifest mismatch is diagnosed by \
+             which member disagreed and how big it was: {printed}"
+        );
+        assert!(
+            printed.contains("entity"),
+            "redaction must not swallow the rest of the value: {printed}"
+        );
+
+        // Bytes, not characters. The canonical form is UTF-8 and a Jordanian
+        // receipt is full of Arabic, so a character count would disagree with
+        // the bytes `payload_hash` was taken over and read as a different value.
+        assert_ne!(
+            payload.len(),
+            payload.chars().count(),
+            "this fixture must actually contain multi-byte text, or the \
+             bytes-versus-characters assertion above proves nothing"
+        );
+
+        // The same redaction on the way back out, where a caller this crate does
+        // not control is the one holding it.
+        let register = Register::open();
+        let sale = Sale::new();
+        let chain = seed_catalog(&register.conn, &sale);
+        checkout(&register, &sale, &chain);
+        let manifest = OutboxRepository::new(&register.conn)
+            .manifest(sale.commit.as_bytes())
+            .unwrap();
+        let printed = format!("{manifest:?}");
+        for entry in &manifest {
+            assert!(
+                !printed.contains(&entry.payload),
+                "ManifestEntry printed a canonical payload verbatim"
+            );
+        }
+        let first = manifest.first().expect("the checkout wrote a manifest");
+        assert!(
+            printed.contains(&first.payload_hash),
+            "the digests stay legible — #174 leaves the `_hash` scope question \
+             open and nothing here depends on the answer"
+        );
+    }
+
     #[test]
     fn an_envelope_with_no_members_is_refused() {
         let register = Register::open();
