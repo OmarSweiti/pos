@@ -105,7 +105,7 @@ pub struct CommitEnvelope<'a> {
 }
 
 /// One constituent fact of a business transaction, as it travels.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct FactMember<'a> {
     /// Identity of this change on the wire.
     pub change_id: &'a [u8; ID_BYTES],
@@ -140,7 +140,7 @@ pub struct CommitReceipt {
 /// Delivery rows may be pruned once durably acknowledged; these rows may not.
 /// They are the financial evidence of what the register committed, and the
 /// convergence oracle the server reconciles against.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ManifestEntry {
     pub change_id: [u8; ID_BYTES],
     pub commit_index: i64,
@@ -150,6 +150,66 @@ pub struct ManifestEntry {
     pub payload: String,
     pub payload_hash: String,
     pub created_at: String,
+}
+
+/// What a `payload` renders as, for both types that hold one.
+///
+/// Length rather than nothing: a manifest mismatch is diagnosed by *which*
+/// member disagrees and by how big it was, and a bare `<redacted>` throws that
+/// away for no additional protection. Bytes, not characters — the canonical
+/// form is UTF-8 and a receipt is full of Arabic, so a character count would
+/// disagree with `payload_hash`'s input and read as a different value.
+fn redacted_payload(payload: &str) -> String {
+    format!("<redacted, {} bytes>", payload.len())
+}
+
+/// `Debug` is hand-written on both payload-bearing types.
+///
+/// A canonical sale payload carries `buyer_name`, `buyer_id_value` and a
+/// customer `phone`. All three are on the registry in
+/// `ref/security-compliance.md` §6, which redacts them **at any nesting depth**
+/// — and a JSON string holding them is exactly that nesting.
+/// `.claude/rules/security.md` names "test fixtures that print" among the
+/// surfaces the rule reaches, which is what a derived `Debug` is.
+///
+/// `pos-db` emits no `tracing` at all, so nothing prints these today. That is
+/// not the guarantee: these are public types handed to callers this crate does
+/// not control, and the module's own doc already records that payloads must
+/// stay out of errors and logs. This closes the third surface, which was
+/// considered for those two and not for this one.
+///
+/// **The digests are deliberately left legible**, and that is a narrower claim
+/// than it looks — see #174. `payload_hash` and `commit_hash` end in `_hash`,
+/// which the never-log list covers literally, but they are integrity
+/// identifiers the design already transmits to the server, and blanking them
+/// removes the one thing they exist for: naming *which* manifest disagreed when
+/// reconciliation fails. Whether a content digest is in scope for the `_hash`
+/// rule or explicitly out of it is an open question on #174; nothing here
+/// depends on the answer, because both readings agree about `payload`.
+impl core::fmt::Debug for FactMember<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("FactMember")
+            .field("change_id", &self.change_id)
+            .field("entity", &self.entity)
+            .field("entity_id", &self.entity_id)
+            .field("payload", &redacted_payload(self.payload))
+            .finish()
+    }
+}
+
+impl core::fmt::Debug for ManifestEntry {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ManifestEntry")
+            .field("change_id", &self.change_id)
+            .field("commit_index", &self.commit_index)
+            .field("entity", &self.entity)
+            .field("entity_id", &self.entity_id)
+            .field("op", &self.op)
+            .field("payload", &redacted_payload(&self.payload))
+            .field("payload_hash", &self.payload_hash)
+            .field("created_at", &self.created_at)
+            .finish()
+    }
 }
 
 /// A member with its payload digest, paired once so the digest can never drift
