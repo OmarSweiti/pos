@@ -59,6 +59,11 @@ pub enum DbError {
     InvalidStoredApproval { reason: String },
     #[error("stored clock state is malformed: {reason}")]
     ClockStateInvalid { reason: String },
+    #[error(
+        "this build of SQLite has no {0}: the register would open, and then return \
+         an empty result for every search instead of failing"
+    )]
+    MissingFeature(&'static str),
     #[error("{table}.{column} holds a {found}-byte id; ids are BLOB(16) (conventions §2)")]
     IdWidthInvalid {
         table: &'static str,
@@ -141,8 +146,51 @@ pub fn open(path: &Path, key: &str) -> Result<Connection, DbError> {
         return Err(DbError::ForeignKeysRefused);
     }
 
+    assert_fts5(&conn)?;
+
     migrate(&conn)?;
     Ok(conn)
+}
+
+/// The compile option FTS5 is built in under.
+const FTS5_COMPILE_OPTION: &str = "ENABLE_FTS5";
+
+/// Refuse a build whose SQLite cannot do full-text search.
+///
+/// `rusqlite` has no `fts5` feature flag to depend on: FTS5 arrives through the
+/// bundled build, and this project builds SQLCipher, so whether it is present is
+/// a property of how the C library was configured rather than of anything Cargo
+/// can express. Verify rather than hope.
+///
+/// **Why this fails the open rather than the search.** Without FTS5 a register
+/// starts perfectly, sells perfectly, and returns an empty result for every
+/// catalogue search — a cashier reads that as "we do not stock it" and sells
+/// nothing, or rings it up by hand at the wrong price. A missing feature that
+/// degrades into a plausible-looking wrong answer is worse than one that
+/// refuses, so this refuses.
+///
+/// It runs before [`migrate`] deliberately: `0007` creates the FTS tables, and
+/// a migration is a worse place to discover this than an open.
+fn assert_fts5(conn: &Connection) -> Result<(), DbError> {
+    let present: i64 = conn.query_row(
+        "SELECT count(*) FROM pragma_compile_options WHERE compile_options = ?1",
+        [FTS5_COMPILE_OPTION],
+        |row| row.get(0),
+    )?;
+    fts5_verdict(present)
+}
+
+/// The decision, separated from the query that feeds it.
+///
+/// Splitting it is what makes the refusal path testable at all: every
+/// connection this build can open reports FTS5, so a test that could only go
+/// through [`assert_fts5`] would exercise the success branch and nothing else —
+/// and a guard nobody has seen refuse is a guard nobody should trust.
+fn fts5_verdict(compile_options_found: i64) -> Result<(), DbError> {
+    if compile_options_found == 0 {
+        return Err(DbError::MissingFeature(FTS5_COMPILE_OPTION));
+    }
+    Ok(())
 }
 
 fn migrate(conn: &Connection) -> Result<(), DbError> {
@@ -166,4 +214,69 @@ fn migrate(conn: &Connection) -> Result<(), DbError> {
         tx.commit()?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::{DbError, FTS5_COMPILE_OPTION, assert_fts5, fts5_verdict};
+
+    /// Microstep 1.2.6. Two halves, because either alone is worth little.
+    ///
+    /// The refusal path cannot be reached through a real connection — every
+    /// database this build opens reports FTS5 — so it is proved through the
+    /// decision function, and the query that feeds it is proved separately by
+    /// actually using the feature.
+    ///
+    /// **What this test cannot prove, stated rather than implied:** that
+    /// [`crate::open`] still *calls* [`assert_fts5`]. Deleting that one line
+    /// leaves every assertion below green, because on a build that has FTS5 an
+    /// open that checks and an open that does not are indistinguishable. Only a
+    /// build without FTS5 could tell them apart, and this workspace cannot
+    /// produce one — `rusqlite` has no `fts5` feature to turn off, which is the
+    /// same fact that makes the assertion necessary. The call site is therefore
+    /// a reviewed one-liner, not a tested one.
+    #[test]
+    fn open_asserts_fts5_available() {
+        // 1 · The refusal. A build without FTS5 must fail with a named error
+        // rather than open and return an empty result for every search.
+        let refused = fts5_verdict(0).expect_err("a build with no FTS5 must be refused at open");
+        assert!(
+            matches!(refused, DbError::MissingFeature(FTS5_COMPILE_OPTION)),
+            "expected MissingFeature(\"{FTS5_COMPILE_OPTION}\"), found {refused:?}"
+        );
+        assert!(
+            refused.to_string().contains("empty result"),
+            "the message must say what the failure would otherwise look like to a \
+             cashier, not merely name the missing option: {refused}"
+        );
+        assert!(fts5_verdict(1).is_ok());
+
+        // 2 · The query, and the feature behind it. A compile-options string is
+        // evidence that the library was configured for FTS5, not that FTS5
+        // works — so this builds one and searches it. A `temp` table lives on
+        // the connection and never reaches the register's schema.
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::open(&dir.path().join("fts5.db"), "test-key")
+            .expect("this build must carry FTS5, which is what open now asserts");
+        assert_fts5(&conn).expect("the assertion open just made must still hold");
+
+        conn.execute_batch(
+            "CREATE VIRTUAL TABLE temp.probe USING fts5(name);
+             INSERT INTO temp.probe (name) VALUES ('قهوة عربية'), ('Espresso');",
+        )
+        .expect("ENABLE_FTS5 in pragma_compile_options must mean a usable fts5 module");
+        let hits: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM temp.probe WHERE probe MATCH ?1",
+                ["Espresso"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            hits, 1,
+            "a compiled-in FTS5 that matches nothing is not FTS5"
+        );
+    }
 }

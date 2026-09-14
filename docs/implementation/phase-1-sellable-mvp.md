@@ -315,7 +315,7 @@ Search is the fallback for every unbarcoded item and the only path a cashier has
 **Done when:** `just verify-schema` applies `0001`–`0007` and `cargo nextest run -p pos-db --test migration_0007_search_and_seed` exits zero after proving both FTS trigger coverage and fail-closed trade-scale activation.
 
 ### 1.2.6 — Assert FTS5 exists at open
-**Files:** `crates/pos-db/src/lib.rs`
+**Files:** `crates/pos-db/src/lib.rs` (`assert_fts5`, `fts5_verdict`, `DbError::MissingFeature`, the call in `open`, and the crate's first `#[cfg(test)] mod tests`)
 `rusqlite` has no `fts5` feature flag; FTS5 arrives through the bundled build, and this project builds SQLCipher. Verify rather than hope:
 ```rust
 fn assert_fts5(conn: &Connection) -> Result<(), DbError> {
@@ -327,7 +327,8 @@ fn assert_fts5(conn: &Connection) -> Result<(), DbError> {
 }
 ```
 **Tests:** `open_asserts_fts5_available`
-**Done when:** a build without FTS5 fails at `open()` with a named error, not at the first search with empty results.
+**Done when:** `cargo nextest run -p pos-db open_asserts_fts5_available` exits zero, proving both halves — `fts5_verdict(0)` returns the named `MissingFeature` error, and a real `fts5` virtual table on an opened register matches a row. A build without FTS5 then fails at `open()` with that named error rather than at the first search with empty results.
+> **The decision is split from the query on purpose, and one thing stays untested.** Every connection this build opens reports FTS5, so a test that could only go through `assert_fts5` would exercise the success branch and nothing else; `fts5_verdict` takes the count so the refusal can be reached. What no test here can reach is whether `open` still *calls* it — delete that line and every assertion stays green, because on an FTS5-enabled build a checking open and a non-checking open are indistinguishable. Only a build without FTS5 could tell them apart, and `rusqlite` has no feature flag to produce one, which is the same fact that makes the assertion necessary. The call site is a reviewed one-liner, not a tested one. The compile-options string is likewise evidence of configuration rather than of a working module, which is why the test builds a `temp` `fts5` table and searches it.
 
 ### 1.2.7 — Search benchmark
 *Gap G-9.*
