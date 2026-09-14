@@ -17,12 +17,22 @@ use pos_domain::{
 use rusqlite::{Connection, Transaction, params};
 use uuid::Uuid;
 
+#[path = "common/registered_chain.rs"]
+mod registered_chain;
+
+use registered_chain::RegisteredChain;
+
 const KEY: &str = "test-key";
 const AT: &str = "2026-09-02T10:00:00.000Z";
 const AT_MS: i64 = 1_788_343_200_000;
 const TTL_MS: i64 = 5 * 60 * 1_000;
 const AMOUNT_MINOR: i64 = 1_500;
 const REASON: &str = "damaged box";
+/// The register every `sale` row in this file names. Migration 0005 repaired
+/// `sale.register_id` with a trigger — `ALTER TABLE` cannot retrofit a
+/// `REFERENCES` clause onto an existing column — so it has to exist, and so
+/// does the store and org behind it.
+const EFFECT_REGISTER: u8 = 0xF0;
 
 struct TestDb {
     // Field order is deliberate: the connection drops before the temporary
@@ -57,6 +67,7 @@ fn fresh_database(name: &str) -> TestDb {
     let dir = tempfile::tempdir().expect("the fixture needs a private database directory");
     let path = dir.path().join(name);
     let conn = pos_db::open(&path, KEY).expect("the registered migration chain must open");
+    RegisteredChain::seed(&conn).add_register(&conn, id(EFFECT_REGISTER).as_slice(), "REG01");
     TestDb {
         conn,
         _dir: dir,
@@ -191,7 +202,7 @@ fn write_effect(tx: &Transaction<'_>, effect: Uuid, receipt: &str) {
         params![
             effect.as_bytes().as_slice(),
             receipt,
-            id(0xF0).as_slice(),
+            id(EFFECT_REGISTER).as_slice(),
             AT,
         ],
     )
@@ -214,7 +225,7 @@ fn write_audit(
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'sale', ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             fixture.audit.as_bytes().as_slice(),
-            id(0xF0).as_slice(),
+            id(EFFECT_REGISTER).as_slice(),
             fixture.actor.as_uuid().as_bytes().as_slice(),
             fixture.approver.as_uuid().as_bytes().as_slice(),
             fixture.handle.as_uuid().as_bytes().as_slice(),

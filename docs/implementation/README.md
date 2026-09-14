@@ -16,11 +16,11 @@ The buildable plan for this POS: what to type, in what order, and how you will k
 
 Then work the phase you are in, consulting `ref/` as the microsteps point you there.
 
-**Current implementation frontier (13 September 2026):** Phase 0 is closed by transfer: `0.3.2`
+**Current implementation frontier (14 September 2026):** Phase 0 is closed by transfer: `0.3.2`
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **21 of 112 executable microsteps fully complete (~19%)**: `1.1.0`
+Phase 1 has **22 of 112 executable microsteps fully complete (~20%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -35,15 +35,21 @@ in a release build), `1.11.2` (the RTL lint, whose escape hatch now requires its
 denial is a row rather than an absence), `1.6.3` (the capability grid, and the test that holds
 all 128 seeded cells to it), `1.11.0` (the register's DOM component-test harness — a jsdom
 environment whose document fixture is `index.html` itself, `renderWithProviders`, explicit
-cleanup, and the bridge that makes a fake clock usable), and `1.11.3` (the formatting helpers —
+cleanup, and the bridge that makes a fake clock usable), `1.11.3` (the formatting helpers —
 a transaction amount at the currency's own exponent, a catalogue form that shortens only where
-shortening is exact, and Western Arabic digits in an Arabic locale).
+shortening is exact, and Western Arabic digits in an Arabic locale), and `1.9.1` (migration
+`0005` — immutable shift opens with one open shift per register, the seven gates a sale must pass
+to become a fact, append-only tender settlement, immutable receipt artifacts and their print
+queue, `trusted_time_state`, and the scoped `doc_sequence` both counters share).
 <!-- frontier:end -->
 Group 1.1 has **no immediately buildable work remaining**:
-`1.1.9`'s pure-domain time values, clock policy, and terminal IANA-zone resolution have landed, but
-its database persistence half remains deferred until `1.9.1` creates `trusted_time_state`, including
-`clock_state_survives_restart`. The `1.1.9` microstep is therefore **partially delivered**, not
-complete. `1.6.3` is now **fully delivered**: `crates/pos-db/tests/role_matrix.rs` reads back all
+`1.1.9`'s pure-domain time values, clock policy, and terminal IANA-zone resolution have landed, and
+its database persistence half is now **unblocked**: `1.9.1` shipped `trusted_time_state`, mapping
+`ClockState` field for field. What remains is `crates/pos-db/src/repo/clock.rs` and
+`clock_state_survives_restart`, which are a repository rather than a schema change and are
+deliberately not in `1.9.1`'s pull request — it is a separate microstep half with its own
+`Done when`. The `1.1.9` microstep is therefore still **partially delivered**, not complete, and it
+is the smallest buildable thing in the repository. `1.6.3` is now **fully delivered**: `crates/pos-db/tests/role_matrix.rs` reads back all
 128 seeded `role_capability` rows and holds each one to `cap::DEFAULT_MATRIX`, so the grid the
 domain declares and the grid the register ships are the same grid or the gate is red.
 Group 1.2 begins with the **partially delivered** `1.2.0` benchmark gate: `just
@@ -55,7 +61,9 @@ records is `1.2.0`'s deferred half and waits on hardware nobody has bought
 ([`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6a: order it before group 1.7
 starts). **`1.8.9` has landed, so the gate it held is open**: groups 1.6, 1.9 and 1.10 may now write
 append-only facts, because every fact graph commits with its delivery envelope and the writer refuses
-to return success on an incomplete one. `1.2.4` (the scan parser's pure half, next in
+to return success on an incomplete one. **`1.9.1` has landed too**, so the migration chain is
+contiguous to `0005` and `0006` may be written: `1.2.3`, `1.9.2`–`1.9.5`, `1.10.2`–`1.10.5` and the
+`1.2.4` database half all stood behind it. `1.2.4` (the scan parser's pure half, next in
 §1.2's build order) has every dependency met, and `1.6.3` is closed: its seed comparison landed
 against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
 `authorize`, `ApprovalHandle` and `EscalationPolicy` are complete in `pos-domain`, with the two

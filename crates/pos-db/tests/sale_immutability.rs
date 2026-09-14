@@ -11,6 +11,11 @@
 use rusqlite::{Connection, params};
 use uuid::Uuid;
 
+#[path = "common/registered_chain.rs"]
+mod registered_chain;
+
+use registered_chain::{Checkout, RegisteredChain};
+
 fn id(value: u128) -> Uuid {
     Uuid::from_u128(value)
 }
@@ -35,17 +40,26 @@ const TENDER_IMMUTABLE_MESSAGE: &str =
 struct Fixture {
     _dir: tempfile::TempDir,
     conn: Connection,
+    chain: RegisteredChain,
+    checkout: Checkout,
     sale: Uuid,
     product: Uuid,
     register: Uuid,
 }
 
 /// A register holding one parked sale with one line and one tender.
+///
+/// The org, store, tax pack, policy and register come from the shared
+/// registered-chain fixture. Migration 0005 repaired `sale.register_id` with a
+/// trigger and put seven gates in front of completion, so "a register holding a
+/// sale" is now a chain of rows rather than a single `register_id` value.
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let conn = pos_db::open(&dir.path().join("register.db"), "test-key").unwrap();
 
     let (product, sale, register) = (id(1), id(2), id(3));
+    let chain = RegisteredChain::seed(&conn);
+    chain.add_register(&conn, register.as_bytes(), "REG01");
     conn.execute(
         "INSERT INTO product (id, sku, name, price_minor, currency, is_active)
          VALUES (?1,?2,?3,?4,?5,0)",
@@ -81,9 +95,19 @@ fn fixture() -> Fixture {
     )
     .unwrap();
 
+    let checkout = Checkout::new(
+        1,
+        sale.as_bytes(),
+        register.as_bytes(),
+        &[id(4).as_bytes()],
+        &[id(5).as_bytes()],
+    );
+
     Fixture {
         _dir: dir,
         conn,
+        chain,
+        checkout,
         sale,
         product,
         register,
@@ -91,13 +115,12 @@ fn fixture() -> Fixture {
 }
 
 impl Fixture {
+    /// parked → completed, the ordinary lifecycle, with everything 0005 now
+    /// requires a completed sale to be able to prove: an open shift, the
+    /// store's policy, a tax component per line, an initial event per tender,
+    /// a queued original receipt and the complete delivery manifest.
     fn complete(&self) {
-        self.conn
-            .execute(
-                "UPDATE sale SET status='completed' WHERE id=?1",
-                params![self.sale.as_bytes().as_slice()],
-            )
-            .expect("parked → completed is the ordinary lifecycle and must be allowed");
+        self.checkout.seal(&self.conn, &self.chain);
     }
 }
 
@@ -280,6 +303,7 @@ fn a_completed_tender_refuses_settlement_updates_and_reparenting() {
 #[test]
 fn a_receipt_number_is_unique_per_register_but_not_across_them() {
     let f = fixture();
+    f.chain.add_register(&f.conn, id(9).as_bytes(), "REG02");
 
     let clash = f.conn.execute(
         "INSERT INTO sale (id, receipt_number, register_id, status, subtotal_minor,
