@@ -222,6 +222,21 @@ impl RegisteredChain {
     /// demands. `shift_project_open` writes `shift_state` itself, so the one
     /// open row per register comes from the migration and not from here.
     pub fn open_shift(&self, conn: &Connection, shift: &[u8], register: &[u8], date: &str) {
+        self.try_open_shift(conn, shift, register, date)
+            .expect("a shift opens against its own register's store, with its envelope");
+    }
+
+    /// The same open, for a test that expects it to be refused — a second open
+    /// shift on one register, say. The envelope is written first and stays
+    /// written: it is its own transaction, exactly as it would be on a
+    /// register where the shift insert failed.
+    pub fn try_open_shift(
+        &self,
+        conn: &Connection,
+        shift: &[u8],
+        register: &[u8],
+        date: &str,
+    ) -> rusqlite::Result<usize> {
         let commit = fixture_id(REFERENCE_SLOT, 0x80 | tail(shift));
         let change = fixture_id(REFERENCE_SLOT, 0xC0 | tail(shift));
         self.write_envelope(conn, &commit, &[Member::new(&change, "shift", shift)]);
@@ -231,7 +246,6 @@ impl RegisteredChain {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)",
             params![shift, register, &self.store, date, &self.cashier, AT],
         )
-        .unwrap();
     }
 
     /// One delivery envelope through the shipped writer, in its own
@@ -561,6 +575,13 @@ impl Checkout {
     /// The auxiliary facts that refuse to exist without one: `audit_log` and
     /// `tender_status_event` each check `sync_commit_ready` on insert.
     pub fn write_facts_after_envelope(&self, conn: &Connection, chain: &RegisteredChain) {
+        self.write_audit(conn, chain);
+        self.write_tender_events(conn);
+    }
+
+    /// The audit row for the completion. Split out so a test can leave one half
+    /// of the post-envelope facts unwritten and watch the right gate fire.
+    pub fn write_audit(&self, conn: &Connection, chain: &RegisteredChain) {
         conn.execute(
             "INSERT INTO audit_log
                (id, register_id, actor_id, action, entity, entity_id, payload,
@@ -577,7 +598,11 @@ impl Checkout {
             ],
         )
         .unwrap();
+    }
 
+    /// One initial status event per tender, which is what
+    /// `sale_completed_requires_tender_events_*` looks for.
+    pub fn write_tender_events(&self, conn: &Connection) {
         for (tender, event) in self.tenders.iter().zip(self.tender_events.iter()) {
             conn.execute(
                 "INSERT INTO tender_status_event
@@ -593,11 +618,19 @@ impl Checkout {
     /// id lands in the same `UPDATE`: `sale_completed_requires_durable_outputs_update`
     /// reads `NEW.sync_commit_id`, so setting it afterwards would be too late.
     pub fn complete(&self, conn: &Connection) {
+        self.try_complete(conn)
+            .expect("the fixture must satisfy every gate 0005 put in front of completion");
+    }
+
+    /// The same transition, for a test that has deliberately withheld one
+    /// precondition and wants to name the gate that refuses it. Writing the
+    /// `UPDATE` by hand instead would silently omit `sync_commit_id` and be
+    /// refused by the durable-outputs gate whatever the test was aiming at.
+    pub fn try_complete(&self, conn: &Connection) -> rusqlite::Result<usize> {
         conn.execute(
             "UPDATE sale SET status = 'completed', sync_commit_id = ?1 WHERE id = ?2",
             params![&self.commit, &self.sale],
         )
-        .expect("the fixture must satisfy every gate 0005 put in front of completion");
     }
 
     /// Attach, envelope, auxiliary facts, transition — for the callers that do
