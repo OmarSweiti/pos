@@ -57,6 +57,8 @@ pub enum DbError {
     ApprovalConsumptionUnbound,
     #[error("stored approval handle is malformed: {reason}")]
     InvalidStoredApproval { reason: String },
+    #[error("stored clock state is malformed: {reason}")]
+    ClockStateInvalid { reason: String },
     #[error("{table}.{column} holds a {found}-byte id; ids are BLOB(16) (conventions §2)")]
     IdWidthInvalid {
         table: &'static str,
