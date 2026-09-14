@@ -1,25 +1,34 @@
 # Handoff — the single current one
 
-**Reflects `development` @ `3014a88`, 13 September 2026.**
+**Reflects `development` @ `60ef37f`, 14 September 2026.**
 
 There is one handoff — keep updating this file rather than adding a dated one.
 
-**13 September moved the product, for the first time since 8 September.** Five pull requests merged
-into `development` — #161, #163, #164, #165, #166 — and one of them, **#165, landed microstep
+> ## ⚠ READ §2b FIRST — microstep `1.9.1` is IN FLIGHT and the tree on its branch is RED
+>
+> Migration `0005` is written, registered and schema-verified on the pushed branch
+> **`phase-1/group-9-migration-0005`** at **`e6d774f`**, and `just test` fails there on **17
+> pre-existing tests, by design**. `development` itself is untouched and green. §2b is the complete
+> resume instruction: what is done, what is left, and the one command to run before editing `0005`.
+
+**13 September moved the product, for the first time since 8 September.** Six pull requests merged
+into `development` — #161, #163, #164, #165, #166, #167 — and one of them, **#165, landed microstep
 `1.11.3`**: `apps/terminal/src/lib/format.ts` and thirteen tests. Phase 1 is **21 of 112 (~19%)**.
 Two P2 gap issues closed with it (#119, #120), and #113 took a decision. §2a is that window; §2
 keeps the 9–11 September record, where twenty-six pull requests changed the governance layer and no
 microstep advanced.
 
-**The tree is green, and CI on the tip is not.** `just pre-push` exits 0 at `3014a88` and all 37
-`just guards` steps pass. But the `ci` run on the tip, `34753605560`, was **cancelled** — five
-merges inside two minutes tripped the workflow's concurrency group, which cancelled `ci` on both
-`5220f46` and `3014a88`. The newest green `ci` on `development` is `34753631505`, on `afc7395`, two
-commits back. `security` did pass on the tip. **Re-run `ci` on the tip before promoting**, and after
-any burst of merges check the tip rather than assuming the last green run covers it.
+**`development` is green, tip included.** `just pre-push` exits 0 at `60ef37f`, all 37 `just guards`
+steps pass, and `ci` run **`34757633967` is a success on the tip**. The cancelled-CI caveat that
+stood here on 13 September is resolved: `34753605560` was cancelled on `3014a88` when five merges
+inside two minutes tripped `ci.yml`'s concurrency group, and #167's own merge then produced a clean
+run. **The lesson survives the fix** — after a burst of merges, query the tip specifically rather
+than assuming the newest green run covers it.
 
-**The WIP=1 slot is empty**: 0 open pull requests, and no board item is `In Progress`. Board #4 now
-reads **eleven items — eight `Todo`, three `Done`**.
+**The WIP=1 slot is FULL.** 0 open pull requests, but `1.9.1` is in flight on the branch above. Do
+not start a second microstep. Board #4 reads **eleven items — eight `Todo`, three `Done`**; no item
+is `In Progress`, because **no Microstep issue has been filed for `1.9.1` yet** — that is the first
+item of unfinished work in §2b.
 
 **Read `CLAUDE.md` first.** This document assumes it. Where this file and the repository disagree,
 **the repository is right** — every number here was read from `git`, `gh` or a command, and where
@@ -34,7 +43,12 @@ cd ~/My_Projects/pos
 git checkout development && git pull --ff-only
 git fetch --all --prune            # your local staging is 51 commits stale — see §14
 mise exec -- just setup
-mise exec -- just pre-push          # passes at 3014a88
+mise exec -- just pre-push          # passes at 60ef37f
+
+# To resume the in-flight microstep (§2b) instead:
+git checkout phase-1/group-9-migration-0005    # at e6d774f, pushed
+mise exec -- ./scripts/verify-schema.py        # exits 0
+mise exec -- cargo nextest run -p pos-db --no-fail-fast   # 17 fail, by design
 ```
 
 **`just setup` without `mise exec --` fails.** The shell's Node is `v26.4.0`; `.nvmrc` pins
@@ -47,7 +61,7 @@ with `couldn't exec process: No such file or directory`, because the whole unspl
 `cd <repo> && mise exec -- node --version` prints `v24.19.0` — and a relative script path works.
 Re-measured 13 September; the `cd` clause that stood here was false.
 
-### Verified gate baselines at `3014a88`
+### Verified gate baselines at `60ef37f`
 
 Every row re-measured on 13 September. Use these as the "nothing is broken" reference.
 
@@ -110,12 +124,12 @@ vitest 5.0.0, gitleaks 8.30.1, Docker Engine 29.5.2.
 
 | | |
 |---|---|
-| `development` | **`3014a88`** — local `just pre-push` exits 0, but the tip has **no green CI**: run `34753605560` was cancelled by `ci.yml`'s ref-scoped concurrency group when three merges landed inside 61 seconds. Newest green `ci` is `34753631505` at `afc7395`, two back. Every PR head merged that day was green on all six required checks before it merged |
-| `staging` | **`531ea04`** — **16 behind** `development`, 5 ahead (its own five promotion merges) |
-| `main` | `24a0283` — **144 behind** `development`, **133 behind** `staging`, untouched since 20 August |
+| `development` | **`60ef37f`** — `just pre-push` exits 0 and `ci` run **`34757633967` is green on the tip**. Untouched by the in-flight `1.9.1` work, which lives only on its own branch |
+| `staging` | **`531ea04`** — **17 behind** `development`, 5 ahead (its own five promotion merges) |
+| `main` | `24a0283` — **145 behind** `development`, **133 behind** `staging`, untouched since 20 August |
 | Phase 1 | **21 of 112** executable microsteps (~19%) — `1.11.3` landed 13 September (#165), the first advance since 8 September |
-| Open PRs | **0** |
-| Open issues | **8** — see §3. **None is `In Progress`: the WIP=1 slot is empty** |
+| Open PRs | **0** — but see §2b: `1.9.1` is in flight on a pushed branch with no PR open |
+| Open issues | **8** — see §3. None is `In Progress`, but **the WIP=1 slot is FULL**: `1.9.1` is in flight (§2b) with no Microstep issue filed yet |
 | Board #4 | the API's default listing returns **11 items — 8 `Todo`, 3 `Done`** (#119, #120 and #162, all closed 13 September). Archived items are excluded from that listing and their count is not readable through it |
 | Rulesets | **four, all active**, all four checked in under `.github/rulesets/`. They **agreed with live when last compared by hand** (11 September) — no gate diffs them, so this is a dated observation, not an invariant. See §3 |
 | Tags / releases | **zero of each.** The append-only tag ruleset has never been exercised |
@@ -269,10 +283,10 @@ and CI's grammar gate (`branch-flow.yml:157`) validates only the **PR title**, w
 
 ---
 
-## 2a · What landed 13 September — five pull requests, one microstep
+## 2a · What landed 13 September — six pull requests, one microstep
 
-Five commits, 441 insertions, 14 deletions. **The first product code since 8 September**, and the
-first time a microstep and its issue moved together.
+Six commits. **The first product code since 8 September**, and the first time a microstep and its
+issue moved together.
 
 | PR | Commit | What |
 |---|---|---|
@@ -281,6 +295,7 @@ first time a microstep and its issue moved together.
 | **#164** | `afc7395` | `apps/backoffice` gets `setupFiles` and a cleanup-only `src/test/setup.ts`. **Closes #119** |
 | **#165** | `5220f46` | **microstep `1.11.3`** — `format.ts`, thirteen tests, the frontier to 21 of 112. **Closes #162** |
 | **#166** | `3014a88` | the Microstep issue form stopped contradicting its own body text |
+| **#167** | `60ef37f` | this handoff, refreshed — 74 stale claims corrected, four sections rebuilt |
 
 ### The four rulings that matter
 
@@ -321,11 +336,144 @@ green before its rebase — but the ledger cannot tell "green, then rebased" fro
 each branch from the previous one, or wait for the post-rebase run.
 
 **B · Five merges inside two minutes cancel CI on the tip.** `ci.yml`'s ref-scoped concurrency group
-cancelled the runs on `5220f46` and `3014a88`. The tip has no green `ci`; `afc7395` does. This is
-invisible unless you query the tip specifically.
+cancelled the runs on `5220f46` and `3014a88`. That specific gap is closed — #167's merge produced
+a green `ci` on `60ef37f` — but the mechanism is not, and it is invisible unless you query the tip
+specifically.
 
 **C · `mise exec` after `cd` is fine.** Two handoffs asserted it fails. It does not — see §0. The
 real failure is a command built in a shell variable.
+
+---
+
+## 2b · IN FLIGHT — microstep `1.9.1`, migration `0005`
+
+**Branch `phase-1/group-9-migration-0005`, pushed, at `e6d774f`. `just test` is RED there on 17
+pre-existing tests, by design. `development` is untouched and green. Do not merge this branch.**
+
+Started 13 September after #113 recorded its decision. This section is the complete resume
+instruction; nothing about the work lives only in a session transcript.
+
+### Done, with the evidence
+
+| | |
+|---|---|
+| `crates/pos-db/migrations/0005_sale_columns_and_sequences.sql` | **1,179 lines.** Transcribed verbatim from `ref/schema.md` §0005's **three** code fences (`1673-2242`, `2261-2649`, `2670-2835`) in document order |
+| Object counts, checked against the specification | **16** `CREATE TABLE` · **5** `CREATE INDEX` · **2** `CREATE UNIQUE INDEX` · **60** `CREATE TRIGGER` · **1** `CREATE VIEW` · **1** `INSERT` · **14** `ALTER TABLE` = **99 objects** |
+| `crates/pos-db/src/lib.rs` | appended to `MIGRATIONS`. `SCHEMA_VERSION` derives from array length — no separate edit |
+| `crates/pos-db/tests/common/mod.rs` | `reference_blocks()` **5 → 6**, with its doc comment |
+| `ref/schema.md` §0005 heading | gained **`· SHIPPED`** |
+| `./scripts/verify-schema.py` | **exits 0.** Chain moved 4 migrations / 32 tables / 300 columns → **5 / 48 / 457** |
+
+### Left to do, in order
+
+1. **File the Microstep issue for `1.9.1`**, put it on board #4, set `In Progress`. Not done
+   deliberately: the form calls a late-appearing file "a scope leak", and the true `Files:` list was
+   unknown until the test blast radius was measured. It is known now — item 6 below.
+2. **Repair the 17 failing tests** (named below).
+3. **Write the six tests `1.9.1` names**, in
+   `crates/pos-db/tests/migration_0005_sale_columns_and_sequences.rs` (new, name fixed by
+   `phase-1:1050`): `opening_a_second_shift_for_the_register_is_refused` ·
+   `a_completed_sale_requires_an_open_matching_shift` ·
+   `migration_0005_preserves_completed_sale_guards` ·
+   `every_completed_tender_has_an_initial_status_event` ·
+   `exchange_tender_seed_matches_internal_contract` ·
+   `an_exchange_tender_never_opens_or_counts_the_drawer`.
+4. **The Postgres mirror** — `apps/server/migrations/<14-digit UTC>_<lower_snake>.sql` with a
+   `-- Mirrors SQLite 0005_sale_columns_and_sequences.sql` header, plus `REGISTER_LOCAL` entries in
+   `scripts/verify-pg-migrations.py` for the tables that never sync. Candidates the scope identified:
+   `parked_cart`, `checkout_operation`, `product_quick_add_request`, `trusted_time_state` — **verify
+   each against `ref/schema.md` rather than trusting that list.**
+5. **Rewrite the three ⚠️ OPEN blocks that still say the ICV choice is unmade** —
+   `phase-1:1055`, `ref/schema.md:2651`, `ref/schema.md:4250`. Each enumerates #113's four options or
+   says `1.9.1` "must choose deliberately first". Landing `0005` without rewriting all three leaves
+   the plan of record contradicting a decision that has been taken.
+6. **Advance the frontier to `22 of 112 executable microsteps fully complete (~20%)`** in
+   `docs/implementation/README.md` — `round(100*22/112) == 20`, and the prose list must gain
+   `1.9.1`. **Extend `1.9.1`'s own `Files:` line** to name what actually changed, the way `1.11.0`
+   and `1.11.3` do; it currently names two files and the change touches ten.
+7. Consider whether the **deferred `1.1.9` database half** (`phase-1:1057-1060`,
+   `crates/pos-db/src/repo/clock.rs`, test `clock_state_survives_restart`) lands in the same PR.
+   `trusted_time_state` now exists, which was its only blocker. It is a *separate* microstep half
+   with its own `Done when`; deciding is part of the work, not a given.
+
+### The 17 failures, and why they are correct
+
+`0005` adds **seven gates** to sale completion, each with an `_insert` and an `_update` trigger:
+shift · tax policy · fiscal decision · tax components · discount recap · tender events · durable
+outputs. Every pre-`0005` test completes a *minimal* sale, so none can satisfy them. The
+representative refusal is
+`sale completion atomically requires its original receipt job and complete sync commit`.
+
+```
+approval.rs           a_consumed_handle_is_still_consumed_after_restart
+                      a_handle_used_twice_is_refused
+                      the_effect_and_the_consumption_commit_together_or_not_at_all
+durability.rs         a_committed_sale_is_readable_on_a_fresh_connection
+migration_0003.rs     after_the_rebuild_the_six_tables_enforce_their_types
+                      the_rebuild_restores_the_immutability_triggers
+outbox.rs             a_completed_sale_has_one_ready_sync_commit
+                      a_second_commit_cannot_claim_the_same_fact
+                      delivery_rows_can_be_pruned_without_losing_the_manifest
+                      every_fact_member_is_in_the_commit_manifest
+                      outbox_commit_rolls_back_with_the_fact_graph
+sale_immutability.rs  a_completed_sale_refuses_update_and_delete
+                      a_completed_tender_refuses_settlement_updates_and_reparenting
+                      a_parked_sale_is_still_editable
+                      a_receipt_number_is_unique_per_register_but_not_across_them
+                      every_immutability_trigger_survives_the_migration_runner
+                      the_lines_of_a_completed_sale_are_frozen
+```
+
+**`fact_table_guards.rs` and `authorization_scope.rs` PASS**, which is the evidence the
+`reference_blocks()` bump was right: they were already getting `0005`'s shape from the reference
+document and now get it from the shipped migration instead.
+
+**The intended repair** is one shared registered-chain fixture — a `complete_sale` helper that seeds
+a valid world and passes all seven gates — rather than seventeen local patches. No pos-db test today
+inserts a `register` or `store` row on the registered chain; that recipe exists only inside
+`fact_fixture.rs`, reachable from `full_schema` suites. Whoever writes it is writing the crate's
+first registered-chain store/register seed.
+
+### Before you edit `0005`, run this
+
+```bash
+git reset HEAD~1        # ONLY if 0005 itself must change
+```
+
+Once a migration is in `HEAD`, `.claude/hooks/protect-immutable.py` and `.githooks/pre-commit`
+refuse to edit it — `is_committed` tests membership of `git ls-tree HEAD`, not whether anything
+shipped. Nothing on this branch has shipped, merged, or touched a protected branch, so moving it
+back out of `HEAD` is the intended escape. **A second migration to fix a typo in an unmerged one
+would be permanent for no reason.** Re-commit when it is right.
+
+### If the file is ever lost, it is reproducible
+
+Concatenate `ref/schema.md` lines `1674-2241`, `2262-2648` and `2671-2834` (the fence *contents*,
+excluding the fence markers) in that order, and prepend the header. **The fence split is the primary
+transcription hazard**: fence 1 holds only 55 of the 99 objects, so copying "the 0005 code block"
+silently drops `tender_type` and its seed, `parked_cart`, `checkout_operation`, the receipt and
+print tables, `product_quick_add_request`, `doc_sequence`, `trusted_time_state` and the view.
+
+### Five findings from this work, none of them in the plan
+
+* **`0002:103-106` is a stale forward reference that reads as an instruction.** It says "0005 adds
+  `tender_state`/`captured_at`" to `sale_tender`. **`0003:322-324` superseded it** with append-only
+  `tender_status_event`, and §0005 contains **zero** `ALTER` on `sale_tender`. A reader following
+  0002 adds columns that must not exist.
+* **The live completed-sale guard set is the post-0003 one.** `0003:320` replaced 0002's
+  `sale_tender_amount_frozen_once_completed` with `sale_tender_no_update_once_completed`, and 0003
+  defines the `sale_line_no_*` triggers **twice** — the `913-933` versions are live. A test naming
+  0002's set fails; a migration restoring 0002's wording reopens a hole 0003 closed, which
+  `0003:907-912` records as having happened once already.
+* **`sale` has no foreign keys at all** — `pragma_foreign_key_list('sale')` is empty. `0005` repairs
+  `register_id` and `ref_sale_id` with **triggers**, because `ALTER TABLE` cannot retrofit a
+  `REFERENCES` clause. That is the documented trade at `ref/schema.md:1798-1817`, not an oversight.
+* **No `PRAGMA` may appear in `0005`.** The runner wraps each migration in one transaction, where
+  `PRAGMA foreign_keys` is a no-op and `PRAGMA defer_foreign_keys` cannot clear a deferred violation.
+* **`verify-schema.py:405` skips any heading containing `SHIPPED`**, and pass 1 has already applied
+  the file from disk. The `· SHIPPED` marker is therefore required in the **same** commit as the
+  migration — without it pass 2 re-executes the DDL against the schema it just built. A scoping
+  agent advised the opposite; the script settles it.
 
 ---
 
@@ -399,19 +547,27 @@ legacy API cannot express `allowed_merge_methods` at all). **No issue tracks thi
 
 ---
 
-## 4 · What is next — the WIP=1 slot is EMPTY
+## 4 · What is next — the WIP=1 slot is TAKEN by `1.9.1`
 
-Nothing is `In Progress`. Per `03-github-workflow.md` §4: pick **one** microstep, open **one**
-`Microstep` issue, add it to board #4 by hand, set it `In Progress`, then build it. Note that
+**Finish §2b before starting anything here.** `1.9.1` is in flight, and WIP = 1 means one microstep,
+not one open pull request. The candidates below are what comes *after* it, and they are recorded now
+so the choice is not re-derived later.
+
+Per `03-github-workflow.md` §4 the loop is: pick **one** microstep, open **one** `Microstep` issue,
+add it to board #4 by hand, set it `In Progress`, then build it.
 `.github/ISSUE_TEMPLATE/01-microstep.yml` has **eight required fields**, including a proving command
 (*"The command that proves it. Not a description of the command."*) and a *Test-catalog rows closed*
 field — so a microstep with no `Done when` line cannot even be filed without authoring one first.
 
 **That loop is one microstep old.** #162, for `1.11.3`, is the first Microstep issue this repository
 has ever carried; the twenty before it were built without one. The law was right and unfollowed, so
-treat §4's procedure as a new habit rather than an established one.
+treat §4's procedure as a new habit rather than an established one — and note that `1.9.1` has not
+been filed yet either, which §2b lists as its first item of unfinished work.
 
-### Recommended first: `1.9.1` — migration `0005`
+### IN FLIGHT, not recommended: `1.9.1` — migration `0005`
+
+**This work has started — see §2b for its state and how to resume it.** The rest of this subsection
+is the case for it, kept because the obligations it lists are still owed.
 
 **#113 is decided.** On 13 September it took **option 4 — freeze `store`, knowingly** — and its own
 words are *"`1.9.1` is unblocked and may write `0005` transcribing the specified DDL unchanged."*
@@ -1002,6 +1158,25 @@ which suites were run.
     Not a judgement call to re-argue — it is mechanical, it happened three times on 13 September, and
     the fix is to wait for the post-rebase run or to cut each branch from the previous one.
 
+### Taken 14 September
+
+45. **`ref/schema.md`'s `## NNNN` heading gains `· SHIPPED` in the SAME commit as the migration.**
+    Settled against the script, not opinion: `verify-schema.py:405` skips any heading containing
+    `SHIPPED`, and pass 1 has already applied the file from disk. Without the marker, pass 2
+    re-executes the section's DDL against the schema it just built and the verifier reds. A scoping
+    agent advised deferring the marker to a separate documentation edit; it was wrong.
+46. **An unmerged migration is moved back out of `HEAD` to correct it, not patched by a successor.**
+    `is_committed` in `protect-immutable.py` tests membership of `git ls-tree HEAD`, so committing a
+    migration on a feature branch makes the agent guard and the Git hooks refuse to edit it. On a
+    branch that has not shipped, not merged, and not touched a protected branch, `git reset HEAD~1`
+    is the intended escape. The forward-only law protects released history; it is not a reason to
+    make a typo in an unmerged file permanent.
+47. **The 17 tests `0005` breaks are repaired by ONE shared registered-chain fixture, not 17 local
+    patches.** They fail because `0005` adds seven gates to sale completion and every pre-`0005`
+    test completes a minimal sale — correct behaviour, not a defect. One `complete_sale` helper that
+    passes all seven gates is one recipe in one place; seventeen local worlds would drift apart and
+    the next migration would break them all again.
+
 ---
 
 ## 11 · The board `Phase` field — why #69 reads Phase 1 with Microstep 2.7.0
@@ -1058,9 +1233,13 @@ comparison survives only in `check-branch-workflow-policy.rb`, whose trusted roo
 
 ---
 
-## 13 · Workflows — what nine runs have taught
+## 13 · Workflows — what ten runs have taught
 
-Nine audit workflows have now been launched across six sessions. The two of 13 September scoped
+Ten audit workflows have now been launched across six sessions. A tenth, on 14 September, scoped
+migration `0005` before a line of it was written — six dimensions, and its adversarial half refuted
+**32** of the scopes' own claims, including a blast-radius estimate of four failing tests where the
+measured number is **17**. That is the pattern to keep: the scope is a hypothesis, the command is
+the evidence. The two of 13 September scoped
 the five-item work queue before any of it was written, and then audited this document against live
 state — 47 refutations in the first, 22 in the second, of the *auditors* rather than the tree. **The 11 September run finished**:
 nine dimensions, twenty agents, 1,107 tool calls, each dimension followed by an adversarial verifier
