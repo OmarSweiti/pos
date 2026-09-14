@@ -1668,7 +1668,7 @@ END;
 
 ---
 
-## 0005 — sale columns and sequences  ·  Phase 1, microsteps 1.4.11, 1.9.1
+## 0005 — sale columns and sequences  ·  Phase 1, microsteps 1.4.11, 1.9.1  ·  SHIPPED
 
 ```sql
 -- The opening row is an immutable fact. Closing is a separate fact and
