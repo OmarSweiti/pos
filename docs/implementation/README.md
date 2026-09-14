@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **22 of 112 executable microsteps fully complete (~20%)**: `1.1.0`
+Phase 1 has **23 of 112 executable microsteps fully complete (~21%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -40,16 +40,15 @@ a transaction amount at the currency's own exponent, a catalogue form that short
 shortening is exact, and Western Arabic digits in an Arabic locale), and `1.9.1` (migration
 `0005` — immutable shift opens with one open shift per register, the seven gates a sale must pass
 to become a fact, append-only tender settlement, immutable receipt artifacts and their print
-queue, `trusted_time_state`, and the scoped `doc_sequence` both counters share).
+queue, `trusted_time_state`, and the scoped `doc_sequence` both counters share), and `1.1.9`
+(complete at last — its deferred database half persists `ClockState` across the restart that is
+exactly when a wrong clock arrives).
 <!-- frontier:end -->
-Group 1.1 has **no immediately buildable work remaining**:
-`1.1.9`'s pure-domain time values, clock policy, and terminal IANA-zone resolution have landed, and
-its database persistence half is now **unblocked**: `1.9.1` shipped `trusted_time_state`, mapping
-`ClockState` field for field. What remains is `crates/pos-db/src/repo/clock.rs` and
-`clock_state_survives_restart`, which are a repository rather than a schema change and are
-deliberately not in `1.9.1`'s pull request — it is a separate microstep half with its own
-`Done when`. The `1.1.9` microstep is therefore still **partially delivered**, not complete, and it
-is the smallest buildable thing in the repository. `1.6.3` is now **fully delivered**: `crates/pos-db/tests/role_matrix.rs` reads back all
+Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
+and terminal IANA-zone resolution landed first, and its database persistence half followed on
+14 September once `1.9.1` shipped `trusted_time_state`. `ClockRepository` now maps `ClockState`
+field for field across a restart, and **one of the three `Full-step status:` markers is gone** —
+the first to be cleared rather than added. `1.6.3` is **fully delivered**: `crates/pos-db/tests/role_matrix.rs` reads back all
 128 seeded `role_capability` rows and holds each one to `cap::DEFAULT_MATRIX`, so the grid the
 domain declares and the grid the register ships are the same grid or the gate is red.
 Group 1.2 begins with the **partially delivered** `1.2.0` benchmark gate: `just
