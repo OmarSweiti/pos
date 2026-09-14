@@ -10,6 +10,11 @@
 //! for throughput turns them red.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+#[path = "common/registered_chain.rs"]
+mod registered_chain;
+
+use registered_chain::{Checkout, RegisteredChain};
+
 /// `PRAGMA synchronous` answers with a number: 0 OFF, 1 NORMAL, 2 FULL, 3 EXTRA.
 const FULL: i64 = 2;
 
@@ -82,14 +87,23 @@ fn a_committed_sale_is_readable_on_a_fresh_connection() {
     let conn = pos_db::open(&path, "test-key").unwrap();
     let id = vec![1u8; 16];
     let register = vec![2u8; 16];
+    let chain = RegisteredChain::seed(&conn);
+    chain.add_register(&conn, &register, "REG01");
+
+    // The sale is inserted parked and sealed, never inserted `completed`.
+    // After 0005 no sale can be born completed: its original receipt artifact
+    // carries `REFERENCES sale(id)`, and the durable-outputs gate wants that
+    // artifact and its queued print job to exist already. The row has to be
+    // there before the thing that proves it may exist at all.
     conn.execute(
         "INSERT INTO sale (id, receipt_number, register_id, status, subtotal_minor,
                            tax_minor, total_minor, currency, business_date, completed_at)
-         VALUES (?1, 'R-000001', ?2, 'completed', 1500, 240, 1740, 'JOD',
+         VALUES (?1, 'R-000001', ?2, 'parked', 1500, 240, 1740, 'JOD',
                  '2026-08-25', '2026-08-25T10:00:00.000Z')",
         rusqlite::params![id, register],
     )
     .unwrap();
+    Checkout::new(1, &id, &register, &[], &[]).seal(&conn, &chain);
     drop(conn);
 
     // Dropping the connection is not the interesting part — a clean close

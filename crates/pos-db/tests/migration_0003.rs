@@ -11,7 +11,16 @@ use std::path::Path;
 
 use rusqlite::{Connection, ErrorCode, params};
 
+#[path = "common/registered_chain.rs"]
+mod registered_chain;
+
+use registered_chain::{Checkout, RegisteredChain};
+
 const KEY: &str = "test-key";
+
+/// The register every sale in this file names. 0005 repaired
+/// `sale.register_id` with a trigger, so it has to exist.
+const REGISTER: u8 = 0xf0;
 
 fn blob(byte: u8) -> Vec<u8> {
     vec![byte; 16]
@@ -26,6 +35,16 @@ fn current_database(name: &str) -> TestDb {
     let dir = tempfile::tempdir().unwrap();
     let conn = pos_db::open(&dir.path().join(name), KEY).unwrap();
     TestDb { _dir: dir, conn }
+}
+
+/// The same database with the reference world and `REGISTER` seeded, for the
+/// tests that write a sale. Kept separate from [`current_database`] so the
+/// schema-shape tests still open an empty register and prove it is empty.
+fn registered_database(name: &str) -> (TestDb, RegisteredChain) {
+    let db = current_database(name);
+    let chain = RegisteredChain::seed(&db.conn);
+    chain.add_register(&db.conn, &blob(REGISTER), "REG01");
+    (db, chain)
 }
 
 fn insert_inactive_product(conn: &Connection, id: u8, sku: &str) {
@@ -45,7 +64,7 @@ fn insert_parked_sale(conn: &Connection, id: u8, receipt_number: &str) {
             tax_minor, total_minor, currency, business_date, completed_at)
          VALUES (?1, ?2, ?3, 'parked', 1250, 0, 1250, 'JOD',
                  '2026-08-27', '2026-08-27T09:30:00.000Z')",
-        params![blob(id), receipt_number, blob(0xf0)],
+        params![blob(id), receipt_number, blob(REGISTER)],
     )
     .unwrap();
 }
@@ -593,7 +612,7 @@ fn the_rebuilt_tables_are_all_strict() {
 
 #[test]
 fn the_rebuild_restores_the_immutability_triggers() {
-    let db = current_database("restored-immutability.db");
+    let (db, chain) = registered_database("restored-immutability.db");
     insert_inactive_product(&db.conn, 1, "SKU-1");
     insert_parked_sale(&db.conn, 2, "R-000001");
     insert_parked_sale(&db.conn, 3, "R-000002");
@@ -612,12 +631,8 @@ fn the_rebuild_restores_the_immutability_triggers() {
             params![blob(0x21), blob(2)],
         )
         .unwrap();
-    db.conn
-        .execute(
-            "UPDATE sale SET status = 'completed' WHERE id = ?1",
-            [blob(2)],
-        )
-        .unwrap();
+    Checkout::new(1, &blob(2), &blob(REGISTER), &[&blob(0x11)], &[&blob(0x21)])
+        .seal(&db.conn, &chain);
 
     for trigger in [
         "sale_no_update_once_completed",
@@ -661,11 +676,18 @@ fn the_rebuild_restores_the_immutability_triggers() {
 
     // The corrected UPDATE guards inspect both parents: moving a parked row
     // into the completed sale must be refused even though its OLD parent is open.
+    //
+    // The line copies its tax category off the product (I-5). It has one now:
+    // sealing the sale above gave the product a category, and 0003's
+    // `sale_line_tax_category_evidenced_insert` reads a line that disagrees
+    // with its product as a supply-specific override needing evidence.
     db.conn
         .execute(
             "INSERT INTO sale_line
-               (id, sale_id, product_id, qty_milli, unit_price_minor, total_minor)
-             VALUES (?1, ?2, ?3, 1000, 1250, 1250)",
+               (id, sale_id, product_id, qty_milli, unit_price_minor, total_minor,
+                tax_category_id)
+             VALUES (?1, ?2, ?3, 1000, 1250, 1250,
+                     (SELECT tax_category_id FROM product WHERE id = ?3))",
             params![blob(0x12), blob(3), blob(1)],
         )
         .unwrap();
@@ -719,7 +741,7 @@ fn assert_strict_type_refusal(result: Result<usize, rusqlite::Error>, table: &st
 
 #[test]
 fn after_the_rebuild_the_six_tables_enforce_their_types() {
-    let db = current_database("strict-type-enforcement.db");
+    let (db, _chain) = registered_database("strict-type-enforcement.db");
 
     assert_strict_type_refusal(
         db.conn.execute(
@@ -740,7 +762,7 @@ fn after_the_rebuild_the_six_tables_enforce_their_types() {
                 tax_minor, total_minor, currency, business_date, completed_at)
              VALUES (?1, 'BAD-SALE', ?2, 'parked', 0, 0, 'not-an-integer',
                      'JOD', '2026-08-27', '2026-08-27T09:30:00.000Z')",
-            params![blob(0xe2), blob(0xf0)],
+            params![blob(0xe2), blob(REGISTER)],
         ),
         "sale",
     );
