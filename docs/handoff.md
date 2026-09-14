@@ -1,32 +1,39 @@
 # Handoff — the single current one
 
-**Reflects `development` @ `393a564`, 14 September 2026.**
+**Reflects `development` @ `34ef72d`, 14 September 2026.**
 
 There is one handoff — keep updating this file rather than adding a dated one.
 
-> ## ✅ `1.9.1` LANDED — the WIP slot is EMPTY and the migration chain reaches `0005`
+> ## ✅ TWO MICROSTEPS LANDED — the WIP slot is EMPTY and group 1.1 is closed
 >
-> Migration `0005` merged on 14 September as **#170**, closing **#169**. §2b is now the *record* of
-> that work rather than a resume instruction, and **nothing is in flight**. §4 names what comes
-> next; the smallest of them — `1.1.9`'s database half — was unblocked by this migration.
+> `1.9.1` (migration `0005`) and `1.1.9`'s database half merged on 14 September as **#170** and
+> **#173**, closing **#169** and **#172**. §2b and §2c are the records. **Nothing is in flight.**
+> §4 names what comes next.
 
-**14 September landed the largest migration in Phase 1.** One pull request, **#170**, merged
-microstep **`1.9.1`**: 1,179 lines of `0005`, the shared registered-chain fixture, seven tests, the
-Postgres mirror, and four documentation sites where the ICV decision still read as an open
-question. Phase 1 is **22 of 112 (~20%)**. #169 closed with it — the second Microstep issue this
-repository has carried. §2b is that window; §2a keeps 13 September and §2 the 9–11 September
-record, where twenty-six pull requests changed the governance layer and no microstep advanced.
+**14 September moved two microsteps, and the second existed only because the first landed.** #170
+merged **`1.9.1`**: 1,179 lines of migration `0005`, the shared registered-chain fixture, seven
+tests, the Postgres mirror, and four documentation sites where the ICV decision still read as an
+open question. That shipped `trusted_time_state`, which was the only thing blocking **`1.1.9`**'s
+deferred database half — #173 merged it the same afternoon and **closed group 1.1**. Phase 1 is
+**23 of 112 (~21%)**. §2b and §2c are those windows; §2a keeps 13 September and §2 the 9–11
+September record, where twenty-six pull requests changed the governance layer and no microstep
+advanced.
 
-**`development` is green, tip included.** `just pre-push` exits 0 at `393a564`, all 37 `just guards`
-steps pass, and `ci` run **`34833970459` is a success on the tip**. The burst-of-merges lesson from 13
-September still stands and is the reason that run was queried by SHA rather than taken as the
-newest green one: `ci.yml`'s ref-scoped concurrency group cancels runs when merges land inside two
-minutes of each other, and the cancellation is invisible unless you ask about the tip specifically.
+**`development` is green, tip included.** `just pre-push` exits 0 at `34ef72d`, all 37
+`just guards` steps pass, and `ci` run **`34837946172` is a success on the tip**. The
+burst-of-merges lesson from 13 September still stands and is the reason that run was queried by SHA
+rather than taken as the newest green one: `ci.yml`'s ref-scoped concurrency group cancels runs
+when merges land inside two minutes of each other, and the cancellation is invisible unless you ask
+about the tip specifically.
 
-**The WIP=1 slot is EMPTY.** 0 open pull requests and nothing in flight — the first time since 13
-September. Board #4 reads **twelve items — eight `Todo`, four `Done`**; no item is `In Progress`.
-Pick one microstep from §4, file its Microstep issue, put it on the board, set it `In Progress`,
-then build it.
+**The WIP=1 slot is EMPTY.** 0 open pull requests and nothing in flight. Board #4 reads **fourteen
+items — nine `Todo`, five `Done`**; no item is `In Progress`. Pick one microstep from §4, file its
+Microstep issue, put it on the board, set it `In Progress`, then build it — a loop now three
+microsteps old and followed every time since #162.
+
+**One thing on the board is not a microstep and is not blocked: #174.** It came out of `1.1.9`'s own
+review, needs no answer from anyone, and is the first issue since 13 September that code alone can
+close. §3 has it.
 
 **Read `CLAUDE.md` first.** This document assumes it. Where this file and the repository disagree,
 **the repository is right** — every number here was read from `git`, `gh` or a command, and where
@@ -41,7 +48,7 @@ cd ~/My_Projects/pos
 git checkout development && git pull --ff-only
 git fetch --all --prune            # your local staging is 51 commits stale — see §14
 mise exec -- just setup
-mise exec -- just pre-push          # passes at 393a564
+mise exec -- just pre-push          # passes at 34ef72d
 ```
 
 Nothing is in flight, so there is no branch to resume. `phase-1/group-9-migration-0005` merged as
@@ -57,18 +64,18 @@ with `couldn't exec process: No such file or directory`, because the whole unspl
 `cd <repo> && mise exec -- node --version` prints `v24.19.0` — and a relative script path works.
 Re-measured 13 September; the `cd` clause that stood here was false.
 
-### Verified gate baselines at `393a564`
+### Verified gate baselines at `34ef72d`
 
-Every row re-measured on 14 September, after `0005`. Use these as the "nothing is broken"
-reference. **Four rows moved, all of them because of `1.9.1`** — the test count, the schema chain,
-and the two that follow the chain.
+Every row re-measured on 14 September, after `0005` and `ClockRepository`. Use these as the
+"nothing is broken" reference. **Two rows moved and nothing else did**: the test count (241 → 256,
+all of it `pos-db`) and the schema chain (4 migrations / 32 tables / 300 columns → 5 / 48 / 457).
 
 | Command | Reads |
 |---|---|
 | `just pre-push` | **exit 0** — `lint test build-web guards secrets`, `justfile:368`, ~1:30 warm |
 | `just check` | exit 0 — all **seven** workspace members |
 | `just lint` | exit 0 — 2 prerequisites + 14 body steps = **16 checkers** |
-| `just test` | exit 0 — **248 tests run: 248 passed, 2 skipped**; JS **6 files / 44 tests** |
+| `just test` | exit 0 — **256 tests run: 256 passed, 2 skipped**; JS **6 files / 44 tests** |
 | `just build-web` | exit 0 — `tsc -b` + vite 8.2.2 across 5 packages |
 | `just guards` | exit 0 — **37 steps** |
 | `just verify-schema` | exit 0 — **5 migrations, 48 tables, 457 columns** |
@@ -89,8 +96,8 @@ and the two that follow the chain.
 | `test-settings.py` | **30 passed**; `.claude/settings.json` is **4,426 bytes** |
 
 **The three per-package vitest rows must sum to the `just test` row.** They do — 4 + 1 + 1 = 6
-files, 31 + 3 + 10 = 44 tests. `1.9.1` moved only the Rust half: 241 → 248, which is `pos-db`'s
-74 → 80 plus nothing anywhere else. The `money` row is new here; without it the sums did not reconcile
+files, 31 + 3 + 10 = 44 tests. Both 14 September microsteps moved only the Rust half: 241 → 248 →
+256, all of it `pos-db` (74 → 80 → 88) and nothing anywhere else. The `money` row is new here; without it the sums did not reconcile
 and a reader could not tell which number was wrong. The JS counts are the only rows that move
 often, because every UI microstep adds tests: #164 took the back office 2 → 3 and #165 took the
 terminal 18 → 31 on the same day.
@@ -123,46 +130,59 @@ vitest 5.0.0, gitleaks 8.30.1, Docker Engine 29.5.2.
 
 | | |
 |---|---|
-| `development` | **`393a564`** — `just pre-push` exits 0 and `ci` run **`34833970459` is green on the tip**. Carries `1.9.1` and migration `0005` |
+| `development` | **`34ef72d`** — `just pre-push` exits 0 and `ci` run **`34837946172` is green on the tip**. Carries `1.9.1`, migration `0005` and `1.1.9`'s `ClockRepository` |
 | `staging` | **`531ea04`** — **17 behind** `development`, 5 ahead (its own five promotion merges) |
 | `main` | `24a0283` — **145 behind** `development`, **133 behind** `staging`, untouched since 20 August |
-| Phase 1 | **22 of 112** executable microsteps (~20%) — `1.9.1` landed 14 September (#170), the largest migration in the phase |
+| Phase 1 | **23 of 112** executable microsteps (~21%) — `1.9.1` (#170) and `1.1.9` (#173) both landed 14 September. **Group 1.1 is closed** |
 | Open PRs | **0**, and **nothing is in flight**. The WIP=1 slot is free for the first time since 13 September |
-| Open issues | **8** — see §3. All eight are blocked on a human; **there is no issue here that code can close.** #169 (`1.9.1`) closed with #170 |
-| Board #4 | the API's default listing returns **12 items — 8 `Todo`, 4 `Done`** (#119, #120, #162 and #169). Archived items are excluded from that listing and their count is not readable through it |
+| Open issues | **9** — see §3. Eight are blocked on a human, and **#174 is not**: it is the first issue since 13 September that code alone can close. #169 and #172 closed with their microsteps |
+| Board #4 | the API's default listing returns **14 items — 9 `Todo`, 5 `Done`** (#119, #120, #162, #169, #172). Archived items are excluded from that listing and their count is not readable through it |
 | Rulesets | **four, all active**, all four checked in under `.github/rulesets/`. They **agreed with live when last compared by hand** (11 September) — no gate diffs them, so this is a dated observation, not an invariant. See §3 |
 | Tags / releases | **zero of each.** The append-only tag ruleset has never been exercised |
 | Repository | **PUBLIC**, GitHub Free, `OmarSweiti` the sole collaborator (admin) |
 
-### Complete: 22 microsteps
+### Complete: 23 microsteps
 
 Read live from the frontier region, `docs/implementation/README.md:22-41`, in its own order:
 
 `1.1.0` `1.1.1` `1.1.2a` `1.1.6` `1.1.3` `1.1.4` `1.1.2b` `1.1.7` `1.1.5` `1.1.8` `1.2.1` `1.2.2`
-`1.3.1` `1.8.9` `1.8.5` `1.11.2` `1.6.5` `1.6.1` `1.6.3` `1.11.0` `1.11.3` `1.9.1`
+`1.3.1` `1.8.9` `1.8.5` `1.11.2` `1.6.5` `1.6.1` `1.6.3` `1.11.0` `1.11.3` `1.9.1` `1.1.9`
 
-**When the 23rd lands, the region must read `23 of 112 executable microsteps fully complete
-(~21%)`.** The checker computes `round(100 * done / total)` and `round(100*23/112) == 21`; leaving
-`~20%` is a hard `just lint` failure, not a rounding quibble. It has now bitten on two consecutive
-microsteps and cost nothing both times only because it was expected: each had to move the count,
-the percentage **and** the prose list in one commit. The same denominators appear on three
+**When the 24th lands, the region must read `24 of 112 executable microsteps fully complete
+(~21%)`.** The checker computes `round(100 * done / total)`, and this is the first step where the
+**percentage does not move**: `round(100*23/112)` and `round(100*24/112)` are both 21. Change the
+count and the prose list; leave the percentage alone. Getting that backwards is the same hard
+`just lint` failure as leaving it stale, and it has bitten on three consecutive microsteps in the
+other direction, so the reflex now points the wrong way. The same denominators appear on three
 surfaces the checker reconciles — the region, `00-master-plan.md:96`, and
 `status-page.html:464-504` — so a denominator change lands in all three or the gate reds.
 
-### Partially delivered — still three
+### Partially delivered — two, down from three
 
 A `**Full-step status:**` marker mechanically means "partial" whatever its prose, and
 `scripts/check-implementation-frontier.py` refuses to let such a step be declared complete.
 
 | Step | Marker | What is missing |
 |---|---|---|
-| `1.1.9` | `phase-1:190` | the database half — **no longer gated**. `1.9.1` shipped `trusted_time_state`; what remains is `crates/pos-db/src/repo/clock.rs` and `clock_state_survives_restart`. The smallest buildable thing in the repository |
-| `1.2.0` | `phase-1:222` | a reference register exists nowhere — **#68**. `bench-gate --check-profile` exits 3 |
-| `1.6.4` | `phase-1:691` | only the 1.8.x terminal handler — gated on **#111** and on 1.8.x wiring `pos-db` into the terminal |
+| `1.2.0` | `phase-1:221` | a reference register exists nowhere — **#68**. `bench-gate --check-profile` exits 3 |
+| `1.6.4` | `phase-1:690` | only the 1.8.x terminal handler — gated on **#111** and on 1.8.x wiring `pos-db` into the terminal |
 
-Rule 8 of the checker is the non-obvious half: every `**Full-step status:**` id must also still
-appear as a backticked id in `README.md`. Completing one means deleting **both** the marker and the
-README prose in the same change; delete one and the checker errors from the other direction.
+**`1.1.9` cleared its marker on 14 September — the first one ever cleared rather than added — and
+it took three deletions, not two.** Each is caught from a different side, and the third is the one
+nobody had met:
+
+| Rule | What it holds | Verdict on 14 September |
+|---|---|---|
+| 3 | the `**Full-step status:**` marker itself | deleted |
+| 8 | the `README.md` prose naming the same backticked id | rewritten in the same commit |
+| **4** | a `**Done when:**` line must exist to have been satisfied | **this is the one that fired** |
+
+Rule 4 fired because `1.1.9` carried a `**Current half done when:**` line, which is deliberately
+**not** the literal string the checker matches. While the halves were split, rule 3 refused every
+completion claim and rule 4 never got the chance; delete the marker alone and the checker reds from
+the opposite direction with a message about a missing `Done when`. Promoting that line to a real
+`Done when:` over all three commands is the third deletion. **`1.2.0` carries the same
+`Current half done when:` shape** (`phase-1:214`), so whoever finishes it meets rule 4 too.
 
 ---
 
@@ -439,12 +459,70 @@ beside it says why activation and sort order make this one tenant-owned.
 
 ---
 
-## 3 · The eight open issues
+## 2c · LANDED — microstep `1.1.9`'s database half (#173, 14 September)
 
-All eight are on board #4, all `Todo`, all assigned — and **every one is blocked on a human**:
-one on `hardware`, five on a `decision`, two on a `merchant answer`. Nothing on the board reads
-`not blocked` any more. The two that did, #119 and #120, both shipped on 13 September, which is why
-the remaining list is entirely external: **there is no issue here that code can close.**
+**Merged as #173, closing #172. Group 1.1 is closed.** `1.9.1` shipped `trusted_time_state` in the
+morning and this consumed it in the afternoon, which is the only reason two microsteps landed in
+one day.
+
+`crates/pos-db/src/repo/clock.rs` maps the pure domain `ClockState` onto the table field for field,
+across the restart that is exactly when a wrong clock arrives. Eight tests, where the microstep
+names one.
+
+### Three decisions inside it
+
+* **`trusted_time_state` is register-local, not a fact.** `ref/schema.md` §"Convergence" names it in
+  the exclusion list, so unlike every other repository in this crate it writes an **upsert** and
+  takes no `sync_commit` envelope. It still takes an explicit `&Transaction`, because `repo/mod.rs`
+  makes the caller own the boundary.
+* **`boot_token` is stored here and interpreted elsewhere.** A bare monotonic counter cannot
+  identify its own boot — a new boot eventually passes the old anchor. The shell compares the token
+  on startup and calls `note_monotonic_reset` when it changes. The repository hands the bytes back
+  unread; deciding what a change *means* belongs to a shell that does not exist yet, and was not
+  smuggled in early.
+* **An unknown `anomaly_kind` is a hard error, not `None`.** A later migration may widen that
+  `CHECK`. Reading an unrecognised variant as "no anomaly" would silently downgrade a register from
+  *something is wrong with the clock* to *nothing is wrong with it*, on the one value whose whole
+  job is to be distrusted.
+
+### The security finding, and how it was caught
+
+**`StoredClock` derived `Debug`, and `boot_token` ends in `_token`.**
+`.claude/rules/security.md` redacts every such field at every nesting depth and names "test fixtures
+that print" among the surfaces it covers — a derived `Debug` is exactly that, and
+`ref/security-compliance.md:511` already required the fix: *"secret-bearing types implement `Debug`
+and `Display` as a redacted constant"*. It is now a hand-written impl showing presence and not
+bytes, held by `the_boot_token_is_never_printed`, **verified live** by restoring the derive and
+watching the test fail.
+
+Two things about that worth carrying forward, because both are general:
+
+* **The first version of that test was vacuous in an instructive way.** It asserted that no token
+  byte appeared as a decimal digit anywhere in the `Debug` string. Every timestamp is full of
+  digits, so it failed on the fixture's own `7`. It now builds the exact rendering a derived `Debug`
+  would have emitted, *from the value itself*, so changing the fixture's bytes cannot make it
+  silently pass. **A redaction test must name what leaking looks like, not what it does not.**
+* **The review also found a doc comment that overclaimed.** It said the error path never quotes a
+  stored value; it quotes one — an unrecognised `anomaly_kind`, because the discriminant is the
+  whole diagnosis and it is a schema enum rather than merchant data. A comment that overstates a
+  security property is worse than no comment, because the next reader trusts it instead of checking.
+
+The same sweep found the same class of defect in **shipped** code and did **not** fix it in this
+pull request: `outbox.rs`'s `ManifestEntry` derives `Debug` over `pub payload: String`, the
+canonical fact JSON its own module doc says carries customer data. That is **#174**, filed rather
+than folded in — `outbox.rs` is `1.8.9`'s code, and a late file in a microstep's diff is the scope
+leak the issue template refuses by name.
+
+## 3 · The nine open issues
+
+All nine are on board #4, all `Todo`, all assigned. **Eight are blocked on a human** — one on
+`hardware`, five on a `decision`, two on a `merchant answer`.
+
+**#174 is the exception, and it is new.** Filed 14 September out of `1.1.9`'s own review, it reads
+`not blocked`, needs no answer from anyone, and is the first issue since 13 September that code
+alone can close. The sentence that stood here — *"there is no issue here that code can close"* — was
+true when it was written and is now false. If you want something small and unblocked that is not a
+microstep, it is this.
 
 | # | Title | Prio | Risk | Blocked | Blocks |
 |---|---|---|---|---|---|
@@ -456,6 +534,7 @@ the remaining list is entirely external: **there is no issue here that code can 
 | 111 | `decision: does deactivating an approver revoke an already-issued handle?` | P1 | security | decision | the 1.8.x approval handler, so `1.6.4`'s last file |
 | 112 | `decision: the three manual discount caps (merchant decisions 3.1–3.3)` | P1 | money path | merchant answer | `1.4.5` |
 | 114 | `gap: the agent read-deny blocks the memory directory and workflow resume` | P2 | — | decision | agent memory, workflow resume |
+| **174** | `gap: derived Debug prints canonical payloads and digests the never-list redacts` | P2 | security | **not blocked** | nothing — it is a guard, not a gate |
 
 **#69 does not gate a Phase-1 microstep.** Its own body says it blocks *"all of group 2.7 and the
 22 ⚠️ OPEN items microstep 2.7.0 owns"*, and `phase-1:1055` says the opposite of gating: *"Owner:
@@ -511,19 +590,28 @@ legacy API cannot express `allowed_merge_methods` at all). **No issue tracks thi
 
 ## 4 · What is next — the WIP=1 slot is FREE
 
-**Take one of these, and only one.** WIP = 1 means one microstep, not one open pull request.
-`1.9.1` landed on 14 September (§2b), so every candidate below is genuinely startable and the
-choice is recorded here so it is not re-derived later.
+**Take one of these, and only one.** WIP = 1 means one microstep, not one open pull request. Both
+14 September candidates are spent — `1.9.1` in §2b and `1.1.9`'s database half in §2c — so the
+list below is what is genuinely startable now, recorded so the choice is not re-derived later.
 
-**The recommendation is `1.1.9`'s database half**, and it is not a close call: `1.9.1` shipped
-`trusted_time_state` mapping `ClockState` field for field, which was its only blocker; it is one new
-file (`crates/pos-db/src/repo/clock.rs`) and one named test (`clock_state_survives_restart`); it
-already has a `Done when` that is a command; and completing it clears one of the three
-`**Full-step status:**` markers, which is the only kind of work that makes the frontier checker's
-rule 8 easier rather than harder. Its one subtlety is not the schema: the shell must persist the
-opaque boot-continuity token beside the value, compare it on startup, and call
-`ClockState::note_monotonic_reset` before use when it changes — a numeric counter alone cannot
-identify its own boot.
+**The recommendation is `1.2.6` — assert FTS5 at open.** It is the smallest thing in the repository
+that is not blocked: one file (`crates/pos-db/src/lib.rs`), one test
+(`open_asserts_fts5_available`, `phase-1:330`), and it asserts over `pragma_compile_options`, so
+there is **no table and therefore no migration**. Group 1.2's build-order note (`phase-1:196`) puts
+it after `0007`, but read the note — neither reason it gives touches this step. One thing to author
+first: its `Done when` (`:331`) states an outcome rather than a command, and the issue form will not
+accept a microstep without a proving command.
+
+**If you want the bigger one instead, it is `1.2.4`'s pure half** — the gateway to group 1.4, since
+`CartLine` needs `PriceOrigin` and `DerivedWeight` and neither name appears anywhere under
+`crates/`. Two cautions that have not changed: **two of its fourteen tests are blocked by #71**, and
+it defers half of itself with **no `Full-step status:` marker**, unlike `1.2.0` — so nothing
+mechanically stops a premature "complete" claim, and §1's rule-4 trap does not protect you here.
+
+**And #174 is not a microstep at all.** It needs no issue ceremony, no board dance and no frontier
+arithmetic — it is a guard on shipped code, unblocked, with the fix shape already written down from
+`1.1.9`'s precedent. If the WIP rule is what is stopping you starting something, this sits outside
+it.
 
 Per `03-github-workflow.md` §4 the loop is: pick **one** microstep, open **one** `Microstep` issue,
 add it to board #4 by hand, set it `In Progress`, then build it.
@@ -570,7 +658,7 @@ front of `0006`, `0007`, `1.2.3`, `1.9.2`–`1.9.5`, `1.10.2`–`1.10.5`, the `1
 `1.2.4` DB half. **That gate is open.** `1.2.3` is still blocked — its FTS repository needs
 `0007`'s tables — but it is now two migrations away rather than three.
 
-### If `0005` is too big for the sitting — three genuinely small ones
+### The three genuinely small ones
 
 | Candidate | State |
 |---|---|
@@ -1160,6 +1248,31 @@ which suites were run.
     amended — the same call as `1.11.0`'s. The seventh,
     `two_sales_on_one_register_share_its_shift_and_not_their_commits`, holds the property the six
     lean on: one open shift serves both sales, and no id is reused between their commits.
+53. **`trusted_time_state` is register-local, so `ClockRepository` upserts and takes no envelope.**
+    `ref/schema.md` §"Convergence" names it in the exclusion list. It still takes an explicit
+    `&Transaction`, because `repo/mod.rs` makes the caller own the boundary — the transaction
+    argument is about *who decides*, not about whether the row is a fact.
+54. **An unknown `anomaly_kind` is a hard error, never `None`.** A later migration may widen the
+    `CHECK`. Reading an unrecognised variant as "no anomaly" downgrades a register from *something
+    is wrong with the clock* to *nothing is wrong with it*, silently, on the one value whose job is
+    to be distrusted. `DbError::ClockStateInvalid` names the discriminant, which is a schema enum
+    rather than merchant data.
+55. **A type holding a field the never-list covers implements `Debug` by hand.**
+    `ref/security-compliance.md:511` already required it — *"secret-bearing types implement `Debug`
+    and `Display` as a redacted constant"* — and `StoredClock.boot_token` was the first case anyone
+    met. **A derived `Debug` is a printing surface**, which `.claude/rules/security.md` names
+    explicitly, and `pos-db` having no `tracing` at all does not make it safe: these are public
+    types handed to callers this crate does not control.
+56. **A redaction test must name what leaking looks like, not what it does not.** The first version
+    of `the_boot_token_is_never_printed` asserted that no token byte appeared as a decimal digit
+    anywhere in the string; every timestamp is full of digits and it failed on the fixture's own
+    `7`. It now builds the exact rendering a derived `Debug` would have emitted, from the value
+    itself, so changing the fixture cannot make it vacuous — and the guard was **verified live** by
+    restoring the derive and watching it fail.
+57. **#174 was filed, not folded into #173.** The same review found the same defect class in
+    `outbox.rs`'s shipped `ManifestEntry`. Fixing it there would have put a `1.8.9` file in a
+    `1.1.9` diff, which is the scope leak `.github/ISSUE_TEMPLATE/01-microstep.yml` refuses by name,
+    and changing a public `Debug` has API consequences worth their own review.
 
 ---
 
