@@ -1,0 +1,53 @@
+-- Mirrors SQLite 0005_sale_columns_and_sequences.sql (conventions §9 rule 4).
+--
+-- This migration creates nothing. That is the finding, not an omission, and it
+-- is recorded here because a committed migration cannot be reopened to explain
+-- itself later.
+--
+-- 0005 ships ninety-nine objects across sixteen tables. Every one of them is
+-- either tenant-owned and blocked, or register-local and never synced. There is
+-- no third group, and unlike 0002 — which found a half that was already wrong
+-- on this server and fixed it — there is nothing here the server has to correct.
+--
+-- Tenant-owned, and blocked on the shared multi-tenant decision that
+-- ref/schema.md §"Shared multi-tenant decision for sign-off" records as still
+-- awaiting owner sign-off "before the first Phase-3 server migration": shift,
+-- shift_close_event, sale_tax_summary, tender_status_event, receipt_template,
+-- receipt_artifact, and the fourteen sale columns with the guards that read
+-- them. The 0003 and 0004 mirrors deferred every tenant-bearing structure for
+-- this same reason and nothing has changed since. Creating them now would omit
+-- the org_id UUID NOT NULL column, the UNIQUE (org_id, id) parent keys, the
+-- composite tenant foreign keys, forced row-level security and the
+-- owner/application role split.
+--
+-- Most of them also have no parent to point at. The server has product,
+-- capability and the global change sequence; it has no org, store, register,
+-- app_user, sale, sale_line, sale_tender, sync_commit or fact_commit_member. A
+-- shift references three of those and a receipt artifact a fourth.
+--
+-- tender_type is tenant-owned too, and deliberately so — ref/schema.md's
+-- machine-readable exception inventory,
+-- `<!-- postgres-global-tables: _sqlx_migrations, capability -->`, names only
+-- two global tables, and the sentence beside it says why this one is not a
+-- third: "PostgreSQL tender_type is tenant-owned because activation and sort
+-- order are merchant configuration, not vendor constants." Seeding the six
+-- codes globally here would freeze a merchant's own sort order and activation
+-- flags into a vendor catalogue.
+--
+-- Register-local, and excluded from the reference dump by name in
+-- ref/schema.md §"Convergence": parked_cart, checkout_operation,
+-- product_quick_add_request, trusted_time_state, print_job, print_attempt,
+-- doc_sequence, shift_state and tender_status_current. A working cart, a
+-- recovery journal, a prepared intent, a device's clock anchor, a print queue,
+-- a counter and two rebuildable projections are device-owned or ephemeral; a
+-- server copy of any of them would be a second answer to a question only the
+-- register can answer. They are not listed in REGISTER_LOCAL in
+-- scripts/verify-pg-migrations.py, because that list is keyed by migration
+-- file and 0005 is not a register-local migration — most of what it ships does
+-- sync, once the server has somewhere to put it.
+--
+-- The append-only half lands with those tables, not before. On PostgreSQL it is
+-- REVOKE UPDATE on the fact tables rather than a BEFORE UPDATE trigger, and
+-- that revocation is part of the same unsigned role split. The 0002, 0003 and
+-- 0004 mirrors all made this call in the same words: sale immutability "lands
+-- with the server fact tables".
