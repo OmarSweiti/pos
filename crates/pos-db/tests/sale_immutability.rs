@@ -37,6 +37,25 @@ const REQUIRED_TRIGGERS: &[&str] = &[
 const TENDER_IMMUTABLE_MESSAGE: &str =
     "I-4: a tender on a completed sale is immutable — append a status event";
 
+/// Assert a statement was refused by **the named I-4 trigger**, not merely that
+/// it failed.
+///
+/// A bare `is_err()` here is worth nothing, and this file proved it: once the
+/// shared fixture attached the sale to a registered chain, three of these
+/// assertions were satisfied by guards that have nothing to do with I-4 — a
+/// 0003 tax-category check and two foreign keys the fixture's own auxiliary
+/// rows created. Every one stayed green with its I-4 trigger removed.
+fn assert_refused_by(result: Result<usize, rusqlite::Error>, expected: &str) {
+    match result.expect_err("this statement must be refused") {
+        rusqlite::Error::SqliteFailure(_, Some(message)) => assert_eq!(
+            message, expected,
+            "refused by the wrong guard — an unrelated constraint is standing in \
+             for the I-4 trigger this assertion names"
+        ),
+        other => panic!("refused for the wrong kind of reason: {other:?}"),
+    }
+}
+
 struct Fixture {
     _dir: tempfile::TempDir,
     conn: Connection,
@@ -184,36 +203,41 @@ fn the_lines_of_a_completed_sale_are_frozen() {
     f.complete();
     let sale = f.sale.as_bytes().to_vec();
 
-    assert!(
-        f.conn
-            .execute(
-                "INSERT INTO sale_line (id, sale_id, product_id, qty_milli, unit_price_minor, total_minor)
-                 VALUES (?1,?2,?3,1000,100,100)",
-                params![
-                    id(6).as_bytes().as_slice(),
-                    sale,
-                    f.product.as_bytes().as_slice()
-                ],
-            )
-            .is_err(),
-        "a line cannot be added to a completed sale"
+    // The line copies its tax category off the product (I-5). Without that it
+    // is refused by 0003's `sale_line_tax_category_evidenced_insert` before I-4
+    // is ever consulted — the fixture gives the product a category when it
+    // attaches the sale to the chain — and the assertion would pass with the
+    // I-4 insert guard deleted.
+    assert_refused_by(
+        f.conn.execute(
+            "INSERT INTO sale_line
+               (id, sale_id, product_id, qty_milli, unit_price_minor, total_minor, tax_category_id)
+             VALUES (?1,?2,?3,1000,100,100,
+                     (SELECT tax_category_id FROM product WHERE id = ?3))",
+            params![
+                id(6).as_bytes().as_slice(),
+                sale,
+                f.product.as_bytes().as_slice()
+            ],
+        ),
+        "I-4: cannot add a line to a completed sale",
     );
     let sale = f.sale.as_bytes().to_vec();
-    assert!(
-        f.conn
-            .execute(
-                "UPDATE sale_line SET total_minor=1 WHERE sale_id=?1",
-                params![sale]
-            )
-            .is_err(),
-        "a line of a completed sale cannot be edited"
+    assert_refused_by(
+        f.conn.execute(
+            "UPDATE sale_line SET total_minor=1 WHERE sale_id=?1",
+            params![sale],
+        ),
+        "I-4: a line of a completed sale is immutable",
     );
+    // The fixture's `sale_line_tax` row references this line, so a foreign key
+    // refuses the DELETE too. Naming the message is what keeps the assertion
+    // about I-4 rather than about referential integrity.
     let sale = f.sale.as_bytes().to_vec();
-    assert!(
+    assert_refused_by(
         f.conn
-            .execute("DELETE FROM sale_line WHERE sale_id=?1", params![sale])
-            .is_err(),
-        "a line of a completed sale cannot be removed"
+            .execute("DELETE FROM sale_line WHERE sale_id=?1", params![sale]),
+        "I-4: a line of a completed sale cannot be deleted",
     );
 }
 
@@ -289,14 +313,14 @@ fn a_completed_tender_refuses_settlement_updates_and_reparenting() {
         .expect_err("the NEW completed parent must refuse an inbound parked tender");
     assert_completed_tender_update_refused(error);
 
-    assert!(
-        f.conn
-            .execute(
-                "DELETE FROM sale_tender WHERE sale_id=?1",
-                params![f.sale.as_bytes().as_slice()]
-            )
-            .is_err(),
-        "a payment cannot be removed from a completed sale"
+    // `tender_status_event` references this tender, so a foreign key refuses the
+    // DELETE as well. The message is what holds the assertion to I-4.
+    assert_refused_by(
+        f.conn.execute(
+            "DELETE FROM sale_tender WHERE sale_id=?1",
+            params![f.sale.as_bytes().as_slice()],
+        ),
+        "I-4: a tender of a completed sale cannot be deleted",
     );
 }
 

@@ -315,7 +315,7 @@ Search is the fallback for every unbarcoded item and the only path a cashier has
 **Done when:** `just verify-schema` applies `0001`–`0007` and `cargo nextest run -p pos-db --test migration_0007_search_and_seed` exits zero after proving both FTS trigger coverage and fail-closed trade-scale activation.
 
 ### 1.2.6 — Assert FTS5 exists at open
-**Files:** `crates/pos-db/src/lib.rs` (`assert_fts5`, `fts5_verdict`, `DbError::MissingFeature`, the call in `open`, and the crate's first `#[cfg(test)] mod tests`)
+**Files:** `crates/pos-db/src/lib.rs` (`assert_fts5`, `fts5_verdict`, `DbError::MissingFeature`, the call in `open`, and a `#[cfg(test)] mod tests` in `lib.rs` — `key.rs` and `repo/outbox.rs` already had their own)
 `rusqlite` has no `fts5` feature flag; FTS5 arrives through the bundled build, and this project builds SQLCipher. Verify rather than hope:
 ```rust
 fn assert_fts5(conn: &Connection) -> Result<(), DbError> {

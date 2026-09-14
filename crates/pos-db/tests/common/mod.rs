@@ -1,9 +1,10 @@
 //! Shared machinery for tests that need the *reference* schema, not just the
 //! shipped chain.
 //!
-//! `pos_db::open` applies committed migrations 0001 through 0004. Most
-//! of the schema, and therefore most of its constraints and triggers, exists only
-//! in `ref/schema.md` until those migrations are written. A test that opens the
+//! `pos_db::open` applies every committed migration — `0001` through `0005`
+//! today, and the count moves. Most of the schema, and therefore most of its
+//! constraints and triggers, exists only in `ref/schema.md` until those
+//! migrations are written. A test that opens the
 //! shipped chain alone silently skips all of it, which is how the first version of
 //! `fact_table_guards.rs` came to validate none of the guards it was written for.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]
