@@ -68,14 +68,22 @@ fn register(name: &str) -> Register {
 /// Each test then removes exactly one of those and watches the matching gate
 /// fire, which is only meaningful because the untouched fixture completes.
 fn parked_sale(register: &Register) -> Checkout {
-    let (sale, line, tender, product) = (id(0x10), id(0x11), id(0x12), id(0x13));
+    parked_sale_in_slot(register, 1, 0x10, "000123")
+}
+
+fn parked_sale_in_slot(register: &Register, slot: u8, base: u128, receipt: &str) -> Checkout {
+    let (sale, line, tender, product) = (id(base), id(base + 1), id(base + 2), id(base + 3));
     register
         .conn
         .execute(
             "INSERT INTO product
                (id, sku, name, price_minor, currency, is_active, tax_category_id)
-             VALUES (?1, 'SKU-1', 'Espresso', 2500, 'JOD', 1, ?2)",
-            params![&product, &register.chain.tax_category],
+             VALUES (?1, ?2, 'Espresso', 2500, 'JOD', 1, ?3)",
+            params![
+                &product,
+                format!("SKU-{base}"),
+                &register.chain.tax_category
+            ],
         )
         .unwrap();
     register
@@ -83,8 +91,8 @@ fn parked_sale(register: &Register) -> Checkout {
         .execute(
             "INSERT INTO sale (id, receipt_number, register_id, status, subtotal_minor,
                                tax_minor, total_minor, currency, business_date, completed_at)
-             VALUES (?1, '000123', ?2, 'parked', 2500, 400, 2900, 'JOD', ?3, ?4)",
-            params![&sale, &id(0x01), BUSINESS_DATE, AT],
+             VALUES (?1, ?5, ?2, 'parked', 2500, 400, 2900, 'JOD', ?3, ?4)",
+            params![&sale, &id(0x01), BUSINESS_DATE, AT, receipt],
         )
         .unwrap();
     register
@@ -106,7 +114,7 @@ fn parked_sale(register: &Register) -> Checkout {
         )
         .unwrap();
 
-    let checkout = Checkout::new(1, &sale, &id(0x01), &[&line], &[&tender]);
+    let checkout = Checkout::new(slot, &sale, &id(0x01), &[&line], &[&tender]);
     checkout.attach(&register.conn, &register.chain);
     register
         .chain
@@ -489,4 +497,76 @@ fn an_exchange_tender_never_opens_or_counts_the_drawer() {
         .query_row("SELECT count(*) FROM tender_type", [], |row| row.get(0))
         .unwrap();
     assert_eq!(seeded, 6, "0005 seeds the catalogue complete, once");
+}
+
+/// Not one of the six `1.9.1` names; it holds the property those six lean on.
+///
+/// Every microstep after this one rings up more than one sale per register —
+/// `1.9.2`'s gap-free counter and `1.9.5`'s shift lifecycle both do — and both
+/// the shift and the delivery manifest are shared, keyed structures where a
+/// second sale is where a collision would first appear. One open shift serves
+/// both sales, and nothing else about them is shared.
+#[test]
+fn two_sales_on_one_register_share_its_shift_and_not_their_commits() {
+    let r = register("two-sales.db");
+    let first = parked_sale_in_slot(&r, 1, 0x10, "000123");
+    first.complete(&r.conn);
+    let second = parked_sale_in_slot(&r, 2, 0x60, "000124");
+    second.complete(&r.conn);
+
+    let (open, shifts): (i64, i64) = r
+        .conn
+        .query_row(
+            "SELECT (SELECT count(*) FROM shift_state WHERE state = 'open'),
+                    (SELECT count(*) FROM shift)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        (open, shifts),
+        (1, 1),
+        "the second sale joins the open shift rather than opening a second one"
+    );
+    let shared: i64 = r
+        .conn
+        .query_row(
+            "SELECT count(DISTINCT shift_id) FROM sale WHERE status = 'completed'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(shared, 1, "both completed sales name the same shift");
+
+    // Two commits, fourteen members, fourteen delivery rows — and no id reused
+    // between them. `fact_commit_member` has a primary key on `change_id` and a
+    // UNIQUE on `(entity, entity_id)`, so a collision would have refused the
+    // write above; this states the property the refusal would have been about.
+    for (what, sql, expected) in [
+        (
+            "commits",
+            "SELECT count(DISTINCT id) FROM sync_commit WHERE id IN (?1, ?2)",
+            2,
+        ),
+        (
+            "members",
+            "SELECT count(DISTINCT change_id) FROM fact_commit_member
+              WHERE commit_id IN (?1, ?2)",
+            14,
+        ),
+        (
+            "facts",
+            "SELECT count(*) FROM (SELECT DISTINCT entity, entity_id FROM fact_commit_member
+                                    WHERE commit_id IN (?1, ?2))",
+            14,
+        ),
+    ] {
+        let counted: i64 = r
+            .conn
+            .query_row(sql, params![&first.commit, &second.commit], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(counted, expected, "distinct {what} across the two sales");
+    }
 }

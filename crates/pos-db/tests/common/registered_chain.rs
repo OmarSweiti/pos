@@ -60,10 +60,25 @@ fn fixture_id(slot: u8, tag: u8) -> Vec<u8> {
     id.to_vec()
 }
 
-/// The last byte of an id, which is where every fixture and test id varies.
-fn tail(id: &[u8]) -> u8 {
-    *id.last().expect("an id is never empty")
+/// An id derived from another, marked in bytes 2 and 3.
+///
+/// Bytes 0 and 1 are deliberately left alone. A fixture id carries its slot in
+/// byte 1, and a derivation that overwrote it would map slot 1's receipt
+/// artifact and slot 2's onto the same change id — two checkouts in one
+/// database would then collide on `fact_commit_member`'s primary key. Bytes 2
+/// and 3 are zero in every id this crate's tests mint.
+fn derived_id(source: &[u8], marker: u8, index: u8) -> Vec<u8> {
+    let mut id = array(source);
+    id[2] = marker;
+    id[3] = index;
+    id.to_vec()
 }
+
+/// Markers for the three derivations, distinct so a shift's envelope, its
+/// delivery row and a sale member can never land on one another.
+const SHIFT_COMMIT: u8 = 0x5C;
+const SHIFT_CHANGE: u8 = 0x5D;
+const SALE_CHANGE: u8 = 0xCE;
 
 fn array(id: &[u8]) -> [u8; 16] {
     id.try_into().expect("every id in this fixture is 16 bytes")
@@ -237,8 +252,8 @@ impl RegisteredChain {
         register: &[u8],
         date: &str,
     ) -> rusqlite::Result<usize> {
-        let commit = fixture_id(REFERENCE_SLOT, 0x80 | tail(shift));
-        let change = fixture_id(REFERENCE_SLOT, 0xC0 | tail(shift));
+        let commit = derived_id(shift, SHIFT_COMMIT, 0);
+        let change = derived_id(shift, SHIFT_CHANGE, 0);
         self.write_envelope(conn, &commit, &[Member::new(&change, "shift", shift)]);
         conn.execute(
             "INSERT INTO shift
@@ -442,12 +457,13 @@ impl Checkout {
             .into_iter()
             .enumerate()
             .map(|(offset, (entity, entity_id))| {
-                let mut change = array(&entity_id);
-                change[0] = FIXTURE_PREFIX;
-                change[1] = 0xCE;
-                change[2] =
+                let index =
                     u8::try_from(first + offset).expect("a fixture commit holds 256 members");
-                Member::new(&change, entity, &entity_id)
+                Member::new(
+                    &derived_id(&entity_id, SALE_CHANGE, index),
+                    entity,
+                    &entity_id,
+                )
             })
             .collect()
     }
