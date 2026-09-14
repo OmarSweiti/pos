@@ -1,34 +1,32 @@
 # Handoff — the single current one
 
-**Reflects `development` @ `60ef37f`, 14 September 2026.**
+**Reflects `development` @ `393a564`, 14 September 2026.**
 
 There is one handoff — keep updating this file rather than adding a dated one.
 
-> ## ⚠ READ §2b FIRST — microstep `1.9.1` is IN FLIGHT and the tree on its branch is RED
+> ## ✅ `1.9.1` LANDED — the WIP slot is EMPTY and the migration chain reaches `0005`
 >
-> Migration `0005` is written, registered and schema-verified on the pushed branch
-> **`phase-1/group-9-migration-0005`** at **`e6d774f`**, and `just test` fails there on **17
-> pre-existing tests, by design**. `development` itself is untouched and green. §2b is the complete
-> resume instruction: what is done, what is left, and the one command to run before editing `0005`.
+> Migration `0005` merged on 14 September as **#170**, closing **#169**. §2b is now the *record* of
+> that work rather than a resume instruction, and **nothing is in flight**. §4 names what comes
+> next; the smallest of them — `1.1.9`'s database half — was unblocked by this migration.
 
-**13 September moved the product, for the first time since 8 September.** Six pull requests merged
-into `development` — #161, #163, #164, #165, #166, #167 — and one of them, **#165, landed microstep
-`1.11.3`**: `apps/terminal/src/lib/format.ts` and thirteen tests. Phase 1 is **21 of 112 (~19%)**.
-Two P2 gap issues closed with it (#119, #120), and #113 took a decision. §2a is that window; §2
-keeps the 9–11 September record, where twenty-six pull requests changed the governance layer and no
-microstep advanced.
+**14 September landed the largest migration in Phase 1.** One pull request, **#170**, merged
+microstep **`1.9.1`**: 1,179 lines of `0005`, the shared registered-chain fixture, seven tests, the
+Postgres mirror, and four documentation sites where the ICV decision still read as an open
+question. Phase 1 is **22 of 112 (~20%)**. #169 closed with it — the second Microstep issue this
+repository has carried. §2b is that window; §2a keeps 13 September and §2 the 9–11 September
+record, where twenty-six pull requests changed the governance layer and no microstep advanced.
 
-**`development` is green, tip included.** `just pre-push` exits 0 at `60ef37f`, all 37 `just guards`
-steps pass, and `ci` run **`34757633967` is a success on the tip**. The cancelled-CI caveat that
-stood here on 13 September is resolved: `34753605560` was cancelled on `3014a88` when five merges
-inside two minutes tripped `ci.yml`'s concurrency group, and #167's own merge then produced a clean
-run. **The lesson survives the fix** — after a burst of merges, query the tip specifically rather
-than assuming the newest green run covers it.
+**`development` is green, tip included.** `just pre-push` exits 0 at `393a564`, all 37 `just guards`
+steps pass, and `ci` run **`34833970459` is a success on the tip**. The burst-of-merges lesson from 13
+September still stands and is the reason that run was queried by SHA rather than taken as the
+newest green one: `ci.yml`'s ref-scoped concurrency group cancels runs when merges land inside two
+minutes of each other, and the cancellation is invisible unless you ask about the tip specifically.
 
-**The WIP=1 slot is FULL.** 0 open pull requests, but `1.9.1` is in flight on the branch above. Do
-not start a second microstep. Board #4 reads **eleven items — eight `Todo`, three `Done`**; no item
-is `In Progress`, because **no Microstep issue has been filed for `1.9.1` yet** — that is the first
-item of unfinished work in §2b.
+**The WIP=1 slot is EMPTY.** 0 open pull requests and nothing in flight — the first time since 13
+September. Board #4 reads **twelve items — eight `Todo`, four `Done`**; no item is `In Progress`.
+Pick one microstep from §4, file its Microstep issue, put it on the board, set it `In Progress`,
+then build it.
 
 **Read `CLAUDE.md` first.** This document assumes it. Where this file and the repository disagree,
 **the repository is right** — every number here was read from `git`, `gh` or a command, and where
@@ -43,13 +41,11 @@ cd ~/My_Projects/pos
 git checkout development && git pull --ff-only
 git fetch --all --prune            # your local staging is 51 commits stale — see §14
 mise exec -- just setup
-mise exec -- just pre-push          # passes at 60ef37f
-
-# To resume the in-flight microstep (§2b) instead:
-git checkout phase-1/group-9-migration-0005    # at e6d774f, pushed
-mise exec -- ./scripts/verify-schema.py        # exits 0
-mise exec -- cargo nextest run -p pos-db --no-fail-fast   # 17 fail, by design
+mise exec -- just pre-push          # passes at 393a564
 ```
+
+Nothing is in flight, so there is no branch to resume. `phase-1/group-9-migration-0005` merged as
+#170 and can be deleted locally.
 
 **`just setup` without `mise exec --` fails.** The shell's Node is `v26.4.0`; `.nvmrc` pins
 `24.19.0` exactly and the check is fail-closed. This is the first thing that goes wrong every time.
@@ -61,19 +57,21 @@ with `couldn't exec process: No such file or directory`, because the whole unspl
 `cd <repo> && mise exec -- node --version` prints `v24.19.0` — and a relative script path works.
 Re-measured 13 September; the `cd` clause that stood here was false.
 
-### Verified gate baselines at `60ef37f`
+### Verified gate baselines at `393a564`
 
-Every row re-measured on 13 September. Use these as the "nothing is broken" reference.
+Every row re-measured on 14 September, after `0005`. Use these as the "nothing is broken"
+reference. **Four rows moved, all of them because of `1.9.1`** — the test count, the schema chain,
+and the two that follow the chain.
 
 | Command | Reads |
 |---|---|
-| `just pre-push` | **exit 0** — `lint test build-web guards secrets`, `justfile:368`, 1:29.90 warm |
+| `just pre-push` | **exit 0** — `lint test build-web guards secrets`, `justfile:368`, ~1:30 warm |
 | `just check` | exit 0 — all **seven** workspace members |
 | `just lint` | exit 0 — 2 prerequisites + 14 body steps = **16 checkers** |
-| `just test` | exit 0 — **241 tests run: 241 passed, 2 skipped**; JS **6 files / 44 tests** |
+| `just test` | exit 0 — **248 tests run: 248 passed, 2 skipped**; JS **6 files / 44 tests** |
 | `just build-web` | exit 0 — `tsc -b` + vite 8.2.2 across 5 packages |
 | `just guards` | exit 0 — **37 steps** |
-| `just verify-schema` | exit 0 — **4 migrations, 32 tables, 300 columns** |
+| `just verify-schema` | exit 0 — **5 migrations, 48 tables, 457 columns** |
 | `just verify-pg` | exit 0 — **the engine pass RAN** via the Docker fallback |
 | `just secrets` | exit 0 — gitleaks 8.30.1, `--history` |
 | `just audit` | exit 0 — cargo-deny clean; **135 package releases, 11 reviewed expressions** |
@@ -90,8 +88,9 @@ Every row re-measured on 13 September. Use these as the "nothing is broken" refe
 | `check-protected-paths.sh --self-test` | 18 passed · `watch-pr-checks.sh --self-test` **49** |
 | `test-settings.py` | **30 passed**; `.claude/settings.json` is **4,426 bytes** |
 
-**The three per-package vitest rows must sum to the `just test` row.** They do now — 4 + 1 + 1 = 6
-files, 31 + 3 + 10 = 44 tests. The `money` row is new here; without it the sums did not reconcile
+**The three per-package vitest rows must sum to the `just test` row.** They do — 4 + 1 + 1 = 6
+files, 31 + 3 + 10 = 44 tests. `1.9.1` moved only the Rust half: 241 → 248, which is `pos-db`'s
+74 → 80 plus nothing anywhere else. The `money` row is new here; without it the sums did not reconcile
 and a reader could not tell which number was wrong. The JS counts are the only rows that move
 often, because every UI microstep adds tests: #164 took the back office 2 → 3 and #165 took the
 terminal 18 → 31 on the same day.
@@ -124,29 +123,29 @@ vitest 5.0.0, gitleaks 8.30.1, Docker Engine 29.5.2.
 
 | | |
 |---|---|
-| `development` | **`60ef37f`** — `just pre-push` exits 0 and `ci` run **`34757633967` is green on the tip**. Untouched by the in-flight `1.9.1` work, which lives only on its own branch |
+| `development` | **`393a564`** — `just pre-push` exits 0 and `ci` run **`34833970459` is green on the tip**. Carries `1.9.1` and migration `0005` |
 | `staging` | **`531ea04`** — **17 behind** `development`, 5 ahead (its own five promotion merges) |
 | `main` | `24a0283` — **145 behind** `development`, **133 behind** `staging`, untouched since 20 August |
-| Phase 1 | **21 of 112** executable microsteps (~19%) — `1.11.3` landed 13 September (#165), the first advance since 8 September |
-| Open PRs | **0** — but see §2b: `1.9.1` is in flight on a pushed branch with no PR open |
-| Open issues | **8** — see §3. None is `In Progress`, but **the WIP=1 slot is FULL**: `1.9.1` is in flight (§2b) with no Microstep issue filed yet |
-| Board #4 | the API's default listing returns **11 items — 8 `Todo`, 3 `Done`** (#119, #120 and #162, all closed 13 September). Archived items are excluded from that listing and their count is not readable through it |
+| Phase 1 | **22 of 112** executable microsteps (~20%) — `1.9.1` landed 14 September (#170), the largest migration in the phase |
+| Open PRs | **0**, and **nothing is in flight**. The WIP=1 slot is free for the first time since 13 September |
+| Open issues | **8** — see §3. All eight are blocked on a human; **there is no issue here that code can close.** #169 (`1.9.1`) closed with #170 |
+| Board #4 | the API's default listing returns **12 items — 8 `Todo`, 4 `Done`** (#119, #120, #162 and #169). Archived items are excluded from that listing and their count is not readable through it |
 | Rulesets | **four, all active**, all four checked in under `.github/rulesets/`. They **agreed with live when last compared by hand** (11 September) — no gate diffs them, so this is a dated observation, not an invariant. See §3 |
 | Tags / releases | **zero of each.** The append-only tag ruleset has never been exercised |
 | Repository | **PUBLIC**, GitHub Free, `OmarSweiti` the sole collaborator (admin) |
 
-### Complete: 21 microsteps
+### Complete: 22 microsteps
 
 Read live from the frontier region, `docs/implementation/README.md:22-41`, in its own order:
 
 `1.1.0` `1.1.1` `1.1.2a` `1.1.6` `1.1.3` `1.1.4` `1.1.2b` `1.1.7` `1.1.5` `1.1.8` `1.2.1` `1.2.2`
-`1.3.1` `1.8.9` `1.8.5` `1.11.2` `1.6.5` `1.6.1` `1.6.3` `1.11.0` `1.11.3`
+`1.3.1` `1.8.9` `1.8.5` `1.11.2` `1.6.5` `1.6.1` `1.6.3` `1.11.0` `1.11.3` `1.9.1`
 
-**When the 22nd lands, the region must read `22 of 112 executable microsteps fully complete
-(~20%)`.** The checker computes `round(100 * done / total)` and `round(100*22/112) == 20`; leaving
-`~19%` is a hard `just lint` failure, not a rounding quibble. This bit on 13 September and cost
-nothing only because it was expected: `1.11.3` had to move the count, the percentage **and** the
-prose list in one commit. The same denominators appear on three
+**When the 23rd lands, the region must read `23 of 112 executable microsteps fully complete
+(~21%)`.** The checker computes `round(100 * done / total)` and `round(100*23/112) == 21`; leaving
+`~20%` is a hard `just lint` failure, not a rounding quibble. It has now bitten on two consecutive
+microsteps and cost nothing both times only because it was expected: each had to move the count,
+the percentage **and** the prose list in one commit. The same denominators appear on three
 surfaces the checker reconciles — the region, `00-master-plan.md:96`, and
 `status-page.html:464-504` — so a denominator change lands in all three or the gate reds.
 
@@ -157,7 +156,7 @@ A `**Full-step status:**` marker mechanically means "partial" whatever its prose
 
 | Step | Marker | What is missing |
 |---|---|---|
-| `1.1.9` | `phase-1:190` | the database half, gated on `1.9.1` creating `trusted_time_state` |
+| `1.1.9` | `phase-1:190` | the database half — **no longer gated**. `1.9.1` shipped `trusted_time_state`; what remains is `crates/pos-db/src/repo/clock.rs` and `clock_state_survives_restart`. The smallest buildable thing in the repository |
 | `1.2.0` | `phase-1:222` | a reference register exists nowhere — **#68**. `bench-gate --check-profile` exits 3 |
 | `1.6.4` | `phase-1:691` | only the 1.8.x terminal handler — gated on **#111** and on 1.8.x wiring `pos-db` into the terminal |
 
@@ -345,114 +344,68 @@ real failure is a command built in a shell variable.
 
 ---
 
-## 2b · IN FLIGHT — microstep `1.9.1`, migration `0005`
+## 2b · LANDED — microstep `1.9.1`, migration `0005` (#170, 14 September)
 
-**Branch `phase-1/group-9-migration-0005`, pushed, at `e6d774f`. `just test` is RED there on 17
-pre-existing tests, by design. `development` is untouched and green. Do not merge this branch.**
+**Merged into `development` as #170, closing #169. Nothing is in flight.** This section is the
+record of what shipped and what it cost, kept because five of its findings are not in any plan.
 
-Started 13 September after #113 recorded its decision. This section is the complete resume
-instruction; nothing about the work lives only in a session transcript.
-
-### Done, with the evidence
+### What shipped
 
 | | |
 |---|---|
-| `crates/pos-db/migrations/0005_sale_columns_and_sequences.sql` | **1,179 lines.** Transcribed verbatim from `ref/schema.md` §0005's **three** code fences (`1673-2242`, `2261-2649`, `2670-2835`) in document order |
-| Object counts, checked against the specification | **16** `CREATE TABLE` · **5** `CREATE INDEX` · **2** `CREATE UNIQUE INDEX` · **60** `CREATE TRIGGER` · **1** `CREATE VIEW` · **1** `INSERT` · **14** `ALTER TABLE` = **99 objects** |
-| `crates/pos-db/src/lib.rs` | appended to `MIGRATIONS`. `SCHEMA_VERSION` derives from array length — no separate edit |
-| `crates/pos-db/tests/common/mod.rs` | `reference_blocks()` **5 → 6**, with its doc comment |
-| `ref/schema.md` §0005 heading | gained **`· SHIPPED`** |
-| `./scripts/verify-schema.py` | **exits 0.** Chain moved 4 migrations / 32 tables / 300 columns → **5 / 48 / 457** |
+| `crates/pos-db/migrations/0005_sale_columns_and_sequences.sql` | **1,179 lines**, transcribed verbatim from `ref/schema.md` §0005's **three** code fences in document order. **16** `CREATE TABLE` · **5** `CREATE INDEX` · **2** `CREATE UNIQUE INDEX` · **60** `CREATE TRIGGER` · **1** `CREATE VIEW` · **1** `INSERT` · **14** `ALTER TABLE` = **99 objects** |
+| `crates/pos-db/tests/common/registered_chain.rs` | the shared fixture the repair is built on — org, an approved rate pack and policy, an evidenced store, registers, open shifts, and the auxiliary facts a completion must prove |
+| `crates/pos-db/tests/migration_0005_sale_columns_and_sequences.rs` | the six tests `phase-1:1052` names, plus one more (below) |
+| five existing `pos-db` suites | the seventeen deliberately-red tests, repaired |
+| `apps/server/migrations/20260914090000_sale_columns_and_sequences.sql` | the mirror, which creates nothing and records why |
+| `ref/schema.md` · `phase-1-sellable-mvp.md` · `00-master-plan.md` · `README.md` | `· SHIPPED`, four ICV sites, the frontier |
 
-### Left to do, in order
+`verify-schema` moved **4 migrations / 32 tables / 300 columns → 5 / 48 / 457**. `just test` moved
+**241 → 248**. `verify-pg` maps 5 against 5 and its engine pass applies all five to real PostgreSQL 18.
 
-1. **File the Microstep issue for `1.9.1`**, put it on board #4, set `In Progress`. Not done
-   deliberately: the form calls a late-appearing file "a scope leak", and the true `Files:` list was
-   unknown until the test blast radius was measured. It is known now — item 6 below.
-2. **Repair the 17 failing tests** (named below).
-3. **Write the six tests `1.9.1` names**, in
-   `crates/pos-db/tests/migration_0005_sale_columns_and_sequences.rs` (new, name fixed by
-   `phase-1:1050`): `opening_a_second_shift_for_the_register_is_refused` ·
-   `a_completed_sale_requires_an_open_matching_shift` ·
-   `migration_0005_preserves_completed_sale_guards` ·
-   `every_completed_tender_has_an_initial_status_event` ·
-   `exchange_tender_seed_matches_internal_contract` ·
-   `an_exchange_tender_never_opens_or_counts_the_drawer`.
-4. **The Postgres mirror** — `apps/server/migrations/<14-digit UTC>_<lower_snake>.sql` with a
-   `-- Mirrors SQLite 0005_sale_columns_and_sequences.sql` header, plus `REGISTER_LOCAL` entries in
-   `scripts/verify-pg-migrations.py` for the tables that never sync. Candidates the scope identified:
-   `parked_cart`, `checkout_operation`, `product_quick_add_request`, `trusted_time_state` — **verify
-   each against `ref/schema.md` rather than trusting that list.**
-5. **Rewrite the three ⚠️ OPEN blocks that still say the ICV choice is unmade** —
-   `phase-1:1055`, `ref/schema.md:2651`, `ref/schema.md:4250`. Each enumerates #113's four options or
-   says `1.9.1` "must choose deliberately first". Landing `0005` without rewriting all three leaves
-   the plan of record contradicting a decision that has been taken.
-6. **Advance the frontier to `22 of 112 executable microsteps fully complete (~20%)`** in
-   `docs/implementation/README.md` — `round(100*22/112) == 20`, and the prose list must gain
-   `1.9.1`. **Extend `1.9.1`'s own `Files:` line** to name what actually changed, the way `1.11.0`
-   and `1.11.3` do; it currently names two files and the change touches ten.
-7. Consider whether the **deferred `1.1.9` database half** (`phase-1:1057-1060`,
-   `crates/pos-db/src/repo/clock.rs`, test `clock_state_survives_restart`) lands in the same PR.
-   `trusted_time_state` now exists, which was its only blocker. It is a *separate* microstep half
-   with its own `Done when`; deciding is part of the work, not a given.
+### The seventeen failures — what the last handoff got slightly wrong
 
-### The 17 failures, and why they are correct
+It said every pre-`0005` test "completes a *minimal* sale, so none can satisfy them", implying seven
+gates each. Measured: **sixteen of the seventeen failed on one thing — `a sale must name an existing
+register`**, the trigger repairing the FK `ALTER TABLE` cannot retrofit. Only
+`a_committed_sale_is_readable_on_a_fresh_connection` reached the durable-outputs gate, because it
+alone inserted a sale already `completed`. The gates are sequential, so the first wall is the only
+wall you see. **Budget a repair by the first failure, not by the number of gates.**
 
-`0005` adds **seven gates** to sale completion, each with an `_insert` and an `_update` trigger:
-shift · tax policy · fiscal decision · tax components · discount recap · tender events · durable
-outputs. Every pre-`0005` test completes a *minimal* sale, so none can satisfy them. The
-representative refusal is
-`sale completion atomically requires its original receipt job and complete sync commit`.
+### Four things that outlive the repair
 
-```
-approval.rs           a_consumed_handle_is_still_consumed_after_restart
-                      a_handle_used_twice_is_refused
-                      the_effect_and_the_consumption_commit_together_or_not_at_all
-durability.rs         a_committed_sale_is_readable_on_a_fresh_connection
-migration_0003.rs     after_the_rebuild_the_six_tables_enforce_their_types
-                      the_rebuild_restores_the_immutability_triggers
-outbox.rs             a_completed_sale_has_one_ready_sync_commit
-                      a_second_commit_cannot_claim_the_same_fact
-                      delivery_rows_can_be_pruned_without_losing_the_manifest
-                      every_fact_member_is_in_the_commit_manifest
-                      outbox_commit_rolls_back_with_the_fact_graph
-sale_immutability.rs  a_completed_sale_refuses_update_and_delete
-                      a_completed_tender_refuses_settlement_updates_and_reparenting
-                      a_parked_sale_is_still_editable
-                      a_receipt_number_is_unique_per_register_but_not_across_them
-                      every_immutability_trigger_survives_the_migration_runner
-                      the_lines_of_a_completed_sale_are_frozen
-```
+* **A sale can no longer be born `completed`.** Its original `receipt_artifact` carries
+  `REFERENCES sale(id)` and the durable-outputs gate wants that artifact already present, so the row
+  must exist before the thing that proves it may exist at all. Every sale is inserted `parked` and
+  sealed. `outbox.rs` already wrote in that order for an I-4 reason; now there are two.
+* **The smallest fact graph a checkout produces is seven facts, not three** — sale, line, tender,
+  the line's tax component, the tender's initial status event, the original receipt artifact, and
+  the audit row. That is what `sale_commit_base_complete` means by a whole sale. `outbox.rs`'s
+  `COMMIT_SIZE` moved 3 → 7 and its counts are now **scoped to the sale's own commit**: the shift
+  open beside it is a separate business transaction with an envelope of its own.
+* **A line's tax category must equal its product's.** `0003`'s
+  `sale_line_tax_category_evidenced_*` said so; nothing had yet had to obey it. A line that differs
+  is a supply-specific override needing immutable `sale_supply_tax_context` evidence — which is a
+  materially different thing and must not be faked in a fixture.
+* **A shift open cannot happen inside a checkout transaction.** `shift_open_has_ready_commit` needs
+  a ready envelope, writing one needs a transaction, and SQLite has no nested `BEGIN`. It is a prior
+  business transaction, which is also the truth about the boundary.
 
-**`fact_table_guards.rs` and `authorization_scope.rs` PASS**, which is the evidence the
-`reference_blocks()` bump was right: they were already getting `0005`'s shape from the reference
-document and now get it from the shipped migration instead.
+### The fixture's contract, and the trap inside it
 
-**The intended repair** is one shared registered-chain fixture — a `complete_sale` helper that seeds
-a valid world and passes all seven gates — rather than seventeen local patches. No pos-db test today
-inserts a `register` or `store` row on the registered chain; that recipe exists only inside
-`fact_fixture.rs`, reachable from `full_schema` suites. Whoever writes it is writing the crate's
-first registered-chain store/register seed.
+`registered_chain.rs` writes **what `0005` requires and nothing more**. It does *not* write
+`sale_tax_summary` or `sale_supply_tax_context`: `0005` requires those rows to be in the manifest
+**if they exist**, never that they exist, and a fixture that seeded optional facts would silently
+widen what every suite using it asserts.
 
-### Before you edit `0005`, run this
-
-```bash
-git reset HEAD~1        # ONLY if 0005 itself must change
-```
-
-Once a migration is in `HEAD`, `.claude/hooks/protect-immutable.py` and `.githooks/pre-commit`
-refuse to edit it — `is_committed` tests membership of `git ls-tree HEAD`, not whether anything
-shipped. Nothing on this branch has shipped, merged, or touched a protected branch, so moving it
-back out of `HEAD` is the intended escape. **A second migration to fix a typo in an unmerged one
-would be permanent for no reason.** Re-commit when it is right.
-
-### If the file is ever lost, it is reproducible
-
-Concatenate `ref/schema.md` lines `1674-2241`, `2262-2648` and `2671-2834` (the fence *contents*,
-excluding the fence markers) in that order, and prepend the header. **The fence split is the primary
-transcription hazard**: fence 1 holds only 55 of the 99 objects, so copying "the 0005 code block"
-silently drops `tender_type` and its seed, `parked_cart`, `checkout_operation`, the receipt and
-print tables, `product_quick_add_request`, `doc_sequence`, `trusted_time_state` and the view.
+Its ids are `[0xFC, slot, 0 … 0, tag]`, outside the `[b; 16]` / `vec![b; 16]` / `Uuid::from_u128(n)`
+shapes every `pos-db` test mints. **The trap:** derived ids must not overwrite byte 1, which carries
+the slot — an earlier draft did, so two checkouts in one database mapped onto the same change id and
+the second was refused by `fact_commit_member`'s primary key. Loud rather than silent, but it would
+have surfaced in the *next* microstep's fixture. Derivation marks bytes 2 and 3 now, and
+`two_sales_on_one_register_share_its_shift_and_not_their_commits` holds the property — it is the
+seventh test, not one of the six `1.9.1` names, and it fails against the previous derivation.
+**`1.9.2` and `1.9.5` both ring up more than one sale per register; that test is for them.**
 
 ### Five findings from this work, none of them in the plan
 
@@ -462,18 +415,27 @@ print tables, `product_quick_add_request`, `doc_sequence`, `trusted_time_state` 
   0002 adds columns that must not exist.
 * **The live completed-sale guard set is the post-0003 one.** `0003:320` replaced 0002's
   `sale_tender_amount_frozen_once_completed` with `sale_tender_no_update_once_completed`, and 0003
-  defines the `sale_line_no_*` triggers **twice** — the `913-933` versions are live. A test naming
-  0002's set fails; a migration restoring 0002's wording reopens a hole 0003 closed, which
-  `0003:907-912` records as having happened once already.
-* **`sale` has no foreign keys at all** — `pragma_foreign_key_list('sale')` is empty. `0005` repairs
-  `register_id` and `ref_sale_id` with **triggers**, because `ALTER TABLE` cannot retrofit a
-  `REFERENCES` clause. That is the documented trade at `ref/schema.md:1798-1817`, not an oversight.
+  defines the `sale_line_no_*` triggers **twice** — the `913-933` versions are live.
+* **`sale` had no foreign keys at all** — `pragma_foreign_key_list('sale')` was empty. `0005` repairs
+  `register_id` and `ref_sale_id` with **triggers**, the documented trade at `ref/schema.md:1798-1817`.
 * **No `PRAGMA` may appear in `0005`.** The runner wraps each migration in one transaction, where
   `PRAGMA foreign_keys` is a no-op and `PRAGMA defer_foreign_keys` cannot clear a deferred violation.
 * **`verify-schema.py:405` skips any heading containing `SHIPPED`**, and pass 1 has already applied
-  the file from disk. The `· SHIPPED` marker is therefore required in the **same** commit as the
-  migration — without it pass 2 re-executes the DDL against the schema it just built. A scoping
-  agent advised the opposite; the script settles it.
+  the file from disk. The marker is therefore required in the **same** commit as the migration. A
+  scoping agent advised the opposite; the script settles it.
+
+### The Postgres mirror creates nothing, and `REGISTER_LOCAL` was the wrong instrument
+
+Every one of the 99 objects is either tenant-owned and blocked on the multi-tenant sign-off, or
+register-local and never synced. There is no third group, and unlike `0002` — which found a half
+already wrong on the server and fixed it — there is nothing here for the server to correct.
+
+The last handoff said to add "`REGISTER_LOCAL` entries for the tables that never sync". **That list
+is keyed by migration *file*, not by table**, and `0005` is not a register-local migration: most of
+what it ships does sync, once the server has somewhere to put it. The nine register-local tables are
+named in the mirror's header instead. `tender_type` is the one that looks global and is not —
+`ref/schema.md`'s machine-readable inventory names exactly two global tables, and the sentence
+beside it says why activation and sort order make this one tenant-owned.
 
 ---
 
@@ -486,7 +448,7 @@ the remaining list is entirely external: **there is no issue here that code can 
 
 | # | Title | Prio | Risk | Blocked | Blocks |
 |---|---|---|---|---|---|
-| **113** | `decision: ICV scope, before migration 0005 freezes it (merchant decision 6.9)` | P1 | migration · compliance | decision | **the `doc_sequence` half of `1.9.1` — read before any SQL** |
+| **113** | `decision: ICV scope, before migration 0005 freezes it (merchant decision 6.9)` | P1 | migration · compliance | decision | **nothing in Phase 1 any more** — `0005` shipped the `CHECK` on 14 September as option 4. It now binds **`2.7.4`**, which must re-check 6.9 before allocating the first ICV |
 | 68 | `hardware: buy the reference register, scanner and both printers` | — | — | hardware | `1.2.0`'s deferred half, group 1.7, and four budgets |
 | 69 | `decision: the legal entity, its TIN, and ISTD registration for JoFotara` | — | — | decision | **group 2.7, not a Phase-1 microstep** — see below |
 | 70 | `decision: a tax adviser's written opinion on the four group-1.3 questions` | — | — | merchant answer | `1.3.4`, `1.3.7`, and the Phase-1 exit gate |
@@ -547,11 +509,21 @@ legacy API cannot express `allowed_merge_methods` at all). **No issue tracks thi
 
 ---
 
-## 4 · What is next — the WIP=1 slot is TAKEN by `1.9.1`
+## 4 · What is next — the WIP=1 slot is FREE
 
-**Finish §2b before starting anything here.** `1.9.1` is in flight, and WIP = 1 means one microstep,
-not one open pull request. The candidates below are what comes *after* it, and they are recorded now
-so the choice is not re-derived later.
+**Take one of these, and only one.** WIP = 1 means one microstep, not one open pull request.
+`1.9.1` landed on 14 September (§2b), so every candidate below is genuinely startable and the
+choice is recorded here so it is not re-derived later.
+
+**The recommendation is `1.1.9`'s database half**, and it is not a close call: `1.9.1` shipped
+`trusted_time_state` mapping `ClockState` field for field, which was its only blocker; it is one new
+file (`crates/pos-db/src/repo/clock.rs`) and one named test (`clock_state_survives_restart`); it
+already has a `Done when` that is a command; and completing it clears one of the three
+`**Full-step status:**` markers, which is the only kind of work that makes the frontier checker's
+rule 8 easier rather than harder. Its one subtlety is not the schema: the shell must persist the
+opaque boot-continuity token beside the value, compare it on startup, and call
+`ClockState::note_monotonic_reset` before use when it changes — a numeric counter alone cannot
+identify its own boot.
 
 Per `03-github-workflow.md` §4 the loop is: pick **one** microstep, open **one** `Microstep` issue,
 add it to board #4 by hand, set it `In Progress`, then build it.
@@ -564,37 +536,17 @@ has ever carried; the twenty before it were built without one. The law was right
 treat §4's procedure as a new habit rather than an established one — and note that `1.9.1` has not
 been filed yet either, which §2b lists as its first item of unfinished work.
 
-### IN FLIGHT, not recommended: `1.9.1` — migration `0005`
+### DONE: `1.9.1` — migration `0005`, merged as #170
 
-**This work has started — see §2b for its state and how to resume it.** The rest of this subsection
-is the case for it, kept because the obligations it lists are still owed.
+**All five obligations this section listed were discharged**, and §2b is the record. Briefly, so the
+list is not re-derived: `schema.md`'s heading carries `· SHIPPED` in the migration's own commit; the
+Postgres mirror exists with its 14-digit name and declaration header; `MIGRATIONS` carries `0005`,
+so `user_version` is 5; `reference_blocks_at_or_after(5)` became `6`; and the ICV blocks were
+rewritten — at **four** sites, not the three this section predicted. The fourth is
+`00-master-plan.md` §4a's `doc_sequence` concordance row, which said the ICV scope was
+"store-scoped by default". It stopped being a default the moment `0005` committed.
 
-**#113 is decided.** On 13 September it took **option 4 — freeze `store`, knowingly** — and its own
-words are *"`1.9.1` is unblocked and may write `0005` transcribing the specified DDL unchanged."*
-That makes `0005` the highest-leverage buildable microstep in the repository: `verify-schema.py:259`
-requires migration numbers contiguous from `0001`, so `0005` is the gate standing in front of
-`0006`, `0007`, `1.2.3`, `1.9.2`–`1.9.5`, `1.10.2`–`1.10.5`, the `1.1.9` DB half and the `1.2.4` DB
-half.
-
-**Unblocked is not small.** `ref/schema.md` §0005 runs `:1671` to `:2838` — **1,168 lines** of
-specification, the largest single migration in Phase 1. Budget accordingly.
-
-Five things that PR owes, and the fifth is new:
-
-1. **`schema.md`'s `## 0005` heading must gain `· SHIPPED`** in the same commit.
-   `verify-schema.py:405` skips re-executing a section whose heading contains `SHIPPED`; without it
-   the second pass re-runs the DDL against the schema it just built. `0002`, `0003` and `0004` carry
-   the marker. `0005` does not.
-2. **The Postgres mirror**, with its 14-digit UTC name and its declaration header.
-3. **The `lib.rs` `MIGRATIONS` registration** — `SCHEMA_VERSION` is `MIGRATIONS.len()`, so shipping
-   `0005` moves `user_version` to 5.
-4. **`tests/common/mod.rs`'s `reference_blocks_at_or_after(5)` → `6`**, and the test file.
-5. **Three ⚠️ OPEN blocks still say the ICV choice is unmade.** `phase-1:1055`,
-   `ref/schema.md:2651` and `ref/schema.md:4250` each enumerate #113's four options or say `1.9.1`
-   "must choose deliberately first". Landing `0005` without rewriting all three leaves the plan of
-   record contradicting a decision that has been taken — the same defect class as §2a's twelfth site.
-
-**Two things the decision did NOT do**, and both must survive contact with whoever writes `0005`:
+**Two things the decision did NOT do**, and both survived contact:
 `ref/merchant-decisions.md` row 6.9's Answer cell **stays empty** — option 4 is a hedge, and only
 the official ISTD package can answer it — and **#113 stays open**. What is settled is what `0005`
 does, not what the ICV namespace is.
@@ -602,7 +554,7 @@ does, not what the ICV namespace is.
 **The reversal window is now a standing obligation on `2.7.4`.** ICV is never allocated at checkout;
 allocation begins there, in Phase 2. Until the first ICV row exists, correcting a wrong `store`
 guess is one forward-only migration. After it, it is a migration plus a data repair on a sequence
-required to be gapless.
+required to be gapless. All four rewritten blocks now carry that deadline.
 
 The decision also recorded a blast-radius correction nobody had written down: **the ICV question
 binds Phase 3 too.** `ref/test-catalog.md:96` row 87 names
@@ -610,6 +562,13 @@ binds Phase 3 too.** `ref/test-catalog.md:96` row 87 names
 store-scoped default is written into **five** documents — `ref/fiscal-jofotara.md:102`,
 `ref/plan-validation.md:274`, `phase-2-money-grade.md:471`, `ref/test-catalog.md:100` and
 `ref/schema.md:4250`. A later correction sweeps all five.
+
+### Still true, and now unblocked three migrations deep
+
+`verify-schema.py:259` requires migration numbers contiguous from `0001`, so `0005` was the gate in
+front of `0006`, `0007`, `1.2.3`, `1.9.2`–`1.9.5`, `1.10.2`–`1.10.5`, the `1.1.9` DB half and the
+`1.2.4` DB half. **That gate is open.** `1.2.3` is still blocked — its FTS repository needs
+`0007`'s tables — but it is now two migrations away rather than three.
 
 ### If `0005` is too big for the sitting — three genuinely small ones
 
@@ -1175,7 +1134,32 @@ which suites were run.
     patches.** They fail because `0005` adds seven gates to sale completion and every pre-`0005`
     test completes a minimal sale — correct behaviour, not a defect. One `complete_sale` helper that
     passes all seven gates is one recipe in one place; seventeen local worlds would drift apart and
-    the next migration would break them all again.
+    the next migration would break them all again. **Built and merged as #170;** the helper is
+    `crates/pos-db/tests/common/registered_chain.rs`.
+48. **The fixture writes what `0005` REQUIRES and nothing more.** It does not seed
+    `sale_tax_summary` or `sale_supply_tax_context`: `0005` requires those rows to be in the
+    manifest *if they exist*, never that they exist. A fixture that seeded optional facts would
+    silently widen what every suite leaning on it asserts, and five suites lean on it.
+49. **`0005`'s Postgres mirror is a file that creates nothing, not a `REGISTER_LOCAL` entry.**
+    `REGISTER_LOCAL` is keyed by migration **file**, and its contract is "never syncs" — false for
+    `0005`, most of which does sync once the server has somewhere to put it. The nine register-local
+    tables are named in the mirror's header instead. **Do not re-propose the `REGISTER_LOCAL`
+    route**; the last handoff suggested it, and it is the wrong instrument.
+50. **`1.1.9`'s database half did NOT ride along in `1.9.1`'s pull request.** `trusted_time_state`
+    unblocked it, but it is a separate microstep half with its own `Files:`, its own `Tests:` and
+    its own `Done when`, and #170 was already 2,700 lines. It is §4's recommendation instead.
+51. **`opening_a_second_shift_for_the_register_is_refused` is named by BOTH `1.9.1` and `1.9.5`,
+    and was deliberately left in both.** Unlike the `latin_runs_…` duplicate #165 resolved, these
+    sit on different rungs and in different test binaries: `1.9.1` proves the storage guarantee
+    (`idx_shift_one_open`, a partial unique index) in
+    `tests/migration_0005_sale_columns_and_sequences.rs`; `1.9.5` will prove the repository refuses
+    it, in `tests/shift_lifecycle.rs`, which does not exist yet. nextest addresses them by distinct
+    binary ids and `check-test-catalog.py` reconciles. If `1.9.5` wants the name alone, that is
+    `1.9.5`'s edit to make against a test that exists.
+52. **`1.9.1` shipped SEVEN tests where its `Tests:` line names six**, and the line was **not**
+    amended — the same call as `1.11.0`'s. The seventh,
+    `two_sales_on_one_register_share_its_shift_and_not_their_commits`, holds the property the six
+    lean on: one open shift serves both sales, and no id is reused between their commits.
 
 ---
 
