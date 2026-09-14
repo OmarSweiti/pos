@@ -40,11 +40,34 @@ const MONOTONIC_RESET: &str = "monotonic_reset";
 /// The `boot_token` travels with the state rather than inside it: `ClockState`
 /// is a pure domain value and the token is a shell concern the domain must not
 /// acquire a field for.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct StoredClock {
     pub state: ClockState,
     pub boot_token: Option<Vec<u8>>,
     pub updated_at: String,
+}
+
+/// `Debug` is hand-written so `boot_token` is never printed.
+///
+/// `.claude/rules/security.md` redacts every field name ending in `_token`, at
+/// every nesting depth, and names "test fixtures that print" among the places
+/// it applies — which is precisely what a derived `Debug` is. Its presence and
+/// length are shown because that is what a reader debugging boot continuity
+/// actually needs; the bytes are what they must not have.
+impl core::fmt::Debug for StoredClock {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("StoredClock")
+            .field("state", &self.state)
+            .field(
+                "boot_token",
+                &self
+                    .boot_token
+                    .as_ref()
+                    .map_or("None", |_| "<redacted, present>"),
+            )
+            .field("updated_at", &self.updated_at)
+            .finish()
+    }
 }
 
 /// Reads and writes of the register's durable clock assessment.
@@ -240,9 +263,12 @@ fn decode_anomaly(
 
 /// A stored row that cannot be read back as a domain value.
 ///
-/// The message names the column and the shape it violated, never the value:
-/// nothing here is sensitive today, but an error that quotes a stored value is
-/// how one starts leaking (`.claude/rules/security.md`).
+/// The message names the column and the shape it violated. It quotes exactly
+/// one stored value — an unrecognised `anomaly_kind` — because the discriminant
+/// is the whole diagnosis and it is a schema enum rather than merchant data. It
+/// never carries a timestamp, and never `boot_token`:
+/// `.claude/rules/security.md` redacts every field ending in `_token`, and an
+/// error string is one of the surfaces it names.
 fn invalid_stored(error: impl core::fmt::Display) -> DbError {
     DbError::ClockStateInvalid {
         reason: error.to_string(),

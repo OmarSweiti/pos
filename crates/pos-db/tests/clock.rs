@@ -231,6 +231,44 @@ mod clock {
     }
 
     #[test]
+    fn the_boot_token_is_never_printed() {
+        // `.claude/rules/security.md` redacts every field ending in `_token`, at
+        // every nesting depth, and names "test fixtures that print" among the
+        // surfaces it covers — a derived `Debug` is exactly that. The guard is
+        // a hand-written impl, and a guard nobody has seen work is one nobody
+        // should trust.
+        let stored = anchored();
+        let printed = format!("{stored:?}");
+
+        assert!(
+            printed.contains("<redacted, present>"),
+            "the token's presence is what a reader debugging boot continuity \
+             needs; its bytes are what they must not have — got {printed}"
+        );
+
+        // Exactly what a derived `Debug` would have emitted for the field,
+        // built from the value itself rather than restated — so a change to the
+        // fixture's bytes cannot quietly make this assertion vacuous. Scanning
+        // for individual decimal digits does not work: every timestamp is full
+        // of them, which is how the first version of this test failed.
+        let derived = format!("{:?}", stored.boot_token);
+        assert!(
+            !printed.contains(&derived),
+            "the derived rendering {derived} reached a Debug string"
+        );
+
+        let absent = StoredClock {
+            boot_token: None,
+            ..anchored()
+        };
+        assert!(format!("{absent:?}").contains("None"));
+
+        // The redaction must not swallow the rest of the value: an error report
+        // with nothing in it is its own failure.
+        assert!(printed.contains("high_water"), "got {printed}");
+    }
+
+    #[test]
     fn a_row_written_by_a_newer_build_is_refused_not_downgraded() {
         let dir = tempfile::tempdir().unwrap();
         let conn = register(&dir, "newer-build.db");
