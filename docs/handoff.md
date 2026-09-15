@@ -89,10 +89,11 @@ moved**: the test count (241 → 259 → **266**, all of it Rust) and the schema
 
 **Two different measurements are mixed in this table, and the distinction matters.** The five rows
 `just pre-push` covers — `lint`, `test`, `build-web`, `guards`, `secrets` — were re-run at the tip
-above. The rest (`verify-schema`, `verify-pg`, `audit`, `bench-gate`, `check-js-licenses`) were
-measured at `1c1fd4f` and are **carried forward unre-run**, because #185 changed one test file and
-no schema, dependency or lockfile. That is a reason to expect them unchanged, not evidence that they
-are. Re-run the one you are about to depend on.
+above, and so was `verify-schema`, which still reads 5 migrations / 48 tables / 457 columns. The
+rest (`verify-pg`, `audit`, `bench-gate`, `check-js-licenses`) were measured at `1c1fd4f` and are
+**carried forward unre-run**, because #185 changed one test file and no schema, dependency or
+lockfile. That is a reason to expect them unchanged, not evidence that they are. Re-run the one you
+are about to depend on.
 
 | Command | Reads |
 |---|---|
