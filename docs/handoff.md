@@ -1,15 +1,17 @@
 # Handoff — the single current one
 
-**Reflects `development` @ `1c1fd4f`, 15 September 2026.**
+**Reflects `development` @ `a15dff6`, 15 September 2026.**
 
 There is one handoff — keep updating this file rather than adding a dated one.
 
-> ## ✅ THREE MICROSTEPS LANDED, THEN AN AUDIT FOUND FOUR DEFECTS IN THEM
+> ## ✅ #179's THIRD ITEM IS CLOSED — FIVE UNPROVED GATES NOW HAVE TESTS AND A MUTATION PROOF
 >
 > `1.9.1`, `1.1.9`'s database half and `1.2.6` merged on 14 September. A ten-lens adversarial audit
 > of that day's work then found **four real defects that CI was green through**, and they are fixed
 > (#180). §2d is that record and it is the most useful section in this file — three of the four were
-> in the *verification*, not the code. **Nothing is in flight.** §4 names what comes next.
+> in the *verification*, not the code. #185 then took the audit's own advice and closed **#179 item
+> 3**: the five completion gates `0005` shipped with no negative test, each one now falsified before
+> it was trusted. §2e is that record. **Nothing is in flight.** §4 names what comes next.
 
 **14 September moved three microsteps, and each unlocked the next.** #170 merged **`1.9.1`**: 1,179
 lines of migration `0005`, the shared registered-chain fixture, seven tests, the Postgres mirror,
@@ -18,12 +20,14 @@ and four documentation sites where the ICV decision still read as an open questi
 the same afternoon and **closed group 1.1**. #177 then took **`1.2.6`**, the FTS5 assertion, and
 #178 redacted a canonical payload out of two `Debug` impls.
 
-**15 September audited all of it and found four defects.** Phase 1 is **24 of 112 (~21%)**. §2b,
+**15 September audited all of it, found four defects, and then closed the largest thing the audit
+could not fix where it stood.** Phase 1 is still **24 of 112 (~21%)** — #185 is guard-hardening on
+shipped code, not a microstep. §2b,
 §2c and §2d are those windows; §2a keeps 13 September and §2 the 9–11 September record, where
 twenty-six pull requests changed the governance layer and no microstep advanced.
 
-**`development` is green, tip included.** `just pre-push` exits 0 at `1c1fd4f`, all 37
-`just guards` steps pass, and `ci` run **`34942852112` is a success on the tip**, queried by SHA
+**`development` is green, tip included.** `just pre-push` exits 0 at `a15dff6`, all 37
+`just guards` steps pass, and `ci` run **`34948248459` is a success on the tip**, queried by SHA
 rather than taken as the newest green one — `ci.yml`'s ref-scoped concurrency group cancels runs
 when merges land inside two minutes of each other, and the cancellation is invisible unless you ask
 about the tip specifically.
@@ -44,8 +48,9 @@ microsteps old and followed every time since #162.
 
 **Two things on the board are not microsteps and are not blocked: #174 and #179.** Both came out of
 reviewing this window's own work, neither needs an answer from anyone, and between them they are the
-only issues here that code alone can close. §3 has both, and §4 argues #179 is the better use of a
-sitting than the next microstep.
+only issues here that code alone can close. §3 has both. **#179's item 3 is now done** — §2e — and
+its other three items wait on a migration number, so #174 is the one left that code alone can close
+today.
 
 **Read `CLAUDE.md` first.** This document assumes it. Where this file and the repository disagree,
 **the repository is right** — every number here was read from `git`, `gh` or a command, and where
@@ -60,7 +65,7 @@ cd ~/My_Projects/pos
 git checkout development && git pull --ff-only
 git fetch --all --prune            # your local staging is 51 commits stale — see §14
 mise exec -- just setup
-mise exec -- just pre-push          # passes at 1c1fd4f
+mise exec -- just pre-push          # passes at a15dff6
 ```
 
 Nothing is in flight, so there is no branch to resume. `phase-1/group-9-migration-0005` merged as
@@ -76,18 +81,26 @@ with `couldn't exec process: No such file or directory`, because the whole unspl
 `cd <repo> && mise exec -- node --version` prints `v24.19.0` — and a relative script path works.
 Re-measured 13 September; the `cd` clause that stood here was false.
 
-### Verified gate baselines at `1c1fd4f`
+### Verified gate baselines at `a15dff6`
 
-Every row re-measured on 15 September. Use these as the "nothing is broken" reference. Across the
-whole 14–15 September window **two rows moved**: the test count (241 → 259, all of it Rust) and the
-schema chain (4 migrations / 32 tables / 300 columns → 5 / 48 / 457).
+Use these as the "nothing is broken" reference. Across the whole 14–15 September window **two rows
+moved**: the test count (241 → 259 → **266**, all of it Rust) and the schema chain (4 migrations /
+32 tables / 300 columns → 5 / 48 / 457).
+
+**Two different measurements are mixed in this table, and the distinction matters.** The five rows
+`just pre-push` covers — `lint`, `test`, `build-web`, `guards`, `secrets` — were re-run at the tip
+above, and so was `verify-schema`, which still reads 5 migrations / 48 tables / 457 columns. The
+rest (`verify-pg`, `audit`, `bench-gate`, `check-js-licenses`) were measured at `1c1fd4f` and are
+**carried forward unre-run**, because #185 changed one test file and no schema, dependency or
+lockfile. That is a reason to expect them unchanged, not evidence that they are. Re-run the one you
+are about to depend on.
 
 | Command | Reads |
 |---|---|
 | `just pre-push` | **exit 0** — `lint test build-web guards secrets`, `justfile:368`, ~1:30 warm |
 | `just check` | exit 0 — all **seven** workspace members |
 | `just lint` | exit 0 — 2 prerequisites + 14 body steps = **16 checkers** |
-| `just test` | exit 0 — **259 tests run: 259 passed, 2 skipped**; JS **6 files / 44 tests** |
+| `just test` | exit 0 — **266 tests run: 266 passed, 2 skipped**; JS **6 files / 44 tests** |
 | `just build-web` | exit 0 — `tsc -b` + vite 8.2.2 across 5 packages |
 | `just guards` | exit 0 — **37 steps** |
 | `just verify-schema` | exit 0 — **5 migrations, 48 tables, 457 columns** |
@@ -109,7 +122,8 @@ schema chain (4 migrations / 32 tables / 300 columns → 5 / 48 / 457).
 
 **The three per-package vitest rows must sum to the `just test` row.** They do — 4 + 1 + 1 = 6
 files, 31 + 3 + 10 = 44 tests. **No JavaScript test has been added since 13 September** — every
-microstep in this window was Rust, 241 → 259, and the JS rows are unchanged. The first UI microstep
+microstep in this window was Rust, 241 → 259, and #185's seven took it to 266 without touching a
+JavaScript file either, so the JS rows are unchanged. The first UI microstep
 (`1.11.6`, §4) moves them again. The `money` row is new here; without it the sums did not reconcile
 and a reader could not tell which number was wrong. The JS counts are the only rows that move
 often, because every UI microstep adds tests: #164 took the back office 2 → 3 and #165 took the
@@ -143,12 +157,12 @@ vitest 5.0.0, gitleaks 8.30.1, Docker Engine 29.5.2.
 
 | | |
 |---|---|
-| `development` | **`1c1fd4f`** — `just pre-push` exits 0 and `ci` run **`34942852112` is green on the tip**. Carries `1.9.1`, migration `0005`, `1.1.9`'s `ClockRepository`, `1.2.6` and the audit's fixes |
-| `staging` | **`531ea04`** — **26 behind** `development`, 5 ahead (its own five promotion merges). Re-measured 15 September with `git rev-list --count`; **this row has been wrong before and §9 states it independently** — if the two disagree, run the command rather than picking one |
-| `main` | `24a0283` — **155 behind** `development`, **133 behind** `staging`, untouched since 20 August |
+| `development` | **`a15dff6`** — `just pre-push` exits 0 and `ci` run **`34948248459` is green on the tip**. Carries `1.9.1`, migration `0005`, `1.1.9`'s `ClockRepository`, `1.2.6`, the audit's fixes and #185's seven tests |
+| `staging` | **`531ea04`** — **30 behind** `development`, 5 ahead (its own five promotion merges). Re-measured 15 September with `git rev-list --count`; **this row has been wrong before and §9 states it independently** — if the two disagree, run the command rather than picking one |
+| `main` | `24a0283` — **158 behind** `development`, **133 behind** `staging`, untouched since 20 August |
 | Phase 1 | **24 of 112** executable microsteps (~21%) — `1.9.1` (#170), `1.1.9` (#173) and `1.2.6` (#177) landed 14 September. **Group 1.1 is closed** |
-| Open PRs | **0**, and **nothing is in flight**. The WIP=1 slot is free for the first time since 13 September |
-| Open issues | **10** — see §3. Eight are blocked on a human; **#174 and #179 are not**, and both came out of auditing this window's own work. #169, #172 and #176 closed with their microsteps |
+| Open PRs | **0**, and **nothing is in flight**. The WIP=1 slot is free |
+| Open issues | **10** — see §3. Eight are blocked on a human; **#174 and #179 are not**. #179 is now **three-quarters open**: its item 3 closed with #185, and its other three items all need a migration. #169, #172 and #176 closed with their microsteps |
 | Board #4 | the API's default listing returns **16 items — 10 `Todo`, 6 `Done`** (#119, #120, #162, #169, #172, #176). Archived items are excluded from that listing and their count is not readable through it |
 | Rulesets | **four, all active**, all four checked in under `.github/rulesets/`. They **agreed with live when last compared by hand** (11 September) — no gate diffs them, so this is a dated observation, not an invariant. See §3 |
 | Tags / releases | **zero of each.** The append-only tag ruleset has never been exercised |
@@ -611,6 +625,68 @@ Migrations are forward-only, so these need a later one:
 * **`doc_sequence`** — the one knowingly irreversible decision in `0005` — has no test and no
   `DELETE` guard.
 
+## 2e · 15 September — the five gates that could have vanished
+
+**#179's third finding is closed.** `0005` put seven gates in front of
+`sale.status = 'completed'` and `1.9.1` shipped a negative test for two. The other five are now six
+tests — the durable-outputs gate has two independent halves and gets one each — plus a seventh that
+proves every one of them is load-bearing.
+
+| Gate | Test | What is withheld |
+|---|---|---|
+| tax policy | `a_completed_sale_snapshots_its_store_current_policy` | the policy, then a *different* approved one |
+| fiscal decision | `a_live_sale_requires_an_evidenced_fiscal_decision` | the store's evidenced obligation |
+| tax components | `completed_lines_require_exactly_their_applicable_tax_components` | the component, then its rate |
+| discount recap | `a_completed_sale_recaps_exactly_its_line_allowances` | a recap with no allowance behind it |
+| durable outputs | `sale_completion_requires_a_queued_original_receipt` | the queued original print job |
+| durable outputs | `sale_completion_requires_a_manifest_naming_every_fact` | one manifest member, five ways |
+| all five | `every_completion_gate_is_load_bearing` | the trigger itself |
+
+`just test` reads **266** where it read 259; `pos-db` alone goes 91 → 98. Nothing else moved: no
+schema, no migration, no Postgres mirror, and `check-test-catalog.py` still reconciles at 92 cases.
+
+### The harness is the part worth copying
+
+A negative test says the statement was refused. It does not say *by what* — and §2d's first defect
+was exactly three assertions refused by a foreign key and a sibling trigger rather than by the guard
+they named. `every_completion_gate_is_load_bearing` closes that by running each gate twice against
+the same withheld precondition: with the trigger in place the refusal must carry that trigger's own
+message, and **with the trigger dropped the identical `UPDATE` must be accepted**. Only the
+`_update` half is ever dropped, never its `_insert` sibling — that is #178's mistake, where removing
+both halves at once let the live one mask the dead one.
+
+Two properties make it worth the lines. `DROP TRIGGER` errors on a name that is not there, so the
+test reds the day a later migration removes one of these gates — which is #179's actual complaint.
+And the harness was itself falsified before it was trusted: pointed at
+`sale_completed_requires_durable_outputs_insert` instead, it fails, because the `_update` half still
+stands and the completion is still refused. Each of the six tests was also falsified individually —
+its gate dropped at the top of its own test — and **all six went red**.
+
+### Three limits the tests carry as comments rather than work around
+
+* **The obvious fiscal withholding is unavailable.** `store_fiscal_evidence_consistent_update`
+  (`0003`) already refuses to let a store leave either evidenced shape by edit, so a test written
+  that way would assert `0003`'s guard and stay green with `0005`'s removed. The reachable shape is
+  the third `fiscal_obligation` value — `pending_evidence` with a disabled profile, which is a
+  consistent store and the one a merchant actually sits in before the ISTD paperwork arrives.
+* **Two arms cannot be isolated at all.** An *extra* tax component, and a line allowance with no
+  recap, are each also a fact the delivery manifest does not name, so the durable-outputs gate
+  refuses the same statement and SQLite does not document which of two eligible triggers fires
+  first. An ambiguous assertion is the failure mode the whole exercise exists to avoid.
+* **One arm is covered but not isolated.** For a `doc_type = 'sale'` a NULL policy trips both the
+  `IS NULL` arm of the tax-policy gate and its store-comparison arm, because SQLite's
+  `NULL IS NOT <blob>` is true. Isolating the first needs a `doc_type = 'refund'` whose referenced
+  sale is also policy-less.
+
+### #179's other three items have no migration number to land in
+
+`0006` is named by `1.10.1`, the stock ledger (`phase-1-sellable-mvp.md:1117`), and `0007` by
+`1.2.5`, FTS5/PLU/tiles/scan rules (`:303`). So `sale.is_training`'s missing
+`CHECK (… IN (0,1))`, the two declared fact tables with no delivery-envelope gate, and
+`doc_sequence`'s missing delete guard must either ride inside one of those two migrations or claim
+`0008`. **That is why item 3 was the right one to take alone:** it needed no migration number at
+all, and the other three are a scheduling decision rather than a coding one.
+
 ## 3 · The ten open issues
 
 All ten are on board #4, all `Todo`, all assigned. **Eight are blocked on a human** — one on
@@ -619,8 +695,8 @@ All ten are on board #4, all `Todo`, all assigned. **Eight are blocked on a huma
 **#174 and #179 are the exceptions, and both are new.** Neither needs an answer from anyone, both
 read `not blocked`, and both came out of reviewing this window's own work rather than from the plan.
 The sentence that stood here on 14 September — *"there is no issue here that code can close"* — was
-true when written and is now false twice over. §4 argues #179 is the better use of a sitting than
-the next microstep.
+true when written and is now false twice over. **#179 is the one that has moved**: its item 3 closed
+with #185 (§2e), and its remaining three items are blocked on nothing but a free migration number.
 
 | # | Title | Prio | Risk | Blocked | Blocks |
 |---|---|---|---|---|---|
@@ -633,7 +709,7 @@ the next microstep.
 | 112 | `decision: the three manual discount caps (merchant decisions 3.1–3.3)` | P1 | money path | merchant answer | `1.4.5` |
 | 114 | `gap: the agent read-deny blocks the memory directory and workflow resume` | P2 | — | decision | agent memory, workflow resume |
 | **174** | `gap: derived Debug prints canonical payloads and digests the never-list redacts` | P2 | security | **not blocked** | nothing — it is a guard, not a gate. **Half done**: `payload` is redacted in `pos-db` (#178) and `pos-sync` (#180). What is left is one decision, below |
-| **179** | `gap: four guards migration 0005 did not ship, found by audit` | P2 | migration | **not blocked** | nothing — but §2d's last block is the reason it matters |
+| **179** | `gap: four guards migration 0005 did not ship, found by audit` | P2 | migration | **not blocked** | nothing. **Item 3 closed by #185** — the five unproved completion gates now have negative tests and a mutation proof (§2e). Items 1, 2 and 4's delete guard all need a migration, and §2e explains why none of them has a free number |
 
 **#69 does not gate a Phase-1 microstep.** Its own body says it blocks *"all of group 2.7 and the
 22 ⚠️ OPEN items microstep 2.7.0 owns"*, and `phase-1:1066` says the opposite of gating: *"Owner:
@@ -690,20 +766,12 @@ legacy API cannot express `allowed_merge_methods` at all). **No issue tracks thi
 ## 4 · What is next — the WIP=1 slot is FREE
 
 **Take one of these, and only one.** WIP = 1 means one microstep, not one open pull request. Every
-14–15 September candidate is spent — `1.9.1` (§2b), `1.1.9`'s database half (§2c) and `1.2.6`, which
-this section recommended yesterday and which merged as #177.
+14–15 September candidate is spent — `1.9.1` (§2b), `1.1.9`'s database half (§2c), `1.2.6` (#177),
+and **#179's five missing negative tests, which this section recommended this morning and which
+merged as #185** (§2e).
 
-**The recommendation is not a microstep: it is #179's five missing negative tests.**
-`sale_completed_requires_durable_outputs_*` — the gate that is the entire justification for
-`outbox.rs` carrying seven members instead of three — **could be deleted today and nothing in the
-suite would go red.** The same is true of the tax-policy, fiscal-decision, tax-components and
-discount-recap gates. `Checkout::try_complete` exists for exactly this shape, and
-`a_completed_sale_requires_an_open_matching_shift` is the pattern to copy: withhold one
-precondition, assert the exact refusal message. It needs no issue ceremony, no board dance and no
-frontier arithmetic, and §2d is the argument for why an untested guard on a migration nobody can
-edit is the worst kind to leave.
-
-**The next microstep proper is `1.11.6` — global scan capture.** Two new files under
+**The recommendation is now `1.11.6` — global scan capture**, and it is a microstep proper, so the
+issue-and-board loop below applies to it in a way it did not to #185. Two new files under
 `apps/terminal/src/lib/`, two named tests, and `1.11.0`'s harness was built for it: its doc comment
 names the `< 30 ms` heuristic and carries the `jest.advanceTimersByTime` bridge specifically so the
 burst timing is deterministic. One thing checked so you need not: the spec says scans must route
@@ -1085,7 +1153,7 @@ Established by introspection and corrected in #122; do not re-litigate.
 
 ### `development → staging`
 
-`staging` is **26 behind** (re-measured 15 September), and the gap now carries five microsteps —
+`staging` is **30 behind** (re-measured 15 September, after #183–#185), and the gap now carries five microsteps —
 `1.11.3`, `1.9.1`, `1.1.9`, `1.2.6` — migration `0005`, a security bump and a code
 fix (#164) rather than documentation alone. Open a promotion when you want the cross-platform matrix
 over the current tip:
@@ -1475,6 +1543,15 @@ nine dimensions, twenty agents, 1,107 tool calls, each dimension followed by an 
 whose default verdict was REFUTED. It produced this document, and **69 of its load-bearing claims
 were refuted or corrected on re-measurement.**
 
+An eleventh, on 15 September, scoped #179's five negative tests — twelve agents, 452 tool calls,
+zero deaths. It taught one new thing and confirmed the oldest: **a scoping workflow launched before
+you start editing will read your edits mid-run.** Three of its refuters reported "nothing in the
+repository asserts this message today" against `HEAD` and then refuted *themselves* against the
+working tree, because by then the tests existed. Name the commit that is the subject, or scope
+before you write. Its genuinely new finding was one line of SQL semantics — `NULL IS NOT <blob>` is
+true, so a NULL policy trips two arms of the tax-policy gate at once — which is exactly the class a
+wide read finds and a single command does not.
+
 What is established:
 
 - **A workflow earns its keep on a wide, read-heavy, parallel question with no single command as
@@ -1507,6 +1584,14 @@ documentation surface **no gate reads** (`status-page.html`'s prose — see §14
 
 ## 14 · Loose ends
 
+- **#184 is an empty commit on `development`, and the cause is worth more than the commit.** The
+  handoff branch had already merged as **#183**; a second session compared `HEAD` against a
+  **stale local `origin/development`**, saw one commit ahead, and opened and merged #184 for content
+  that was already in. `git diff 70934b3 b4776cb` is empty, so nothing regressed — but `development`
+  is append-only, so the redundant commit and its duplicate title are permanent. §0's
+  `git fetch --all --prune` is the first line of this document for exactly this reason, and skipping
+  it costs a commit that cannot be taken back. **`git rev-list --left-right --count` against an
+  unfetched remote ref answers a question about yesterday.**
 - **CLOSED by #163 — `status-page.html` is still the document no gate reads.** The stale
   *"`main` is deliberately unprotected"* sentence is fixed, and the sweep that fixed it turned up a
   **second** error on the same page that nobody had ever looked for: *"The two source plans under
@@ -1531,7 +1616,7 @@ documentation surface **no gate reads** (`status-page.html`'s prose — see §14
   `refs/codex/turn-diffs/checkpoints/*` refs. `git branch -d` refuses them because squash merges
   break ancestry; `git branch -D` is safe for all fifteen — each is merged content on
   `development`.
-- **Your local `staging` is 51 commits behind `origin/staging` and 63 behind `development`** — it
+- **Your local `staging` is 51 commits behind `origin/staging` and 77 behind `development`** — it
   still sits at #91's promotion merge (`f2edbb6`), four promotions behind (#106, #108, #130, #148).
   `just promote-staging` without fetching first works from the wrong base.
 - **One stash remains:** `stash@{0}: On fix/float-arithmetic-forbid: codex scanner approach,
