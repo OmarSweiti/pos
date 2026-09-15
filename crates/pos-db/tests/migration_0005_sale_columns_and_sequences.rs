@@ -14,10 +14,27 @@
 //!   business date;
 //! * every tender of a completed sale must carry an initial status event, so
 //!   settlement is an appended fact and never an `UPDATE`;
+//! * the five remaining gates in front of `status = 'completed'` — the policy
+//!   snapshot, the evidenced fiscal decision, the per-line tax components, the
+//!   discount recap and the durable outputs — each refuse a completion that
+//!   withholds exactly one of their preconditions;
 //! * the completed-sale immutability guards `0002` and `0003` built are still
 //!   standing after fourteen `ALTER TABLE`s and sixty new triggers;
 //! * and the `exchange` tender seed carries the `is_internal` contract that
 //!   keeps an exchange out of expected drawer cash.
+//!
+//! `1.9.1` shipped negative tests for two of the seven completion gates. The
+//! other five were unproved until issue #179: each could have been dropped by a
+//! later migration and the whole suite would have stayed green. Because `0005`
+//! is committed and migrations are forward-only, a gate that is never exercised
+//! is a gate nobody would discover had stopped working.
+//!
+//! Every one of the five is written the same way, and the shape is the point:
+//! take the fixture that completes, withhold exactly one precondition, and
+//! assert the **exact** refusal message with `assert_eq!`. Where a withholding
+//! could not be isolated — because a second gate refuses the same statement and
+//! SQLite does not document which trigger fires first — the test says so in a
+//! comment instead of asserting something ambiguous.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use rusqlite::{Connection, params};
@@ -26,7 +43,7 @@ use uuid::Uuid;
 #[path = "common/registered_chain.rs"]
 mod registered_chain;
 
-use registered_chain::{AT, Checkout, RegisteredChain};
+use registered_chain::{AT, Checkout, Member, RegisteredChain};
 
 const KEY: &str = "test-key";
 const BUSINESS_DATE: &str = "2026-08-25";
@@ -72,6 +89,23 @@ fn parked_sale(register: &Register) -> Checkout {
 }
 
 fn parked_sale_in_slot(register: &Register, slot: u8, base: u128, receipt: &str) -> Checkout {
+    parked_sale_omitting(register, slot, base, receipt, None)
+}
+
+/// The same, with one entity left out of the delivery manifest.
+///
+/// The envelope stays internally complete — `commit_size` is taken from the
+/// members actually written, so `sync_commit_ready` still holds and the facts
+/// that refuse to exist without a ready commit can still be written against it.
+/// What is missing is a fact of the *sale* that the manifest should have named,
+/// which is the only thing `sale_commit_base_complete` is looking for.
+fn parked_sale_omitting(
+    register: &Register,
+    slot: u8,
+    base: u128,
+    receipt: &str,
+    omit: Option<&str>,
+) -> Checkout {
     let (sale, line, tender, product) = (id(base), id(base + 1), id(base + 2), id(base + 3));
     register
         .conn
@@ -116,13 +150,30 @@ fn parked_sale_in_slot(register: &Register, slot: u8, base: u128, receipt: &str)
 
     let checkout = Checkout::new(slot, &sale, &id(0x01), &[&line], &[&tender]);
     checkout.attach(&register.conn, &register.chain);
+    let members: Vec<Member> = checkout
+        .members()
+        .into_iter()
+        .filter(|member| Some(member.entity()) != omit)
+        .collect();
     register
         .chain
-        .write_envelope(&register.conn, &checkout.commit, &checkout.members());
+        .write_envelope(&register.conn, &checkout.commit, &members);
     checkout.write_facts_before_envelope(&register.conn);
     checkout.write_audit(&register.conn, &register.chain);
     checkout.write_tender_events(&register.conn);
     checkout
+}
+
+/// The one tax component of a single-line checkout.
+///
+/// `clippy::indexing_slicing` is denied workspace-wide, and rightly: a bare
+/// `[0]` in a test panics with a message about a slice rather than about the
+/// fixture that failed to write the row.
+fn only_line_tax(checkout: &Checkout) -> &[u8] {
+    checkout
+        .line_taxes
+        .first()
+        .expect("every checkout in this suite carries exactly one line")
 }
 
 #[test]
@@ -304,6 +355,523 @@ fn every_completed_tender_has_an_initial_status_event() {
         )
         .expect_err("settlement history is append-only");
     assert_eq!(message(refused), "tender settlement is append-only");
+}
+
+#[test]
+fn a_completed_sale_snapshots_its_store_current_policy() {
+    let r = register("policy-snapshot.db");
+    let checkout = parked_sale(&r);
+
+    // A sale that names no policy cannot explain its own arithmetic. The
+    // rounding rule and the cash-rounding step it was computed under are
+    // recoverable from nothing else: `tax_computation_policy` is immutable and
+    // versioned precisely so a sale can point at the version it used.
+    r.conn
+        .execute(
+            "UPDATE sale SET tax_computation_policy_id = NULL WHERE id = ?1",
+            [&checkout.sale],
+        )
+        .expect("a parked sale is work in progress");
+    let refused = checkout
+        .try_complete(&r.conn)
+        .expect_err("a completed sale with no policy cannot explain its own rounding");
+    assert_eq!(
+        message(refused),
+        "a sale snapshots the current policy; a refund preserves the original policy"
+    );
+
+    // One honest limit on what that assertion proves. For a `doc_type = 'sale'`
+    // a NULL policy trips *two* arms of this gate at once — the explicit
+    // `IS NULL` arm and the store-comparison arm, because SQLite's
+    // `NULL IS NOT <blob>` is true. So the refusal above proves the gate
+    // refuses a policy-less completion; it does not prove the `IS NULL` arm
+    // carries its own weight. Isolating that arm needs a `doc_type = 'refund'`
+    // whose referenced sale is also policy-less, since only then is the
+    // store-comparison arm silent — and no sale document can reach it.
+    //
+    // Presence is not what the gate checks. A second policy — real, approved,
+    // referentially valid — is still not the one this sale's store computes
+    // under, and the gate compares identity with `store.tax_computation_policy_id`.
+    // That is what makes the column evidence rather than decoration.
+    let other_policy = id(0x70);
+    r.conn
+        .execute(
+            "INSERT INTO tax_computation_policy
+               (id, jurisdiction, policy_version, rounding_rule, cash_round_step_minor,
+                cash_round_direction, cash_round_tax_treatment, source_ref, content_hash,
+                approved_at)
+             VALUES (?1, 'JO', 'fixture-v2', 'half_away_from_zero', 5, 'nearest', 'none',
+                     'fixture', ?2, ?3)",
+            params![&other_policy, vec![0x0Bu8; 32], AT],
+        )
+        .unwrap();
+    r.conn
+        .execute(
+            "UPDATE sale SET tax_computation_policy_id = ?1 WHERE id = ?2",
+            params![&other_policy, &checkout.sale],
+        )
+        .unwrap();
+    let refused = checkout
+        .try_complete(&r.conn)
+        .expect_err("an approved policy that is not the store's is still the wrong snapshot");
+    assert_eq!(
+        message(refused),
+        "a sale snapshots the current policy; a refund preserves the original policy"
+    );
+
+    // Restored to the store's own, the sale completes — so both refusals were
+    // this gate, and not some other precondition the withholding disturbed.
+    r.conn
+        .execute(
+            "UPDATE sale SET tax_computation_policy_id = ?1 WHERE id = ?2",
+            params![&r.chain.tax_policy, &checkout.sale],
+        )
+        .unwrap();
+    checkout.complete(&r.conn);
+}
+
+#[test]
+fn a_live_sale_requires_an_evidenced_fiscal_decision() {
+    let r = register("fiscal-decision.db");
+    let checkout = parked_sale(&r);
+
+    // The obvious withholding is not available, and finding that out is half
+    // the value of this test. `store_fiscal_evidence_consistent_update` (0003)
+    // already refuses to let a store leave either evidenced shape by edit, so
+    // an assertion written that way would be about 0003's guard and would stay
+    // green with 0005's removed.
+    let blocked = r
+        .conn
+        .execute(
+            "UPDATE store SET fiscal_profile = 'jordan_jofotara' WHERE id = ?1",
+            [&r.chain.store],
+        )
+        .expect_err("an exempt store may not claim the JoFotara profile");
+    assert_eq!(
+        message(blocked),
+        "fiscal enablement or exemption must match merchant-specific evidence"
+    );
+
+    // What 0003 does allow is the third `fiscal_obligation` value, and it is
+    // the one a real merchant sits in: registered, awaiting the ISTD paperwork,
+    // fiscal output disabled. That store is internally consistent and satisfies
+    // neither branch of 0005's gate — which is the point. A sale may be taken
+    // on it; a sale may not be *filed* from it.
+    r.conn
+        .execute(
+            "UPDATE store
+                SET fiscal_obligation = 'pending_evidence',
+                    fiscal_obligation_evidence_ref = NULL
+              WHERE id = ?1",
+            [&r.chain.store],
+        )
+        .expect("`pending_evidence` with a disabled profile is a consistent store");
+    let refused = checkout
+        .try_complete(&r.conn)
+        .expect_err("a store still awaiting its evidence cannot file a live sale");
+    assert_eq!(
+        message(refused),
+        "a live sale requires evidenced fiscal obligation or exemption"
+    );
+
+    // The gate is keyed on `is_training`, and a training sale is not a fiscal
+    // document. The same sale, on the same unevidenced store, completes.
+    //
+    // `is_training` carries no `CHECK (… IN (0,1))` — issue #179 — so a value
+    // of `2` would disable this gate as effectively as `1` does. That hole is
+    // closed by a later migration, not asserted here: a test of it would have
+    // to be deleted the day it is fixed.
+    r.conn
+        .execute(
+            "UPDATE sale SET is_training = 1 WHERE id = ?1",
+            [&checkout.sale],
+        )
+        .unwrap();
+    checkout.complete(&r.conn);
+
+    // And the refusal really was the store's fiscal state: restore it, and a
+    // second live sale on the same register completes untouched.
+    r.conn
+        .execute(
+            "UPDATE store
+                SET fiscal_obligation = 'exempt',
+                    fiscal_obligation_evidence_ref = 'fixture-evidence'
+              WHERE id = ?1",
+            [&r.chain.store],
+        )
+        .unwrap();
+    let live = parked_sale_in_slot(&r, 2, 0x71, "000124");
+    live.complete(&r.conn);
+}
+
+#[test]
+fn completed_lines_require_exactly_their_applicable_tax_components() {
+    let r = register("tax-components.db");
+
+    // 1 · No component at all. The I-4 guards on tax detail bind a *completed*
+    //     sale, so deleting the row while the sale is parked is allowed — and
+    //     leaves the line with no snapshot of what it was taxed at.
+    let bare = parked_sale(&r);
+    r.conn
+        .execute(
+            "DELETE FROM sale_line_tax WHERE id = ?1",
+            [only_line_tax(&bare)],
+        )
+        .expect("tax detail is immutable once completed; this sale is parked");
+    let refused = bare
+        .try_complete(&r.conn)
+        .expect_err("a completed line with no tax component cannot reproduce its own total");
+    assert_eq!(
+        message(refused),
+        "completed lines require exactly the applicable tax component snapshots"
+    );
+
+    // 2 · A component that no longer matches the rate it claims to snapshot.
+    //     The row is still there and still in the manifest, so the only gate
+    //     with anything to say is this one.
+    let drifted = parked_sale_in_slot(&r, 2, 0x80, "000124");
+    r.conn
+        .execute(
+            "UPDATE sale_line_tax SET rate_ppm = 100000 WHERE id = ?1",
+            [only_line_tax(&drifted)],
+        )
+        .unwrap();
+    let refused = drifted
+        .try_complete(&r.conn)
+        .expect_err("10% is not the rate the store's approved pack applies to this category");
+    assert_eq!(
+        message(refused),
+        "completed lines require exactly the applicable tax component snapshots"
+    );
+
+    // Restored to the pack's rate, it completes: the drift was the only thing
+    // wrong with this sale. Case 1's deletion gets the same treatment in
+    // `every_completion_gate_is_load_bearing` rather than here, because a
+    // deleted component cannot be put back without re-stating the fixture's own
+    // INSERT, and a fixture restated in a test is a fixture that can drift.
+    //
+    // The third arm of this gate — an *extra* component with no rate behind it
+    // — is deliberately not asserted here. An unexpected `sale_line_tax` row is
+    // also a fact the delivery manifest does not name, so
+    // `sale_completed_requires_durable_outputs_update` refuses the same
+    // statement, and SQLite does not document which of two eligible triggers
+    // fires first. An ambiguous assertion is the failure mode this whole test
+    // exists to avoid.
+    r.conn
+        .execute(
+            "UPDATE sale_line_tax SET rate_ppm = 160000 WHERE id = ?1",
+            [only_line_tax(&drifted)],
+        )
+        .unwrap();
+    drifted.complete(&r.conn);
+}
+
+#[test]
+fn a_completed_sale_recaps_exactly_its_line_allowances() {
+    let r = register("discount-recap.db");
+    let checkout = parked_sale(&r);
+
+    // A document-level discount with no line allowance behind it is a number
+    // nothing explains: the receipt would show a deduction the lines do not
+    // account for, and a filing built from the detail would disagree with the
+    // document it came from.
+    r.conn
+        .execute(
+            "UPDATE sale SET discount_minor = 500 WHERE id = ?1",
+            [&checkout.sale],
+        )
+        .expect("a parked sale is work in progress");
+    let refused = checkout
+        .try_complete(&r.conn)
+        .expect_err("a recap must be the sum of the allowances it recaps");
+    assert_eq!(
+        message(refused),
+        "document discount recap must equal the sum of exact line allowances"
+    );
+
+    // The converse — allowances with no recap — is not asserted here, and the
+    // reason is structural rather than an omission. `sale_line_discount` is one
+    // of the entities `sale_commit_base_complete` requires the manifest to
+    // name, so inserting one into a sale whose envelope is already sealed trips
+    // the durable-outputs gate as well, and the refusal would no longer name
+    // this gate unambiguously. Proving that direction needs a manifest that
+    // carries the allowance from the start, which is `1.4.5`'s work.
+    r.conn
+        .execute(
+            "UPDATE sale SET discount_minor = 0 WHERE id = ?1",
+            [&checkout.sale],
+        )
+        .unwrap();
+    checkout.complete(&r.conn);
+}
+
+#[test]
+fn sale_completion_requires_a_queued_original_receipt() {
+    let r = register("durable-receipt.db");
+    let checkout = parked_sale(&r);
+
+    // A job the print worker has already claimed is not a queued job. This is
+    // the one transition `print_job_state_transition_allowed` permits without
+    // an appended attempt, so the withholding is a state the register really
+    // reaches — not a shape invented to fail.
+    r.conn
+        .execute(
+            "UPDATE print_job
+                SET state = 'printing', claimed_at = ?1, lease_owner = 'worker-1',
+                    lease_expires_at = ?1, next_attempt_at = NULL, updated_at = ?1
+              WHERE id = ?2",
+            params![AT, &checkout.print_job],
+        )
+        .expect("queued -> printing under a lease is the claim transition 0005 allows");
+    let refused = checkout
+        .try_complete(&r.conn)
+        .expect_err("a claimed job is no longer the durable promise of a receipt");
+    assert_eq!(
+        message(refused),
+        "sale completion atomically requires its original receipt job and complete sync commit"
+    );
+
+    // And with no job at all. `print_job` carries no delete guard, which is why
+    // the gate has to check for the row rather than trust that one was written.
+    r.conn
+        .execute("DELETE FROM print_job WHERE id = ?1", [&checkout.print_job])
+        .unwrap();
+    let refused = checkout
+        .try_complete(&r.conn)
+        .expect_err("an artifact with no job is a receipt nobody has promised to print");
+    assert_eq!(
+        message(refused),
+        "sale completion atomically requires its original receipt job and complete sync commit"
+    );
+
+    // Re-queued against the same original artifact, the sale completes.
+    r.conn
+        .execute(
+            "INSERT INTO print_job (id, artifact_id, state, attempts, created_at, updated_at)
+             VALUES (?1, ?2, 'queued', 0, ?3, ?3)",
+            params![&id(0x72), &checkout.artifact, AT],
+        )
+        .unwrap();
+    checkout.complete(&r.conn);
+}
+
+/// The gate that is the entire justification for `outbox.rs` carrying seven
+/// members instead of three.
+///
+/// Five of the seven can be dropped from the manifest and the facts still
+/// write, because nothing else requires them to be named; only this gate
+/// notices. The remaining two cannot be dropped at all — `audit_log` and
+/// `tender_status_event` each refuse their own insert unless they are already a
+/// member of a ready commit (`audit_log_has_ready_commit` in 0004,
+/// `tender_status_event_is_next` in 0005), so a manifest missing either never
+/// gets as far as a completion to refuse. That asymmetry is why this test
+/// iterates the five rather than all seven.
+#[test]
+fn sale_completion_requires_a_manifest_naming_every_fact() {
+    let r = register("durable-manifest.db");
+
+    for (slot, base, receipt, omitted) in [
+        (1u8, 0x90u128, "000201", "sale"),
+        (2, 0xA0, "000202", "sale_line"),
+        (3, 0xB0, "000203", "sale_tender"),
+        (4, 0xC0, "000204", "sale_line_tax"),
+        (5, 0xD0, "000205", "receipt_artifact"),
+    ] {
+        let checkout = parked_sale_omitting(&r, slot, base, receipt, Some(omitted));
+
+        // The envelope is internally complete — `commit_size` matches the rows
+        // written, so `sync_commit_ready` holds and every fact that needs a
+        // ready commit was written against it. What is missing is a fact of the
+        // sale the manifest should have named.
+        let size: i64 = r
+            .conn
+            .query_row(
+                "SELECT commit_size FROM sync_commit WHERE id = ?1",
+                [&checkout.commit],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(size, 6, "the envelope is one member short, and consistent");
+
+        let refused = checkout
+            .try_complete(&r.conn)
+            .expect_err("a sale whose manifest omits one of its own facts cannot complete");
+        assert_eq!(
+            message(refused),
+            "sale completion atomically requires its original receipt job and complete sync commit",
+            "omitting `{omitted}` from the manifest must refuse the completion"
+        );
+    }
+
+    // The seven-member manifest completes. Delete a member from `outbox.rs` and
+    // every assertion above stops being a tautology and starts being red.
+    let whole = parked_sale_in_slot(&r, 6, 0xE0, "000206");
+    let size: i64 = r
+        .conn
+        .query_row(
+            "SELECT commit_size FROM sync_commit WHERE id = ?1",
+            [&whole.commit],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(size, 7, "sale, line, tender, tax, event, receipt, audit");
+    whole.complete(&r.conn);
+}
+
+/// Each of the five gates, proved load-bearing by taking it away.
+///
+/// A negative test that passes tells you the statement was refused. It does not
+/// tell you *which* object refused it. This repository has already shipped three
+/// assertions that were refused by a foreign key and by a sibling trigger rather
+/// than by the guard they named, and all three stayed green with that guard
+/// removed (#180). The only thing that separates the two cases is removing the
+/// guard and watching the refusal disappear.
+///
+/// So each gate is exercised twice against the same withheld precondition: once
+/// with the trigger in place, where the refusal must carry that trigger's own
+/// message, and once with it dropped, where the identical `UPDATE` must be
+/// accepted. If any other object had a view on the statement, the second half
+/// would still fail.
+///
+/// **One half at a time.** Only the `_update` trigger is dropped, never its
+/// `_insert` sibling. #178's redaction check removed both halves of a two-part
+/// guard at once, and the live half masked the dead one — the same mistake here
+/// would let one gate stand in for another.
+///
+/// `DROP TRIGGER` is an error on a name that is not there, so this also fails
+/// the day a later migration removes one of these gates — which is the whole of
+/// issue #179's complaint about the durable-outputs gate: it could have been
+/// dropped and nothing would have gone red.
+#[test]
+fn every_completion_gate_is_load_bearing() {
+    fn withhold_the_policy(r: &Register, c: &Checkout) {
+        r.conn
+            .execute(
+                "UPDATE sale SET tax_computation_policy_id = NULL WHERE id = ?1",
+                [&c.sale],
+            )
+            .unwrap();
+    }
+    fn withhold_the_fiscal_decision(r: &Register, c: &Checkout) {
+        let _ = c;
+        r.conn
+            .execute(
+                "UPDATE store
+                    SET fiscal_obligation = 'pending_evidence',
+                        fiscal_obligation_evidence_ref = NULL
+                  WHERE id = ?1",
+                [&r.chain.store],
+            )
+            .unwrap();
+    }
+    fn withhold_the_tax_components(r: &Register, c: &Checkout) {
+        r.conn
+            .execute(
+                "DELETE FROM sale_line_tax WHERE id = ?1",
+                [only_line_tax(c)],
+            )
+            .unwrap();
+    }
+    fn withhold_the_recap(r: &Register, c: &Checkout) {
+        r.conn
+            .execute(
+                "UPDATE sale SET discount_minor = 500 WHERE id = ?1",
+                [&c.sale],
+            )
+            .unwrap();
+    }
+    fn withhold_the_queued_receipt(r: &Register, c: &Checkout) {
+        r.conn
+            .execute(
+                "UPDATE print_job
+                    SET state = 'printing', claimed_at = ?1, lease_owner = 'worker-1',
+                        lease_expires_at = ?1, next_attempt_at = NULL, updated_at = ?1
+                  WHERE id = ?2",
+                params![AT, &c.print_job],
+            )
+            .unwrap();
+    }
+
+    for (index, (trigger, refusal, withhold)) in [
+        (
+            "sale_completed_requires_tax_policy_update",
+            "a sale snapshots the current policy; a refund preserves the original policy",
+            withhold_the_policy as fn(&Register, &Checkout),
+        ),
+        (
+            "sale_completed_requires_fiscal_decision_update",
+            "a live sale requires evidenced fiscal obligation or exemption",
+            withhold_the_fiscal_decision,
+        ),
+        (
+            "sale_completed_requires_tax_components_update",
+            "completed lines require exactly the applicable tax component snapshots",
+            withhold_the_tax_components,
+        ),
+        (
+            "sale_completed_discount_recap_update",
+            "document discount recap must equal the sum of exact line allowances",
+            withhold_the_recap,
+        ),
+        (
+            "sale_completed_requires_durable_outputs_update",
+            "sale completion atomically requires its original receipt job and complete sync commit",
+            withhold_the_queued_receipt,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let r = register(&format!("load-bearing-{index}.db"));
+        let checkout = parked_sale(&r);
+        withhold(&r, &checkout);
+
+        let Err(refused) = checkout.try_complete(&r.conn) else {
+            panic!("the withholding for `{trigger}` must be refused while the gate stands")
+        };
+        assert_eq!(
+            message(refused),
+            refusal,
+            "`{trigger}` must be the object that refuses this completion"
+        );
+
+        // The name is a literal from the table above, never a value read back
+        // out of the database, so there is nothing here for a quoting mistake
+        // to reach. SQLite does not parameterise a schema object's name.
+        r.conn
+            .execute_batch(&format!("DROP TRIGGER {trigger};"))
+            .unwrap_or_else(|e| panic!("`{trigger}` must exist to be the guard under test: {e}"));
+
+        let rows = checkout.try_complete(&r.conn).unwrap_or_else(|e| {
+            panic!(
+                "with `{trigger}` dropped the same UPDATE must be accepted, so that the \
+                 refusal above was this gate and not another: {e}"
+            )
+        });
+        assert_eq!(rows, 1, "the completion lands once `{trigger}` is gone");
+    }
+
+    // The durable-outputs gate has a second half, and it is withheld at
+    // construction rather than afterwards: a member cannot be taken out of a
+    // sealed envelope without breaking `sync_commit_ready` for every fact that
+    // checked it on the way in. So the manifest half gets its own round of the
+    // same proof, against the same trigger.
+    let r = register("load-bearing-manifest.db");
+    let checkout = parked_sale_omitting(&r, 1, 0x10, "000123", Some("receipt_artifact"));
+    let Err(refused) = checkout.try_complete(&r.conn) else {
+        panic!("a manifest that omits the receipt must be refused while the gate stands")
+    };
+    assert_eq!(
+        message(refused),
+        "sale completion atomically requires its original receipt job and complete sync commit"
+    );
+    r.conn
+        .execute_batch("DROP TRIGGER sale_completed_requires_durable_outputs_update;")
+        .unwrap();
+    let rows = checkout
+        .try_complete(&r.conn)
+        .expect("the incomplete manifest was refused by this gate and by nothing else");
+    assert_eq!(rows, 1, "the completion lands once the gate is gone");
 }
 
 #[test]
