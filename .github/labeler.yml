@@ -41,6 +41,13 @@
   - changed-files:
       - any-glob-to-any-file:
           - "justfile"
+          # Shared test scaffolding, not a crate any one area owns: every crate
+          # that uses it does so through `[dev-dependencies]`, and nothing it
+          # contains ships to a register. Matched by no other rule, so without
+          # this line a pull request whose whole subject is the property-test
+          # harness arrives with no `area:` label at all — which is how the
+          # microstep that created it (1.1.0) landed.
+          - "crates/pos-test-support/**"
           - "scripts/**"
           - ".github/**"
           - ".githooks/**"
