@@ -685,7 +685,7 @@ mod outbox {
              which member disagreed and how big it was: {printed}"
         );
         assert!(
-            printed.contains("entity"),
+            printed.contains(r#"entity: "sale""#),
             "redaction must not swallow the rest of the value: {printed}"
         );
 
@@ -710,8 +710,15 @@ mod outbox {
             .unwrap();
         let printed = format!("{manifest:?}");
         for entry in &manifest {
+            // The exact rendering a derived `Debug` would have emitted, built
+            // from the value itself. Searching for `entry.payload` raw cannot
+            // fail: `Debug` for a `String` escapes the quotes a canonical
+            // payload is full of, so the needle never appears in the haystack
+            // and the assertion passes with the redaction removed. That is what
+            // this half of the test did until it was checked by removing it.
+            let leaked = format!("{:?}", entry.payload);
             assert!(
-                !printed.contains(&entry.payload),
+                !printed.contains(&leaked),
                 "ManifestEntry printed a canonical payload verbatim"
             );
         }

@@ -51,9 +51,13 @@ pub struct StoredClock {
 ///
 /// `.claude/rules/security.md` redacts every field name ending in `_token`, at
 /// every nesting depth, and names "test fixtures that print" among the places
-/// it applies — which is precisely what a derived `Debug` is. Its presence and
-/// length are shown because that is what a reader debugging boot continuity
-/// actually needs; the bytes are what they must not have.
+/// it applies — which is precisely what a derived `Debug` is.
+///
+/// **Presence only, not length.** Presence is what a reader debugging boot
+/// continuity needs — did this register have an anchor or not — and a length is
+/// a property of the token itself. `redacted_payload` in `repo/outbox.rs` does
+/// disclose a length, and the difference is deliberate: a manifest mismatch is
+/// diagnosed by how big the payload was, a boot-continuity failure is not.
 impl core::fmt::Debug for StoredClock {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("StoredClock")
@@ -174,22 +178,28 @@ struct RawClockRow {
 
 impl RawClockRow {
     fn into_stored(self) -> Result<StoredClock, DbError> {
-        let parse = |value: Option<String>| -> Result<Option<Timestamp>, DbError> {
+        let parse = |column: &'static str,
+                     value: Option<String>|
+         -> Result<Option<Timestamp>, DbError> {
             value
-                .map(|text| Timestamp::parse_iso8601(&text).map_err(invalid_stored))
+                .map(|text| {
+                    Timestamp::parse_iso8601(&text)
+                        .map_err(|_| invalid_stored(format!("{column} is not an ISO-8601 instant")))
+                })
                 .transpose()
         };
 
         Ok(StoredClock {
             state: ClockState {
-                last_trusted_at: parse(self.last_trusted_at)?,
-                device_at_trust: parse(self.device_at_trust)?,
+                last_trusted_at: parse("last_trusted_at", self.last_trusted_at)?,
+                device_at_trust: parse("device_at_trust", self.device_at_trust)?,
                 monotonic_since_trust_ms: self.monotonic_since_trust_ms,
-                high_water: Timestamp::parse_iso8601(&self.high_water).map_err(invalid_stored)?,
+                high_water: Timestamp::parse_iso8601(&self.high_water)
+                    .map_err(|_| invalid_stored("high_water is not an ISO-8601 instant"))?,
                 anomaly: decode_anomaly(
                     self.anomaly_kind.as_deref(),
                     self.anomaly_by_ms,
-                    parse(self.anomaly_at)?,
+                    parse("anomaly_at", self.anomaly_at)?,
                 )?,
             },
             boot_token: self.boot_token,
@@ -263,12 +273,21 @@ fn decode_anomaly(
 
 /// A stored row that cannot be read back as a domain value.
 ///
-/// The message names the column and the shape it violated. It quotes exactly
-/// one stored value — an unrecognised `anomaly_kind` — because the discriminant
-/// is the whole diagnosis and it is a schema enum rather than merchant data. It
-/// never carries a timestamp, and never `boot_token`:
-/// `.claude/rules/security.md` redacts every field ending in `_token`, and an
-/// error string is one of the surfaces it names.
+/// The message names the column and the shape it violated, and carries a stored
+/// value in exactly one case: an unrecognised `anomaly_kind`, because the
+/// discriminant is the whole diagnosis and it is a schema enum rather than
+/// merchant data.
+///
+/// **It carried more than that until it was audited.** The four timestamp
+/// columns were parsed through `Timestamp::parse_iso8601`, whose `TimeError`
+/// is `#[error("cannot parse {0:?} as an ISO-8601 UTC timestamp")]` — so the
+/// column's raw text was echoed verbatim, and all four collapsed into one
+/// message that named none of them. Neither was what the comment above them
+/// claimed. They are named and not quoted now.
+///
+/// It never carries `boot_token`: `.claude/rules/security.md` redacts every
+/// field ending in `_token`, and an error string is one of the surfaces it
+/// names.
 fn invalid_stored(error: impl core::fmt::Display) -> DbError {
     DbError::ClockStateInvalid {
         reason: error.to_string(),
