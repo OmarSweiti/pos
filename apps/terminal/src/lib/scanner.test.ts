@@ -320,6 +320,21 @@ describe("the scan heuristic", () => {
     expect(candidate.chars).toEqual(["6", "2", "9"]);
   });
 
+  /** A burst nobody terminated must not be committed by an unrelated Enter later. */
+  it("does not let a later bare Enter commit an abandoned burst", () => {
+    const { steps } = feedAll([
+      ["6", 0],
+      ["2", 2],
+      ["Enter", 5000],
+    ]);
+
+    expect(steps.map((step) => step.kind)).toEqual([
+      "typing",
+      "absorbed",
+      "typing",
+    ]);
+  });
+
   /** Two scans in a row: the second starts clean rather than trailing the first. */
   it("starts a fresh candidate after a committed scan", () => {
     const { steps } = feedAll([
