@@ -15,9 +15,13 @@
  * applies to clocks, and it is what makes the boundary testable without
  * guessing at a scheduler.
  *
- * **The routing.** `ref/ui-spec.md:140` requires scans to "route correctly even
- * when focus is in the search box", and calls that the detail where most
- * implementations break. It breaks for a reason that no amount of care in the
+ * **The routing.** `ref/ui-spec.md:140` and `ref/hardware-and-receipts.md:292`
+ * both require scans to "route correctly even when focus is in the search box",
+ * and call it the detail where most implementations break. The hardware
+ * document is the one that says what correct means: *"A cashier types two
+ * letters, then scans; the scan must become a line, **not extra text in the
+ * search field**."* So retracting what leaked is the requirement, not a
+ * refinement of it. It breaks for a reason that no amount of care in the
  * heuristic removes: a burst cannot be *recognised* until a second character
  * arrives inside the threshold, and by then the first character has already
  * been delivered to whatever had focus. Measured against this repository's own
@@ -109,16 +113,41 @@ export function feedScanKey(
   at: number,
 ): { readonly candidate: ScanCandidate; readonly step: ScanStep } {
   if (key === "Enter") {
-    const code = candidate.chars.join("");
-    if (candidate.chars.length >= SCAN_MIN_LENGTH) {
+    // The terminator has to belong to the burst it terminates.
+    // `ref/hardware-and-receipts.md:290` defines a scan as "a burst with < 30 ms
+    // between characters, **terminated by Enter**" — one transmission, Enter
+    // included, which is how a wedge scanner sends it.
+    //
+    // Without this window an abandoned burst waits around to be committed by
+    // the next unrelated Enter the cashier presses. A misread that never sent
+    // its terminator would then fire as a phantom scan minutes later, against
+    // whatever is on screen by then. Measured before it was fixed: two
+    // characters 2 ms apart and an Enter five seconds later produced a scan.
+    const sinceLastCharacter =
+      candidate.lastAt === null
+        ? Number.POSITIVE_INFINITY
+        : at - candidate.lastAt;
+    if (
+      candidate.chars.length >= SCAN_MIN_LENGTH &&
+      sinceLastCharacter < SCAN_MAX_GAP_MS
+    ) {
       return {
         candidate: NO_SCAN_CANDIDATE,
-        step: { kind: "scanned", code, leaked: candidate.passed },
+        step: {
+          kind: "scanned",
+          code: candidate.chars.join(""),
+          leaked: candidate.passed,
+        },
       };
     }
-    // Enter with nothing behind it is the cashier confirming something. It is
-    // not ours to swallow — `ref/ui-spec.md:245` maps Enter to "confirm /
+    // Enter with nothing live behind it is the cashier confirming something. It
+    // is not ours to swallow — `ref/ui-spec.md:245` maps Enter to "confirm /
     // commit scan", and with no scan to commit only the first half applies.
+    //
+    // The characters of an abandoned burst are dropped rather than replayed.
+    // Half a barcode in the search box is worse than none, and the one
+    // character that got through before the burst was recognised is left where
+    // it is — the cashier saw it arrive.
     return { candidate: NO_SCAN_CANDIDATE, step: { kind: "typing" } };
   }
 
