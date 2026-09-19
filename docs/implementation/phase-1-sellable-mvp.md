@@ -1247,7 +1247,7 @@ Three zones per master plan D: cart list (line menu on long-press: qty, discount
 **Done when:** `pnpm --filter terminal exec vitest run src/screens/Sale.test.tsx` exits zero with the age-restricted fixture unable to reach tender before confirmation.
 
 ### 1.11.6 — Global scan capture
-**Files:** `apps/terminal/src/lib/scanner.ts`, `apps/terminal/src/lib/scanner.test.ts` (new)
+**Files:** `apps/terminal/src/lib/scanner.ts`, `apps/terminal/src/lib/scanner.test.ts` (new) · [`README.md`](README.md) (implementation frontier) · [`ref/test-catalog.md`](ref/test-catalog.md) and [`02-development-workflow.md`](02-development-workflow.md) (both list these two tests as still owed) · this file (this microstep's `Files:` line)
 A hidden input capturing keystrokes anywhere on the sale screen, distinguishing a scan burst from typing by inter-key timing (< 30 ms between characters, terminated by Enter). **Scans must route correctly even when focus is in the search box** — that detail is where most implementations break.
 **Tests:** `scan_burst_detected_over_typing` · `scan_routes_while_search_focused` — both use fake timers from 1.11.0.
 **Done when:** `pnpm --filter terminal exec vitest run src/lib/scanner.test.ts` exits zero with fake time advancing across both the scan-burst and human-typing thresholds.
