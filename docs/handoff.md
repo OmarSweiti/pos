@@ -1,6 +1,6 @@
 # Handoff — the single current one
 
-**Reflects `development` @ `a15dff6`, 15 September 2026.**
+**Reflects `development` @ `8ae7ab0`, 19 September 2026.**
 
 There is one handoff — keep updating this file rather than adding a dated one.
 
@@ -21,13 +21,14 @@ the same afternoon and **closed group 1.1**. #177 then took **`1.2.6`**, the FTS
 #178 redacted a canonical payload out of two `Debug` impls.
 
 **15 September audited all of it, found four defects, and then closed the largest thing the audit
-could not fix where it stood.** Phase 1 is still **24 of 112 (~21%)** — #185 is guard-hardening on
-shipped code, not a microstep. §2b,
-§2c and §2d are those windows; §2a keeps 13 September and §2 the 9–11 September record, where
-twenty-six pull requests changed the governance layer and no microstep advanced.
+could not fix where it stood.** That window left Phase 1 at **24 of 112 (~21%)** — #185 is
+guard-hardening on shipped code, not a microstep. **19 September moved it to 25 (~22%)** with
+`1.11.6`, the first UI microstep since 13 September; §2f is that record. §2b,
+§2c and §2d are the 14–15 September windows; §2a keeps 13 September and §2 the 9–11 September
+record, where twenty-six pull requests changed the governance layer and no microstep advanced.
 
-**`development` is green, tip included.** `just pre-push` exits 0 at `a15dff6`, all 37
-`just guards` steps pass, and `ci` run **`34948248459` is a success on the tip**, queried by SHA
+**`development` is green, tip included.** `just pre-push` exits 0 at `8ae7ab0`, all 37
+`just guards` steps pass, and `ci` run **`35458831850` is a success on the tip**, queried by SHA
 rather than taken as the newest green one — `ci.yml`'s ref-scoped concurrency group cancels runs
 when merges land inside two minutes of each other, and the cancellation is invisible unless you ask
 about the tip specifically.
@@ -65,7 +66,7 @@ cd ~/My_Projects/pos
 git checkout development && git pull --ff-only
 git fetch --all --prune            # your local staging is 51 commits stale — see §14
 mise exec -- just setup
-mise exec -- just pre-push          # passes at a15dff6
+mise exec -- just pre-push          # passes at 8ae7ab0
 ```
 
 Nothing is in flight, so there is no branch to resume. `phase-1/group-9-migration-0005` merged as
@@ -81,7 +82,7 @@ with `couldn't exec process: No such file or directory`, because the whole unspl
 `cd <repo> && mise exec -- node --version` prints `v24.19.0` — and a relative script path works.
 Re-measured 13 September; the `cd` clause that stood here was false.
 
-### Verified gate baselines at `a15dff6`
+### Verified gate baselines at `8ae7ab0`
 
 Use these as the "nothing is broken" reference. Across the whole 14–15 September window **two rows
 moved**: the test count (241 → 259 → **266**, all of it Rust) and the schema chain (4 migrations /
@@ -89,18 +90,18 @@ moved**: the test count (241 → 259 → **266**, all of it Rust) and the schema
 
 **Two different measurements are mixed in this table, and the distinction matters.** The five rows
 `just pre-push` covers — `lint`, `test`, `build-web`, `guards`, `secrets` — were re-run at the tip
-above, and so was `verify-schema`, which still reads 5 migrations / 48 tables / 457 columns. The
-rest (`verify-pg`, `audit`, `bench-gate`, `check-js-licenses`) were measured at `1c1fd4f` and are
-**carried forward unre-run**, because #185 changed one test file and no schema, dependency or
-lockfile. That is a reason to expect them unchanged, not evidence that they are. Re-run the one you
-are about to depend on.
+above. The rest (`verify-schema`, `verify-pg`, `audit`, `bench-gate`, `check-js-licenses`) are
+**carried forward unre-run**: `verify-schema` last ran at `a15dff6` on 15 September and the others
+at `1c1fd4f`, and neither #185 nor #188 touched a migration, a dependency or a lockfile. That is a
+reason to expect them unchanged, not evidence that they are. Re-run the one you are about to depend
+on.
 
 | Command | Reads |
 |---|---|
 | `just pre-push` | **exit 0** — `lint test build-web guards secrets`, `justfile:368`, ~1:30 warm |
 | `just check` | exit 0 — all **seven** workspace members |
 | `just lint` | exit 0 — 2 prerequisites + 14 body steps = **16 checkers** |
-| `just test` | exit 0 — **266 tests run: 266 passed, 2 skipped**; JS **6 files / 44 tests** |
+| `just test` | exit 0 — **266 tests run: 266 passed, 2 skipped**; JS **7 files / 59 tests** |
 | `just build-web` | exit 0 — `tsc -b` + vite 8.2.2 across 5 packages |
 | `just guards` | exit 0 — **37 steps** |
 | `just verify-schema` | exit 0 — **5 migrations, 48 tables, 457 columns** |
@@ -108,7 +109,7 @@ are about to depend on.
 | `just secrets` | exit 0 — gitleaks 8.30.1, `--history` |
 | `just audit` | exit 0 — cargo-deny clean; **135 package releases, 11 reviewed expressions** |
 | `just bench-gate` | **REFUSED, exit 3** — no reference register. Correct, not broken |
-| `pnpm --filter terminal exec vitest run` | **4 files, 31 tests**, vitest **5.0.0** |
+| `pnpm --filter terminal exec vitest run` | **5 files, 46 tests**, vitest **5.0.0** |
 | `pnpm --filter backoffice exec vitest run` | 1 file, **3 tests** |
 | `pnpm --filter money exec vitest run` | 1 file, 10 tests |
 | `check-implementation-frontier.py` | phase 1: **112**, 2: 61, 3: 45, 4: 42, 5: 36 |
@@ -157,27 +158,29 @@ vitest 5.0.0, gitleaks 8.30.1, Docker Engine 29.5.2.
 
 | | |
 |---|---|
-| `development` | **`a15dff6`** — `just pre-push` exits 0 and `ci` run **`34948248459` is green on the tip**. Carries `1.9.1`, migration `0005`, `1.1.9`'s `ClockRepository`, `1.2.6`, the audit's fixes and #185's seven tests |
+| `development` | **`8ae7ab0`** — `just pre-push` exits 0 and `ci` run **`35458831850` is a success on the tip**, queried by SHA. Carries `1.9.1`, migration `0005`, `1.1.9`'s `ClockRepository`, `1.2.6`, the audit's fixes, #185's seven tests, `1.11.6`'s scan capture and #189's fix to it |
 | `staging` | **`531ea04`** — **30 behind** `development`, 5 ahead (its own five promotion merges). Re-measured 15 September with `git rev-list --count`; **this row has been wrong before and §9 states it independently** — if the two disagree, run the command rather than picking one |
 | `main` | `24a0283` — **158 behind** `development`, **133 behind** `staging`, untouched since 20 August |
-| Phase 1 | **24 of 112** executable microsteps (~21%) — `1.9.1` (#170), `1.1.9` (#173) and `1.2.6` (#177) landed 14 September. **Group 1.1 is closed** |
+| Phase 1 | **25 of 112** executable microsteps (~22%) — `1.11.6` (#188) landed 19 September and moved the percentage, as §1 predicted it would. **Group 1.1 is closed** |
 | Open PRs | **0**, and **nothing is in flight**. The WIP=1 slot is free |
-| Open issues | **10** — see §3. Eight are blocked on a human; **#174 and #179 are not**. #179 is now **three-quarters open**: its item 3 closed with #185, and its other three items all need a migration. #169, #172 and #176 closed with their microsteps |
+| Open issues | **10** — see §3. Eight are blocked on a human; **#174 and #179 are not**. #179 is **three-quarters open**: its item 3 closed with #185, and its other three items all need a migration. #187 opened and closed with `1.11.6` on the same day |
 | Board #4 | the API's default listing returns **16 items — 10 `Todo`, 6 `Done`** (#119, #120, #162, #169, #172, #176). Archived items are excluded from that listing and their count is not readable through it |
 | Rulesets | **four, all active**, all four checked in under `.github/rulesets/`. They **agreed with live when last compared by hand** (11 September) — no gate diffs them, so this is a dated observation, not an invariant. See §3 |
 | Tags / releases | **zero of each.** The append-only tag ruleset has never been exercised |
 | Repository | **PUBLIC**, GitHub Free, `OmarSweiti` the sole collaborator (admin) |
 
-### Complete: 24 microsteps
+### Complete: 25 microsteps
 
 Read live from the frontier region — the block between the `<!-- frontier:begin -->` and
 `<!-- frontier:end -->` markers in `docs/implementation/README.md` — in its own order:
 
 `1.1.0` `1.1.1` `1.1.2a` `1.1.6` `1.1.3` `1.1.4` `1.1.2b` `1.1.7` `1.1.5` `1.1.8` `1.2.1` `1.2.2`
 `1.3.1` `1.8.9` `1.8.5` `1.11.2` `1.6.5` `1.6.1` `1.6.3` `1.11.0` `1.11.3` `1.9.1` `1.1.9` `1.2.6`
+`1.11.6`
 
-**When the 25th lands, the region must read `25 of 112 executable microsteps fully complete
-(~22%)`.** `round(100*25/112) == 22`, so the percentage moves again.
+**The 25th landed and the percentage moved with it, exactly as this section said it would.**
+`round(100*25/112) == 22`, so the region now reads `25 of 112 executable microsteps fully complete
+(~22%)`. **When the 26th lands it moves again** — `round(100*26/112) == 23`.
 
 **`1.2.6` was the exception and it happened as predicted.** `round(100*23/112)` and
 `round(100*24/112)` are both 21, so #177 moved the count and the prose list and left `~21%` alone.
@@ -687,6 +690,99 @@ its gate dropped at the top of its own test — and **all six went red**.
 `0008`. **That is why item 3 was the right one to take alone:** it needed no migration number at
 all, and the other three are a scheduling decision rather than a coding one.
 
+## 2f · 19 September — `1.11.6`, and a guard that hid behind its own other half
+
+**The 25th microstep.** `1.11.6` — global scan capture — is the first UI microstep since
+13 September, the first JavaScript test added since then, and the first work to enter through the
+full §4 loop from the start: issue **#187** filed with its eight fields, added to board #4, set
+`In Progress`, then built.
+
+`apps/terminal/src/lib/scanner.ts` splits a keystroke stream into scans and typing by inter-key
+timing alone — under `SCAN_MAX_GAP_MS` (30) apart is one burst, and an Enter inside the same window
+commits it — and routes the
+result whatever holds focus. The heuristic takes the time as an argument, the discipline
+`direction.ts` applies to the document root, so the boundary is testable without a scheduler.
+
+### The hard part is not the timing, and it is not fixable in the heuristic
+
+`ref/ui-spec.md:140` calls focus routing the detail where most implementations break. It breaks for
+a reason no amount of care in the heuristic removes: **a burst cannot be recognised until a second
+character arrives inside the threshold**, and by then the first has already been delivered to
+whatever had focus. Measured against `1.11.0`'s harness rather than reasoned about — a capture-phase
+listener that suppresses from the second key onward leaves exactly one character, `خبز6`, in the
+search box.
+
+So `ScanStep` carries the leak count rather than hiding it, and the commit path restores the value
+the field held before that keystroke. `scan_routes_while_search_focused` asserts both halves,
+because only the pair is "routing correctly".
+
+### The finding worth carrying: a guard masked by its own sibling
+
+Eight mutations, one per guard. **Seven were caught by exactly the test that claims to cover them.
+One was not: deleting `preventDefault` from the absorbed branch left all thirteen tests green.**
+
+`scan_routes_while_search_focused` asserts the field's *final* value, and retraction restores that
+value from a snapshot taken before the burst began — so it passes whether the absorbed characters
+were suppressed on the way in or merely undone on the way out. The two halves of the guard masked
+each other. **This is #178's shape exactly**, found in new code by the same technique that found it
+in old code, which is the argument for running the sweep every time rather than when something feels
+wrong.
+
+The fourteenth test, `never lets an absorbed character reach the field`, watches the `input` events
+instead of the end state. Undoing is not equivalent to never inserting: a field that receives all
+six characters fires six `input` events, so a controlled search box would run its query six times
+and repaint the barcode before it vanished.
+
+### Two facts established by throwaway probes, both easy to get wrong
+
+* **`delay` is a `userEvent.setup()` option, not an option to `type` or `keyboard`.** Passed to the
+  call it is silently ignored and every keystroke lands on the same timestamp — which presents as a
+  scanner that never scans, with no error anywhere. In `setup`, consecutive `keydown` events are
+  exactly `delay` ms apart on the fake clock.
+* **`KeyboardEvent.timeStamp` is driven by the faked clock** under `vi.useFakeTimers()` in this
+  configuration, so the module reads the event's own time rather than reaching for a global.
+
+### `just build-web` is the only thing that typechecks a test
+
+`tsc -b` refused `Array.prototype.at`: `tsconfig.app.json` targets **ES2020** and lists
+`lib: ["ES2020", "DOM", "DOM.Iterable"]`, and `.at` is ES2022. Fourteen tests had already passed,
+because **`vitest` transpiles without typechecking**. So a `.test.ts` can be green in its own runner
+and red in the build, and `just test` will never say so — the gate that catches it is `build-web`,
+which is why `just pre-push` runs both. The fix was to index; widening the application's target for
+a test's convenience would have been the wrong direction.
+
+### The defect the scope found after the microstep had merged
+
+**`1.11.6` shipped a real bug, and the reason it shipped is the more useful half.** An adversarial
+scope of the microstep finished after #188 had merged and found that `feedScanKey` accepted an Enter
+arriving arbitrarily long after the characters it terminated. So an abandoned burst sat in the
+candidate waiting to be committed by the next unrelated Enter the cashier pressed. Written as a
+failing test before the fix: `["6", 0], ["2", 2], ["Enter", 5000]` produced a scan. At a till that is
+a phantom line added minutes after a misread, against whatever is on screen by then. Fixed by
+requiring the terminator inside the same window as the characters.
+
+**`ref/hardware-and-receipts.md` §5 is a normative source on scanning, and `1.11.6` was written from
+`ref/ui-spec.md` alone.** Both carry the same *"route correctly even when focus is in the search
+box"* sentence, so reading one felt like reading the subject. It is not: `:290` is the definition the
+fix rests on — *"a burst with < 30 ms between characters, **terminated by Enter**"*, one
+transmission — and `:292` is the line that settles what "route correctly" means:
+
+> A cashier types two letters, then scans; the scan must become a line, **not extra text in the
+> search field**. Test `scan_routes_while_search_focused` exists for exactly this.
+
+So the retraction `1.11.6` shipped was **required** rather than a refinement chosen on the way past,
+and the test it shipped already reproduces that document's own scenario — three Arabic letters, then
+a scan. The behaviour was right; its sourcing was not, and only one of those is visible in a green
+run. **Before implementing from a `ref/` document, grep the whole `ref/` set for the subject** —
+`grep -ril 'scan' docs/implementation/ref/` returns both files in under a second.
+
+### Documentation nothing would have caught
+
+`ref/test-catalog.md:314` and `02-development-workflow.md:1710` both listed these two tests as
+"still owed". Neither claim is reconciled by any checker — `check-test-catalog.py` runs
+catalogue → runner, never the reverse — so both were corrected deliberately. Lesson 10 again: the
+document nobody's gate can read is the document that goes stale.
+
 ## 3 · The ten open issues
 
 All ten are on board #4, all `Todo`, all assigned. **Eight are blocked on a human** — one on
@@ -766,19 +862,24 @@ legacy API cannot express `allowed_merge_methods` at all). **No issue tracks thi
 ## 4 · What is next — the WIP=1 slot is FREE
 
 **Take one of these, and only one.** WIP = 1 means one microstep, not one open pull request. Every
-14–15 September candidate is spent — `1.9.1` (§2b), `1.1.9`'s database half (§2c), `1.2.6` (#177),
-and **#179's five missing negative tests, which this section recommended this morning and which
-merged as #185** (§2e).
+candidate this file has named since 14 September is spent — `1.9.1` (§2b), `1.1.9`'s database half
+(§2c), `1.2.6` (#177), #179's five missing negative tests (#185, §2e), and **`1.11.6`, which this
+section recommended on 15 September and which merged as #188** (§2f).
 
-**The recommendation is now `1.11.6` — global scan capture**, and it is a microstep proper, so the
-issue-and-board loop below applies to it in a way it did not to #185. Two new files under
-`apps/terminal/src/lib/`, two named tests, and `1.11.0`'s harness was built for it: its doc comment
-names the `< 30 ms` heuristic and carries the `jest.advanceTimersByTime` bridge specifically so the
-burst timing is deterministic. One thing checked so you need not: the spec says scans must route
-*"even when focus is in the search box"* and there is no search box — `1.11.5` is blocked because
-`CartSnapshot` does not exist. `ref/ui-spec.md:140` settles it — the capture is a hidden input that
-"listens everywhere on this screen", so it is focus-agnostic by design and a test can stand a plain
-input in for one. It would also be the **first JavaScript test added since 13 September**.
+**The recommendation is now `1.11.11` — the keyboard map** (`phase-1:1310`; this file has called
+it "keyboard reachability", which is its test's subject and not its heading). It is the cheapest
+microstep left standing, and another `src/lib/*.ts` pair. One named test, `every_action_reachable_without_a_mouse`; its `Done when` is already
+a command rather than an outcome; and `1.11.0`'s harness plus `1.11.6`'s two tests have now proved
+every piece it needs — a jsdom document, `renderWithProviders`, explicit cleanup, `user-event` under
+fake timers, and a `.ts`/`.tsx` split that is understood rather than guessed at. `ref/ui-spec.md:247`
+is its normative line: *"Barcode scans need no focus. Every action is reachable without a mouse."*
+The first half of that sentence is now true in code, which is a reason to take the second half next
+rather than later.
+
+**Two things `1.11.6` learned that this one will need.** `just build-web` is the only gate that
+typechecks a test, and `tsconfig.app.json` targets **ES2020** — so a `.tsx` test can be green under
+`vitest` and red under `tsc -b`. And `userEvent.setup({ delay })` is where the delay goes; passed to
+`type` or `keyboard` it is silently ignored. §12 carries both as traps.
 
 **If you want the bigger one instead, it is `1.2.4`'s pure half** — the gateway to group 1.4, since
 `CartLine` needs `PriceOrigin` and `DerivedWeight` and neither name appears anywhere under
@@ -1519,6 +1620,8 @@ label on the issue at all** — see §3.
 | **`pnpm install` aborts with no TTY** after lockfile merges | `CI=true mise exec -- pnpm install --frozen-lockfile` |
 | **A dependency change makes `--frozen-lockfile` fail everywhere** | Regenerate the lockfile **in the same commit**: `mise exec -- pnpm install` at the repository root |
 | A fresh worktree has **no `node_modules`** | `pnpm install --frozen-lockfile` before believing any JS gate |
+| **A `.test.ts` can be green in vitest and red in the build** | `vitest` transpiles without typechecking, so `tsc -b` under `just build-web` is the *only* thing that types a test. `tsconfig.app.json` targets **ES2020** with `lib: ["ES2020", "DOM", "DOM.Iterable"]`, so `Array.prototype.at` and anything else ES2022 runs fine and fails the build. Fourteen green tests preceded this discovery. Index instead; do not widen the app's target for a test |
+| **`userEvent`'s `delay` is a `setup()` option, not a `type`/`keyboard` option** | Passed to the call it is **silently ignored** and every keystroke lands on the same timestamp, which presents as a scanner that never scans and raises nothing. `userEvent.setup({ delay, advanceTimers: vi.advanceTimersByTime })` puts consecutive `keydown` events exactly `delay` ms apart on the fake clock — measured |
 | **Reading a repository file from inside a jsdom test** | No Node types in `src/**` under `tsc -b`, and Vite rewrites `new URL("<literal>", import.meta.url)`. Read it in `vite.config.ts` |
 | **Prose naming the forward-only SQLx revert inside backticks within a *shell* command is refused** | Known false positive; the hook's segmenter splits before `shlex` sees the quoting. Ordinary quoting is safe, and editing a file that discusses it through Edit/Write is unaffected. Deliberately not softened |
 
