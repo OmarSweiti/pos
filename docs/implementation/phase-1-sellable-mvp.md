@@ -1308,7 +1308,7 @@ Search and PLU come first. The default cashier path is a configured, capped depa
 **Done when:** `cargo nextest run -p terminal department_list_ && pnpm --filter terminal exec vitest run src/components/UnknownBarcode.test.tsx` completes a taxed department line as a cashier without leaving the sale screen.
 
 ### 1.11.11 — Keyboard map
-**Files:** `apps/terminal/src/lib/keymap.ts`, `apps/terminal/src/lib/keymap.test.ts` (new)
+**Files:** `apps/terminal/src/lib/keymap.ts`, `apps/terminal/src/lib/keymap.test.ts` (new) · [`README.md`](README.md) (implementation frontier) · [`ref/test-catalog.md`](ref/test-catalog.md) and [`02-development-workflow.md`](02-development-workflow.md) (both list this test as still owed) · this file (this microstep's `Files:` line)
 `F2` search · `F4` pay · `F6` park · `F7` resume · `F9` returns · `Del` void line · `+/−` qty · `F12` lock. Scans need no focus.
 **Tests:** `every_action_reachable_without_a_mouse`
 **Done when:** `pnpm --filter terminal exec vitest run src/lib/keymap.test.ts` exits zero after dispatching every mapped action without pointer input.
