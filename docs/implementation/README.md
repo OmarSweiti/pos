@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **27 of 112 executable microsteps fully complete (~24%)**: `1.1.0`
+Phase 1 has **28 of 112 executable microsteps fully complete (~25%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -48,9 +48,11 @@ because the alternative is a catalogue search that answers "we do not stock it" 
 timing alone, routed whatever holds focus, and the one character that physics forces into the
 search box before a burst can be recognised taken back out of it), `1.11.11` (the keyboard map —
 every action in `ref/ui-spec.md` §7 reachable without a mouse, with the keys that mean something
-inside a text box yielding to one that has focus), and `1.9.2` (the owned document counters — a
+inside a text box yielding to one that has focus), `1.9.2` (the owned document counters — a
 number spent only by a transaction that commits, and G-2's real requirement met: a gap that does
-happen is *detectable* rather than pretended impossible).
+happen is *detectable* rather than pretended impossible), and `1.7.2` (the embedded typeface — IBM
+Plex Sans Arabic in two faces and its OFL licence, committed rather than fetched, so the receipt is
+drawn with the file the screen uses).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
