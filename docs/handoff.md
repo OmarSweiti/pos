@@ -1,20 +1,21 @@
 # Handoff — the single current one
 
-**Reflects `development` @ `46e957b`, 20 September 2026.**
+**Reflects `development` @ `9ce655f`, 20 September 2026.**
 
 There is one handoff — keep updating this file rather than adding a dated one.
 
-> ## ✅ TWO UI MICROSTEPS IN TWO DAYS — AND TWO TESTS THAT WERE GREEN FOR THE WRONG REASON
+> ## ✅ THREE MICROSTEPS IN TWO DAYS — AND THREE TESTS THAT WERE GREEN FOR THE WRONG REASON
 >
-> `1.11.6` (#188, with #189's fix) and `1.11.11` (#192) took Phase 1 to **26 of 112 (~23%)**. §2f and
-> §2g are those records, and the thing worth reading in both is the same: a mutation sweep caught a
-> test that passed without exercising the branch it was named for, **in each of them**, and no gate
-> saw either. Before that, the 15 September audit found four defects CI was green through and #185
-> closed the largest (§2d, §2e).
+> `1.11.6` (#188, with #189's fix), `1.11.11` (#192) and `1.9.2` (#195) took Phase 1 to **27 of 112
+> (~24%)**. §2f, §2g and §2h are those records, and the thing worth reading in all three is the
+> same: **a mutation sweep caught a test that passed without exercising the branch it was named
+> for, in every one of them**, and no gate saw any of it. In `1.9.2` the survivor was the hazard its
+> own module doc warns about at length. The constant is not the code; it is believing a test covers
+> what its name says.
 >
-> **Two warnings.** #179 was closed by hand with three of its four findings unaddressed — they are
-> still true in the code and now tracked nowhere (§3). And with auto-merge standing, `just pr` exits
-> **1** on a PR that merges before its watcher finishes; the work succeeded (§12).
+> **Two issues were closed this session with their substance unresolved** — #179 on 15 September and
+> #113 on 20 September, the latter while `ref/schema.md:4255` still reads `⚠️ OPEN` and eight
+> documents still ask the question. §3 has both, and neither should stay as it is.
 >
 > **Nothing is in flight.** §4 names what comes next.
 
@@ -32,8 +33,8 @@ guard-hardening on shipped code, not a microstep. **19 September moved it to 25 
 §2c and §2d are the 14–15 September windows; §2a keeps 13 September and §2 the 9–11 September
 record, where twenty-six pull requests changed the governance layer and no microstep advanced.
 
-**`development` is green, tip included.** `just pre-push` exits 0 at `46e957b`, all 37
-`just guards` steps pass, and `ci` run **`35460222810` is a success on the tip**, queried by SHA
+**`development` is green, tip included.** `just pre-push` exits 0 at `9ce655f`, all 37
+`just guards` steps pass, and `ci` run **`35502777431` is a success on the tip**, queried by SHA
 rather than taken as the newest green one — `ci.yml`'s ref-scoped concurrency group cancels runs
 when merges land inside two minutes of each other, and the cancellation is invisible unless you ask
 about the tip specifically.
@@ -71,7 +72,7 @@ cd ~/My_Projects/pos
 git checkout development && git pull --ff-only
 git fetch --all --prune            # your local staging is 51 commits stale — see §14
 mise exec -- just setup
-mise exec -- just pre-push          # passes at 46e957b
+mise exec -- just pre-push          # passes at 9ce655f
 ```
 
 Nothing is in flight, so there is no branch to resume. `phase-1/group-9-migration-0005` merged as
@@ -87,7 +88,7 @@ with `couldn't exec process: No such file or directory`, because the whole unspl
 `cd <repo> && mise exec -- node --version` prints `v24.19.0` — and a relative script path works.
 Re-measured 13 September; the `cd` clause that stood here was false.
 
-### Verified gate baselines at `46e957b`
+### Verified gate baselines at `9ce655f`
 
 Use these as the "nothing is broken" reference. Across the whole 14–15 September window **two rows
 moved**: the test count (241 → 259 → **266**, all of it Rust) and the schema chain (4 migrations /
@@ -106,7 +107,7 @@ on.
 | `just pre-push` | **exit 0** — `lint test build-web guards secrets`, `justfile:368`, ~1:30 warm |
 | `just check` | exit 0 — all **seven** workspace members |
 | `just lint` | exit 0 — 2 prerequisites + 14 body steps = **16 checkers** |
-| `just test` | exit 0 — **266 tests run: 266 passed, 2 skipped**; JS **7 files / 71 tests** |
+| `just test` | exit 0 — **276 tests run: 276 passed, 2 skipped**; JS **7 files / 71 tests** |
 | `just build-web` | exit 0 — `tsc -b` + vite 8.2.2 across 5 packages |
 | `just guards` | exit 0 — **37 steps** |
 | `just verify-schema` | exit 0 — **5 migrations, 48 tables, 457 columns** |
@@ -163,29 +164,30 @@ vitest 5.0.0, gitleaks 8.30.1, Docker Engine 29.5.2.
 
 | | |
 |---|---|
-| `development` | **`46e957b`** — `just pre-push` exits 0 and `ci` run **`35460222810` is a success on the tip**, queried by SHA. Carries `1.9.1`, migration `0005`, `1.1.9`'s `ClockRepository`, `1.2.6`, the audit's fixes, #185's seven tests, `1.11.6`'s scan capture with #189's fix, and `1.11.11`'s keyboard map |
+| `development` | **`9ce655f`** — `just pre-push` exits 0 and `ci` run **`35502777431` is a success on the tip**, queried by SHA. Carries `1.9.1`, migration `0005`, `1.1.9`'s `ClockRepository`, `1.2.6`, the audit's fixes, #185's seven tests, `1.11.6`'s scan capture with #189's fix, `1.11.11`'s keyboard map and `1.9.2`'s document counters |
 | `staging` | **`531ea04`** — **30 behind** `development`, 5 ahead (its own five promotion merges). Re-measured 15 September with `git rev-list --count`; **this row has been wrong before and §9 states it independently** — if the two disagree, run the command rather than picking one |
 | `main` | `24a0283` — **158 behind** `development`, **133 behind** `staging`, untouched since 20 August |
-| Phase 1 | **26 of 112** executable microsteps (~23%) — `1.11.6` (#188) and `1.11.11` (#192) landed 19–20 September, and the percentage moved on each. **Group 1.1 is closed** |
+| Phase 1 | **27 of 112** executable microsteps (~24%) — `1.11.6` (#188), `1.11.11` (#192) and `1.9.2` (#195) landed 19–20 September, and the percentage moved on each of the three. **Group 1.1 is closed** |
 | Open PRs | **0**, and **nothing is in flight**. The WIP=1 slot is free |
-| Open issues | **9** — see §3. **#179 was closed by hand on 15 September, eighteen minutes after #185 landed its item 3** — not by the pull request, whose `closingIssuesReferences` is empty. Its other **three items are real, still true in the code, and now tracked nowhere**. Eight of the nine are blocked on a human; **#174 is the exception**. #187 and #191 opened and closed with their microsteps |
+| Open issues | **8** — #68, #69, #70, #71, #111, #112, #114 and #174. **Two issues have now been closed this session with their substance unresolved**: #179 on 15 September (three findings still true in the code) and **#113 on 20 September, while `ref/schema.md:4255` still reads `⚠️ OPEN` and merchant decision 6.9's *Answer* cell is still empty**. §3 has both. Seven of the eight are blocked on a human; **#174 is the exception**. #187, #191 and #194 opened and closed with their microsteps |
 | Board #4 | the API's default listing returns **16 items — 10 `Todo`, 6 `Done`** (#119, #120, #162, #169, #172, #176). Archived items are excluded from that listing and their count is not readable through it |
 | Rulesets | **four, all active**, all four checked in under `.github/rulesets/`. They **agreed with live when last compared by hand** (11 September) — no gate diffs them, so this is a dated observation, not an invariant. See §3 |
 | Tags / releases | **zero of each.** The append-only tag ruleset has never been exercised |
 | Repository | **PUBLIC**, GitHub Free, `OmarSweiti` the sole collaborator (admin) |
 
-### Complete: 26 microsteps
+### Complete: 27 microsteps
 
 Read live from the frontier region — the block between the `<!-- frontier:begin -->` and
 `<!-- frontier:end -->` markers in `docs/implementation/README.md` — in its own order:
 
 `1.1.0` `1.1.1` `1.1.2a` `1.1.6` `1.1.3` `1.1.4` `1.1.2b` `1.1.7` `1.1.5` `1.1.8` `1.2.1` `1.2.2`
 `1.3.1` `1.8.9` `1.8.5` `1.11.2` `1.6.5` `1.6.1` `1.6.3` `1.11.0` `1.11.3` `1.9.1` `1.1.9` `1.2.6`
-`1.11.6` `1.11.11`
+`1.11.6` `1.11.11` `1.9.2`
 
-**Both predictions held.** `round(100*25/112) == 22` and `round(100*26/112) == 23`, so the region
-moved on each of the last two microsteps and now reads `26 of 112 executable microsteps fully
-complete (~23%)`. **The 27th moves it again** — `round(100*27/112) == 24`.
+**Three predictions, three held.** `round(100*25/112) == 22`, `round(100*26/112) == 23` and
+`round(100*27/112) == 24`, so the region moved on each of the last three microsteps and now reads
+`27 of 112 executable microsteps fully complete (~24%)`. **The 28th moves it again** —
+`round(100*28/112) == 25`.
 
 **`1.2.6` was the exception and it happened as predicted.** `round(100*23/112)` and
 `round(100*24/112)` are both 21, so #177 moved the count and the prose list and left `~21%` alone.
@@ -853,11 +855,101 @@ The named test's expectation is **written out, not derived from `KEY_BINDINGS`**
 its expected set out of the table under test stays green when a row is deleted from that table,
 because the expectation shrinks with it. The duplication is the point.
 
-## 3 · The nine open issues
+## 2h · 20 September — `1.9.2`, and the sweep that found the word the design turned on
 
-All nine are on board #4, all `Todo`, all assigned — **#68, #69, #70, #71, #111, #112, #113, #114
-and #174**, re-read live at `46e957b` rather than carried forward. **Eight are blocked on a human**
-— one on `hardware`, five on a `decision`, two on a `merchant answer`.
+**The 27th microstep.** `1.9.2` — `SequenceRepository` — landed as #195. Phase 1 reads **27 of 112
+(~24%)**, and `round(100*28/112)` is 25, so the next moves it again. `pos-db` goes 98 → 108 tests
+and the workspace 266 → 276.
+
+`crates/pos-db/src/repo/sequence.rs` allocates receipt and Z numbers from `doc_sequence` inside the
+caller's `&Transaction`, so a number is spent only by a transaction that commits. It needed **no
+migration**, which is why it was takeable at all: `0006` belongs to `1.10.1` and `0007` to `1.2.5`.
+
+### One word decided the design, and the first sweep missed it
+
+`ref/plan-validation.md:338` defines G-2, and it does not say gapless:
+
+> Per-register counters must be crash-safe and **gap-detectable**. A gap in a receipt sequence is
+> what an auditor asks about first.
+
+Detection, not prevention. So `gaps()` reports rather than guarantees, and the two claims split
+across the tests: `rollback_does_not_consume_a_number` and the hundred-point crash schedule prove a
+number is never spent on nothing; `gaps_finds_the_number_whose_document_never_arrived` proves that
+when a gap does happen it is visible.
+
+**That line came out of a wider sweep than the one run first, and the difference is the lesson.**
+`1.11.6` shipped a defect for want of *any* `ref/` sweep (§2f), so this microstep began with one —
+`doc_sequence|SequenceScope|SeqKind|gapless|gap-free`, which returns **four** files. Sweeping the
+*subject* in plain words — `sequence|counter|receipt number` — returns **ten**, and
+`plan-validation.md` is in the difference. No term in the first sweep matches the word
+"gap-detectable".
+
+> **Sweep for the subject, not for the identifiers you expect.** Searching for the names you already
+> believe in returns the documents that agree with you. The habit from §2f is necessary and was not
+> sufficient; this is its second-order form.
+
+The wider sweep also placed the boundary: `ref/test-catalog.md:240` and `:90` put
+`prop_z_number_is_gap_free` and `prop_icv_is_gap_free_and_strictly_increasing_within_its_scope` in
+**Phase 2**, so the deeper gap-free properties are not this microstep's and the four named tests are
+its whole scope.
+
+### `next()` refuses `SeqKind::FiscalIcv`, and the reason is #113
+
+Not because the scope rule forbids it — `0005`'s `CHECK` pairs `fiscal_icv` with `store` quite
+happily. **The first such row that exists closes #113's reversal window.** `ref/schema.md:4255` is
+explicit: the frozen `store` namespace stays cheap only while nothing has been allocated, and after
+one row correcting it is a migration *plus* a data repair on a counter required to be gapless.
+Allocation belongs to `2.7.4`, which must re-check merchant decision 6.9 first.
+
+A `next()` that could create that row would let a stray test spend a decision reserved for a later
+microstep. It refuses by name, a test asserts no `fiscal_icv` row exists, and `2.7.4` deletes the
+refusal as part of doing the re-check — which is the forcing function `schema.md` asks for.
+
+### `gaps()` errors rather than returning empty
+
+The counter stores a high-water mark and nothing couples a bump to a document, so the evidence has
+to come from the documents — and today it exists for one kind. `Receipt` reconciles against
+`sale.receipt_number`; `ZReport` has no table (`z_report` is Phase 2) and `FiscalIcv` is unreachable
+while `next()` refuses it, so both return a **named error**. The exception is where nothing was ever
+allocated, the one case where "no gaps" is true rather than merely unknown.
+
+An unconditional `Ok(vec![])` would read as "this counter is sound" to every caller and every test.
+Likewise an unparseable receipt number is refused rather than skipped: skipping manufactures a gap
+that is not there, and counting it as zero hides one that is.
+
+### The mutation sweep found a warning with no test — the third microstep running
+
+Seven mutations, six caught by the test that names them. **The seventh survived: `INSERT OR REPLACE`
+passed all nine tests** — and it is the exact hazard the module doc-comment warns about at length.
+`REPLACE` deletes the row and re-inserts it, so `doc_sequence_monotonic` (a `BEFORE UPDATE OF
+next_value` trigger) never fires, and `doc_sequence` has **no delete guard** behind it — #179's
+fourth finding, still open and now untracked (§3).
+
+The numbers come out identical either way, which is why every other test passed. What `REPLACE`
+cannot fake is the rest of the row: `prefix` is `TEXT NOT NULL DEFAULT ''`, so a re-insert that does
+not name it silently resets it — and `gaps()` reads `prefix` to strip it off a receipt number, so
+the register would lose its prefix and every gap report over it would start refusing rows it should
+have parsed. `next_preserves_the_row_it_does_not_own` pins that.
+
+**Three microsteps, three tests that were green for the wrong reason** (§2f, §2g, here). The
+constant is not the code; it is believing a test covers what its name says. Every gate — CI, clippy,
+`tsc`, nextest — stayed green over all three.
+
+### Two things measured rather than assumed
+
+* **`busy_timeout` is five seconds**, set in `pos_db::open` at `crates/pos-db/src/lib.rs:160`. A
+  first reading of that file concluded it was unset and nearly designed the concurrency test around
+  a `SQLITE_BUSY` that does not happen here — a `grep … | head -8` had truncated two lines short.
+  With the timeout, the second writer waits, so `concurrent_next_never_duplicates` is deterministic;
+  it was run ten times to confirm rather than once.
+* **`next()` is a single statement**, an upsert with `RETURNING`, so there is no read-then-write
+  window in which two transactions could observe the same value.
+
+## 3 · The eight open issues
+
+All eight are on board #4, all `Todo`, all assigned — **#68, #69, #70, #71, #111, #112, #114 and
+#174**, re-read live at `9ce655f` rather than carried forward. **Seven are blocked on a human** —
+one on `hardware`, four on a `decision`, two on a `merchant answer`.
 
 **#174 is the only one code alone can close.** The sentence that stood here on 14 September —
 *"there is no issue here that code can close"* — became false twice over when #174 and #179 were
@@ -867,7 +959,6 @@ re-measures each and says so.
 
 | # | Title | Prio | Risk | Blocked | Blocks |
 |---|---|---|---|---|---|
-| **113** | `decision: ICV scope, before migration 0005 freezes it (merchant decision 6.9)` | P1 | migration · compliance | decision | **nothing in Phase 1 any more** — `0005` shipped the `CHECK` on 14 September as option 4. It now binds **`2.7.4`**, which must re-check 6.9 before allocating the first ICV |
 | 68 | `hardware: buy the reference register, scanner and both printers` | — | — | hardware | `1.2.0`'s deferred half, group 1.7, and four budgets |
 | 69 | `decision: the legal entity, its TIN, and ISTD registration for JoFotara` | — | — | decision | **group 2.7, not a Phase-1 microstep** — see below |
 | 70 | `decision: a tax adviser's written opinion on the four group-1.3 questions` | — | — | merchant answer | `1.3.4`, `1.3.7`, and the Phase-1 exit gate |
@@ -890,6 +981,32 @@ two risk labels** (`migration` *and* `compliance`) while the board's single-sele
 only `migration` — the field is structurally incapable of holding both, and the loss is silent.
 Decide which surface is authoritative and make them agree, or stop reading one of them.
 
+### Two issues closed with their substance unresolved
+
+**This has now happened twice in six days, to two different issues, and the pattern is worth naming
+before it happens a third time.** An issue closed as `COMPLETED` is read by everyone afterwards as
+an answered question. Neither of these is.
+
+**#113 — `decision: ICV scope` — closed 20 September at 09:36Z as `COMPLETED`.** The plan of record
+does not agree, in two places:
+
+* `ref/schema.md:4255` still opens with `⚠️ **OPEN — blocks 2.7.0, and carries a standing obligation
+  on 2.7.4.**`
+* `ref/merchant-decisions.md:152` row 6.9's **Answer** cell is still **empty**. The `**store**` in
+  that row sits in the **Default** column — the header at `:130` reads
+  `| # | Question | Default | Answer | Lives in | Step |`, and the two are one cell apart. Easy to
+  misread; misread once while writing this section, and caught only by going back for the header.
+
+So the question is unanswered in the plan of record whatever the tracker says, and **eight documents
+still carry it** — `00-master-plan.md`, `phase-1`, `phase-2`, and `ref/`'s `fiscal-jofotara`,
+`merchant-decisions`, `plan-validation`, `schema` and `test-catalog`. That is lesson 1's shape
+exactly: one belief, many live sites.
+
+**This makes `1.9.2`'s refusal more justified, not less.** `next()` declines to allocate a
+`fiscal_icv` number precisely because the namespace decision is not made; a closed issue does not
+make it made, and `2.7.4` still owns the re-check. Either re-open #113, or sweep the eight documents
+so they stop asking a question the tracker considers answered — but not neither.
+
 ### #179's three surviving items, now tracked nowhere
 
 **Closed by hand on 15 September at 08:58Z**, eighteen minutes after #185 merged and seventeen
@@ -903,6 +1020,16 @@ findings below outlived it. **Each was re-measured against the tree at `46e957b`
 | `sale.is_training` has no `CHECK (… IN (0,1))`, so `2` silently disables the fiscal-decision gate | **yes** | `grep -n is_training crates/pos-db/migrations/*.sql` returns four lines, none of them a `CHECK` |
 | `receipt_artifact` and `print_attempt` are declared fact tables with no delivery-envelope gate | **yes** | no `*_has_ready_commit` trigger exists for either; the five that have one are `approval_handle`, `approval_consumption`, `audit_log`, `shift` and `shift_close_event` |
 | `doc_sequence` has no `DELETE` guard, so a G-2 gapless counter resets to 1 | **yes** | no `BEFORE DELETE ON doc_sequence` anywhere in `0001`–`0005` |
+
+**One part of the fourth item is closed.** #179 also said `doc_sequence` had *no test* — that
+`doc_sequence_monotonic` was unexercised and nothing asserted which `scope_kind` values the `CHECK`
+admits. `1.9.2` closed the first half: `the_counter_advances_by_exactly_one_or_not_at_all`
+(`crates/pos-db/tests/sequence.rs`) asserts the trigger's exact refusal. The second half is covered
+at the **Rust** boundary by `invalid_scope_for_sequence_kind_is_refused` and not at the SQL one —
+`SequenceRepository` refuses an illegal pairing before a statement reaches the table, so `0005`'s
+composite `CHECK` is still never exercised. That is the right layering and it is not the same as
+testing the `CHECK`; whoever adds the `DELETE` guard should exercise both from SQL while they are
+there.
 
 All three need a migration and **no number is free** — `0006` belongs to `1.10.1` and `0007` to
 `1.2.5`, both by name in the phase file — so they ride inside one of those or claim `0008`. That is
@@ -955,8 +1082,9 @@ legacy API cannot express `allowed_merge_methods` at all). **No issue tracks thi
 
 **Take one of these, and only one.** WIP = 1 means one microstep, not one open pull request. Every
 candidate this file has named since 14 September is spent — `1.9.1` (§2b), `1.1.9`'s database half
-(§2c), `1.2.6` (#177), #179's five missing negative tests (#185, §2e), `1.11.6` (#188, §2f) and
-**`1.11.11`, which this section recommended on 19 September and which merged as #192** (§2g).
+(§2c), `1.2.6` (#177), #179's five missing negative tests (#185, §2e), `1.11.6` (#188, §2f),
+`1.11.11` (#192, §2g) and **`1.9.2`, which this section recommended this morning and which merged as
+#195** (§2h).
 
 **The five candidates below were re-assessed against `46e957b` on 20 September**, each by an agent
 whose findings were then attacked by a skeptic with a default verdict of REFUTED. The verdicts are
@@ -964,16 +1092,32 @@ live, not carried forward — and two of them contradict what this section used 
 
 | Candidate | Verdict | Why |
 |---|---|---|
-| **`1.9.2`** — `SequenceRepository` | **buildable** | nothing in its way; see below |
+| ~~`1.9.2` — `SequenceRepository`~~ | **DONE, #195** | the verdict held: nothing was in its way (§2h) |
 | `1.7.2` — font decision and embedding | **buildable**, but see the caveat | `Done when` at `phase-1:746` is a runnable command |
 | `1.6.6` — `AuditRepository` | buildable **after authoring a `Done when`** | it has none; `audit_log` shipped in `0004` and nothing else blocks it |
 | `1.2.4` pure half | **blocked** | `ref/schema.md:3410` is an `⚠️ **OPEN` item that names it, and #71 is the issue |
 | `1.11.12` — empty and edge states | **blocked** | needs rendered screens that do not exist |
 
-**The recommendation is `1.9.2` — the sequence repository** (`phase-1`, `Files:`
-`crates/pos-db/src/repo/sequence.rs` and `crates/pos-db/tests/sequence.rs`, both new). Four named
-tests. It is the one candidate with nothing at all in its way, and three things recommend it over
-the rest:
+**`1.9.2` is done — #195, §2h.** Of the five assessed below, that leaves `1.7.2` and `1.6.6`, and
+neither is a clean "just take it":
+
+* **`1.6.6` — `AuditRepository`** is the closest thing to a straight successor: same crate, same
+  shape as `1.9.2`, `audit_log` shipped in `0004`, no migration. **Two documentation prerequisites
+  come with it**, both satisfiable in its own PR but neither optional. It has **no `Done when`**, so
+  frontier rule 4 refuses a completion claim until one is authored; and its `Files:` line names only
+  `crates/pos-db/src/repo/audit.rs` while its `Tests:` line names three tests, so the line needs a
+  test file added to it. Author the `Done when` as a *command*, the way `1.9.2`'s was.
+* **`1.7.2` — font decision and embedding** is buildable and unblocks `1.11.1`, but it is not purely
+  a coding step. See the caveat below; **it wants an answer from the operator first.**
+
+**`1.9.3` is not the successor it looks like.** It reads as the natural next step after `1.9.2` —
+receipt numbering consumes the counter this microstep built — but its `Files:` line names
+`apps/terminal/src-tauri/src/commands/sale.rs`, and `src-tauri/src/` holds only `lib.rs`, `main.rs`
+and `time.rs`. There is no `commands/` module, so `1.9.3` is the step that *creates the IPC command
+layer*, which is the same wall `1.11.4` sits behind. Worth knowing before it is picked up as a
+small one.
+
+What follows is the 20 September assessment of the five, kept because the verdicts are evidence:
 
 * **Its `Done when` is already a command** — `cargo nextest run -p pos-db --test sequence` — so no
   documentation prerequisite stands in front of it.
@@ -1062,7 +1206,7 @@ front of `0006`, `0007`, `1.2.3`, `1.9.2`–`1.9.5`, `1.10.2`–`1.10.5`, the `1
 | Candidate | State |
 |---|---|
 | `1.2.4` **pure half** | **BLOCKED, and this row said otherwise until 20 September.** `ref/schema.md:3410` is an `⚠️ **OPEN` item whose own text reads "blocks 1.2.4", and #71 is the issue behind it. What follows was true of its *size* and stays useful — the gateway to group 1.4, since `CartLine` needs `PriceOrigin` and `DerivedWeight` and neither name appears anywhere under `crates/`. Big: 14 named tests, a new module, a trybuild pair. Its full `Done when` (`phase-1:301`) chains commands unreachable before `0007`, so the issue's proving command must be rewritten for the half. **Two of the 14 tests are blocked by #71**, whose body says it blocks "`1.2.4`'s database commissioning half". And it defers half of itself with **no `Full-step status:` marker** — unlike `1.1.9` and `1.2.0` — so nothing mechanically stops a premature "complete" claim |
-| `1.6.6` — `AuditRepository` | **A dark horse nobody named.** Fully unblocked: `0004` shipped `audit_log`, and `1.6.5` and `1.8.9` landed. **No `Done when` line** — one must be authored first |
+| `1.6.6` — `AuditRepository` | **The closest successor to `1.9.2`**, re-verified 20 September. Unblocked: `0004` shipped `audit_log`, `1.6.5` and `1.8.9` landed, no migration needed. Two documentation prerequisites, both satisfiable in its own PR: **no `Done when` line**, and a `Files:` line naming only `src/repo/audit.rs` against a `Tests:` line naming three tests |
 | `1.11.1` — i18n | **Blocked by `1.7.2`, which is itself buildable today.** `assets/fonts/` does not exist, no font file is tracked anywhere, `pos-hardware/src` is only `lib.rs` — but nothing stops `1.7.2` being taken, so this is one step behind rather than blocked outright. See §4's table |
 | `1.11.4` — Lock / PIN | **Soft-blocked.** All four IPC commands it drives are absent — `src-tauri/src` has no `commands/`, and `src/lib/ipc.ts` does not exist. It would be tested entirely against invented mocks |
 | `1.11.5` — Sale screen | **Blocked.** `CartSnapshot` does not exist (`packages/api-types/src/index.ts` is `export {};`), and it would rewrite the green `1.11.0` canary |
@@ -1743,6 +1887,7 @@ label on the issue at all** — see §3.
 | **A dependency change makes `--frozen-lockfile` fail everywhere** | Regenerate the lockfile **in the same commit**: `mise exec -- pnpm install` at the repository root |
 | A fresh worktree has **no `node_modules`** | `pnpm install --frozen-lockfile` before believing any JS gate |
 | **`just pr` exits 1 on a PR that auto-merges, and the work succeeded** | `watch-pr-checks.sh` refuses with *"PR snapshot changed while watching checks; discard the old check evidence and run this command again"* — it noticed the PR merge out from under it and correctly declined to vouch for evidence that had gone stale. With auto-merge as the standing policy this happens on **every** PR whose checks finish before the watcher does. A red exit meaning "merged successfully" is worth recognising rather than re-deriving: check `gh pr view <n> --json state` before believing the exit code |
+| **`clippy::indexing_slicing` is denied workspace-wide, tests included, and provable in-bounds-ness is no defence** | `SCHEDULE[point % SCHEDULE.len()]` and `line_taxes[0]` were both refused, in `1.9.2` and in #185. Neither can panic and clippy does not care. Iterate instead — `.iter().copied().cycle().take(n)` — or take the `Option` from `.first()`/`.get()`. It surfaces in `just lint`'s clippy step, **after** `cargo nextest` has already gone green, so a passing test run says nothing about it |
 | **A `.test.ts` can be green in vitest and red in the build** | `vitest` transpiles without typechecking, so `tsc -b` under `just build-web` is the *only* thing that types a test. `tsconfig.app.json` targets **ES2020** with `lib: ["ES2020", "DOM", "DOM.Iterable"]`, so `Array.prototype.at` and anything else ES2022 runs fine and fails the build. Fourteen green tests preceded this discovery. Index instead; do not widen the app's target for a test |
 | **`userEvent`'s `delay` is a `setup()` option, not a `type`/`keyboard` option** | Passed to the call it is **silently ignored** and every keystroke lands on the same timestamp, which presents as a scanner that never scans and raises nothing. `userEvent.setup({ delay, advanceTimers: vi.advanceTimersByTime })` puts consecutive `keydown` events exactly `delay` ms apart on the fake clock — measured |
 | **Reading a repository file from inside a jsdom test** | No Node types in `src/**` under `tsc -b`, and Vite rewrites `new URL("<literal>", import.meta.url)`. Read it in `vite.config.ts` |
