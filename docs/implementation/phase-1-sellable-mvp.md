@@ -1120,6 +1120,29 @@ Create append-only `stock_ledger` with `qty_delta_milli`, the captured `qty_step
 **Tests:** `stock_ledger_is_append_only` · `a_sale_event_records_the_cost_basis_at_capture_time` · `missing_cost_is_null_and_reported_as_estimated` · `price_embedded_stock_event_carries_the_derived_weight_flagged_estimated` · `migration_0006_preserves_quantity_steps`
 **Done when:** `just verify-schema` applies `0001`–`0006` and `cargo nextest run -p pos-db --test migration_0006_stock_ledger` proves a later cost change leaves the original sale event's `unit_cost_minor` unchanged.
 
+> **`0006` also carries three guards `0005` did not ship, and it is the only migration that can.**
+> Tracked as **#197**, inherited from #179. They are absent guards rather than live defects, and the
+> reason they ride here is arithmetic: `0007` is named by `1.2.5`, and `verify-schema.py` requires
+> migration numbers contiguous from `0001`, so a dedicated `0008` could not land until both exist.
+>
+> 1. `CHECK (is_training IN (0,1))` on `sale` — the fiscal-decision gate keys on `is_training = 0`,
+>    so today a value of `2` is a completed non-training sale with no fiscal decision behind it.
+>    `ref/schema.md`'s line has the same gap and is corrected in the same change.
+> 2. `receipt_artifact_has_ready_commit` and `print_attempt_has_ready_commit`, **or** a recorded
+>    reason in `ref/schema.md` that these two declared fact tables are deliberately unlike their five
+>    siblings. Either closes it. **If the triggers are added,
+>    `sale_completion_requires_a_manifest_naming_every_fact` must omit a different member** — it
+>    omits `receipt_artifact` today precisely because that table has no envelope gate, and it already
+>    iterates four other members that would serve.
+> 3. `doc_sequence_no_delete` — `DELETE FROM doc_sequence` silently resets a G-2 gapless counter to
+>    1, and every sibling append-only table in `0005` has a delete guard. `1.9.2` closed the test
+>    half of this one; the guard itself needs a migration.
+>
+> Each wants a negative test in the shape `1.9.1`'s gates now use — withhold one precondition, assert
+> the exact refusal message — and the Postgres mirror per `verify-pg-migrations.py`'s two-way check.
+> **Unrelated to #197 but due with `0006` regardless:** `reference_blocks_at_or_after(6)` becomes
+> `(7)` in `crates/pos-db/tests/common/mod.rs`, or every `full_schema()` test double-applies §0006.
+
 ### 1.10.2 — `StockRepository`
 **Files:** `crates/pos-db/src/repo/stock.rs` (new)
 ```rust
