@@ -740,7 +740,7 @@ Per API reference §13. The ESC/POS rasteriser, the PDF renderer, and the email 
 ### 1.7.2 — Font decision and embedding
 *Gap G-5.*
 **Scheduled in:** embed, license and prove the raster font at 1.7.2; wire the UI to the same asset in 1.11.1
-**Files:** `assets/fonts/` (new), `crates/pos-hardware/Cargo.toml`, `crates/pos-hardware/tests/font_asset.rs` (new)
+**Files:** `assets/fonts/` (new — two TTF faces, `LICENSE.txt`, and a `README.md` recording provenance and the OFL clause that binds a later subsetting step) · `crates/pos-hardware/src/font.rs` (new) · `crates/pos-hardware/src/lib.rs` (`pub mod font;`) · `crates/pos-hardware/tests/font_asset.rs` (new) · [`README.md`](README.md) (implementation frontier) · this file (this microstep's `Files:` line). **`crates/pos-hardware/Cargo.toml` needed no change** and this line used to name it: `include_bytes!` requires no dependency, and the workspace is `publish = false`, so no `include` key is needed to package the asset
 One family covering Arabic and Latin, embeddable, licence-clear, shipped with the app — **no network font**. The same file feeds the UI and the receipt rasteriser so the receipt looks like the screen. Candidates: Noto Sans Arabic, IBM Plex Sans Arabic, Cairo.
 **Tests:** `embedded_font_has_a_repository_licence` · `embedded_font_bytes_are_not_empty`
 **Done when:** `cargo nextest run -p pos-hardware --test font_asset` exits zero with the font and its licence in the repository; 1.7.3 owns raster loading and 1.11.1 owns the later UI-path equality check.

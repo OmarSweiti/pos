@@ -1,6 +1,8 @@
 //! Hardware abstraction layer (blueprint §5).
 //! Traits here; drivers (ESC/POS over TCP/serial/USB) in submodules later.
 
+pub mod font;
+
 use std::sync::{Mutex, MutexGuard};
 
 #[derive(Debug, thiserror::Error)]
