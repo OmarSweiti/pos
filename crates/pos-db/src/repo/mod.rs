@@ -20,3 +20,4 @@
 pub mod approval;
 pub mod clock;
 pub mod outbox;
+pub mod sequence;
