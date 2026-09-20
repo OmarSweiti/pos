@@ -38,6 +38,33 @@ pub enum DbError {
     #[error("refusing to open a register database with foreign keys disabled")]
     ForeignKeysRefused,
     #[error(
+        "a {scope_kind}-scoped sequence cannot number a {kind} document: \
+         migration 0005 pairs receipt and zreport with a register, and \
+         fiscal_icv with a store"
+    )]
+    SequenceScopeInvalid {
+        scope_kind: &'static str,
+        kind: &'static str,
+    },
+    #[error(
+        "refusing to allocate a {kind} number in Phase 1: the first row closes \
+         the reversal window on merchant decision 6.9 (#113), and microstep \
+         2.7.4 must re-check it before allocating"
+    )]
+    SequenceNotYetAllocatable { kind: &'static str },
+    #[error(
+        "cannot report {kind} gaps: the documents this counter numbers do not \
+         exist yet, so an empty answer would assert soundness nobody has shown"
+    )]
+    SequenceEvidenceUnavailable { kind: &'static str },
+    #[error("stored sequence value {found} is not a document number")]
+    SequenceValueInvalid { found: i64 },
+    #[error(
+        "receipt number {found:?} does not carry this register\'s prefix and a \
+         decimal counter, so a gap report over it would be a guess"
+    )]
+    SequenceNumberUnreadable { found: String },
+    #[error(
         "refusing to write a delivery envelope with no members: a business \
          transaction that produced no fact has nothing to deliver (I-9)"
     )]

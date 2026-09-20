@@ -1072,7 +1072,7 @@ Per [`ref/schema.md`](ref/schema.md) §0005: immutable `shift` opens, append-onl
 > **The module name is load-bearing**, as it was for 1.8.9: nextest matches `clock::` against the test's own name, not the binary id `pos-db::clock`, so the suite lives in a `mod clock { … }` or the proving command passes by running no tests at all. Six further tests ship beside the named one, because a round-trip that only ever stores `Some` proves half the mapping: the three independently nullable columns, each `ClockAnomaly` variant through the flattened `anomaly_*` group, the upsert replacing rather than appending, a cleared anomaly clearing all three columns, and an `anomaly_kind` a newer build wrote being **refused rather than read as the absence of an anomaly** — the one failure here that would downgrade a register from "something is wrong with the clock" to "nothing is wrong with it". `trusted_time_state` is register-local, not a fact (`ref/schema.md` §"Convergence"), so the repository writes an upsert and takes no `sync_commit` envelope; it still takes an explicit `&Transaction`, because `repo/mod.rs` makes the caller own the boundary.
 
 ### 1.9.2 — `SequenceRepository`
-**Files:** `crates/pos-db/src/repo/sequence.rs` (new), `crates/pos-db/tests/sequence.rs` (new)
+**Files:** `crates/pos-db/src/repo/sequence.rs` (new), `crates/pos-db/tests/sequence.rs` (new) · `crates/pos-db/src/repo/mod.rs` (`pub mod sequence;`) · `crates/pos-db/src/lib.rs` (five `DbError` variants, as `1.1.9` did for `ClockStateInvalid`) · [`README.md`](README.md) (implementation frontier) · this file (this microstep's `Files:` line)
 ```rust
 pub enum SequenceScope { Register(RegisterId), Store(StoreId) }
 pub fn next(&self, tx: &Transaction, scope: SequenceScope,
