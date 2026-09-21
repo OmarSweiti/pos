@@ -1,8 +1,29 @@
 # Handoff — the single current one
 
-**Reflects `development` @ `8f05458`, 21 September 2026.**
+**Reflects `development` @ `3495b49`, 21 September 2026 — fully re-measured, not incremented.**
 
 There is one handoff — keep updating this file rather than adding a dated one.
+
+> ## 🔎 THIS EDITION WAS AUDITED, NOT APPENDED TO
+>
+> Every live claim was re-derived on 21 September rather than carried forward, and **§1 gains the
+> view this document has never had**: *"What is LEFT"* — 82 microsteps by group, the four missing
+> files that gate seventeen of them, which 40 are startable, and a snippet that regenerates the
+> whole block. It is derived from the phase file and the filesystem, so it cannot drift silently
+> the way the prose around it can.
+>
+> **The audit found four errors in this file and one in the plan.** All 76 `file:line` references
+> were checked mechanically: three had drifted onto the wrong line and two onto blank lines — all
+> five repaired. **One was worse than drift: a quotation that does not exist.** §3 argued #69 gates
+> nothing by quoting `phase-1` as saying *"…so this microstep cannot wait for it"*; that clause is
+> in no file in this repository. The conclusion survives on other evidence and §3 now says so, and
+> §15 records why a sentence in quotation marks is the claim nobody re-checks. The plan defect:
+> `apps/terminal/src/lib/ipc.ts` is named as a prerequisite by two microsteps and **created by
+> none**.
+>
+> Also re-measured rather than assumed: 30 `[gone]` local branches (the row said fifteen), the
+> ruleset ledger at 28 bypasses of 68, and all four rulesets re-diffed against live by hand — they
+> still match.
 
 > ## ✅ `1.6.6b` LANDED — THE CHAIN NOW HAS A COMMAND THAT CAN PROVE IT, AND THE SAME REVIEW SHAPE PAID AGAIN
 >
@@ -233,7 +254,7 @@ vitest 5.0.0, gitleaks 8.30.1, Docker Engine 29.5.2.
 | Open PRs | **0**, and **nothing is in flight**. The WIP=1 slot is free |
 | Open issues | **11**, not ten — #68, #69, #70, #71, #111, #112, **#113 (reopened)**, #114, #174, #197 and **#203**, listed live rather than carried forward. **#203 is the one every handoff since 21 September has missed**: the weekly `security` workflow filed it automatically at 09:08 UTC, it carries no labels, it is **not on board #4**, and it is a real red — §3 diagnoses it. #202 opened and closed with `1.6.6`; #207 opened and closed with `1.6.6b`. Both of the issues this session closed with their substance unresolved have been put right: **#113 is reopened** and **#197 carries #179's three surviving findings**, with `1.10.1` amended (#198) so `0006` is where they land. Nine of the ten are blocked on a human; **#174 is the exception**. #187, #191, #194 and #199 opened and closed with their microsteps |
 | Board #4 | **23 items — 10 `Todo`, 13 `Done`**, counted live on 21 September rather than incremented. `Done` gains #207; `Todo` is **ten of the eleven open issues — #203 is not on the board at all**, which is the first time the "Todo is exactly the open issues" equation has been false. Archived items are excluded from the listing and their count is not readable through it |
-| Rulesets | **four, all active**, all four checked in under `.github/rulesets/`. They **agreed with live when last compared by hand** (11 September) — no gate diffs them, so this is a dated observation, not an invariant. See §3 |
+| Rulesets | **four, all active**, all four checked in under `.github/rulesets/`. **Re-diffed by hand on 21 September: all four still match live** on enforcement, target, conditions, rules and bypass actors. No gate does this, so it stays a dated observation rather than an invariant — but the date is now today's. See §3 |
 | Tags / releases | **zero of each.** The append-only tag ruleset has never been exercised |
 | Repository | **PUBLIC**, GitHub Free, `OmarSweiti` the sole collaborator (admin) |
 
@@ -297,6 +318,115 @@ completion claim and rule 4 never got the chance; delete the marker alone and th
 the opposite direction with a message about a missing `Done when`. Promoting that line to a real
 `Done when:` over all three commands is the third deletion. **`1.2.0` carries the same
 `Current half done when:` shape** (`phase-1:214`), so whoever finishes it meets rule 4 too.
+
+### What is LEFT: 82 microsteps, and four files that gate a third of them
+
+**Derived, not typed.** Every number below comes from walking `phase-1-sellable-mvp.md`'s `### 1.x`
+headings against the frontier region's declared-complete list, and from asking the filesystem
+whether each remaining step's named prerequisite files exist. Re-run it rather than trusting it —
+the snippet is at the end of this block, and it is the only view in this document that answers
+*"what can I actually start"* without reading 1,500 lines of phase file.
+
+| Group | Done | Left | What remains |
+|---|---|---|---|
+| `1.1` foundations | **11 / 11** | — | **COMPLETE** |
+| `1.2` catalogue & scanning | 3 / 9 | 6 | `1.2.0` `1.2.3` `1.2.4` `1.2.5` `1.2.7` `1.2.8` |
+| `1.3` tax engine | 1 / 8 | 7 | `1.3.2`–`1.3.8` — **four of the seven are externally blocked**, by two different authorities |
+| `1.4` cart | **0 / 13** | 13 | the largest untouched group, and eight of the thirteen wait on one file |
+| `1.5` tender | **0 / 4** | 4 | three of the four wait on `1.5.1` |
+| `1.6` auth & audit | 5 / 9 | 4 | `1.6.2` `1.6.4`(partial) `1.6.7` `1.6.8` |
+| `1.7` receipts & printing | 1 / 10 | 9 | `1.7.1` first; group 1.7 also wants #68's hardware |
+| `1.8` storage & lifecycle | 2 / 14 | 12 | `1.8.0`/`1.8.1` first, and `1.8.1` is externally blocked |
+| `1.9` documents | 2 / 5 | 3 | `1.9.3` `1.9.4` `1.9.5` — all three behind the IPC wall |
+| `1.10` stock | **0 / 5** | 5 | `1.10.1` is migration `0006`, and it carries #197 |
+| `1.11` UI | 5 / 19 | 14 | `1.11.1` is startable; most of the rest wait on screens |
+| `1.12` seed & sweeps | **0 / 5** | 5 | `1.12.1` is the seeded catalogue four other steps are scheduled behind |
+
+**Four groups have not started at all** — `1.4`, `1.5`, `1.10` and `1.12`. `1.4` is the one to
+notice: thirteen microsteps, zero done, and it is the cart.
+
+#### The gates — one missing file, and how many remaining steps name it
+
+| Missing file | Named by | Created by |
+|---|---|---|
+| `apps/terminal/src-tauri/src/ipc/registry.rs` | **9** remaining steps | `1.6.7` |
+| `crates/pos-domain/src/cart.rs` | **8** | `1.4.1` |
+| `apps/terminal/src-tauri/src/commands/sale.rs` | 3 | `1.8.3` |
+| `apps/terminal/src-tauri/src/commands/cart.rs` | 3 | `1.4.11` |
+| `crates/pos-domain/src/tender.rs` | 3 | `1.5.1` |
+| `apps/terminal/src/screens/Sale.tsx` | 3 | `1.11.5` |
+| `crates/pos-domain/src/pricing.rs` | 2 | `1.4.5` |
+| `crates/pos-db/src/repo/stock.rs` | 2 | `1.10.2` |
+
+**`1.6.7` and `1.4.1` between them unblock seventeen microsteps**, and both are startable today.
+That is the strongest argument this document can make about sequencing, and it is the first time it
+has been able to make it — nothing here is a judgement, it is a file-existence check.
+
+#### 40 of the 82 are startable by file dependency alone
+
+Startable means *every file its `Files:` line names that is not marked `(new)` already exists*. It
+does **not** mean unblocked — seven carry a `**Scheduled in:**` line deferring them behind other
+work, and several are blocked by a `⚠️ OPEN` item or an issue that no file can show:
+
+```
+1.2.0  1.2.3  1.2.4  1.2.7  1.2.8  1.3.2  1.3.3  1.3.5  1.3.6  1.3.7  1.3.8
+1.4.1  1.4.5  1.5.1  1.6.4  1.6.7  1.6.8  1.7.1  1.7.3  1.7.4  1.7.5  1.7.6
+1.7.7  1.7.8  1.7.8b 1.8.0  1.8.1  1.8.1b 1.8.2  1.8.3  1.8.4  1.8.6  1.8.8
+1.10.2 1.11.1 1.11.13 1.11.14 1.11.15 1.12.3 1.12.4
+```
+
+Subtract what the rest of this document already knows: `1.2.0` and `1.2.7` and `1.12.3` wait on #68's
+hardware, `1.2.4` on #71, `1.3.2`/`1.3.4`/`1.3.5`/`1.3.7` on two OPEN items and #70, `1.6.2` on #68
+*and* an OPEN item, `1.8.1` on an OPEN item nobody filed, and seven carry `Scheduled in:`. **What is
+left after that subtraction is small, and `1.4.1`, `1.5.1`, `1.6.7`, `1.6.8`, `1.7.1` and `1.11.1`
+are the names on it.**
+
+#### Two plan defects this view found, and neither is a code problem
+
+* **`apps/terminal/src/lib/ipc.ts` is a prerequisite nobody creates.** `1.11.4b` and `1.11.9b` both
+  name it, neither marks it `(new)`, it does not exist, and `grep -rn 'lib/ipc.ts'` across the whole
+  plan returns exactly those two lines. Whoever picks up either step writes it, or the plan gains a
+  step that does.
+* **The `(new)` marker is applied inconsistently, so creation ownership is not mechanically
+  derivable.** `1.11.5`'s `Files:` line reads *"`…/Sale.tsx` and components, `…/Sale.test.tsx`"* —
+  the marker lands on the test file and not on the screen, and `1.2.5`, `1.11.4`, `1.11.7` and
+  `1.11.8` do the same. So a tool cannot distinguish *creates* from *edits*, and the table above was
+  finished by hand for five files. Worth fixing the day anybody wants this view generated rather
+  than written.
+
+#### Reproduce the whole block
+
+```bash
+python3 - <<'EOF'
+import re, pathlib
+root = pathlib.Path(".")
+phase = (root/"docs/implementation/phase-1-sellable-mvp.md").read_text()
+readme = (root/"docs/implementation/README.md").read_text()
+region = readme.split("<!-- frontier:begin phase=1 -->")[1].split("<!-- frontier:end -->")[0]
+done = set(re.findall(r"`(\d+\.\d+\.\d+[a-z]?)`", region))
+h = list(re.finditer(r"^### (1\.\d+\.\d+[a-z]?) — ", phase, re.M))
+rem = []
+for i, m in enumerate(h):
+    body = phase[m.end(): h[i+1].start() if i+1 < len(h) else len(phase)]
+    if "**Concordance only:**" in body or m.group(1) in done: continue
+    fl = re.search(r"^\*\*Files:\*\* (.*)$", body, re.M)
+    need = []
+    if fl:
+        line = fl.group(1)
+        spans = [(x.start(), x.end()) for x in re.finditer(r"\(new[^)]*\)", line)]
+        for mm in re.finditer(r"`([^`]+)`", line):
+            p = mm.group(1)
+            if "/" not in p or p.endswith("/"): continue
+            if any(a <= mm.start() <= b for a, b in spans): continue
+            if line[mm.end():mm.end()+6].lstrip().startswith("(new"): continue
+            if not (root/p).exists(): need.append(p)
+    rem.append((m.group(1), need))
+print(f"complete={len(done)} remaining={len(rem)} startable={sum(1 for _, n in rem if not n)}")
+from collections import Counter
+for p, n in Counter(x for _, ns in rem for x in set(ns)).most_common(8):
+    print(f"  {n:>2}x {p}")
+EOF
+```
 
 ---
 
@@ -489,7 +619,7 @@ record of what shipped and what it cost, kept because five of its findings are n
 |---|---|
 | `crates/pos-db/migrations/0005_sale_columns_and_sequences.sql` | **1,179 lines**, transcribed verbatim from `ref/schema.md` §0005's **three** code fences in document order. **16** `CREATE TABLE` · **5** `CREATE INDEX` · **2** `CREATE UNIQUE INDEX` · **60** `CREATE TRIGGER` · **1** `CREATE VIEW` · **1** `INSERT` · **14** `ALTER TABLE` = **99 objects** |
 | `crates/pos-db/tests/common/registered_chain.rs` | the shared fixture the repair is built on — org, an approved rate pack and policy, an evidenced store, registers, open shifts, and the auxiliary facts a completion must prove |
-| `crates/pos-db/tests/migration_0005_sale_columns_and_sequences.rs` | the six tests `phase-1:1063` names, plus one more (below) |
+| `crates/pos-db/tests/migration_0005_sale_columns_and_sequences.rs` | the six tests `phase-1:1088` names, plus one more (below) |
 | five existing `pos-db` suites | the seventeen deliberately-red tests, repaired |
 | `apps/server/migrations/20260914090000_sale_columns_and_sequences.sql` | the mirror, which creates nothing and records why |
 | `ref/schema.md` · `phase-1-sellable-mvp.md` · `00-master-plan.md` · `README.md` | `· SHIPPED`, four ICV sites, the frontier |
@@ -757,7 +887,7 @@ its gate dropped at the top of its own test — and **all six went red**.
 
 ### #179's other three items have no migration number to land in
 
-`0006` is named by `1.10.1`, the stock ledger (`phase-1-sellable-mvp.md:1117`), and `0007` by
+`0006` is named by `1.10.1`, the stock ledger (`phase-1-sellable-mvp.md:1142`), and `0007` by
 `1.2.5`, FTS5/PLU/tiles/scan rules (`:303`). So `sale.is_training`'s missing
 `CHECK (… IN (0,1))`, the two declared fact tables with no delivery-envelope gate, and
 `doc_sequence`'s missing delete guard must either ride inside one of those two migrations or claim
@@ -1020,7 +1150,7 @@ and `round(100*29/112)` is 26. `pos-hardware` goes 2 → 6 tests; the workspace 
 
 **IBM Plex Sans Arabic**, Regular and Bold, committed under `assets/fonts/` with the SIL Open Font
 License 1.1 beside them and read from one place, `pos_hardware::font`. The operator chose the family
-on 20 September from the three `phase-1:740` names. It unblocks `1.11.1`.
+on 20 September from the three `phase-1:769` names. It unblocks `1.11.1`.
 
 `ref/hardware-and-receipts.md:110` wants two things at once — the font is embedded *and* it is the
 same file the UI uses. A network font fails both: a register trades offline by design, so a fetched
@@ -1087,7 +1217,7 @@ Recorded because it took a four-dimension sweep to establish and half of it corr
 answer that was wrong:
 
 * **Five candidates, not three** — register, store, income source, credential, or one TIN across
-  stores (`ref/schema.md:2650`). The short-form `⚠️ OPEN` blocks at `fiscal-jofotara.md:102`,
+  stores (`ref/schema.md:2652`). The short-form `⚠️ OPEN` blocks at `fiscal-jofotara.md:102`,
   `plan-validation.md:274`, `phase-2-money-grade.md:471` and `test-catalog.md:100` collapse
   "store/income source" and drop "credential", which is how a reader comes to think there are three.
 * **Three of the five are unrepresentable today**, and correcting to one of them is not the "one
@@ -1186,7 +1316,7 @@ costs the rows above the boundary and reports where it is.
 
 ### One reference corrected on the way past
 
-`ref/security-compliance.md:290` attributed `verify-audit.rs` to microstep 5.4.4. `phase-1:715`
+`ref/security-compliance.md:290` attributed `verify-audit.rs` to microstep 5.4.4. `phase-1:717`
 builds it at `1.6.6b` and `phase-5:187` says in its own words that the CLI *"is **not** new here"*.
 The stale citation sat in the section a 1.6.6 implementer is sent to read, so it was fixed in the
 same PR rather than filed. Nothing reconciles an owner citation across those files — this is the
@@ -1378,10 +1508,21 @@ re-measures each and says so.
 | **174** | `gap: derived Debug prints canonical payloads and digests the never-list redacts` | P2 | security | **not blocked** | nothing — it is a guard, not a gate. **Half done**: `payload` is redacted in `pos-db` (#178) and `pos-sync` (#180). What is left is one decision, below |
 | **197** | `gap: three guards 0005 did not ship, riding inside 0006` | P2 | migration | **not blocked**, but it has nowhere of its own to land | nothing. Inherits #179's three surviving findings, each re-measured at `1544c04`. Rides inside `0006` because `0007` is `1.2.5`'s and `verify-schema.py` requires contiguity from `0001`; `1.10.1`'s entry carries the obligation (#198) |
 
-**#69 does not gate a Phase-1 microstep.** Its own body says it blocks *"all of group 2.7 and the
-22 ⚠️ OPEN items microstep 2.7.0 owns"*, and `phase-1:1066` says the opposite of gating: *"Owner:
-2.7.0 ratifies 6.9 via #69, on a timeline outside this project's control, **so this microstep cannot
-wait for it**."* It is a long lead ordered in Phase 1, not a Phase-1 blocker.
+**#69 does not gate a Phase-1 microstep**, but the sentence this document used to prove it **does
+not exist**. Until 21 September this block quoted `phase-1:1066` as saying *"Owner: 2.7.0 ratifies
+6.9 via #69, on a timeline outside this project's control, **so this microstep cannot wait for
+it**."* The clause after the comma is in no file in this repository: `grep` for it across `docs/`
+returns only this handoff. The real sentence is at **`phase-1:1091`** and stops earlier —
+*"Owner: `2.7.0` ratifies 6.9 via #69, on a timeline outside this project's control. Source that
+settles it: the official ISTD business rules or a written ISTD E-Invoicing Directorate ruling."*
+
+**The conclusion survives the correction and the evidence for it is elsewhere**, which is why this
+is a repair rather than a retraction: #69's own body scopes it to *"all of group 2.7 and the 22
+⚠️ OPEN items microstep 2.7.0 owns"*, and the mechanical check is that **no Phase-1 microstep names
+#69 or merchant decision 6.9 as a prerequisite**. It is a long lead ordered in Phase 1, not a
+Phase-1 blocker. But a fabricated quotation in a document whose opening line promises that *"every
+number here was read from `git`, `gh` or a command"* is the most expensive kind of error this file
+can carry, so it is recorded rather than quietly fixed — see §15.
 
 **Two divergences nothing reconciles.** Issues **#68, #69, #70 and #71 carry no `priority:` and no
 `risk:` label at all**, while the board shows all four as P1, Phase `1 sellable MVP`, and a Risk —
@@ -1464,7 +1605,7 @@ ones share no vocabulary with the two old ones.
 
 * `ref/plan-validation.md:324` — **blocks `1.8.1`**: the SQLCipher/SQLite WAL-reset corruption
   question and the two minimum version constants `1.8.0` must pin and hash.
-* `ref/security-compliance.md:413` — **blocks `1.6.2`**: what second factor exists on a Jordanian
+* `ref/security-compliance.md:415` — **blocks `1.6.2`**: what second factor exists on a Jordanian
   minimarket counter. **Buying #68's hardware does not unblock `1.6.2`** — it is blocked twice.
 * `ref/domain-api.md:1290` — **blocks `1.3.5`**: for a line carrying both General Sales Tax and
   Special Sales Tax, each component's base, the order they apply in, and whether the fixed part is
@@ -1502,6 +1643,17 @@ candidate this file has named since 14 September is spent — `1.9.1` (§2b), `1
 `1.11.11` (#192, §2g), `1.9.2` (#195, §2h), `1.7.2` (#200, §2i), `1.6.6` (#204, §2j) and
 **`1.6.6b`, which this section named as the closest successor and which landed the same day**
 (#208, §2k).
+
+**§1's "What is LEFT" block is the view to open first.** It is derived from the phase file and the
+filesystem rather than from this list, it says which of the 82 remaining steps are startable, and it
+names the two files — `apps/terminal/src-tauri/src/ipc/registry.rs` (`1.6.7`) and
+`crates/pos-domain/src/cart.rs` (`1.4.1`) — that between them unblock **seventeen** microsteps. Both
+are startable today. This section is the human judgement on top of that; the block is the evidence
+under it.
+
+**The shortlist, after subtracting everything blocked:** `1.4.1`, `1.5.1`, `1.6.7`, `1.6.8`, `1.7.1`
+and `1.11.1`. Four of the six have **no `Done when` line**, so each writes one as part of its own
+delivery (conventions §6) — `1.6.7`, `1.6.8` and `1.11.1` are the three that already have one.
 
 **Read this before you pick anything:** a microstep that lands a test `ref/test-catalog.md` names
 **will be red on `protected-paths`**, because retiring its `PLANNED` entry means editing
@@ -1633,7 +1785,7 @@ front of `0006`, `0007`, `1.2.3`, `1.9.2`–`1.9.5`, `1.10.2`–`1.10.5`, the `1
 | `1.11.5` — Sale screen | **Blocked.** `CartSnapshot` does not exist (`packages/api-types/src/index.ts` is `export {};`), and it would rewrite the green `1.11.0` canary |
 | `1.3.3` — `compute_line_tax` exclusive | Technically buildable, but **no `Done when` line**; document order puts the externally-blocked `1.3.2` first; both edit the same file |
 | `1.3.2`, `1.3.5` | **Blocked, and by nothing anyone filed** — `ref/domain-api.md:1299` and `:1290`. See §3 |
-| `1.6.2` — Argon2id PINs | **Blocked twice**, neither time by code: `just bench-gate pin-verify` refuses until #68, **and** `ref/security-compliance.md:413` |
+| `1.6.2` — Argon2id PINs | **Blocked twice**, neither time by code: `just bench-gate pin-verify` refuses until #68, **and** `ref/security-compliance.md:415` |
 | `1.2.3` | Blocked three migrations deep — its FTS repository needs `0007`'s tables |
 
 **Eighteen executable Phase-1 microsteps carry no `**Done when:**` line at all** — `1.2.0`
@@ -1964,13 +2116,13 @@ Established by introspection and corrected in #122; do not re-litigate.
 | Board sync, four views, repo description and topics | **done** |
 | The `0005` documentation preconditions | **done** — #116 |
 | The twelve queued documentation corrections | **done** — #118, #121, #122, #123 |
-| Ruleset control | **done** — four rulesets, all active, all checked in and byte-matching live |
+| Ruleset control | **done** — four rulesets, all active, all checked in and matching live, re-diffed by hand 21 September |
 | Promotion tooling | **done** — `just promote-merge <pr>` plus a push-only `promotion-shape` job |
 | Hook installation proof | **done** — #134, `scripts/check-hooks-installed.py` |
 | Actions SHA pinning | **done** — `sha_pinning_required: true`, repository-wide |
 | Tag signing | **done** — key registered 9 September |
 | **`#115`'s enforcement remainder** | **not done, and untracked.** No gate diffs `.github/rulesets/` against live; no restore has been round-tripped; `gh-protect.sh` still exits 3 |
-| **A recurring bypass-ledger check** | **not done.** 26 of 39 evaluations were bypasses, and nothing in `scripts/`, `.github/workflows/` or the justfile reads the rule-suites endpoint |
+| **A recurring bypass-ledger check** | **not done.** 28 of 68 evaluations in the trailing month were bypasses, and nothing in `scripts/`, `.github/workflows/` or the justfile reads the rule-suites endpoint. `1.6.6b`'s entry shows what a *readable* bypass looks like (§2k), which is the argument for the check rather than against it |
 | **Selected-Action allowlisting** | **not done** — `allowed_actions: "all"` |
 | **Issues exception-only** | **not done — and it is not a wording fix.** #166 corrected `01-microstep.yml:2` and `CONTRIBUTING.md:81`, which both claimed issues were "the normal way work enters this repo". But `03-github-workflow.md` §4 still *requires* an issue for "the microstep you are starting now (one at a time — WIP = 1)", so making issues exception-only means changing §4 — a policy decision, not a template edit |
 | **Claude read-only permissions** | **not done** — #114. `.claude/settings.local.json` is `{}` |
@@ -2456,11 +2608,12 @@ documentation surface **no gate reads** (`status-page.html`'s prose — see §14
   on 8 September and again on 9 September; still unanswered.**
 - **Local branch hygiene.** The warning in the last handoff protected three branches
   (`backup-before-rewrite`, `pr77`, `pr78`) that **no longer exist in this clone**. What does exist:
-  **fifteen feature branches with `[gone]` upstreams** from the 9–13 September work, a
-  `refs/original/refs/heads/main` filter-branch backup at `a7c2379`, and seven
-  `refs/codex/turn-diffs/checkpoints/*` refs. `git branch -d` refuses them because squash merges
-  break ancestry; `git branch -D` is safe for all fifteen — each is merged content on
-  `development`.
+  **thirty feature branches with `[gone]` upstreams** — re-counted 21 September with
+  `git branch -vv | grep -c ': gone]'`, and the row said fifteen until then, having been written
+  when it was true and never re-measured. Also a `refs/original/refs/heads/main` filter-branch
+  backup at `a7c2379` and seven `refs/codex/turn-diffs/checkpoints/*` refs. `git branch -d` refuses
+  them because squash merges break ancestry; `git branch -D` is safe for all thirty — each is
+  merged content on `development`.
 - **Your local `staging` is 51 commits behind `origin/staging` and now 92 behind `development`** —
   it still sits at #91's promotion merge (`f2edbb6`), four promotions behind (#106, #108, #130,
   #148). `just promote-staging` without fetching first works from the wrong base. **The number that
@@ -2519,6 +2672,14 @@ documentation surface **no gate reads** (`status-page.html`'s prose — see §14
    69 load-bearing claims were refuted or corrected on re-measurement, and roughly thirty of those
    were line numbers that had drifted by one. A handoff is a secondary source; `git`, `gh` and the
    files are primary and one command away.
+
+   **A quotation is a claim too, and this document got one wrong.** §3 argued that #69 gates no
+   Phase-1 microstep by quoting `phase-1` as saying *"…so this microstep cannot wait for it"*. That
+   clause is in no file in this repository. It survived several generations because a quotation
+   *looks* like evidence — nobody re-greps a sentence in quotation marks. The 21 September sweep
+   found it by checking all 76 `file:line` references mechanically: 74 resolved, three landed on the
+   wrong line, and one landed on text that did not contain what was quoted. **Grep the quotation,
+   not just the line number.**
 3. **Prove the guard fails.** #135's five new tag cases exist because the release-tag chain past the
    lightweight check was **entirely untested** — every assertion passed a commit SHA, so the refusal
    at `pre-push:187` fired first and five refusal branches never executed — a miscitation in this
