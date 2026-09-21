@@ -9,6 +9,18 @@ publish.workspace = true
 [lints]
 workspace = true
 
+# The crate's first binary target (microstep 1.6.6b). Declared rather than left
+# to Cargo's `src/bin/` inference: a target that exists because of where a file
+# sits is a target nobody reviewing this manifest can see, and `--bin
+# verify-audit` is in a `Done when` line and in the Phase-1 exit gate.
+#
+# It takes no dependency of its own. Two flags and `--help` are parsed by hand,
+# so no argument-parser crate enters the graph that `pos-db` puts on a register,
+# and `Cargo.lock` does not move.
+[[bin]]
+name = "verify-audit"
+path = "src/bin/verify-audit.rs"
+
 [dependencies]
 blake3.workspace = true
 rusqlite.workspace = true
