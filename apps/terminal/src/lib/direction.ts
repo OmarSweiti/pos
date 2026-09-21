@@ -1,29 +1,38 @@
 /**
- * Locale and writing direction.
+ * Locale and writing direction, as this register applies them.
  *
  * Conventions §10: Arabic is not a translation of this product — it is the
  * product, and English is the toggle. So `ar`/RTL is the default, and switching
  * flips `lang` and `dir` together and nothing else.
+ *
+ * **The rule itself now lives in `@pos/ui`** (microstep 1.11.1): which locales
+ * exist, which one is the default and which direction each writes in are
+ * product law rather than terminal law, and the back office renders the same
+ * two languages. They are re-exported here so every call site in this app keeps
+ * one import, and so `direction.test.ts` proves the binding rather than a
+ * second copy of the answer.
+ *
+ * What stays is what is this app's own: applying a locale to a document root,
+ * and the affordance that switches it.
  *
  * The document root is an argument rather than something these functions reach
  * for. That is the same discipline `pos-domain` applies to clocks and IDs, and it
  * is what lets every rule below be tested without a browser.
  */
 
-export type Locale = "ar" | "en";
-export type Direction = "rtl" | "ltr";
+import {
+  DEFAULT_LOCALE,
+  type Direction,
+  directionFor,
+  type Locale,
+} from "@pos/ui";
 
-/** §10: the register is right-to-left unless someone asks otherwise. */
-export const DEFAULT_LOCALE: Locale = "ar";
+export { DEFAULT_LOCALE, type Direction, directionFor, type Locale };
 
 /** The only part of a document element these functions touch. */
 export interface DocumentRoot {
   lang: string;
   dir: string;
-}
-
-export function directionFor(locale: Locale): Direction {
-  return locale === "ar" ? "rtl" : "ltr";
 }
 
 /** The opposite of the current selection — what the toggle switches to. */

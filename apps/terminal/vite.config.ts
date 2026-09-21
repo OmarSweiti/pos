@@ -1,6 +1,6 @@
 /// <reference types="vitest/config" />
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
@@ -22,6 +22,42 @@ const documentFixture = readFileSync(
   "utf8",
 );
 
+/**
+ * Everything `ui_and_rasterizer_resolve_the_same_embedded_font` needs to read,
+ * read here because the test cannot read it itself.
+ *
+ * `apps/terminal/tsconfig.app.json` carries no `"types": ["node"]`, so an
+ * `import { readFileSync } from "node:fs"` anywhere under `src/` fails
+ * `tsc -b` with TS2591 — and `just build-web` is the only thing that
+ * typechecks a test. Adding node types to the app project would hand every
+ * production component the filesystem to fix a test, so the I/O happens in
+ * this file, which `tsconfig.node.json` already types, and travels to the
+ * suite through vitest's `provide`.
+ *
+ * Only bytes and base URLs cross that boundary. Which paths count as "the same
+ * font", how a `url()` or an `include_bytes!` argument is extracted and what
+ * agreement means are all decided in the test — a fixture that pre-computed
+ * the answer would be asserting against itself.
+ */
+const FONT_DIR = new URL("../../assets/fonts/", import.meta.url);
+const RASTERISER_SOURCE = new URL(
+  "../../crates/pos-hardware/src/font.rs",
+  import.meta.url,
+);
+const SCREEN_SOURCE = new URL("./src/styles/font.css", import.meta.url);
+
+const fontResolution = {
+  screenCss: readFileSync(fileURLToPath(SCREEN_SOURCE), "utf8"),
+  screenCssHref: SCREEN_SOURCE.href,
+  rasteriserRust: readFileSync(fileURLToPath(RASTERISER_SOURCE), "utf8"),
+  rasteriserRustHref: RASTERISER_SOURCE.href,
+  // What is actually on disk, so the test can refuse a path that resolves
+  // tidily and names nothing. Sorted: `readdirSync` order is the filesystem's.
+  presentHrefs: readdirSync(fileURLToPath(FONT_DIR))
+    .sort()
+    .map((name) => new URL(name, FONT_DIR).href),
+};
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
@@ -34,6 +70,7 @@ export default defineConfig(async () => ({
     // one file honest, and a file that forgot to import the harness would fail
     // as a bad selector rather than a missing hook.
     setupFiles: ["./src/test/setup.ts"],
+    provide: { fontResolution },
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
