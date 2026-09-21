@@ -552,6 +552,13 @@ fn an_anchor_recording_an_empty_chain_reports_no_tamper() {
     assert!(run.says("it anchors nothing"), "{}", run.out);
     assert!(!run.says("BROKEN"), "{}", run.out);
     assert!(run.says("INTACT SO FAR — 3 entries"), "{}", run.out);
+    // The register's own block says the anchor is for it and still anchors
+    // nothing — which "none for this register" would have got wrong.
+    assert!(
+        run.says("anchor      for this register, recording it as having written no audit row"),
+        "{}",
+        run.out
+    );
 }
 
 /// Deleting **every** row of a register is the hole enumeration alone leaves.

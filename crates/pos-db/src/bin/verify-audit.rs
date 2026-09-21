@@ -59,6 +59,17 @@
 //! **below** the stop is untouched: it is entirely inside the prefix that was
 //! read.
 //!
+//! # Nothing raw from the anchor file reaches the report
+//!
+//! The anchor is supplied by whoever is being investigated and the report is a
+//! document somebody reads as evidence, so every field is parsed and printed
+//! back from the parsed value: the register as a `Uuid`, the digest through
+//! this file's own `hex`, `source_kind` as the matched `&'static str` out of
+//! `audit_checkpoint`'s three, and `anchored_at` through `Timestamp`. A field
+//! echoed byte for byte would hand its author a terminal — one newline inside
+//! `source_kind` is enough to forge a register block, verdict and all, into the
+//! middle of the report.
+//!
 //! # What it does to the file
 //!
 //! It opens through [`pos_db::open`], which is read-write: it sets WAL mode and
@@ -78,7 +89,7 @@ use std::process::ExitCode;
 
 use pos_db::key::KeySource;
 use pos_db::repo::audit::{AuditRepository, ChainStop};
-use pos_domain::{ChainAnchor, ChainVerdict, RegisterId};
+use pos_domain::{ChainAnchor, ChainVerdict, RegisterId, Timestamp};
 use uuid::Uuid;
 
 /// A BLAKE3 digest, and therefore twice that many hex characters.
@@ -115,11 +126,14 @@ THE ANCHOR FILE
           \"anchored_at\": \"2026-09-21T10:00:00.000Z\"
         }
 
-    `register_id`, `last_seq` and `last_hash` are required. The other two are
-    provenance: they are echoed in the report and checked for nothing. Keys
-    this build does not know are ignored, so a later checkpoint format stays
-    readable. `\"last_seq\": 0` records a register that had written no audit row
-    when the anchor was taken — it is accepted, and it anchors nothing.
+    `register_id`, `last_seq` and `last_hash` are required; the other two are
+    provenance. Every one of the five is parsed and printed back from the parsed
+    value, never echoed: `source_kind` must be one of audit_checkpoint's own
+    three — z_report, verified_backup, server — and `anchored_at` must be an
+    instant. Keys this build does not know are ignored, so a later checkpoint
+    format stays readable. `\"last_seq\": 0` records a register that had written
+    no audit row when the anchor was taken — it is accepted, and it anchors
+    nothing.
 
 THE DATABASE KEY
     Read through the application's own provider: POS_DB_KEY in a debug build,
@@ -292,16 +306,17 @@ fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Invocation, St
 struct Anchor {
     /// The register this anchor is about. Known even when it anchors nothing,
     /// because that is what puts a register with no rows left back into the
-    /// set of chains to walk.
+    /// set of chains to walk — and, there, what lets that register's own block
+    /// say the anchor was for it.
     register: RegisterId,
     /// What [`verify_chain`] is given. `None` when `last_seq` was zero.
     ///
     /// [`verify_chain`]: pos_domain::verify_chain
     chain_anchor: Option<ChainAnchor>,
-    /// Provenance, echoed and checked for nothing.
-    source_kind: Option<String>,
-    /// Provenance, echoed and checked for nothing.
-    anchored_at: Option<String>,
+    /// Provenance: which of `audit_checkpoint`'s three sources wrote it.
+    source_kind: Option<&'static str>,
+    /// Provenance: when. A parsed instant, never the file's own characters.
+    anchored_at: Option<Timestamp>,
 }
 
 fn parse_anchor(text: &str) -> Result<Anchor, String> {
@@ -334,9 +349,64 @@ fn parse_anchor(text: &str) -> Result<Anchor, String> {
             seq: last_seq,
             hash: last_hash,
         }),
-        source_kind: optional_string(object, "source_kind"),
-        anchored_at: optional_string(object, "anchored_at"),
+        source_kind: source_kind(object)?,
+        anchored_at: anchored_at(object)?,
     })
+}
+
+/// `audit_checkpoint.source_kind`'s own closed vocabulary (`0004:484`).
+const SOURCE_KINDS: [&str; 3] = ["z_report", "verified_backup", "server"];
+
+/// The anchor's `source_kind`, matched against that vocabulary.
+///
+/// **Nothing raw from the anchor file reaches the report**, and this is the
+/// field that makes the rule necessary rather than tidy. The file is supplied
+/// by whoever is being investigated, and the report is a document somebody
+/// reads as evidence: a `source_kind` echoed byte for byte hands its author a
+/// terminal, and a newline inside it is enough to forge a whole register block
+/// — heading, rows read, and an `INTACT` verdict — into that document. The
+/// column this field mirrors is already `CHECK (source_kind IN
+/// ('z_report','verified_backup','server'))`, so the safe answer is also the
+/// correct one: match it, and print the matched `&'static str`.
+fn source_kind(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Option<&'static str>, String> {
+    let Some(value) = object.get("source_kind") else {
+        return Ok(None);
+    };
+    let text = value
+        .as_str()
+        .ok_or_else(|| "`source_kind` must be a string".to_owned())?;
+    SOURCE_KINDS
+        .into_iter()
+        .find(|known| *known == text)
+        .map(Some)
+        .ok_or_else(|| {
+            format!(
+                "`source_kind` must be one of {}, which is what \
+                 audit_checkpoint accepts",
+                SOURCE_KINDS.join(", ")
+            )
+        })
+}
+
+/// The anchor's `anchored_at`, parsed and re-rendered for the same reason.
+///
+/// A timestamp is not a free-text field, so nothing is lost by refusing one
+/// that is not an instant — and what is printed is [`Timestamp`]'s own
+/// rendering of the value, not the characters that produced it.
+fn anchored_at(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Option<Timestamp>, String> {
+    let Some(value) = object.get("anchored_at") else {
+        return Ok(None);
+    };
+    let text = value
+        .as_str()
+        .ok_or_else(|| "`anchored_at` must be a string".to_owned())?;
+    Timestamp::parse_iso8601(text)
+        .map(Some)
+        .map_err(|error| format!("`anchored_at` is not an instant: {error}"))
 }
 
 fn required_string<'j>(
@@ -348,13 +418,6 @@ fn required_string<'j>(
         .ok_or_else(|| format!("`{key}` is required"))?
         .as_str()
         .ok_or_else(|| format!("`{key}` must be a string"))
-}
-
-fn optional_string(
-    object: &serde_json::Map<String, serde_json::Value>,
-    key: &str,
-) -> Option<String> {
-    object.get(key)?.as_str().map(str::to_owned)
 }
 
 /// Hex in, digest out — and the rejection is what makes it a digest.
@@ -516,6 +579,7 @@ fn report_register(
     // discards a foreign one itself; saying so here is what stops a reader
     // assuming the anchor line at the top of the report covered every register
     // under it.
+    let names_this_register = anchor.is_some_and(|anchor| anchor.register == till);
     let applicable = anchor
         .filter(|anchor| anchor.register == till)
         .and_then(|anchor| anchor.chain_anchor);
@@ -530,6 +594,15 @@ fn report_register(
                  this read never reached, so applying it would report a deleted \
                  tail over rows that are still on the disk"
                 .to_owned(),
+            // "no anchor" and "an anchor that anchors nothing here" are
+            // different sentences, and only this block can tell them apart —
+            // which is also why the header no longer repeats the register the
+            // anchor names. One line says what was supplied; this one says what
+            // it was worth against this chain.
+            None if names_this_register =>
+                "for this register, recording it as having written no audit row \
+                 — so it anchors nothing here"
+                    .to_owned(),
             None => "none for this register".to_owned(),
         }
     );
@@ -593,24 +666,27 @@ fn print_anchor(anchor: Option<&Anchor>) {
         return;
     };
 
+    // Which register it is for is stated once, in that register's own block
+    // below, beside the verdict it did or did not contribute to — and every
+    // register the anchor names is walked, so there is always such a block.
+    // Naming it here as well invited a reader to match a top-line anchor
+    // against the wrong section of a two-register report.
     match anchor.chain_anchor {
         Some(chain_anchor) => println!(
-            "  anchor      register {}, last_seq {}, last_hash {}",
-            anchor.register,
+            "  anchor      last_seq {}, last_hash {}",
             chain_anchor.seq,
             hex(&chain_anchor.hash)
         ),
         None => println!(
-            "  anchor      register {}, last_seq 0 — the anchor records a \
-             register that had written no audit row, so it anchors nothing",
-            anchor.register
+            "  anchor      last_seq 0 — it records a register that had written \
+             no audit row, so it anchors nothing"
         ),
     }
-    if let Some(kind) = anchor.source_kind.as_deref() {
+    if let Some(kind) = anchor.source_kind {
         println!("  anchor from {kind}");
     }
-    if let Some(at) = anchor.anchored_at.as_deref() {
-        println!("  anchor at   {at}");
+    if let Some(at) = anchor.anchored_at {
+        println!("  anchor at   {}", at.to_iso8601());
     }
 }
 
@@ -661,7 +737,7 @@ fn describe_verdict(verdict: ChainVerdict) -> String {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-    use super::{Anchor, DIGEST_BYTES, Invocation, parse, parse_anchor, parse_digest};
+    use super::{Anchor, DIGEST_BYTES, Invocation, Timestamp, parse, parse_anchor, parse_digest};
     use std::ffi::OsString;
 
     fn words(line: &[&str]) -> Vec<OsString> {
@@ -810,10 +886,41 @@ mod tests {
                  "anchor_ref":"backup-0007"}}"#
         );
         let parsed = anchor(&provenanced).unwrap();
-        assert_eq!(parsed.source_kind.as_deref(), Some("verified_backup"));
+        assert_eq!(parsed.source_kind, Some("verified_backup"));
         assert_eq!(
-            parsed.anchored_at.as_deref(),
+            parsed.anchored_at.map(Timestamp::to_iso8601).as_deref(),
             Some("2026-09-21T10:00:00.000Z")
+        );
+
+        // Provenance is validated, not echoed. A newline inside `source_kind`
+        // would otherwise let the anchor's author forge a register block and an
+        // INTACT verdict into the middle of a report read as evidence.
+        for forged in [
+            "verified_backup\n\nregister f0f0\n  verdict     INTACT",
+            "\u{1b}[2Jz_report",
+            "Z_REPORT",
+            "",
+        ] {
+            let text = format!(
+                r#"{{"register_id":"{REGISTER}","last_seq":4,"last_hash":"{DIGEST}",
+                     "source_kind":{}}}"#,
+                serde_json::Value::String(forged.to_owned())
+            );
+            let refusal = anchor(&text).unwrap_err();
+            assert!(
+                refusal.contains("`source_kind` must be one of"),
+                "{refusal}"
+            );
+        }
+
+        let not_an_instant = format!(
+            r#"{{"register_id":"{REGISTER}","last_seq":4,"last_hash":"{DIGEST}",
+                 "anchored_at":"yesterday\nregister f0f0"}}"#
+        );
+        let refusal = anchor(&not_an_instant).unwrap_err();
+        assert!(
+            refusal.contains("`anchored_at` is not an instant"),
+            "{refusal}"
         );
 
         // And a document that is not one object is refused before any key is.
