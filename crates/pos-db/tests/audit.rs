@@ -1365,3 +1365,113 @@ fn an_unreadable_head_refuses_the_append_rather_than_chaining_onto_it() {
         other => panic!("expected a located head refusal, got {other:?}"),
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The register enumeration (microstep 1.6.6b)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Which tills this file holds rows for — once each, in one fixed order.
+///
+/// **What a careless version of this test would miss.** Assert only the set,
+/// and a reader returning one entry per *row* rather than per till would pass
+/// on a fixture where every till wrote once. Each till here writes twice, so a
+/// duplicate shows. The order is asserted too: a forensic report that reordered
+/// itself between runs is a report nobody can diff against the last one.
+#[test]
+fn registers_lists_every_till_that_has_written_a_row() {
+    let db = fresh_database("registers.db");
+    let first = register(REGISTER);
+    let second = register(OTHER_REGISTER);
+
+    // `fresh_database` seeds both tills in `register`. Neither is in the audit
+    // log until it writes there, and the enumeration reads the log.
+    let empty = AuditRepository::new(&db.conn).registers().unwrap();
+    assert!(
+        empty.registers().is_empty(),
+        "a provisioned till that has audited nothing is not in audit_log"
+    );
+    assert_eq!(empty.orphan_rows(), 0);
+
+    // Appended second-till-first, so insertion order cannot be mistaken for
+    // the ascending order the reader actually promises.
+    append(&db.conn, second, uuid(0x71), &intent(0x71));
+    append(&db.conn, first, uuid(0x72), &intent(0x72));
+    append(&db.conn, second, uuid(0x73), &intent(0x73));
+    append(&db.conn, first, uuid(0x74), &intent(0x74));
+
+    let found = AuditRepository::new(&db.conn).registers().unwrap();
+    assert_eq!(
+        found.registers(),
+        [first, second].as_slice(),
+        "each till once, ascending by register_id — REGISTER is 0xF0 and OTHER_REGISTER 0xF1"
+    );
+    assert_eq!(found.orphan_rows(), 0);
+}
+
+/// A row whose `register_id` is not an id is counted, never dropped.
+///
+/// `audit_log.register_id` carries no `REFERENCES register(id)` and no width
+/// check (`0004:431`), and `STRICT` constrains a column's type rather than its
+/// length — so sixteen bytes is this crate's convention and not something
+/// SQLite enforces. Such a row is in no chain, because every read binds a
+/// sixteen-byte parameter; a reader that silently skipped it would let a tool
+/// report on a subset of the file while sounding like it had read the file.
+///
+/// **What a careless version of this test would miss.** Write one orphan row
+/// and an implementation counting *groups* rather than rows passes. Two rows
+/// share the same unattributable id here, so the answer is two or the reader is
+/// counting the wrong thing.
+#[test]
+fn a_row_whose_register_id_is_no_id_is_counted_rather_than_hidden() {
+    let db = fresh_database("orphan-register.db");
+    let till = register(REGISTER);
+    append(&db.conn, till, uuid(0x76), &intent(0x76));
+    for tag in [0x77u8, 0x78] {
+        write_unattributed_row(&db.conn, uuid(tag));
+    }
+
+    let found = AuditRepository::new(&db.conn).registers().unwrap();
+    assert_eq!(
+        found.registers(),
+        [till].as_slice(),
+        "the honest till is still listed"
+    );
+    assert_eq!(found.orphan_rows(), 2, "rows, not groups");
+
+    // And the honest chain still reads clean. An unattributable row sits
+    // outside every `WHERE register_id = ?`, so it cannot break a chain it was
+    // never part of — which is why it is a count and not a verdict.
+    assert_eq!(
+        verdict(&db.conn, till, None),
+        ChainVerdict::IntactUnanchoredFrom {
+            entries: 1,
+            unanchored_from: 0
+        }
+    );
+}
+
+/// One `audit_log` row whose `register_id` is four bytes, with the delivery
+/// envelope the insert trigger demands.
+///
+/// Written by hand because no repository method can produce it — which is the
+/// point. It is what something holding the file and a SQL console writes.
+fn write_unattributed_row(conn: &Connection, row: Uuid) {
+    let tx = conn.unchecked_transaction().unwrap();
+    write_envelope(conn, &tx, &commit_id(row), &[("audit_log", row)]);
+    tx.execute(
+        "INSERT INTO audit_log
+           (id, register_id, actor_id, action, entity, entity_id, payload,
+            prev_hash, hash, at)
+         VALUES (?1, ?2, ?3, 'drawer.open', 'drawer_event', ?1, '{}', ?4, ?5, ?6)",
+        params![
+            row.as_bytes().as_slice(),
+            vec![0x01u8, 0x02, 0x03, 0x04],
+            user(0xA1).as_uuid().as_bytes().as_slice(),
+            vec![0x00u8; 32],
+            vec![0x7Au8; 32],
+            AT
+        ],
+    )
+    .expect("nothing in the schema constrains register_id to sixteen bytes");
+    tx.commit().unwrap();
+}
