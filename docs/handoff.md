@@ -1,16 +1,17 @@
 # Handoff — the single current one
 
-**Reflects `development` @ `3495b49`, 21 September 2026 — fully re-measured, not incremented.**
+**Reflects `development` @ `5621bc5`, 21 September 2026 — re-measured, not incremented.**
 
 There is one handoff — keep updating this file rather than adding a dated one.
 
 > ## 🔎 THIS EDITION WAS AUDITED, NOT APPENDED TO
 >
 > Every live claim was re-derived on 21 September rather than carried forward, and **§1 gains the
-> view this document has never had**: *"What is LEFT"* — 82 microsteps by group, the four missing
-> files that gate seventeen of them, which 40 are startable, and a snippet that regenerates the
-> whole block. It is derived from the phase file and the filesystem, so it cannot drift silently
-> the way the prose around it can.
+> view this document has never had**: *"What is LEFT"* — every remaining microstep by group, the
+> four missing files that gate seventeen of them, which of them are startable, and a snippet that
+> regenerates the whole block. It is derived from the phase file and the filesystem, so it cannot
+> drift silently the way the prose around it can. (It read 82 and 40 the day it was written;
+> `1.11.1` has since taken it to 81 and 39, which is what a regenerating block is for.)
 >
 > **The audit found four errors in this file and one in the plan.** All 76 `file:line` references
 > were checked mechanically: three had drifted onto the wrong line and two onto blank lines — all
@@ -25,6 +26,43 @@ There is one handoff — keep updating this file rather than adding a dated one.
 > ruleset ledger at 28 bypasses of 68, and all four rulesets re-diffed against live by hand — they
 > still match.
 
+> ## ✅ `1.11.1` LANDED — THE REGISTER SPEAKS ARABIC BECAUSE IT DECIDES TO, NOT BECAUSE A FILE SAID SO
+>
+> `1.11.1` (#212, issue #211) takes Phase 1 to **31 of 112 (~28%)** — the i18n infrastructure, gap
+> G-5, and the fourth front-end microstep to move the JavaScript rows since `1.11.0` built the
+> harness — after `1.11.3`, `1.11.6` and `1.11.11`. §2l is the record.
+>
+> **The finding worth carrying is what "by default" turned out to mean.** `index.html` has shipped
+> `<html lang="ar" dir="rtl">` since the scaffold and `1.11.0`'s harness feeds *that file* to
+> jsdom, so an assertion on the document root passes today with **no product code involved at
+> all** — which `Sale.test.tsx` had already written down as the thing it could not rule out.
+> Meanwhile `useLocale` called `applyLocale` only on a **toggle**. Nothing established direction at
+> boot, so an `index.html` regressed to `ltr`, a window served from elsewhere, or a second entry
+> point would each have rendered Arabic left-to-right with every test green. §5 ruling 4 reserved
+> this for `1.11.1` and it is **discharged**.
+>
+> **The sweep found an argument, not a bug, and the fix was deletion.** 23 mutations, 22 caught.
+> `installLocale` was written with an optional `locale = DEFAULT_LOCALE` that nothing passes, so no
+> test could tell it from a constant — removed rather than given a test of its own. The other
+> survivor is real and is recorded in the test: point **both** the CSS and `font.rs` at
+> `assets/fonts/LICENSE.txt` and this suite correctly reports that the UI and the rasteriser
+> resolve the same asset, which is not a font. What refuses it is `1.7.2`, in another crate and
+> another runner — **so the guarantee composes across two runners and the `Done when`'s single
+> command does not carry it alone.** Measured by applying the mutation, not reasoned.
+>
+> **An adversarial read then found two gaps no mutation in the first list reached**, and both are
+> mutations now: deleting `font-family: var(--font-ui)` while keeping the variable left every
+> element on the fallback stack with the suite green, and the numeral guard was `[0-9]` when
+> conventions §10 wants Western digits *because* Eastern Arabic-Indic ones confuse a Jordanian
+> reader — so `٢` in a catalogue phrase was the worse version of the defect, passing.
+>
+> **`protected-paths` was GREEN, and §4 said it would be red.** That sentence was wrong: `1.11.1`
+> is absent from `check-test-catalog.py`'s `PLANNED` ceiling, while the other four names in its
+> list are present. Corrected in §4. All six required checks and all five CodeQL analyses passed
+> with no alert.
+>
+> **Nothing is in flight.** The WIP=1 slot is free and §4 names what is left.
+>
 > ## ✅ `1.6.6b` LANDED — THE CHAIN NOW HAS A COMMAND THAT CAN PROVE IT, AND THE SAME REVIEW SHAPE PAID AGAIN
 >
 > `1.6.6b` (#208, issue #207) takes Phase 1 to **30 of 112 (~27%)** — `verify-audit`, the forensic
@@ -89,8 +127,8 @@ guard-hardening on shipped code, not a microstep. **19 September moved it to 25 
 §2c and §2d are the 14–15 September windows; §2a keeps 13 September and §2 the 9–11 September
 record, where twenty-six pull requests changed the governance layer and no microstep advanced.
 
-**`development` is green, tip included.** `just pre-push` exits 0 at `8f05458`, all 37
-`just guards` steps pass, and `ci` run **`35602921581` is a success on the tip**, queried by SHA
+**`development` is green, tip included.** `just pre-push` exits 0 at `5621bc5`, all 37
+`just guards` steps pass, and `ci` run **`35650018051` is a success on the tip**, queried by SHA
 rather than taken as the newest green one — `ci.yml`'s ref-scoped concurrency group cancels runs
 when merges land inside two minutes of each other, and the cancellation is invisible unless you ask
 about the tip specifically.
@@ -104,12 +142,12 @@ CI afterwards inherited it and looked like its cause. **Verify before believing 
 register code was involved. This is the class `CLAUDE.md` predicts and deliberately keeps out of the
 local gate.
 
-**The WIP=1 slot is EMPTY.** 0 open pull requests and nothing in flight. Board #4 reads **23
-items — ten `Todo`, thirteen `Done`**, counted live; no item is `In Progress`. Pick one microstep from §4, file its
-Microstep issue, put it on the board, set it `In Progress`, then build it — a loop now four
-microsteps old and followed every time since #162.
+**The WIP=1 slot is EMPTY.** 0 open pull requests and nothing in flight. Board #4 reads **24
+items — ten `Todo`, fourteen `Done`**, counted live; no item is `In Progress`. Pick one microstep
+from §4, file its Microstep issue, put it on the board, set it `In Progress`, then build it — a
+loop now five microsteps old and followed every time since #162.
 
-**There are ELEVEN open issues, not ten, and #203 is the one every previous handoff missed.**
+**There are still ELEVEN open issues, and #203 is the one every handoff before this pair missed.**
 It was filed automatically at 09:08 UTC on 21 September by the weekly `security` workflow's own
 escalation job, carries **no labels and is not on board #4**, and is a real red: §3 diagnoses it.
 
@@ -132,11 +170,11 @@ cd ~/My_Projects/pos
 git checkout development && git pull --ff-only
 git fetch --all --prune            # your local staging is 51 commits stale — see §14
 mise exec -- just setup
-mise exec -- just pre-push          # passes at 8f05458
+mise exec -- just pre-push          # passes at 5621bc5
 ```
 
-Nothing is in flight, so there is no branch to resume. `phase-1/group-6-audit-verifier` merged as
-#208 and `gh pr merge --delete-branch` already removed it on both sides.
+Nothing is in flight, so there is no branch to resume. `phase-1/group-11-i18n` merged as #212 and
+`gh pr merge --delete-branch` already removed it on both sides.
 
 **Two reds are open and neither is a diff of yours.** `protected-paths` on any PR that edits
 `scripts/check-test-catalog.py` is by design (§2k), and **the weekly `security` workflow is red
@@ -154,27 +192,28 @@ with `couldn't exec process: No such file or directory`, because the whole unspl
 `cd <repo> && mise exec -- node --version` prints `v24.19.0` — and a relative script path works.
 Re-measured 13 September; the `cd` clause that stood here was false.
 
-### Verified gate baselines at `8f05458`
+### Verified gate baselines at `5621bc5`
 
-Use these as the "nothing is broken" reference. **One row moved when `1.6.6b` landed**: the test
-count, 298 → **324**, all twenty-six of them `1.6.6b`'s and all Rust. The schema chain did not
-move, because `1.6.6b` needed no migration — and neither did `Cargo.lock`, because the verifier
-parses its two flags by hand rather than taking an argument-parser dependency.
+Use these as the "nothing is broken" reference. **The rows that moved when `1.11.1` landed are
+the JavaScript ones, and only those**: 8 files / 71 tests → **9 files / 79 tests**, all eight of
+them in `apps/terminal/src/i18n/catalog.test.ts`. The Rust suite is unchanged at **324**, because
+nothing in `1.11.1` is Rust. The schema chain did not move — no migration — and **`Cargo.lock` is
+byte-identical**, because the one new dependency is `@pos/ui`, a workspace package, which touches
+`pnpm-lock.yaml` and nothing in the Rust graph.
 
-**Every row below was re-measured on the merged tip `8f05458`, and for once none is carried
-forward.** `just pre-push`'s five, plus `verify-schema`, `verify-pg` — **real engine pass** through
-the Docker fallback — `just audit`, and `bench-gate`, which was run rather than assumed and
-refused with exit 3 as it should. `just audit` still reports **135 package releases and 11
-reviewed expressions**, which is the expected answer *and* the measured one: `1.6.6b` took no
-dependency at all, so `Cargo.lock` is byte-identical and no licence or advisory surface moved.
-**Re-run the one you are about to depend on anyway** — these are dated observations.
+**Every row below was re-measured on the merged tip `5621bc5`.** `just pre-push`'s five, plus
+`verify-schema`, `verify-pg` — **real engine pass** through the Docker fallback — `just audit`,
+and `bench-gate`, which refuses with exit 3 as it should. `just audit` still reports **135 package
+releases and 11 reviewed expressions**: no *third-party* dependency entered either graph, so no
+licence or advisory surface moved. **Re-run the one you are about to depend on anyway** — these
+are dated observations.
 
 | Command | Reads |
 |---|---|
 | `just pre-push` | **exit 0** — `lint test build-web guards secrets`, `justfile:368`, ~1:30 warm |
 | `just check` | exit 0 — all **seven** workspace members |
 | `just lint` | exit 0 — 2 prerequisites + 14 body steps = **16 checkers** |
-| `just test` | exit 0 — **324 tests run: 324 passed, 2 skipped**; JS **8 files / 71 tests** |
+| `just test` | exit 0 — **324 tests run: 324 passed, 2 skipped**; JS **9 files / 79 tests** |
 | `just build-web` | exit 0 — `tsc -b` + vite 8.2.2 across 5 packages |
 | `just guards` | exit 0 — **37 steps** |
 | `just verify-schema` | exit 0 — **5 migrations, 48 tables, 457 columns** |
@@ -182,7 +221,7 @@ dependency at all, so `Cargo.lock` is byte-identical and no licence or advisory 
 | `just secrets` | exit 0 — gitleaks 8.30.1, `--history` |
 | `just audit` | exit 0 — cargo-deny clean; **135 package releases, 11 reviewed expressions** |
 | `just bench-gate` | **REFUSED, exit 3** — no reference register. Correct, not broken |
-| `pnpm --filter terminal exec vitest run` | **6 files, 58 tests**, vitest **5.0.0** |
+| `pnpm --filter terminal exec vitest run` | **7 files, 66 tests**, vitest **5.0.0** |
 | `pnpm --filter backoffice exec vitest run` | 1 file, **3 tests** |
 | `pnpm --filter money exec vitest run` | 1 file, 10 tests |
 | `check-implementation-frontier.py` | phase 1: **112**, 2: 61, 3: 45, 4: 42, 5: 36 |
@@ -195,7 +234,7 @@ dependency at all, so `Cargo.lock` is byte-identical and no licence or advisory 
 | `test-settings.py` | **30 passed**; `.claude/settings.json` is **4,426 bytes** |
 
 **The three per-package vitest rows must sum to the `just test` row.** They do, re-measured
-package by package on 21 September: **6 + 1 + 1 = 8 files, 58 + 3 + 10 = 71 tests**.
+package by package after `1.11.1` merged: **7 + 1 + 1 = 9 files, 66 + 3 + 10 = 79 tests**.
 
 **This paragraph existed to catch exactly the drift it had itself acquired, so the failure is
 worth naming rather than quietly overwriting.** It stood at "4 + 1 + 1 = 6 files, 31 + 3 + 10 =
@@ -247,34 +286,34 @@ vitest 5.0.0, gitleaks 8.30.1, Docker Engine 29.5.2.
 
 | | |
 |---|---|
-| `development` | **`8f05458`** — `just pre-push` exits 0 and `ci` run **`35602921581` is a success on the tip**, queried by SHA. Carries `1.9.1`, migration `0005`, `1.1.9`'s `ClockRepository`, `1.2.6`, the audit's fixes, #185's seven tests, `1.11.6`'s scan capture with #189's fix, `1.11.11`'s keyboard map, `1.9.2`'s document counters, `1.7.2`'s embedded typeface, `1.6.6`'s audit repository and `1.6.6b`'s `verify-audit` |
-| `staging` | **`f2edbb6`** — **45 behind** `origin/development`, 5 ahead (its own five promotion merges). Re-measured 21 September with `git rev-list --count origin/staging..origin/development`; **this row has been wrong before and §9 states it independently** — if the two disagree, run the command rather than picking one. **Use the `origin/` refs**: a local `staging` left stale by 51 commits answers 92, which is how this row went wrong before |
-| `main` | `24a0283` — **173 behind** `origin/development`, **133 behind** `origin/staging`, untouched since 20 August |
-| Phase 1 | **30 of 112** executable microsteps (~27%) — `1.6.6b` (#208) landed 21 September, the same day as `1.6.6` (#204), after `1.11.6` (#188), `1.11.11` (#192), `1.9.2` (#195) and `1.7.2` (#200) on 19–20 September. The percentage moved on every one of the six. **Group 1.1 is closed** |
+| `development` | **`5621bc5`** — `just pre-push` exits 0 and `ci` run **`35650018051` is a success on the tip**, queried by SHA. Carries `1.9.1`, migration `0005`, `1.1.9`'s `ClockRepository`, `1.2.6`, the audit's fixes, #185's seven tests, `1.11.6`'s scan capture with #189's fix, `1.11.11`'s keyboard map, `1.9.2`'s document counters, `1.7.2`'s embedded typeface, `1.6.6`'s audit repository, `1.6.6b`'s `verify-audit` and `1.11.1`'s i18n infrastructure |
+| `staging` | **`f2edbb6`** — **48 behind** `origin/development`, 5 ahead (its own five promotion merges). Re-measured 21 September with `git rev-list --count origin/staging..origin/development`; **this row has been wrong before and §9 states it independently** — if the two disagree, run the command rather than picking one. **Use the `origin/` refs**: a local `staging` left stale by 51 commits answers 92, which is how this row went wrong before |
+| `main` | `24a0283` — **176 behind** `origin/development`, **133 behind** `origin/staging`, untouched since 20 August |
+| Phase 1 | **31 of 112** executable microsteps (~28%) — `1.11.1` (#212) landed 21 September, the third that day after `1.6.6` (#204) and `1.6.6b` (#208), and after `1.11.6` (#188), `1.11.11` (#192), `1.9.2` (#195) and `1.7.2` (#200) on 19–20 September. The percentage moved on every one of the seven. **Group 1.1 is closed** |
 | Open PRs | **0**, and **nothing is in flight**. The WIP=1 slot is free |
-| Open issues | **11**, not ten — #68, #69, #70, #71, #111, #112, **#113 (reopened)**, #114, #174, #197 and **#203**, listed live rather than carried forward. **#203 is the one every handoff since 21 September has missed**: the weekly `security` workflow filed it automatically at 09:08 UTC, it carries no labels, it is **not on board #4**, and it is a real red — §3 diagnoses it. #202 opened and closed with `1.6.6`; #207 opened and closed with `1.6.6b`. Both of the issues this session closed with their substance unresolved have been put right: **#113 is reopened** and **#197 carries #179's three surviving findings**, with `1.10.1` amended (#198) so `0006` is where they land. Nine of the ten are blocked on a human; **#174 is the exception**. #187, #191, #194 and #199 opened and closed with their microsteps |
-| Board #4 | **23 items — 10 `Todo`, 13 `Done`**, counted live on 21 September rather than incremented. `Done` gains #207; `Todo` is **ten of the eleven open issues — #203 is not on the board at all**, which is the first time the "Todo is exactly the open issues" equation has been false. Archived items are excluded from the listing and their count is not readable through it |
+| Open issues | **11** — #68, #69, #70, #71, #111, #112, **#113 (reopened)**, #114, #174, #197 and **#203**, listed live rather than carried forward. #211 opened and closed with `1.11.1`, so the count is unchanged rather than static. **#203 is the one every handoff since 21 September has missed**: the weekly `security` workflow filed it automatically at 09:08 UTC, it carries no labels, it is **not on board #4**, and it is a real red — §3 diagnoses it. #202 opened and closed with `1.6.6`; #207 opened and closed with `1.6.6b`. Both of the issues this session closed with their substance unresolved have been put right: **#113 is reopened** and **#197 carries #179's three surviving findings**, with `1.10.1` amended (#198) so `0006` is where they land. Nine of the ten are blocked on a human; **#174 is the exception**. #187, #191, #194 and #199 opened and closed with their microsteps |
+| Board #4 | **24 items — 10 `Todo`, 14 `Done`**, counted live after `1.11.1` merged rather than incremented. `Done` gains #211; `Todo` is unchanged and is **ten of the eleven open issues — #203 is still not on the board at all**, which remains the only case where the "Todo is exactly the open issues" equation is false. Archived items are excluded from the listing and their count is not readable through it |
 | Rulesets | **four, all active**, all four checked in under `.github/rulesets/`. **Re-diffed by hand on 21 September: all four still match live** on enforcement, target, conditions, rules and bypass actors. No gate does this, so it stays a dated observation rather than an invariant — but the date is now today's. See §3 |
 | Tags / releases | **zero of each.** The append-only tag ruleset has never been exercised |
 | Repository | **PUBLIC**, GitHub Free, `OmarSweiti` the sole collaborator (admin) |
 
-### Complete: 30 microsteps
+### Complete: 31 microsteps
 
 Read live from the frontier region — the block between the `<!-- frontier:begin -->` and
 `<!-- frontier:end -->` markers in `docs/implementation/README.md` — in its own order:
 
 `1.1.0` `1.1.1` `1.1.2a` `1.1.6` `1.1.3` `1.1.4` `1.1.2b` `1.1.7` `1.1.5` `1.1.8` `1.2.1` `1.2.2`
 `1.3.1` `1.8.9` `1.8.5` `1.11.2` `1.6.5` `1.6.1` `1.6.3` `1.11.0` `1.11.3` `1.9.1` `1.1.9` `1.2.6`
-`1.11.6` `1.11.11` `1.9.2` `1.7.2` `1.6.6` `1.6.6b`
+`1.11.6` `1.11.11` `1.9.2` `1.7.2` `1.6.6` `1.6.6b` `1.11.1`
 
-**Six predictions, six held.** `round(100*25/112)` through `round(100*30/112)` are 22, 23, 24,
-25, 26 and 27, so the region moved on every one of the last six microsteps and now reads `30 of
-112 executable microsteps fully complete (~27%)`. **The 31st moves it again** —
-`round(100*31/112) == 28`.
+**Seven predictions, seven held.** `round(100*25/112)` through `round(100*31/112)` are 22, 23, 24,
+25, 26, 27 and 28, so the region moved on every one of the last seven microsteps and now reads
+`31 of 112 executable microsteps fully complete (~28%)`. **The 32nd moves it again** —
+`round(100*32/112) == 29` — and the 33rd does not, because 32/33 share a rounded value.
 
 **The heading above said "28 microsteps" while the list under it held 29 and the region said 29.**
 It was a third hand-typed copy of a number two other surfaces already carry, and
-`check-implementation-frontier.py` does not read this file. It is 30 now; if you change the list,
+`check-implementation-frontier.py` does not read this file. It is 31 now; if you change the list,
 change the heading in the same edit or delete the heading's number.
 
 **`1.2.6` was the exception and it happened as predicted.** `round(100*23/112)` and
@@ -319,7 +358,7 @@ the opposite direction with a message about a missing `Done when`. Promoting tha
 `Done when:` over all three commands is the third deletion. **`1.2.0` carries the same
 `Current half done when:` shape** (`phase-1:214`), so whoever finishes it meets rule 4 too.
 
-### What is LEFT: 82 microsteps, and four files that gate a third of them
+### What is LEFT: 81 microsteps, and four files that gate a third of them
 
 **Derived, not typed.** Every number below comes from walking `phase-1-sellable-mvp.md`'s `### 1.x`
 headings against the frontier region's declared-complete list, and from asking the filesystem
@@ -339,7 +378,7 @@ the snippet is at the end of this block, and it is the only view in this documen
 | `1.8` storage & lifecycle | 2 / 14 | 12 | `1.8.0`/`1.8.1` first, and `1.8.1` is externally blocked |
 | `1.9` documents | 2 / 5 | 3 | `1.9.3` `1.9.4` `1.9.5` — all three behind the IPC wall |
 | `1.10` stock | **0 / 5** | 5 | `1.10.1` is migration `0006`, and it carries #197 |
-| `1.11` UI | 5 / 19 | 14 | `1.11.1` is startable; most of the rest wait on screens |
+| `1.11` UI | **6 / 19** | 13 | `1.11.1` landed 21 September; most of the rest wait on screens |
 | `1.12` seed & sweeps | **0 / 5** | 5 | `1.12.1` is the seeded catalogue four other steps are scheduled behind |
 
 **Four groups have not started at all** — `1.4`, `1.5`, `1.10` and `1.12`. `1.4` is the one to
@@ -362,7 +401,7 @@ notice: thirteen microsteps, zero done, and it is the cart.
 That is the strongest argument this document can make about sequencing, and it is the first time it
 has been able to make it — nothing here is a judgement, it is a file-existence check.
 
-#### 40 of the 82 are startable by file dependency alone
+#### 39 of the 81 are startable by file dependency alone
 
 Startable means *every file its `Files:` line names that is not marked `(new)` already exists*. It
 does **not** mean unblocked — seven carry a `**Scheduled in:**` line deferring them behind other
@@ -372,14 +411,23 @@ work, and several are blocked by a `⚠️ OPEN` item or an issue that no file c
 1.2.0  1.2.3  1.2.4  1.2.7  1.2.8  1.3.2  1.3.3  1.3.5  1.3.6  1.3.7  1.3.8
 1.4.1  1.4.5  1.5.1  1.6.4  1.6.7  1.6.8  1.7.1  1.7.3  1.7.4  1.7.5  1.7.6
 1.7.7  1.7.8  1.7.8b 1.8.0  1.8.1  1.8.1b 1.8.2  1.8.3  1.8.4  1.8.6  1.8.8
-1.10.2 1.11.1 1.11.13 1.11.14 1.11.15 1.12.3 1.12.4
+1.10.2 1.11.13 1.11.14 1.11.15 1.12.3 1.12.4
 ```
 
 Subtract what the rest of this document already knows: `1.2.0` and `1.2.7` and `1.12.3` wait on #68's
 hardware, `1.2.4` on #71, `1.3.2`/`1.3.4`/`1.3.5`/`1.3.7` on two OPEN items and #70, `1.6.2` on #68
 *and* an OPEN item, `1.8.1` on an OPEN item nobody filed, and seven carry `Scheduled in:`. **What is
-left after that subtraction is small, and `1.4.1`, `1.5.1`, `1.6.7`, `1.6.8`, `1.7.1` and `1.11.1`
-are the names on it.**
+left after that subtraction is small, and `1.4.1`, `1.5.1`, `1.6.7`, `1.6.8` and `1.7.1` are the
+names on it** — `1.11.1` came off it on 21 September.
+
+**`1.4.1` is on that list by file existence and is not as startable as it looks**, which is worth
+one line here because §4 has been recommending it. Its `Files:` line names one new file, so the
+check passes — but `CartLine` is typed in terms of `PriceOrigin` and `DerivedWeight` (`1.2.4`,
+blocked by #71) and `LineDiscount`, `BasketDiscount` and `PriceOverride` (`1.4.5`). Measured:
+`grep -rn --include='*.rs' PriceOrigin crates/` returns **0**, as does `DerivedWeight`,
+`LineDiscount`, `BasketDiscount`, `PricedCart`, `Tendering`, `CartContext` and `PromoGroupRef`.
+That is the file-existence check's known limit doing exactly what this block warns about, and it
+is why `1.11.1` was taken ahead of it.
 
 #### Two plan defects this view found, and neither is a code problem
 
@@ -1442,11 +1490,134 @@ Three mutations are worth keeping because of what they cost to write:
 
 ---
 
+## 2l · 21 September — `1.11.1`, and the difference between a default and an attribute
+
+**#212 merged `1.11.1`** — `packages/ui/src/i18n.ts` (the shared locale contract, and that
+package's first real content), `apps/terminal/src/i18n/` (two catalogues, `t`, `installLocale` and
+eight tests), `apps/terminal/src/styles/font.css`, and the `main.tsx` line that applies the locale
+before the first render. Issue #211 is the microstep issue, filed before the branch and closed by
+the PR. Phase 1 is **31 of 112 (~28%)** and the JavaScript rows move **8 files / 71 tests → 9
+files / 79 tests** — the fourth front-end microstep to move them, after `1.11.3`, `1.11.6` and
+`1.11.11`.
+
+**All three conditions of the `Done when` were run, not inferred.**
+
+### The defect was in what "by default" had been allowed to mean
+
+`1.11.1`'s `Done when` asks for *"Arabic as the rendered default"*, and §5 ruling 4 had already
+written down the trap: *"supplying `dir="rtl"` to jsdom is a test-fixture fact, not that
+deliverable."* The trap is deeper than it reads. `index.html` has shipped
+`<html lang="ar" dir="rtl">` since the scaffold, `1.11.0`'s harness feeds **that file** to jsdom
+on purpose, and `Sale.test.tsx` already asserts on the root and passes. So the obvious test was
+green before a line was written.
+
+What was actually missing: `useLocale` seeds `DEFAULT_LOCALE` into React state and calls
+`applyLocale` only when somebody **toggles**. Nothing in the product established direction at
+boot. An `index.html` regressed to `ltr`, a Tauri window served from somewhere else, or a second
+entry point would each have rendered Arabic left-to-right with the whole suite green.
+
+`installLocale` is that decision and `main.tsx` makes it before `createRoot`. Two tests, kept
+separate on purpose: one drives the function against a plain root saying `en`/`ltr`, and one
+**imports `../main` itself** against a document flipped the same way. Deleting the line from
+`main.tsx` while keeping the function reds exactly one of them, which is the only arrangement that
+tells you *which* half broke.
+
+**Unlike `1.2.6`, this call site is provable, and the contrast is the reusable part.** That
+microstep could not test its own: on an FTS5-enabled build a checking `open` and a non-checking
+one are indistinguishable, so the call is reviewed. Here the effect is observable on the document
+root, so it is tested. *"The call site cannot be tested"* is a claim to check rather than inherit.
+
+### The sweep: 23 mutations, 22 caught, and the survivor is a composition
+
+The first pass left two survivors and both had been predicted by reading the design rather than by
+running anything.
+
+* **`installLocale` ignored its argument.** It was written with an optional
+  `locale = DEFAULT_LOCALE`; nothing passes one, because the toggle goes through `useLocale` and
+  calls `applyLocale` directly. **Fixed by deleting the parameter**, not by writing a test for an
+  argument with no caller. Worth stating as a rule: a sweep that finds an untested parameter is
+  usually telling you the parameter is speculative, and the cheaper of the two repairs is the one
+  that removes surface.
+* **Both sides embedding the licence instead of a face.** Point the CSS *and* `font.rs` at
+  `assets/fonts/LICENSE.txt`: the two sets agree, the file exists, and this suite correctly
+  reports that the UI and the rasteriser resolve the same asset. It is not a font. What refuses it
+  is `1.7.2` in another crate and another runner — `font_asset.rs` pins both face *names* against
+  the compiled bytes and asserts the TrueType `sfnt` magic. **Measured, not reasoned:** the
+  mutation was applied and `cargo nextest run -p pos-hardware` failed on
+  `the_committed_faces_match_the_compiled_ones`.
+
+  So the guarantee **composes** — paths equal here, bytes proven a real face there — but it
+  composes across two runners, and the `Done when`'s single vitest command does not carry it
+  alone. Re-deriving the byte check in TypeScript would be a second hand-maintained copy of a
+  fact, which is the worse of the two failures. It is recorded in the test instead.
+
+### The adversarial read found two gaps the first mutation list did not reach
+
+Both are now mutations 19 and 21, and both are the same shape: a guard that was checking the
+adjacent thing.
+
+* **Declaring a family is not asking for it.** Deleting `font-family: var(--font-ui)` from `:root`
+  while leaving the variable in place puts every element on the fallback stack, and the test that
+  checked the variable stayed green. Both halves of the binding are asserted now.
+* **`[0-9]` was the wrong numeral guard.** Conventions §10 mandates Western Arabic digits
+  *because* Eastern Arabic-Indic ones confuse a Jordanian reader more than they serve — so `٢`
+  inside a catalogue phrase is the **worse** version of the defect the rule refuses, and it was
+  passing. The guard covers `\u0660-\u0669` and `\u06F0-\u06F9` now.
+
+### Two facts established by throwaway probes, both easy to get wrong
+
+* **A test under `apps/terminal/src/**` cannot read a file.** `tsconfig.app.json` carries no
+  `"types": ["node"]`, so `import { readFileSync } from "node:fs"` in `src/` fails `tsc -b` with
+  **`TS2591`** — and `just build-web` is the only thing that typechecks a test. §5's trap list
+  already said where the reading goes (*"read repository files in `vite.config.ts`, which
+  `tsconfig.node.json` already types"*); what it did not say is how the result reaches the suite.
+  The answer is **vitest's `provide`/`inject`** with a `declare module "vitest"` augmentation,
+  verified end to end against vitest 5.0.0 before the branch existed: `test.provide` typechecks as
+  `Partial<ProvidedContext>` and both `tsc -b` and the runner are green.
+* **Font URLs may reach out of the Vite root, and Vite still bundles them.**
+  `../../../../assets/fonts/…` from `src/styles/font.css`, rather than a copy under `public/`,
+  because a copy would be a *second* file a later `1.7.3` change could diverge from silently.
+  `just build-web` emits `IBMPlexSansArabic-Regular-CjFS_rN4.ttf` at 236.70 kB and
+  `IBMPlexSansArabic-Bold-Bid7JPYR.ttf` at 247.89 kB — the two on-disk sizes exactly. No network
+  font; conventions §10 holds.
+
+### Three smaller things, each worth one line
+
+* **`packages/ui` has content for the first time**, and needed `"types"` in its manifest for a
+  `moduleResolution: bundler` consumer to find the declarations — `@pos/money` already does this.
+  It has no test runner of its own and deliberately gains none: every symbol is exercised from
+  `apps/terminal`, where the consumer and the DOM both are.
+* **`src/lib/direction.test.ts` was not edited and stays green.** After the primitives moved to
+  `@pos/ui` it proves the terminal's *binding* to the shared law rather than a local copy of it,
+  which is the stronger thing for it to prove. That is why re-export was chosen over a rewrite.
+* **The catalogue's ten keys come from `ref/ui-spec.md` §3's Sale-screen diagram**, not from the
+  Phase-0 smoke panel. Conventions §2's own worked example, `sale.action.park`, is one of them.
+  `App.tsx` is deliberately **not** converted: its strings are scaffolding `1.11.5` deletes, and
+  conventions §6 rule 6 keeps a microstep inside its `Files:` list.
+
+### The `Files:` line was three entries and the work touched twelve
+
+Amended in the PR, in the phase file's voice, with a reason against each addition. The one that
+matters most is **`README.md` (implementation frontier)**: `check-implementation-frontier.py`
+refuses a completion claim whose region was not rewritten, `1.11.3`'s line names it, and
+`1.11.1`'s omitted it. That is a plan oversight rather than a difference in the work, and the same
+omission is worth checking on the next microstep's line before starting it.
+
+### What `1.11.1` did not do
+
+No lint for string literals in components. Conventions §10 calls one a lint failure and none
+exists — `check-logical-css.sh` polices CSS sides and knows nothing about strings. That is a real
+gap with no owning microstep, and it belongs to a checker rather than to the step that made
+compliance possible for the first time. Nothing here reads a stored locale preference either;
+there is no storage yet, which is why `installLocale` takes no argument.
+
+---
+
 ## 3 · The eleven open issues
 
 **Ten are on board #4, all `Todo`, all assigned** — #68, #69, #70, #71, #111, #112, #113, #114,
 #174 and #197 — and **#203 is not on it**, which is why every handoff since it was filed has
-reported ten. Re-read live at `8f05458` with `gh issue list --state open`, which is the command
+reported ten. Re-read live at `5621bc5` with `gh issue list --state open`, which is the command
 that finds the eleventh. **Nine are blocked on a human** — one on `hardware`, five on a
 `decision`, two on a `merchant answer`, and #197 on the sequencing of `0006`. **#174 and #203 are
 the two code alone can close today.**
@@ -1640,9 +1811,10 @@ legacy API cannot express `allowed_merge_methods` at all). **No issue tracks thi
 **Take one of these, and only one.** WIP = 1 means one microstep, not one open pull request. Every
 candidate this file has named since 14 September is spent — `1.9.1` (§2b), `1.1.9`'s database half
 (§2c), `1.2.6` (#177), #179's five missing negative tests (#185, §2e), `1.11.6` (#188, §2f),
-`1.11.11` (#192, §2g), `1.9.2` (#195, §2h), `1.7.2` (#200, §2i), `1.6.6` (#204, §2j) and
+`1.11.11` (#192, §2g), `1.9.2` (#195, §2h), `1.7.2` (#200, §2i), `1.6.6` (#204, §2j),
 **`1.6.6b`, which this section named as the closest successor and which landed the same day**
-(#208, §2k).
+(#208, §2k), and **`1.11.1`, named here as `1.6.6b`'s closest successor and landed the same day
+again** (#212, §2l).
 
 **§1's "What is LEFT" block is the view to open first.** It is derived from the phase file and the
 filesystem rather than from this list, it says which of the 82 remaining steps are startable, and it
@@ -1651,15 +1823,24 @@ names the two files — `apps/terminal/src-tauri/src/ipc/registry.rs` (`1.6.7`) 
 are startable today. This section is the human judgement on top of that; the block is the evidence
 under it.
 
-**The shortlist, after subtracting everything blocked:** `1.4.1`, `1.5.1`, `1.6.7`, `1.6.8`, `1.7.1`
-and `1.11.1`. Four of the six have **no `Done when` line**, so each writes one as part of its own
-delivery (conventions §6) — `1.6.7`, `1.6.8` and `1.11.1` are the three that already have one.
+**The shortlist, after subtracting everything blocked:** `1.5.1`, `1.6.7`, `1.6.8` and `1.7.1`,
+with `1.4.1` behind them and not as free as the file check makes it look. Three of the four have
+**no `Done when` line**, so each writes one as part of its own delivery (conventions §6) —
+`1.6.7` and `1.6.8` are the two that already have one.
 
 **Read this before you pick anything:** a microstep that lands a test `ref/test-catalog.md` names
 **will be red on `protected-paths`**, because retiring its `PLANNED` entry means editing
 `scripts/check-test-catalog.py` inside the frozen policy surface. That red is the review, the edit
 is not optional, and §2k has the recipe. Budget for it rather than being surprised by it —
-`1.11.1`, `1.11.12`, `1.2.3`, `1.2.4` and `1.2.5` all carry `PLANNED` names today.
+`1.11.12`, `1.2.3`, `1.2.4` and `1.2.5` carry `PLANNED` names today.
+
+> **This list said `1.11.1` carried them too, and it did not.** #212 was **green on
+> `protected-paths`** and touched `scripts/check-test-catalog.py` not at all. Neither of
+> `1.11.1`'s two named tests is in `ref/test-catalog.md` or in the `PLANNED` ceiling — the other
+> four names in the sentence are, this one was never there. The failure shape is worth keeping:
+> a list of five where four are right reads as verified, and nobody re-checks the fifth. **Check
+> the ceiling for the step you are about to take** — `grep -n '"<step>"' scripts/check-test-catalog.py`
+> — rather than trusting its membership in a list here.
 
 | Candidate | Verdict | Why |
 |---|---|---|
@@ -1667,18 +1848,26 @@ is not optional, and §2k has the recipe. Budget for it rather than being surpri
 | ~~`1.7.2` — font decision and embedding~~ | **DONE, #200** | §2i |
 | ~~`1.6.6` — `AuditRepository`~~ | **DONE, #204** | its two documentation prerequisites were authored in its own PR, as predicted; §2j |
 | ~~`1.6.6b` — local audit verifier~~ | **DONE, #208** | §2k. It was the first binary target, it took no argument-parser dependency, and it retired the first `PLANNED` entry this repository has ever retired through a microstep |
+| ~~`1.11.1` — i18n infrastructure~~ | **DONE, #212** | §2l. It discharged §5 ruling 4 and was **green on `protected-paths`** against this section's own prediction |
 | `1.2.4` pure half | **blocked** | `ref/schema.md:3410` is an `⚠️ **OPEN` item that names it, and #71 is the issue |
-| `1.11.12` — empty and edge states | **blocked** | needs rendered screens that do not exist |
+| `1.11.12` — empty and edge states | **blocked** | needs rendered screens that do not exist; `1.11.1` created none |
 
-**`1.6.6b` leaves four things behind that the next session should read before choosing.**
+**`1.11.1` leaves three things behind, and `1.6.6b` left four. Read both before choosing.**
 
-* **`1.11.1` — i18n — is the closest thing to a successor, and it has been unblocked and unscoped
-  for two days.** `1.7.2` cleared it on 20 September and nobody has looked at what else it needs.
-  It has a `Done when` (`phase-1:1256`) and two named tests, one of which —
-  `ui_and_rasterizer_resolve_the_same_embedded_font` — **is `1.7.2`'s inherited obligation**: the
-  screen and the receipt must resolve the same font file. It is a front-end microstep, so it is
-  also the one that moves the JavaScript rows §0 says have been still for two days. Scope it
-  before starting it; nothing has.
+* **The string-literal lint conventions §10 promises still does not exist, and now nothing
+  excuses it.** *"The catalog is the single source for UI strings; a string literal in a component
+  is a lint failure."* `check-logical-css.sh` polices CSS sides and knows nothing about strings,
+  so the rule is written and unenforced — the same state `1.11.2` found the RTL rule in. Until
+  `1.11.1` there was no catalogue to point a component at and the gap was inert; there is one now.
+  It has **no owning microstep**, which makes it the same class as §3's four ⚠️ OPEN items.
+* **`1.4.1` is less startable than §1's file check says**, and §4 recommended it for two
+  editions. `CartLine` is typed in `PriceOrigin` and `DerivedWeight` (`1.2.4`, blocked by #71) and
+  `LineDiscount`/`BasketDiscount`/`PriceOverride` (`1.4.5`), and **none of those seven names
+  exists under `crates/`** — measured with `grep -rn --include='*.rs'`, all zero. Taking it means
+  either bringing `1.2.4`'s pure half with it or inventing placeholder types, and neither is what
+  its entry describes. Scope that honestly before picking it.
+* **`1.11.12` is no closer.** It still needs rendered screens that do not exist, and `1.11.1`
+  created none.
 * **`1.6.7` — capability exhaustiveness — is still behind the IPC wall.** It needs
   `apps/terminal/src-tauri/src/ipc/registry.rs`, and `src-tauri/src` still holds only `lib.rs`,
   `main.rs` and `time.rs`. Same wall as `1.9.3` and `1.11.4`.
@@ -1780,7 +1969,7 @@ front of `0006`, `0007`, `1.2.3`, `1.9.2`–`1.9.5`, `1.10.2`–`1.10.5`, the `1
 |---|---|
 | `1.2.4` **pure half** | **BLOCKED, and this row said otherwise until 20 September.** `ref/schema.md:3410` is an `⚠️ **OPEN` item whose own text reads "blocks 1.2.4", and #71 is the issue behind it. What follows was true of its *size* and stays useful — the gateway to group 1.4, since `CartLine` needs `PriceOrigin` and `DerivedWeight` and neither name appears anywhere under `crates/`. Big: 14 named tests, a new module, a trybuild pair. Its full `Done when` (`phase-1:301`) chains commands unreachable before `0007`, so the issue's proving command must be rewritten for the half. **Two of the 14 tests are blocked by #71**, whose body says it blocks "`1.2.4`'s database commissioning half". And it defers half of itself with **no `Full-step status:` marker** — unlike `1.1.9` and `1.2.0` — so nothing mechanically stops a premature "complete" claim |
 | ~~`1.6.6` — `AuditRepository`~~ | **DONE, #204 on 21 September.** Both documentation prerequisites were authored in its own PR, exactly as this row predicted; §2j is the record, and the defect worth reading is the one the mutation sweep could not reach |
-| `1.11.1` — i18n | **UNBLOCKED as of #200**, and the closest thing to a successor after `1.6.6b`. `assets/fonts/` holds both faces and their licence, and `pos_hardware::font` exposes them. Its `Done when` is at `phase-1:1256`; its second test is `1.7.2`'s inherited obligation. Still nothing has re-assessed what else it needs, so scope it rather than start it — and note it carries `PLANNED` names, so it takes §2k's `protected-paths` red |
+| ~~`1.11.1` — i18n~~ | **DONE, #212 on 21 September.** §2l. Two of this row's three claims were wrong and are worth keeping as a shape: it did **not** carry `PLANNED` names and took no `protected-paths` red, and *"scope it rather than start it"* undersold it — the scoping question that mattered was not what it needed but what *"by default"* already appeared to be true of |
 | `1.11.4` — Lock / PIN | **Soft-blocked.** All four IPC commands it drives are absent — `src-tauri/src` has no `commands/`, and `src/lib/ipc.ts` does not exist. It would be tested entirely against invented mocks |
 | `1.11.5` — Sale screen | **Blocked.** `CartSnapshot` does not exist (`packages/api-types/src/index.ts` is `export {};`), and it would rewrite the green `1.11.0` canary |
 | `1.3.3` — `compute_line_tax` exclusive | Technically buildable, but **no `Done when` line**; document order puts the externally-blocked `1.3.2` first; both edit the same file |
@@ -1881,8 +2070,14 @@ Measured safe: lowercase `` tests `id` ``, and a form where a word intervenes be
    it. Do not "fix" either.
 2. `1.11.5`'s three tests and its `Done when` must not absorb the canary.
 3. *"both use fake timers from 1.11.0"* is now true, and truer than before.
-4. `1.11.1` owns `<html dir="rtl" lang="ar">` **by default** and *"Arabic as the rendered default"*.
-   Supplying `dir="rtl"` to jsdom is a test-fixture fact, not that deliverable.
+4. **DISCHARGED by #212 on 21 September, and it paid for itself.** The ruling was that `1.11.1`
+   owns `<html dir="rtl" lang="ar">` **by default** and *"Arabic as the rendered default"*, and
+   that supplying `dir="rtl"` to jsdom is a test-fixture fact rather than that deliverable. It is
+   what stopped `1.11.1` from asserting on a root the harness had already set and calling it
+   done — the assertion was green before a line was written. What discharges it:
+   `installLocale`, called from `main.tsx` before `createRoot`, and two tests that separate the
+   function from its call site. §2l. Kept here because the *shape* recurs: whenever a fixture and
+   a deliverable would produce the same observation, the test has to start from the opposite one.
 5. The three `Scheduled in:` lines are **not** identically worded. Two read *"run its screen
    assertions after 1.11.0"*; `1.9.5`'s reads *"run its provisioning-screen assertions after 1.11.0
    creates the DOM harness"*. There is a fourth record in the group header.
@@ -2135,12 +2330,12 @@ Established by introspection and corrected in #122; do not re-litigate.
 
 ### `development → staging`
 
-`staging` is **45 behind** — `git rev-list --count origin/staging..origin/development`,
-re-measured 21 September after #208, and the `origin/` spellings matter: a local `staging` left at
-#91 answers 92. The gap now carries **ten** microsteps — `1.11.3`, `1.9.1`, `1.1.9`, `1.2.6`,
-`1.11.6`, `1.11.11`, `1.9.2`, `1.7.2`, `1.6.6` and `1.6.6b` — migration `0005`, an embedded
-typeface, the audit chain's writer, reader and verifier, a security bump and a code fix (#164)
-rather than documentation alone. Open a promotion when you want the cross-platform matrix
+`staging` is **48 behind** — `git rev-list --count origin/staging..origin/development`,
+re-measured 21 September after #212, and the `origin/` spellings matter: a local `staging` left at
+#91 answers 92. The gap now carries **eleven** microsteps — `1.11.3`, `1.9.1`, `1.1.9`, `1.2.6`,
+`1.11.6`, `1.11.11`, `1.9.2`, `1.7.2`, `1.6.6`, `1.6.6b` and `1.11.1` — migration `0005`, an
+embedded typeface, the audit chain's writer, reader and verifier, the i18n infrastructure, a
+security bump and a code fix (#164) rather than documentation alone. Open a promotion when you want the cross-platform matrix
 over the current tip:
 
 ```bash
@@ -2706,13 +2901,38 @@ documentation surface **no gate reads** (`status-page.html`'s prose — see §14
     correct produce a correct result together. `1.6.6` found the *wrong guard*; `1.6.6b` found a
     *correct stop* and a *correct anchor* answering `Truncated` over rows that were never deleted.
     Both were found by reading the design adversarially after the sweep was green, which is now
-    three microsteps in a row where that second pass paid and the sweep alone would have shipped
-    the defect. **Run both, in that order, and do not treat a green sweep as the end.**
+    **four** microsteps in a row where that second pass paid and the sweep alone would have
+    shipped the defect. **Run both, in that order, and do not treat a green sweep as the end.**
+
+    `1.11.1` is the fourth and its variant is the cheapest to miss: the sweep was green and the
+    read found two guards that were each checking *the adjacent thing* — a CSS variable that
+    carried the right family while nothing resolved it, and a numeral rule that refused `2` and
+    let `٢` through. Neither is a missing guard or a wrong composition. Both are a guard aimed one
+    step short of the property it was written for, which a mutation of the code under it can
+    never reveal.
 11. **Follow the static analyser to the line it points at, then look around it.** CodeQL flagged a
     non-sensitive register id in `1.6.6b` — a false positive under this repository's own
     never-list — and three lines below it sat raw, unvalidated file content being printed into a
     document read as evidence. Arguing with the tool would have shipped that. This is the second
     microstep running where a CodeQL alert repaid being followed rather than dismissed.
+12. **A list where most entries are right reads as verified, and nobody re-checks the rest.**
+    §4 named five microsteps as carrying `PLANNED` catalogue entries and therefore taking §2k's
+    `protected-paths` red. Four did. `1.11.1` was never in the ceiling at all, and #212 merged
+    green — a budgeted red that never came, which is the harmless direction. The harmful one is
+    the same sentence pointing the other way. **Check the membership for the item you are acting
+    on**, not the list's reputation: one `grep` against `scripts/check-test-catalog.py` answers it.
+13. **A guard that has been true for free is not a guard.** `<html dir="rtl" lang="ar">` has been
+    in `index.html` since the scaffold and `Sale.test.tsx` asserted on it and passed — so "Arabic
+    is the default" *looked* proven while nothing in the product decided it. A fixture and a
+    deliverable that produce the same observation are indistinguishable until the test starts from
+    the opposite state. §5 ruling 4 caught this one a week before it was due, which is the only
+    reason `1.11.1` did not ship the tautology. **Ask what would still be green if the code were
+    deleted.**
+14. **When a sweep finds an untested parameter, the usual repair is deleting it.**
+    `installLocale` was written with an optional locale nobody passes, and a test for it would
+    have been a test of an API with no caller. The step that needs the argument adds it back with
+    its caller and its test. Coverage bought by writing tests for speculative surface is the
+    cheapest kind and the least worth having.
 12. **The document nobody's gate can read is the document that goes stale.** Four documents were
     corrected on 11 September; the one sentence that survived lived two more days in the HTML file
     no checker parses, until a deliberate prose sweep caught it at #163 — along with a second error
