@@ -98,24 +98,27 @@ Re-measured 13 September; the `cd` clause that stood here was false.
 
 ### Verified gate baselines at `1544c04`
 
-Use these as the "nothing is broken" reference. Across the whole 14–15 September window **two rows
-moved**: the test count (241 → 259 → **266**, all of it Rust) and the schema chain (4 migrations /
-32 tables / 300 columns → 5 / 48 / 457).
+Use these as the "nothing is broken" reference. **One row moved on 21 September**: the test
+count, 280 → **298**, all eighteen of them `1.6.6`'s and all Rust. The schema chain did not move,
+because `1.6.6` needed no migration.
 
-**Two different measurements are mixed in this table, and the distinction matters.** The five rows
-`just pre-push` covers — `lint`, `test`, `build-web`, `guards`, `secrets` — were re-run at the tip
-above. The rest (`verify-schema`, `verify-pg`, `audit`, `bench-gate`, `check-js-licenses`) are
-**carried forward unre-run**: `verify-schema` last ran at `a15dff6` on 15 September and the others
-at `1c1fd4f`, and neither #185 nor #188 touched a migration, a dependency or a lockfile. That is a
-reason to expect them unchanged, not evidence that they are. Re-run the one you are about to depend
-on.
+**Two different measurements are mixed in this table, and the distinction matters.** Re-run at
+`1544c04`: the five rows `just pre-push` covers — `lint`, `test`, `build-web`, `guards`,
+`secrets` — **and** `verify-schema` and `verify-pg`, both of which `1.6.6` re-ran because it
+added a crate dependency, with `verify-pg` taking the **real engine pass** through the Docker
+fallback. `just audit` was re-run too, and still reports
+**135 package releases and 11 reviewed expressions**: `1.6.6` moved `Cargo.lock` by one line for
+a crate already in the graph through `pos-domain`, so no new licence or advisory surface entered,
+and this says so because it was measured rather than because it was expected. **Carried forward
+unre-run**: `bench-gate` alone, which refuses every run anyway until #68. **Re-run the one you
+are about to depend on.**
 
 | Command | Reads |
 |---|---|
 | `just pre-push` | **exit 0** — `lint test build-web guards secrets`, `justfile:368`, ~1:30 warm |
 | `just check` | exit 0 — all **seven** workspace members |
 | `just lint` | exit 0 — 2 prerequisites + 14 body steps = **16 checkers** |
-| `just test` | exit 0 — **298 tests run: 298 passed, 2 skipped**; JS **7 files / 71 tests** |
+| `just test` | exit 0 — **298 tests run: 298 passed, 2 skipped**; JS **8 files / 71 tests** |
 | `just build-web` | exit 0 — `tsc -b` + vite 8.2.2 across 5 packages |
 | `just guards` | exit 0 — **37 steps** |
 | `just verify-schema` | exit 0 — **5 migrations, 48 tables, 457 columns** |
@@ -135,14 +138,22 @@ on.
 | `check-protected-paths.sh --self-test` | 18 passed · `watch-pr-checks.sh --self-test` **49** |
 | `test-settings.py` | **30 passed**; `.claude/settings.json` is **4,426 bytes** |
 
-**The three per-package vitest rows must sum to the `just test` row.** They do — 4 + 1 + 1 = 6
-files, 31 + 3 + 10 = 44 tests. **No JavaScript test has been added since 13 September** — every
-microstep in this window was Rust, 241 → 259, and #185's seven took it to 266 without touching a
-JavaScript file either, so the JS rows are unchanged. The first UI microstep
-(`1.11.6`, §4) moves them again. The `money` row is new here; without it the sums did not reconcile
-and a reader could not tell which number was wrong. The JS counts are the only rows that move
-often, because every UI microstep adds tests: #164 took the back office 2 → 3 and #165 took the
-terminal 18 → 31 on the same day.
+**The three per-package vitest rows must sum to the `just test` row.** They do, re-measured
+package by package on 21 September: **6 + 1 + 1 = 8 files, 58 + 3 + 10 = 71 tests**.
+
+**This paragraph existed to catch exactly the drift it had itself acquired, so the failure is
+worth naming rather than quietly overwriting.** It stood at "4 + 1 + 1 = 6 files, 31 + 3 + 10 =
+44 tests" while the table above it said 71, and it asserted "no JavaScript test has been added
+since 13 September" and that "`1.11.6` moves them again" — after `1.11.6` and `1.11.11` had both
+landed and taken the terminal from 4 files / 31 tests to 6 / 58. Three handoff generations copied
+it forward. **No gate reads this file**, which is the whole reason the arithmetic is written out:
+`scripts/check-test-catalog.py` reconciles the catalogue against the runner and has never looked
+at `docs/handoff.md`.
+
+`1.6.6` added no JavaScript test — it is a `pos-db` microstep — so 298 − 280 = 18 is entirely
+Rust and the JS rows are unchanged *since 20 September*, which is a narrower claim than the one
+that stood here. The JS counts are still the rows that move most often, because every UI
+microstep adds tests.
 
 The self-test counts are stable anchors rather than moving targets, and have held across eleven
 commits and two handoff generations: `check-branch-workflow-policy.rb` **219**,
@@ -178,7 +189,7 @@ vitest 5.0.0, gitleaks 8.30.1, Docker Engine 29.5.2.
 | Phase 1 | **29 of 112** executable microsteps (~26%) — `1.6.6` (#204) landed 21 September, after `1.11.6` (#188), `1.11.11` (#192), `1.9.2` (#195) and `1.7.2` (#200) on 19–20 September. The percentage moved on every one of the five. **Group 1.1 is closed** |
 | Open PRs | **0**, and **nothing is in flight**. The WIP=1 slot is free |
 | Open issues | **10** — #68, #69, #70, #71, #111, #112, **#113 (reopened)**, #114, #174 and #197. #202 opened and closed with `1.6.6`. Both of the issues this session closed with their substance unresolved have been put right: **#113 is reopened** and **#197 carries #179's three surviving findings**, with `1.10.1` amended (#198) so `0006` is where they land. Nine of the ten are blocked on a human; **#174 is the exception**. #187, #191, #194 and #199 opened and closed with their microsteps |
-| Board #4 | the API's default listing returns **17 items — 10 `Todo`, 7 `Done`**, #202 the newest. Archived items are excluded from that listing and their count is not readable through it |
+| Board #4 | **22 items — 10 `Todo`, 12 `Done`**, counted live on 21 September rather than incremented. `Done` is #119, #120, #162, #169, #172, #176, #179, #187, #191, #194, #199 and #202; `Todo` is exactly the ten open issues. **The row this replaces read "16 items — 10 `Todo`, 6 `Done`" and had been wrong by five since 15 September**, because each handoff since added one to it instead of asking the API. Archived items are excluded from the listing and their count is not readable through it |
 | Rulesets | **four, all active**, all four checked in under `.github/rulesets/`. They **agreed with live when last compared by hand** (11 September) — no gate diffs them, so this is a dated observation, not an invariant. See §3 |
 | Tags / releases | **zero of each.** The append-only tag ruleset has never been exercised |
 | Repository | **PUBLIC**, GitHub Free, `OmarSweiti` the sole collaborator (admin) |
@@ -1307,7 +1318,7 @@ named as the closest successor and which landed on 21 September** (#204, §2j).
 * **`1.6.6b` — the local audit verifier — is now the closest successor, and it is the first
   candidate in weeks whose dependency just shipped.** It builds
   `crates/pos-db/src/bin/verify-audit.rs` and `crates/pos-db/tests/audit_verifier.rs` on top of
-  `AuditRepository::chain`, it **already has a `Done when`** (`phase-1:724`, two commands), and
+  `AuditRepository::chain`, it **already has a `Done when`** (`phase-1:726`, two commands), and
   `ref/test-catalog.md` already has `tail_deletion_is_detected_against_the_last_anchor` PLANNED
   under it — so landing it **deletes a PLANNED entry**, which is the one direction the frozen
   ceiling allows. Two things to know first: it is the repository's **first binary target**, so
@@ -1414,12 +1425,33 @@ front of `0006`, `0007`, `1.2.3`, `1.9.2`–`1.9.5`, `1.10.2`–`1.10.5`, the `1
 | `1.6.2` — Argon2id PINs | **Blocked twice**, neither time by code: `just bench-gate pin-verify` refuses until #68, **and** `ref/security-compliance.md:413` |
 | `1.2.3` | Blocked three migrations deep — its FTS repository needs `0007`'s tables |
 
-**Seventeen executable Phase-1 microsteps carry no `**Done when:**` line at all** — `1.3.2`
-`1.3.3` `1.4.1` `1.4.2` `1.4.3` `1.4.4` `1.4.5` `1.4.7` `1.4.8` `1.4.10` `1.5.1` `1.5.2` `1.5.4`
-`1.7.1` `1.7.4` `1.7.6` `1.7.8`. **`1.6.6` left this list on 21 September** by authoring one as
-part of its own delivery, which is the third time a step has done so — `1.1.9` and now `1.6.6`
-cleared theirs, and `1.2.0` still carries the `Current half done when:` shape. Re-counted by
-walking every `### 1.x` heading:
+**Eighteen executable Phase-1 microsteps carry no `**Done when:**` line at all** — `1.2.0`
+`1.3.2` `1.3.3` `1.4.1` `1.4.2` `1.4.3` `1.4.4` `1.4.5` `1.4.7` `1.4.8` `1.4.10` `1.5.1` `1.5.2`
+`1.5.4` `1.7.1` `1.7.4` `1.7.6` `1.7.8`. **`1.6.6` left this list on 21 September** by authoring
+one as part of its own delivery — the second step ever to clear one rather than add it, after
+`1.1.9`.
+
+**The number did not fall, and the reason is a counting bug this document carried for a week.**
+The list that stood here named eighteen steps *excluding* `1.2.0`, while claiming to be the result
+of walking every `### 1.x` heading — and that walk includes `1.2.0`, because
+`**Current half done when:**` is not the literal string. So the mechanical answer was nineteen on
+the day this said eighteen. `1.6.6` removed one, and the honest count is now eighteen with `1.2.0`
+named inside it. Reproduce it rather than trusting it:
+
+```bash
+python3 - <<'EOF'
+import re, pathlib
+s = pathlib.Path("docs/implementation/phase-1-sellable-mvp.md").read_text()
+h = list(re.finditer(r"^### (1\.\d+\.\d+[a-z]?) ", s, re.M))
+out = [m.group(1) for i, m in enumerate(h)
+       for body in [s[m.end(): h[i+1].start() if i+1 < len(h) else len(s)]]
+       if "**Concordance only:**" not in body and "**Done when:**" not in body]
+print(len(out), out)
+EOF
+```
+
+It prints `18`, and 113 `### 1.x` headings against 112 executable microsteps — the difference
+being `1.1.2`:
 
 * **`1.1.9` gained a real `Done when`** when it completed on 14 September — §1 records that as the
   third of the three deletions its completion required. It is no longer in the list.
