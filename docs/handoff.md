@@ -1,25 +1,31 @@
 # Handoff — the single current one
 
-**Reflects `development` @ `937d4e1`, 20 September 2026.**
+**Reflects `development` @ `1544c04`, 21 September 2026.**
 
 There is one handoff — keep updating this file rather than adding a dated one.
 
-> ## ✅ FOUR MICROSTEPS IN TWO DAYS, THREE DECISIONS TAKEN, AND THE TRACKER PUT BACK IN AGREEMENT
+> ## ✅ `1.6.6` LANDED, AND AN ADVERSARIAL REVIEW CAUGHT THE DESIGN DEFECT THE MUTATION SWEEP COULD NOT
 >
-> `1.11.6` (#188, with #189's fix), `1.11.11` (#192), `1.9.2` (#195) and `1.7.2` (#200) took Phase 1
-> to **28 of 112 (~25%)**. §2f–§2i are those records, and the thing worth reading across them is the
-> same: **a mutation sweep caught a test that passed without exercising the branch it was named
-> for, in three of the four**, and no gate saw any of it. In `1.9.2` the survivor was the hazard its
-> own module doc warns about at length. The constant is not the code; it is believing a test covers
-> what its name says.
+> `1.6.6` (#204, issue #202) takes Phase 1 to **29 of 112 (~26%)** — the audit repository, so the
+> hash chain `1.6.5` shipped now has something that writes it and something that reads it back.
+> §2j is the record.
 >
-> **The operator took all three open decisions on 20 September.** #113 is reopened, #197 carries
-> #179's three surviving findings with `0006` named as where they land (#198), and `1.7.2` shipped
-> IBM Plex Sans Arabic. §3 records the pattern those first two came from: **an issue's state and the
-> plan of record are two surfaces and nothing reconciles them.**
+> **The thing worth carrying is the order the two checks fired in.** An 18-mutation hand sweep
+> caught 16 and left two survivors, both of which the code had already written down as untestable
+> before the sweep ran. It looked finished. An adversarial review then found a defect **no
+> mutation of the shipped code could have caught, because it was not a missing guard — it was the
+> wrong shape**: `chain()` returned `Err` on any row it could not rebuild and discarded every
+> honest row with it. `audit_log_no_update` and `audit_log_no_delete` guard mutation, and
+> **nothing guards `INSERT`** — so one added row silenced verification for the whole register,
+> permanently, and neither trigger would then let anyone remove it. Cheaper than the re-chaining
+> attack the chain exists to detect, and more effective. A mutation sweep asks "is this guard
+> load-bearing"; it cannot ask "is this the right guard".
 >
-> **Nothing is in flight.** §4 names what comes next, and §2i records what the ICV question would
-> actually take — including that the first answer to it was wrong in three places.
+> **`1.6.6` carries a correction to the previous four microsteps' habit, not a repeat of it.**
+> §2j also records the two survivors, the golden that failed on its own fixture, and the one
+> mutation that killed no test at all until a test was written for it.
+>
+> **Nothing is in flight.** The WIP=1 slot is free and §4 names what is left.
 
 **14 September moved three microsteps, and each unlocked the next.** #170 merged **`1.9.1`**: 1,179
 lines of migration `0005`, the shared registered-chain fixture, seven tests, the Postgres mirror,
@@ -35,8 +41,8 @@ guard-hardening on shipped code, not a microstep. **19 September moved it to 25 
 §2c and §2d are the 14–15 September windows; §2a keeps 13 September and §2 the 9–11 September
 record, where twenty-six pull requests changed the governance layer and no microstep advanced.
 
-**`development` is green, tip included.** `just pre-push` exits 0 at `937d4e1`, all 37
-`just guards` steps pass, and `ci` run **`35512041207` is a success on the tip**, queried by SHA
+**`development` is green, tip included.** `just pre-push` exits 0 at `1544c04`, all 37
+`just guards` steps pass, and `ci` run **`35588204632` is a success on the tip**, queried by SHA
 rather than taken as the newest green one — `ci.yml`'s ref-scoped concurrency group cancels runs
 when merges land inside two minutes of each other, and the cancellation is invisible unless you ask
 about the tip specifically.
@@ -74,7 +80,7 @@ cd ~/My_Projects/pos
 git checkout development && git pull --ff-only
 git fetch --all --prune            # your local staging is 51 commits stale — see §14
 mise exec -- just setup
-mise exec -- just pre-push          # passes at 937d4e1
+mise exec -- just pre-push          # passes at 1544c04
 ```
 
 Nothing is in flight, so there is no branch to resume. `phase-1/group-9-migration-0005` merged as
@@ -90,7 +96,7 @@ with `couldn't exec process: No such file or directory`, because the whole unspl
 `cd <repo> && mise exec -- node --version` prints `v24.19.0` — and a relative script path works.
 Re-measured 13 September; the `cd` clause that stood here was false.
 
-### Verified gate baselines at `937d4e1`
+### Verified gate baselines at `1544c04`
 
 Use these as the "nothing is broken" reference. Across the whole 14–15 September window **two rows
 moved**: the test count (241 → 259 → **266**, all of it Rust) and the schema chain (4 migrations /
@@ -109,7 +115,7 @@ on.
 | `just pre-push` | **exit 0** — `lint test build-web guards secrets`, `justfile:368`, ~1:30 warm |
 | `just check` | exit 0 — all **seven** workspace members |
 | `just lint` | exit 0 — 2 prerequisites + 14 body steps = **16 checkers** |
-| `just test` | exit 0 — **280 tests run: 280 passed, 2 skipped**; JS **7 files / 71 tests** |
+| `just test` | exit 0 — **298 tests run: 298 passed, 2 skipped**; JS **7 files / 71 tests** |
 | `just build-web` | exit 0 — `tsc -b` + vite 8.2.2 across 5 packages |
 | `just guards` | exit 0 — **37 steps** |
 | `just verify-schema` | exit 0 — **5 migrations, 48 tables, 457 columns** |
@@ -166,13 +172,13 @@ vitest 5.0.0, gitleaks 8.30.1, Docker Engine 29.5.2.
 
 | | |
 |---|---|
-| `development` | **`937d4e1`** — `just pre-push` exits 0 and `ci` run **`35512041207` is a success on the tip**, queried by SHA. Carries `1.9.1`, migration `0005`, `1.1.9`'s `ClockRepository`, `1.2.6`, the audit's fixes, #185's seven tests, `1.11.6`'s scan capture with #189's fix, `1.11.11`'s keyboard map, `1.9.2`'s document counters and `1.7.2`'s embedded typeface |
-| `staging` | **`531ea04`** — **30 behind** `development`, 5 ahead (its own five promotion merges). Re-measured 15 September with `git rev-list --count`; **this row has been wrong before and §9 states it independently** — if the two disagree, run the command rather than picking one |
-| `main` | `24a0283` — **158 behind** `development`, **133 behind** `staging`, untouched since 20 August |
-| Phase 1 | **28 of 112** executable microsteps (~25%) — `1.11.6` (#188), `1.11.11` (#192), `1.9.2` (#195) and `1.7.2` (#200) landed 19–20 September, and the percentage moved on every one. **Group 1.1 is closed** |
+| `development` | **`1544c04`** — `just pre-push` exits 0 and `ci` run **`35588204632` is a success on the tip**, queried by SHA. Carries `1.9.1`, migration `0005`, `1.1.9`'s `ClockRepository`, `1.2.6`, the audit's fixes, #185's seven tests, `1.11.6`'s scan capture with #189's fix, `1.11.11`'s keyboard map, `1.9.2`'s document counters, `1.7.2`'s embedded typeface and `1.6.6`'s audit repository |
+| `staging` | **`531ea04`** — **42 behind** `development`, 5 ahead (its own five promotion merges). Re-measured 15 September with `git rev-list --count`; **this row has been wrong before and §9 states it independently** — if the two disagree, run the command rather than picking one |
+| `main` | `24a0283` — **170 behind** `development`, **133 behind** `staging`, untouched since 20 August |
+| Phase 1 | **29 of 112** executable microsteps (~26%) — `1.6.6` (#204) landed 21 September, after `1.11.6` (#188), `1.11.11` (#192), `1.9.2` (#195) and `1.7.2` (#200) on 19–20 September. The percentage moved on every one of the five. **Group 1.1 is closed** |
 | Open PRs | **0**, and **nothing is in flight**. The WIP=1 slot is free |
-| Open issues | **10** — #68, #69, #70, #71, #111, #112, **#113 (reopened)**, #114, #174 and **#197 (new)**. Both of the issues this session closed with their substance unresolved have been put right: **#113 is reopened** and **#197 carries #179's three surviving findings**, with `1.10.1` amended (#198) so `0006` is where they land. Nine of the ten are blocked on a human; **#174 is the exception**. #187, #191, #194 and #199 opened and closed with their microsteps |
-| Board #4 | the API's default listing returns **16 items — 10 `Todo`, 6 `Done`** (#119, #120, #162, #169, #172, #176). Archived items are excluded from that listing and their count is not readable through it |
+| Open issues | **10** — #68, #69, #70, #71, #111, #112, **#113 (reopened)**, #114, #174 and #197. #202 opened and closed with `1.6.6`. Both of the issues this session closed with their substance unresolved have been put right: **#113 is reopened** and **#197 carries #179's three surviving findings**, with `1.10.1` amended (#198) so `0006` is where they land. Nine of the ten are blocked on a human; **#174 is the exception**. #187, #191, #194 and #199 opened and closed with their microsteps |
+| Board #4 | the API's default listing returns **17 items — 10 `Todo`, 7 `Done`**, #202 the newest. Archived items are excluded from that listing and their count is not readable through it |
 | Rulesets | **four, all active**, all four checked in under `.github/rulesets/`. They **agreed with live when last compared by hand** (11 September) — no gate diffs them, so this is a dated observation, not an invariant. See §3 |
 | Tags / releases | **zero of each.** The append-only tag ruleset has never been exercised |
 | Repository | **PUBLIC**, GitHub Free, `OmarSweiti` the sole collaborator (admin) |
@@ -184,11 +190,12 @@ Read live from the frontier region — the block between the `<!-- frontier:begi
 
 `1.1.0` `1.1.1` `1.1.2a` `1.1.6` `1.1.3` `1.1.4` `1.1.2b` `1.1.7` `1.1.5` `1.1.8` `1.2.1` `1.2.2`
 `1.3.1` `1.8.9` `1.8.5` `1.11.2` `1.6.5` `1.6.1` `1.6.3` `1.11.0` `1.11.3` `1.9.1` `1.1.9` `1.2.6`
-`1.11.6` `1.11.11` `1.9.2` `1.7.2`
+`1.11.6` `1.11.11` `1.9.2` `1.7.2` `1.6.6`
 
-**Four predictions, four held.** `round(100*25/112)` through `round(100*28/112)` are 22, 23, 24 and
-25, so the region moved on every one of the last four microsteps and now reads `28 of 112 executable
-microsteps fully complete (~25%)`. **The 29th moves it again** — `round(100*29/112) == 26`.
+**Five predictions, five held.** `round(100*25/112)` through `round(100*29/112)` are 22, 23, 24,
+25 and 26, so the region moved on every one of the last five microsteps and now reads `29 of 112
+executable microsteps fully complete (~26%)`. **The 30th moves it again** —
+`round(100*30/112) == 27`.
 
 **`1.2.6` was the exception and it happened as predicted.** `round(100*23/112)` and
 `round(100*24/112)` are both 21, so #177 moved the count and the prose list and left `~21%` alone.
@@ -1043,10 +1050,104 @@ answer that was wrong:
   document this product submits goes to a live authority, so the real deadline is the first
   submission, not the abstract reversal window.
 
+## 2j · 21 September — `1.6.6`, and the defect a mutation sweep structurally cannot find
+
+**#204 merged `1.6.6`** — `crates/pos-db/src/repo/audit.rs` (764 lines) and
+`crates/pos-db/tests/audit.rs` (18 tests), plus four `DbError` variants, `serde_json` in `pos-db`
+and the frontier. Issue #202 is the microstep issue, filed before the branch and closed by the
+PR. Phase 1 is **29 of 112 (~26%)**.
+
+### The two decisions the phase entry did not make
+
+**`seq` is allocated here, explicitly, before the hash.** `audit_log.seq` is `INTEGER PRIMARY KEY
+AUTOINCREMENT`, but it is *inside* the hashed canonical bytes and `audit_log_no_update` refuses
+every `UPDATE` — so the number cannot be learned after the insert, and a wrong one is unfixable
+forever. The append reads `IFNULL(MAX(seq),0)` and the register's head `hash` in one statement
+through the caller's `&Transaction`. **`sqlite_sequence` was rejected on measurement, not taste**:
+it rolls back with its transaction *and* carries no trigger guard at all — `UPDATE sqlite_sequence
+SET seq = 9999` is accepted, after which AUTOINCREMENT and the chain diverge.
+`a_rewritten_sqlite_sequence_does_not_move_the_chain` is the only test that distinguishes the two
+candidates, because in every ordinary sequence of events they return the same number.
+
+**An unrecognised `action` or `entity` is never a read error.** Both are `&'static str` on the
+domain type and SQLite returns `String`, so the read path interns — one leak per *distinct*
+spelling, never one per row. Interning against `cap::ALL` and refusing the rest was wrong twice:
+`action` is already a superset of the capability vocabulary (`registered_chain.rs` writes
+`sale.complete`), and a read that failed on an unknown spelling would let one inserted row disable
+the whole verifier.
+
+### The chain cannot fork, and nothing in SQL is why
+
+There is no `CHECK`, no unique index and no trigger on `prev_hash`; an `INSERT` duplicating a
+parent is accepted. The guarantee is structural and the module says so, because a reader who
+assumes the schema is holding the line will remove the thing that is: I-9 puts the delivery
+envelope's writes ahead of the audit insert in the same transaction, so the write lock is already
+held when the head is read; a stale snapshot is refused at its write *without* consulting
+`busy_timeout`; and `seq`, derived from that same read, collides on the primary key.
+
+### The sweep found sixteen of eighteen, and then a review found what it could not
+
+**18 mutations, 16 caught, 2 survived** — `ORDER BY seq` (indistinguishable while `seq` is the
+rowid and no index applies to `WHERE register_id = ?`) and `canonical_version` left to the column
+default (indistinguishable while `VERSION` is 1 and so is the default). Both were written into the
+code as untestable *before* the sweep ran, and both comments now record that the sweep agreed.
+
+**Then an adversarial review found a defect no mutation could have caught**, and this is the
+lesson worth keeping. `chain()` returned `Err` on any row it could not rebuild and discarded every
+honest row already read. That is not a missing guard — it is the wrong shape, and a sweep only
+asks whether an existing guard is load-bearing. The consequence was severe and asymmetric:
+`audit_log_no_update` and `audit_log_no_delete` guard mutation while **nothing guards `INSERT`**,
+so adding one poison row — with an envelope the same SQL console can write — made every honest row
+below it unreachable through the only public read, permanently, since neither trigger would then
+let anyone remove or repair it. Cheaper than the re-chaining attack the chain exists to detect,
+and more effective, because a re-chained history still verifies somewhere while an `Err` locates
+nothing.
+
+`chain()` now returns an `AuditChain`: the rows it could rebuild, **plus** an optional `ChainStop`
+naming the `seq` it stopped at and why. `DbError` means what it should always have meant here —
+the database would not answer.
+
+The same review found the canonical-version gate refused in **both** directions, so the first
+`VERSION` bump would have made every row already on disk unreadable and unrecoverable. It is still
+`!=` — a row from below this build's layout is equally unhashable — but as a stop the bump now
+costs the rows above the boundary and reports where it is.
+
+### Three smaller things, each worth one line
+
+* **A golden caught its own fixture.** `the_stored_hash_matches_a_pinned_golden` writes the
+  canonical bytes by hand and hashes them itself rather than routing through the read path under
+  test. It failed on its first run — not on the encoder, on `AT_MS`, which was eleven days from
+  the `AT` string it claimed to be.
+* **One mutation killed no test at all.** Moving the head read from `tx` to `self.conn` changed
+  nothing, because `Transaction` dereferences to its `Connection` and in the house call shape the
+  two are one SQLite handle. The test that closes it constructs the misuse deliberately: the
+  repository over one connection, the transaction from another.
+* **`indexing_slicing` fired after `nextest` was green**, as this document has warned twice. 25
+  errors in the test file, all of them `rows[0]`, none visible until `just lint`.
+
+### One reference corrected on the way past
+
+`ref/security-compliance.md:290` attributed `verify-audit.rs` to microstep 5.4.4. `phase-1:715`
+builds it at `1.6.6b` and `phase-5:187` says in its own words that the CLI *"is **not** new here"*.
+The stale citation sat in the section a 1.6.6 implementer is sent to read, so it was fixed in the
+same PR rather than filed. Nothing reconciles an owner citation across those files — this is the
+same class as §3's "an issue's state and the plan of record are two surfaces".
+
+### CodeQL blocked the first push, and it was right
+
+`rust/hard-coded-cryptographic-value`, critical, on a fixed 16-byte nonce in the approval fixture.
+It is a test, and conventions §5 gives a test no randomness — but `tests/approval.rs` already
+solved the same problem by deriving the nonce from the handle id, which is deterministic *and*
+unique per handle. Copying that idiom was a real improvement, not an appeasement: two handles in
+one file no longer share a nonce. **A dismissal would not have survived**, which this repository
+learned once already (`docs/a-codeql-dismissal-does-not-survive-a-move`).
+
+---
+
 ## 3 · The ten open issues
 
 All ten are on board #4, all `Todo`, all assigned — **#68, #69, #70, #71, #111, #112, #113, #114,
-#174 and #197**, re-read live at `937d4e1` rather than carried forward. **Nine are blocked on a
+#174 and #197**, re-read live at `1544c04` rather than carried forward. **Nine are blocked on a
 human** — one on `hardware`, five on a `decision`, two on a `merchant answer`, and #197 on the
 sequencing of `0006`. **#174 is the only one code alone can close today.**
 
@@ -1067,7 +1168,7 @@ re-measures each and says so.
 | **113** | `decision: ICV scope, before migration 0005 freezes it (merchant decision 6.9)` | P1 | migration · compliance | decision | **nothing in Phase 1** — `0005` shipped the `CHECK` on 14 September as option 4, and `1.9.2` now refuses to allocate a `fiscal_icv` number so the reversal window stays open in code. **Reopened 20 September** after being closed while eight documents still carried the question. Binds **`2.7.4`**, which must re-check 6.9 before allocating the first value. §2i has what would settle it |
 | 114 | `gap: the agent read-deny blocks the memory directory and workflow resume` | P2 | — | decision | agent memory, workflow resume |
 | **174** | `gap: derived Debug prints canonical payloads and digests the never-list redacts` | P2 | security | **not blocked** | nothing — it is a guard, not a gate. **Half done**: `payload` is redacted in `pos-db` (#178) and `pos-sync` (#180). What is left is one decision, below |
-| **197** | `gap: three guards 0005 did not ship, riding inside 0006` | P2 | migration | **not blocked**, but it has nowhere of its own to land | nothing. Inherits #179's three surviving findings, each re-measured at `937d4e1`. Rides inside `0006` because `0007` is `1.2.5`'s and `verify-schema.py` requires contiguity from `0001`; `1.10.1`'s entry carries the obligation (#198) |
+| **197** | `gap: three guards 0005 did not ship, riding inside 0006` | P2 | migration | **not blocked**, but it has nowhere of its own to land | nothing. Inherits #179's three surviving findings, each re-measured at `1544c04`. Rides inside `0006` because `0007` is `1.2.5`'s and `verify-schema.py` requires contiguity from `0001`; `1.10.1`'s entry carries the obligation (#198) |
 
 **#69 does not gate a Phase-1 microstep.** Its own body says it blocks *"all of group 2.7 and the
 22 ⚠️ OPEN items microstep 2.7.0 owns"*, and `phase-1:1066` says the opposite of gating: *"Owner:
@@ -1190,37 +1291,49 @@ legacy API cannot express `allowed_merge_methods` at all). **No issue tracks thi
 **Take one of these, and only one.** WIP = 1 means one microstep, not one open pull request. Every
 candidate this file has named since 14 September is spent — `1.9.1` (§2b), `1.1.9`'s database half
 (§2c), `1.2.6` (#177), #179's five missing negative tests (#185, §2e), `1.11.6` (#188, §2f),
-`1.11.11` (#192, §2g), `1.9.2` (#195, §2h) and **`1.7.2`, which this section flagged as wanting an
-answer from the operator and which they gave on 20 September** (#200, §2i).
-
-**The five candidates below were re-assessed against `46e957b` on 20 September**, each by an agent
-whose findings were then attacked by a skeptic with a default verdict of REFUTED. The verdicts are
-live, not carried forward — and two of them contradict what this section used to say.
+`1.11.11` (#192, §2g), `1.9.2` (#195, §2h), `1.7.2` (#200, §2i) and **`1.6.6`, which this section
+named as the closest successor and which landed on 21 September** (#204, §2j).
 
 | Candidate | Verdict | Why |
 |---|---|---|
-| ~~`1.9.2` — `SequenceRepository`~~ | **DONE, #195** | the verdict held: nothing was in its way (§2h) |
-| ~~`1.7.2` — font decision and embedding~~ | **DONE, #200** | the operator answered it; §2i |
-| `1.6.6` — `AuditRepository` | buildable **after authoring a `Done when`** | it has none; `audit_log` shipped in `0004` and nothing else blocks it |
+| ~~`1.9.2` — `SequenceRepository`~~ | **DONE, #195** | §2h |
+| ~~`1.7.2` — font decision and embedding~~ | **DONE, #200** | §2i |
+| ~~`1.6.6` — `AuditRepository`~~ | **DONE, #204** | its two documentation prerequisites were authored in its own PR, as predicted; §2j |
 | `1.2.4` pure half | **blocked** | `ref/schema.md:3410` is an `⚠️ **OPEN` item that names it, and #71 is the issue |
 | `1.11.12` — empty and edge states | **blocked** | needs rendered screens that do not exist |
 
-**Both `1.9.2` and `1.7.2` are done** — #195 and #200. Of the five assessed below that leaves
-**`1.6.6`**, plus two steps `1.7.2` has just unblocked:
+**`1.6.6` leaves three things behind that the next session should read before choosing.**
 
-* **`1.6.6` — `AuditRepository`** is the closest thing to a straight successor to `1.9.2`: same
-  crate, same shape, `audit_log` shipped in `0004`, no migration. **Two documentation prerequisites
-  come with it**, both satisfiable in its own PR but neither optional. It has **no `Done when`**, so
-  frontier rule 4 refuses a completion claim until one is authored; and its `Files:` line names only
-  `crates/pos-db/src/repo/audit.rs` while its `Tests:` line names three tests, so the line needs a
-  test file added to it. Author the `Done when` as a *command*, the way `1.9.2`'s was.
-* **`1.11.1` — i18n — is newly unblocked, and this file called it blocked by `1.7.2` for weeks.**
-  `assets/fonts/` exists now and `pos_hardware::font` exposes both faces. **Re-assess before taking
-  it**: the table below still says `blocked`, that blocker is gone, and nobody has checked what else
-  it needs. It also inherits an obligation — `1.7.2`'s `Done when` assigns it "the later UI-path
-  equality check", the test that the screen and the receipt use the same file.
-* **`1.7.3` — raster loading** is reachable too, and carries the OFL clause §2i records: subsetting
-  the font to shrink the binary is a *modified version* under a reserved name.
+* **`1.6.6b` — the local audit verifier — is now the closest successor, and it is the first
+  candidate in weeks whose dependency just shipped.** It builds
+  `crates/pos-db/src/bin/verify-audit.rs` and `crates/pos-db/tests/audit_verifier.rs` on top of
+  `AuditRepository::chain`, it **already has a `Done when`** (`phase-1:724`, two commands), and
+  `ref/test-catalog.md` already has `tail_deletion_is_detected_against_the_last_anchor` PLANNED
+  under it — so landing it **deletes a PLANNED entry**, which is the one direction the frozen
+  ceiling allows. Two things to know first: it is the repository's **first binary target**, so
+  `crates/pos-db/Cargo.toml` gains a `[[bin]]` and an argument parser is a dependency decision;
+  and `ChainVerdict` derives no `Serialize`, so a CLI that prints one needs its own mapping
+  rather than a derive added to a domain type.
+* **`1.11.1` — i18n — is still unblocked and still unscoped.** `1.7.2` cleared it on 20 September
+  and nobody has looked at what else it needs. It inherits `1.7.2`'s `Done when` obligation: the
+  later UI-path equality check, that the screen and the receipt use the same font file.
+* **`1.6.7` — capability exhaustiveness — is still behind the IPC wall.** It needs
+  `apps/terminal/src-tauri/src/ipc/registry.rs`, and `src-tauri/src` still holds only `lib.rs`,
+  `main.rs` and `time.rs`. Same wall as `1.9.3` and `1.11.4`.
+
+**One thing `1.6.6` did NOT close, and it is worth stating so nobody re-derives it.**
+`AuditRepository` writes no `audit_checkpoint` row. Anchoring the head is Z close's work, and
+`verify_chain` takes the anchor as an argument precisely so the storage of one is a later
+decision. `a_z_close_anchors_the_head` (`ref/security-compliance.md:280`) is still owned by
+nobody in Phase 1.
+
+**And #174 gained a third crate's worth of evidence rather than a fix.** `1.6.6` hand-wrote
+`Debug` on its one payload-bearing public type, following `outbox.rs` — but it recorded in its
+module doc that the argument does **not** transfer unchanged, because `audit_log.payload`'s own
+DDL forbids the data `outbox.rs` was protecting. So the audit redaction is a latent guard on a
+column whose contract already forbids the content, and `AuditIntent`'s own derived `Debug` in
+`pos-domain` still prints a payload. That is #174's third crate, named rather than silently
+skipped — which is exactly the omission #179's audit found the first time.
 
 **`1.9.3` is not the successor it looks like.** It reads as the natural next step after `1.9.2` —
 receipt numbering consumes the counter this microstep built — but its `Files:` line names
@@ -1228,32 +1341,6 @@ receipt numbering consumes the counter this microstep built — but its `Files:`
 and `time.rs`. There is no `commands/` module, so `1.9.3` is the step that *creates the IPC command
 layer*, which is the same wall `1.11.4` sits behind. Worth knowing before it is picked up as a
 small one.
-
-What follows is the 20 September assessment of the five, kept because the verdicts are evidence:
-
-* **Its `Done when` is already a command** — `cargo nextest run -p pos-db --test sequence` — so no
-  documentation prerequisite stands in front of it.
-* **It needs no migration number**, which is the contested resource: `0006` belongs to `1.10.1` and
-  `0007` to `1.2.5`. `doc_sequence` shipped with `0005` and this step works entirely against it.
-* **It closes the test half of #179's fourth finding**, which is now tracked nowhere (§3).
-  `doc_sequence`'s DDL carries `CHECK (scope_kind IN ('register','store'))` and the composite
-  `CHECK` that binds `receipt`/`zreport` to a register and `fiscal_icv` to a store — and `1.9.2`'s
-  `invalid_scope_for_sequence_kind_is_refused` is, by name, the test #179 said nobody had written.
-  The `DELETE` guard still needs a migration; the test does not.
-
-`SequenceScope` and `SeqKind` appear nowhere under `crates/` — they are in **`1.9.2`'s own signature
-block**, so they are the deliverable rather than a dependency. `RegisterId` and `StoreId` exist.
-Size: the closer precedent is `approval.rs` at 226 lines against `tests/approval.rs` at **655**, so
-budget for the test file being the larger half — `sequence_is_gap_free_under_crash_injection` alone
-wants "one hundred rollback points", and `concurrent_next_never_duplicates` is barrier-synchronised.
-
-**`1.7.2` is newly available and this file had implied otherwise**, by listing `1.11.1` as "blocked
-by `1.7.2`" without ever saying `1.7.2` itself was ready. It is — but it is the one candidate that
-is not purely a coding step: it **commits a third-party font binary and its licence**, and picks the
-family (`Noto Sans Arabic`, `IBM Plex Sans Arabic` or `Cairo` are the named candidates). A blob over
-**2,000,000 bytes** is refused by `scripts/check-staged-policy.py:11`, which a font family will fit
-inside, but redistributing someone else's typeface is a licensing decision rather than a technical
-one. **Worth putting to the operator before it is taken**, not after. It unblocks `1.11.1`.
 
 **And #174 is not a microstep at all.** It needs no issue ceremony, no board dance and no frontier
 arithmetic — it is a guard on shipped code, unblocked, with the fix shape already written down from
@@ -1318,7 +1405,7 @@ front of `0006`, `0007`, `1.2.3`, `1.9.2`–`1.9.5`, `1.10.2`–`1.10.5`, the `1
 | Candidate | State |
 |---|---|
 | `1.2.4` **pure half** | **BLOCKED, and this row said otherwise until 20 September.** `ref/schema.md:3410` is an `⚠️ **OPEN` item whose own text reads "blocks 1.2.4", and #71 is the issue behind it. What follows was true of its *size* and stays useful — the gateway to group 1.4, since `CartLine` needs `PriceOrigin` and `DerivedWeight` and neither name appears anywhere under `crates/`. Big: 14 named tests, a new module, a trybuild pair. Its full `Done when` (`phase-1:301`) chains commands unreachable before `0007`, so the issue's proving command must be rewritten for the half. **Two of the 14 tests are blocked by #71**, whose body says it blocks "`1.2.4`'s database commissioning half". And it defers half of itself with **no `Full-step status:` marker** — unlike `1.1.9` and `1.2.0` — so nothing mechanically stops a premature "complete" claim |
-| `1.6.6` — `AuditRepository` | **The closest successor to `1.9.2`**, re-verified 20 September. Unblocked: `0004` shipped `audit_log`, `1.6.5` and `1.8.9` landed, no migration needed. Two documentation prerequisites, both satisfiable in its own PR: **no `Done when` line**, and a `Files:` line naming only `src/repo/audit.rs` against a `Tests:` line naming three tests |
+| ~~`1.6.6` — `AuditRepository`~~ | **DONE, #204 on 21 September.** Both documentation prerequisites were authored in its own PR, exactly as this row predicted; §2j is the record, and the defect worth reading is the one the mutation sweep could not reach |
 | `1.11.1` — i18n | **UNBLOCKED as of #200**, and this row said otherwise until 20 September. `assets/fonts/` now holds both faces and their licence, and `pos_hardware::font` exposes them. Nothing has re-assessed what else it needs, so treat it as a candidate to scope rather than one to start |
 | `1.11.4` — Lock / PIN | **Soft-blocked.** All four IPC commands it drives are absent — `src-tauri/src` has no `commands/`, and `src/lib/ipc.ts` does not exist. It would be tested entirely against invented mocks |
 | `1.11.5` — Sale screen | **Blocked.** `CartSnapshot` does not exist (`packages/api-types/src/index.ts` is `export {};`), and it would rewrite the green `1.11.0` canary |
@@ -1327,10 +1414,12 @@ front of `0006`, `0007`, `1.2.3`, `1.9.2`–`1.9.5`, `1.10.2`–`1.10.5`, the `1
 | `1.6.2` — Argon2id PINs | **Blocked twice**, neither time by code: `just bench-gate pin-verify` refuses until #68, **and** `ref/security-compliance.md:413` |
 | `1.2.3` | Blocked three migrations deep — its FTS repository needs `0007`'s tables |
 
-**Eighteen executable Phase-1 microsteps carry no `**Done when:**` line at all** — `1.3.2` `1.3.3`
-`1.4.1` `1.4.2` `1.4.3` `1.4.4` `1.4.5` `1.4.7` `1.4.8` `1.4.10` `1.5.1` `1.5.2` `1.5.4` `1.6.6`
-`1.7.1` `1.7.4` `1.7.6` `1.7.8`. Re-counted at `46e957b` by walking every `### 1.x` heading; this
-file said **twenty** and named `1.1.9` and `1.2.0` among them, and both have since moved:
+**Seventeen executable Phase-1 microsteps carry no `**Done when:**` line at all** — `1.3.2`
+`1.3.3` `1.4.1` `1.4.2` `1.4.3` `1.4.4` `1.4.5` `1.4.7` `1.4.8` `1.4.10` `1.5.1` `1.5.2` `1.5.4`
+`1.7.1` `1.7.4` `1.7.6` `1.7.8`. **`1.6.6` left this list on 21 September** by authoring one as
+part of its own delivery, which is the third time a step has done so — `1.1.9` and now `1.6.6`
+cleared theirs, and `1.2.0` still carries the `Current half done when:` shape. Re-counted by
+walking every `### 1.x` heading:
 
 * **`1.1.9` gained a real `Done when`** when it completed on 14 September — §1 records that as the
   third of the three deletions its completion required. It is no longer in the list.
@@ -1632,9 +1721,10 @@ Established by introspection and corrected in #122; do not re-litigate.
 
 ### `development → staging`
 
-`staging` is **30 behind** (re-measured 15 September, after #183–#185), and the gap now carries five microsteps —
-`1.11.3`, `1.9.1`, `1.1.9`, `1.2.6` — migration `0005`, a security bump and a code
-fix (#164) rather than documentation alone. Open a promotion when you want the cross-platform matrix
+`staging` is **42 behind** (re-measured 21 September, after #204), and the gap now carries nine
+microsteps — `1.11.3`, `1.9.1`, `1.1.9`, `1.2.6`, `1.11.6`, `1.11.11`, `1.9.2`, `1.7.2` and
+`1.6.6` — migration `0005`, an embedded typeface, a security bump and a code fix (#164) rather
+than documentation alone. Open a promotion when you want the cross-platform matrix
 over the current tip:
 
 ```bash
