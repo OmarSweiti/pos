@@ -18,6 +18,7 @@
 //! fact.
 
 pub mod approval;
+pub mod audit;
 pub mod clock;
 pub mod outbox;
 pub mod sequence;

@@ -287,7 +287,9 @@ A tamper-evidence mechanism that halts trade converts a forensic signal into an 
 
 ### The verifier
 
-`crates/pos-db/src/bin/verify-audit.rs` (microstep 5.4.4) — a CLI that walks a register's chain, compares its head against the last server-anchored checkpoint when one is available, and reports the first break. The forensic tool you hope never to need and cannot build under pressure.
+`crates/pos-db/src/bin/verify-audit.rs` (microstep **1.6.6b**, extended at 5.4.4) — a CLI that walks a register's chain, compares its head against the last server-anchored checkpoint when one is available, and reports the first break. The forensic tool you hope never to need and cannot build under pressure.
+
+This line read "microstep 5.4.4" until 1.6.6 landed, and both the other two sites disagreed with it: `phase-1:715` builds the CLI at `1.6.6b`, and `phase-5:187` says in its own words *"The CLI itself is **not** new here: it is built at microstep 1.6.6b, because the Phase-1 exit gate demonstrates tamper detection and a claim whose tool arrives four phases later is a claim nobody can check."* What 5.4.4 adds is `--anchor` against a server checkpoint. Nothing reconciles an owner citation across these files, so this one was found by reading §4 for 1.6.6's own design and is corrected here rather than left for whoever reads it next.
 
 Reproducing a break for a drill requires suspending the append-only triggers on a **copy** of the database, because the triggers correctly refuse the edit. That is the only sanctioned way to produce a tampered state, and it is what an investigator would do too.
 
