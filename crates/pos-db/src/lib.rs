@@ -86,6 +86,26 @@ pub enum DbError {
     InvalidStoredApproval { reason: String },
     #[error("stored clock state is malformed: {reason}")]
     ClockStateInvalid { reason: String },
+    #[error("audit payload cannot be chained as written: {reason}")]
+    AuditPayloadRefused { reason: String },
+    #[error(
+        "refusing to append an audit fact with no delivery envelope: write the \
+         commit and its manifest naming this row first, in the same \
+         transaction (I-9)"
+    )]
+    AuditEnvelopeMissing,
+    #[error(
+        "audit_log holds sequence number {found}, which is no chain position: \
+         `seq` is hashed into every entry and an append can only ever have \
+         written a positive one"
+    )]
+    AuditSeqInvalid { found: i64 },
+    #[error(
+        "cannot append onto audit_log seq {seq}: this register's head row \
+         cannot be read ({reason}), and chaining onto a head this build does \
+         not understand would write a link nothing can verify"
+    )]
+    AuditHeadUnreadable { seq: i64, reason: String },
     #[error(
         "this build of SQLite has no {0}: the register would open, and then return \
          an empty result for every search instead of failing"

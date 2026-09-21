@@ -698,9 +698,21 @@ The caller owns the transaction and the write order: refuse an already-consumed 
 **Done when:** mutating any byte of any historical entry makes `verify_chain` return `Broken { at_seq }` pointing at it.
 
 ### 1.6.6 — `AuditRepository`
-**Files:** `crates/pos-db/src/repo/audit.rs` (new)
+**Files:** `crates/pos-db/src/repo/audit.rs` (new), `crates/pos-db/tests/audit.rs` (new), `crates/pos-db/src/repo/mod.rs`, `crates/pos-db/src/lib.rs` (four `DbError` variants), `crates/pos-db/Cargo.toml` (`serde_json`), `Cargo.lock`, [`README.md`](README.md) (implementation frontier), [`ref/security-compliance.md`](ref/security-compliance.md) (§4's stale owner for `verify-audit`), this file
 Append-only. Reads the previous hash and writes the new row **inside the caller's transaction**. There is no update method and no delete method — not private ones, none.
-**Tests:** `chain_survives_process_restart` · `concurrent_appends_serialize` · `verify_chain_over_1000_entries`
+> **Why the `Files:` line is eight entries and not one.** `AuditIntent.payload` is a
+> `serde_json::Value` and `audit_log.payload` is canonical JSON by DDL, so the read path cannot
+> exist without `serde_json` in `pos-db` — a dependency edge `Cargo.lock` records or `--locked`
+> refuses the build. The rest is the five-part shape `1.9.2` records: the module, its suite, the
+> `pub mod` line, the error variants and the frontier.
+>
+> **`seq` is allocated here, explicitly, before the hash.** `audit_log.seq` is `INTEGER PRIMARY KEY AUTOINCREMENT` but it is *inside* the hashed bytes, and `audit_log_no_update` refuses every `UPDATE` — so the number cannot be learned after the insert, and a wrong one is permanently unfixable. The append reads `IFNULL(MAX(seq),0)` and the register's head `hash` in one statement through the caller's `&Transaction`. Not `sqlite_sequence`: it carries no trigger guard at all, and a rewritten counter diverges from the chain.
+>
+> **An unrecognised `action` or `entity` is never a read error.** Both are `&'static str` on the domain type and SQLite returns `String`, so the read path interns — one leak per distinct spelling, never one per row. Refusing an unknown spelling instead would let one inserted row disable the whole verifier, which is the opposite of what gap G-7 asks for.
+>
+> **And no single row can silence a register.** `chain()` returns the rows it could rebuild *plus* an optional located stop, never an error that discards the prefix. The first draft of this microstep did the latter for six row-level conditions, which was the same hole one paragraph up: `audit_log_no_update` and `audit_log_no_delete` guard mutation but **nothing guards `INSERT`**, so adding one unreadable row — with an envelope the same SQL console can write — made every honest row below it unreachable, permanently and irreparably. A stop is also not a tamper verdict: the commonest cause, once this product has two versions in the field, is a row written under a canonical layout the reading binary does not know.
+**Tests:** `chain_survives_process_restart` · `concurrent_appends_serialize` · `verify_chain_over_1000_entries` · `a_negative_seq_stops_the_walk_at_that_row` · `a_null_entity_id_stops_the_walk_at_that_row` · `a_payload_that_is_not_canonically_encodable_is_refused` · `a_rewritten_sqlite_sequence_does_not_move_the_chain` · `a_rolled_back_append_leaves_no_row` · `a_row_this_build_cannot_rebuild_stops_the_walk_without_hiding_the_rows_below_it` · `a_second_registers_rows_do_not_break_either_chain` · `an_append_reads_the_head_through_its_own_transaction` · `an_append_without_its_delivery_envelope_is_refused` · `an_unknown_action_is_read_back_rather_than_refused` · `an_unreadable_head_refuses_the_append_rather_than_chaining_onto_it` · `audit_log_still_refuses_update_and_delete` · `the_chain_read_rebuilds_every_hashed_column` · `the_stored_hash_matches_a_pinned_golden` · `the_stored_payload_is_canonical_json`
+**Done when:** `cargo nextest run -p pos-db --test audit` exits zero — the chain read back out of SQLite after a reopen verifies as `Intact { entries: 1000 }`, a row appended by a transaction that provably contended for the write lock carries the other transaction's `hash` as its `prev_hash`, no two rows of one register share a `prev_hash`, and one row's stored `hash` equals `BLAKE3(GENESIS ‖ the canonical bytes written out by hand in the test)` rather than whatever the encoder produced.
 
 ### 1.6.6b — Local audit verifier
 **Files:** `crates/pos-db/src/bin/verify-audit.rs` (new), `crates/pos-db/tests/audit_verifier.rs` (new)

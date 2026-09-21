@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **28 of 112 executable microsteps fully complete (~25%)**: `1.1.0`
+Phase 1 has **29 of 112 executable microsteps fully complete (~26%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -50,9 +50,12 @@ search box before a burst can be recognised taken back out of it), `1.11.11` (th
 every action in `ref/ui-spec.md` §7 reachable without a mouse, with the keys that mean something
 inside a text box yielding to one that has focus), `1.9.2` (the owned document counters — a
 number spent only by a transaction that commits, and G-2's real requirement met: a gap that does
-happen is *detectable* rather than pretended impossible), and `1.7.2` (the embedded typeface — IBM
+happen is *detectable* rather than pretended impossible), `1.7.2` (the embedded typeface — IBM
 Plex Sans Arabic in two faces and its OFL licence, committed rather than fetched, so the receipt is
-drawn with the file the screen uses).
+drawn with the file the screen uses), and `1.6.6` (the audit repository — a row whose `seq` is
+fixed before the hash is taken over it, a chain that cannot fork because the envelope holds the
+write lock before the head is read, and a read path that walks a row written by a build it has
+never heard of rather than refusing it).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on

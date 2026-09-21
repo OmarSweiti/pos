@@ -17,6 +17,11 @@ getrandom.workspace = true
 # Repositories return owned domain values. The capability grid this crate's
 # migration seeds also remains declared once in `pos_domain::permissions`.
 pos-domain.workspace = true
+# `AuditIntent.payload` is a `serde_json::Value` and `audit_log.payload` is
+# canonical JSON by DDL, so the audit repository cannot read a row back
+# without it (microstep 1.6.6). Already a runtime dependency of
+# `pos-domain`, so nothing new enters the register binary's graph.
+serde_json.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 
