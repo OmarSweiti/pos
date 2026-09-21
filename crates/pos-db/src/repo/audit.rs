@@ -8,7 +8,12 @@
 //! [`pos_domain::audit`] at 1.6.5. What was still missing is the half that
 //! makes the other two evidence: something that writes a row whose `hash` is
 //! the hash of that row, and something that reads the rows back so
-//! [`verify_chain`] has a chain to walk. Both are here, and nothing else is.
+//! [`verify_chain`] has a chain to walk. Both are here.
+//!
+//! [`AuditRepository::registers`] joined them at 1.6.6b, and is the third read
+//! rather than a fourth thing: a verifier handed a database file rather than a
+//! till has to learn which tills the file holds before it can walk one. It
+//! computes nothing and decides nothing.
 //!
 //! **Append-only, and the type system says so.** There is no update method and
 //! no delete method — not private ones, none. `audit_log_no_update` and
@@ -359,6 +364,36 @@ impl AuditChain {
     }
 }
 
+/// What [`AuditRepository::registers`] found in one database: the tills whose
+/// chains can be walked, and how many rows belong to none of them.
+///
+/// The two are one value for the same reason [`AuditChain`] carries its stop: a
+/// caller cannot take the list without also being handed the count of what the
+/// list leaves out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditRegisters {
+    registers: Vec<RegisterId>,
+    orphan_rows: u64,
+}
+
+impl AuditRegisters {
+    /// Every register with at least one row, in ascending `register_id`.
+    #[must_use]
+    pub fn registers(&self) -> &[RegisterId] {
+        &self.registers
+    }
+
+    /// Rows whose `register_id` is not an id, so no chain contains them.
+    ///
+    /// **Not a tamper verdict**, and not zero-is-good: it is the number of rows
+    /// this enumeration could not attribute, reported so that a verdict over
+    /// the rest is not mistaken for a verdict over the file.
+    #[must_use]
+    pub const fn orphan_rows(&self) -> u64 {
+        self.orphan_rows
+    }
+}
+
 /// Appends to, and reads back, one register's hash-chained audit log.
 pub struct AuditRepository<'c> {
     conn: &'c Connection,
@@ -569,6 +604,68 @@ impl<'c> AuditRepository<'c> {
             }
         }
         Ok(AuditChain { entries, stopped })
+    }
+
+    /// Every register this database holds audit rows for.
+    ///
+    /// [`Self::chain`] walks one register, and a caller handed a database file
+    /// rather than a till has no other way to learn which tills are in it —
+    /// which is exactly the position `verify-audit` (microstep 1.6.6b) is in,
+    /// and the one `diag_verify_audit_chain` ([`ref/ipc-contract.md`] §3) will
+    /// be in from the shell. The query lives here rather than in either caller
+    /// because conventions §3 puts SQL over `audit_log` in this module, and two
+    /// copies of a column name are two things to keep in step.
+    ///
+    /// **A row whose `register_id` is not an id is counted, not dropped.**
+    /// `audit_log.register_id` is `BLOB NOT NULL` with no `REFERENCES` clause
+    /// and no width check (`0004:431`), and `STRICT` constrains the type rather
+    /// than the length, so sixteen bytes is this module's convention and not
+    /// something SQLite enforces. Such a row is in no chain — [`Self::chain`]
+    /// binds a sixteen-byte parameter and never matches it — but a tool that
+    /// silently ignored rows it could not classify would report on a subset
+    /// while sounding like it had read the file.
+    ///
+    /// The `ORDER BY` is the same reviewed line [`Self::chain`] carries, with
+    /// the same standing: it fixes the order a forensic report is printed in,
+    /// so two runs over one file can be diffed against each other — and no test
+    /// can prove it, because `GROUP BY` over an unindexed column already sorts
+    /// through a temporary b-tree, so removing the clause changes nothing
+    /// today. Deleting it survived the mutation sweep, as predicted. It becomes
+    /// load-bearing in fact the day a migration indexes `register_id`.
+    ///
+    /// [`ref/ipc-contract.md`]: ../../../../docs/implementation/ref/ipc-contract.md
+    ///
+    /// # Errors
+    ///
+    /// [`DbError::Sqlite`] only: the statement would not run. Nothing about one
+    /// row is an error here, for the reason [`Self::chain`] records.
+    pub fn registers(&self) -> Result<AuditRegisters, DbError> {
+        let mut statement = self.conn.prepare(
+            "SELECT register_id, COUNT(*) FROM audit_log
+              GROUP BY register_id
+              ORDER BY register_id",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?))
+        })?;
+
+        let mut registers = Vec::new();
+        let mut orphan_rows: u64 = 0;
+        for row in rows {
+            let (bytes, rows_in_group) = row?;
+            // `from_slice` is the width check: it accepts sixteen bytes and
+            // nothing else, so no separate length comparison can disagree with
+            // it. `COUNT(*)` is never negative, which is what makes
+            // `unsigned_abs` total here rather than a swallowed conversion.
+            match Uuid::from_slice(&bytes) {
+                Ok(id) => registers.push(RegisterId::from_uuid(id)),
+                Err(_) => orphan_rows = orphan_rows.saturating_add(rows_in_group.unsigned_abs()),
+            }
+        }
+        Ok(AuditRegisters {
+            registers,
+            orphan_rows,
+        })
     }
 }
 

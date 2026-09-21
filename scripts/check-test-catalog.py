@@ -121,7 +121,6 @@ PLANNED: dict[str, tuple[str, ...]] = {
         "prop_cash_rounding_only_on_final_cash_tender",
     ),
     "1.6.2": ("manager_reset_retires_old_hash_and_audits",),
-    "1.6.6b": ("tail_deletion_is_detected_against_the_last_anchor",),
     "1.7.3": ("narrow_profile_reflows_rather_than_truncates",),
     "1.7.5": (
         "golden_receipt_ar_58mm",
@@ -565,6 +564,7 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "manager_self_approval_denied_when_policy_bans_it",
         "mutating_an_identity_column_breaks_the_chain",
         "prop_monotonic_clock_never_decreases",
+        "tail_deletion_is_detected_against_the_last_anchor",
         "the_effect_and_the_consumption_commit_together_or_not_at_all",
     }
 )
