@@ -1,0 +1,51 @@
+/*
+ * The embedded typeface on the screen side (microstep 1.11.1, gap G-5).
+ *
+ * `ref/hardware-and-receipts.md` §110 asks for two things at once: the font is
+ * embedded in the app, and it is the same file the UI uses. `1.7.2` answered
+ * the first for the receipt rasteriser — `crates/pos-hardware/src/font.rs`
+ * pulls both faces in with `include_bytes!` — and this file answers it for the
+ * screen, out of the same two files. One copy of the bytes on disk, two
+ * consumers, and `ui_and_rasterizer_resolve_the_same_embedded_font` compares
+ * the paths rather than trusting this comment.
+ *
+ * The URLs are relative to this file and reach out of the Vite root into the
+ * repository's shared `assets/`, which is deliberate: copying the faces under
+ * `apps/terminal/public/` would make the screen's font a *second* file that a
+ * later `1.7.3` change to the rasteriser's could silently diverge from. Vite
+ * fingerprints and emits them into the bundle, so the register still ships
+ * them rather than fetching anything — conventions §10: no network font.
+ *
+ * `font-display: block` rather than the browser default `auto`: a register is
+ * offline and local, so the face is available in milliseconds, and the failure
+ * this avoids is a flash of fallback Latin glyphs where Arabic text belongs.
+ */
+
+@font-face {
+  font-family: "IBM Plex Sans Arabic";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("../../../../assets/fonts/IBMPlexSansArabic-Regular.ttf")
+    format("truetype");
+}
+
+@font-face {
+  font-family: "IBM Plex Sans Arabic";
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  src: url("../../../../assets/fonts/IBMPlexSansArabic-Bold.ttf")
+    format("truetype");
+}
+
+/*
+ * Bind the family to the document. The fallbacks are what a machine actually
+ * has if the bundled face ever fails to load: `system-ui` first so the host's
+ * own Arabic-capable UI face is preferred over a Latin-only serif default.
+ */
+:root {
+  --font-ui: "IBM Plex Sans Arabic", system-ui, sans-serif;
+
+  font-family: var(--font-ui);
+}
