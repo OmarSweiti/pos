@@ -11,3 +11,29 @@ workspace = true
 
 [dependencies]
 thiserror.workspace = true
+# The renderer's input. `ref/hardware-and-receipts.md` §2.4 puts the boundary
+# here in as many words: *"the renderer lives at `pos-hardware`'s printer
+# boundary and is fed a `ReceiptModel` built in `pos-domain`"*. The edge runs
+# one way — nothing in `pos-domain` knows this crate exists, which is what keeps
+# that crate pure (I-8).
+pos-domain.workspace = true
+# The receipt raster pipeline (1.7.3). See the workspace manifest for why the
+# shaper is `harfrust` and the font reader is `skrifa`, rather than the
+# `cosmic-text` the phase file names or the `rustybuzz`/`ttf-parser` pair that
+# two RUSTSEC unmaintained advisories retired.
+harfrust.workspace = true
+skrifa.workspace = true
+unicode-bidi.workspace = true
+tiny-skia.workspace = true
+# One division, once: `tiny-skia` needs an `f32` scale from font units to
+# pixels, and `float_arithmetic` is `forbid` workspace-wide, so the ratio is
+# computed on `Decimal` and converted at the boundary. Everything else in the
+# pipeline is `i32`. `rust_decimal` is already in the workspace graph, so this
+# adds no supply-chain surface — see `render::raster`.
+rust_decimal.workspace = true
+
+[dev-dependencies]
+# The test fixture builds typed ids, which are newtypes over `Uuid`.
+uuid.workspace = true
+proptest.workspace = true
+pos-test-support.workspace = true

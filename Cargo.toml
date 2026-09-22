@@ -88,6 +88,47 @@ dotenvy = "0.15"
 sqlx = { version = "0.9", default-features = false, features = [
   "runtime-tokio", "tls-rustls", "postgres", "uuid", "time", "migrate", "derive", "macros",
 ] }
+# ── receipt rendering ───────────────────────────────────────────────────
+# The receipt is rasterised, never sent as printer-codepage text (1.7.3):
+# Windows-1256 text mode neither shapes Arabic letters nor reorders an RTL run,
+# so a codepage receipt is unreadable in the one language this product is
+# written for.
+#
+# The shaper, and it is **not** the `cosmic-text` the phase file names. That
+# crate brings `fontdb`, which enumerates the machine's fonts, and `sys-locale`,
+# which reads the machine's language — 55 crates against 20. A register draws
+# with the face 1.7.2 embedded and speaks the language on the `ReceiptModel`; a
+# stack that can answer either question from the host is the wrong one for this
+# device.
+#
+# Nor is it `rustybuzz`, which was the first choice and is what `cosmic-text`
+# uses underneath: RUSTSEC-2026-0206 declares it **unmaintained**, and the
+# advisory names `harfrust` — from the HarfBuzz project itself — as the
+# maintained alternative. Adopting a dependency already flagged on the day it
+# arrives, on the path that draws every document a merchant hands a customer,
+# would be permanent debt for the sake of one afternoon. Measured before the
+# swap: harfrust returns the *identical* glyph ids, advances and mark offsets
+# for the pinned Arabic word, and is 13 crates against rustybuzz's 20.
+harfrust = "0.13"
+# Metrics and glyph outlines. `harfrust` shapes and does not draw.
+#
+# `ttf-parser` was the first choice here, for symmetry with what `rustybuzz`
+# used underneath — and RUSTSEC-2026-0192 declares it unmaintained too, naming
+# `skrifa` as the alternative. The two advisories are one story: the RazrFalcon
+# font stack has been retired in favour of Google's `fontations`, which is what
+# `harfrust` above is already built on. So this is not a second dependency
+# family, it is the same one: `skrifa` and `harfrust` share `read-fonts`, and
+# adding it costs two crates.
+skrifa = "0.47"
+# The Unicode Bidirectional Algorithm, for the Latin SKU and the Western digits
+# that sit inside an Arabic line. This is the "+ bidi" half of the phase file's
+# diagram; a shaper works one direction at a time and does not reorder.
+unicode-bidi = "0.3"
+# The scanline rasteriser. `default-features = false` drops `png-format`, which
+# pulls eight crates into a binary that ships to a merchant's till; 1.7.5 wants
+# a PNG beside each golden, and a golden is a dev-dependency need.
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
+
 # ── server / async ──────────────────────────────────────────────────────
 tokio              = { version = "1", features = ["full"] }
 axum               = "0.8"
