@@ -6,6 +6,7 @@ pub mod catalog;
 pub mod ids;
 pub mod money;
 pub mod permissions;
+pub mod receipt;
 pub mod tax;
 pub mod time;
 
@@ -37,6 +38,11 @@ pub use permissions::{
     ApprovalBinding, ApprovalHandle, Authorized, Capability, CustomerQueryShape, EscalationPolicy,
     Grant, GrantSet, JournalScope, Limit, PermissionError, PreparedIntentHash, Role, RoleGrants,
     StoredApprovalHandle, authorize, cap, default_grants,
+};
+pub use receipt::{
+    BuyerBlock, DocKind, FiscalBlock, FooterBlock, Language, LoyaltyBlock, MerchantBlock,
+    ReceiptDiscount, ReceiptError, ReceiptHeader, ReceiptLine, ReceiptLocale, ReceiptModel,
+    ReceiptTender, ReceiptTotals, TextDirection, Watermark,
 };
 pub use tax::{
     ComponentTax, LineTax, PriceMode, StoreTaxProfile, SupplyDestination, SupplyTaxContext,

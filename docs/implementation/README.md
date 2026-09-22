@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **31 of 112 executable microsteps fully complete (~28%)**: `1.1.0`
+Phase 1 has **32 of 112 executable microsteps fully complete (~29%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -61,7 +61,11 @@ turns the chain into evidence somebody can run, reporting the first break, refus
 the one tamper a chain cannot see in itself), and `1.11.1` (the i18n infrastructure — a typed
 catalogue whose two languages cannot drift apart, Arabic made the rendered default by the entry
 point rather than by the document it was served, and the screen wired to the very font file the
-receipt rasteriser embeds, proven by comparing what each language's source names).
+receipt rasteriser embeds, proven by comparing what each language's source names), and `1.7.1`
+(the receipt render model — one pure description of the document three renderers read, with the
+store's shelf-display precision deliberately absent from it so no renderer can hide a fil, and
+five whole-document rules refused rather than hoped for, including the one that stops a
+non-fiscal acknowledgement printing a fiscal QR).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
