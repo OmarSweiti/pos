@@ -2,6 +2,7 @@
 //! Traits here; drivers (ESC/POS over TCP/serial/USB) in submodules later.
 
 pub mod font;
+pub mod render;
 
 use std::sync::{Mutex, MutexGuard};
 
