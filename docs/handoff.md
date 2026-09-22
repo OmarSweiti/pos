@@ -1,6 +1,6 @@
 # Handoff — the single current one
 
-**Reflects `development` @ `cf79325`, 22 September 2026 — re-measured, not incremented.**
+**Reflects `development` @ `5335c78`, 22 September 2026 — re-measured, not incremented.**
 
 There is one handoff — keep updating this file rather than adding a dated one.
 
@@ -26,6 +26,39 @@ There is one handoff — keep updating this file rather than adding a dated one.
 > ruleset ledger at 28 bypasses of 68, and all four rulesets re-diffed against live by hand — they
 > still match.
 
+> ## ✅ `1.7.4` LANDED — A DOCUMENT THAT CUTS AND NEVER OPENS THE DRAWER
+>
+> `1.7.4` (#221, issue #220) takes Phase 1 to **34 of 112 (~30%)** — the ESC/POS emitter, so
+> `1.7.3`'s page of dots is now a stream a printer would take. §2o is the record. Group 1.7 is
+> **4 of 10**, and it has supplied its own successor three times running.
+>
+> **The test everybody would write first is wrong, and that is the thing to carry.** The drawer
+> pulse must never be in a receipt's bytes (`ref/hardware-and-receipts.md` §4: *"the stream is
+> persisted and retried; the pulse is a physical, non-idempotent, cash-access effect"*). The
+> obvious assertion is to scan the stream for `1B 70` — and it would be **intermittently red**,
+> because the raster payload is an arbitrary bitmap and those two bytes occur inside it by
+> coincidence about once in every 65 536 pairs, which a 576-dot receipt reaches within roughly 900
+> rows. The assertion is structural instead, and one test makes the coincidence deliberate.
+>
+> **The finding this microstep could not fix: the cut has no feed, and nothing checks where it
+> lands.** On many thermal printers the cutter sits ten to fifteen millimetres above the print
+> head, so a bare `GS V` severs the paper at a point the document has not reached and the last
+> lines stay inside the machine. The distance is a device property — §6a makes `cut_command` a
+> profile field for exactly this — and **the matrix ships empty**, so choosing one would be the
+> defect §6a.1 refuses. What is missing is not the feed but the **check**: §9's hardware-lab
+> checklist covers truncation *across* the paper and nothing covers it *along* the paper. A
+> receipt that loses its footer inside the printer passes every check in that table.
+>
+> **22 mutations, 22 caught** — and the read still found two things the sweep could not, because
+> neither was code: an empty page was accepted and emitted a blank tab, and the cut gap above.
+>
+> **`1.7.4` is the fourth microstep ever to clear a missing `Done when` rather than add one**,
+> after `1.1.9`, `1.6.6` and `1.7.1`, and the second to author it in its own commit before any
+> code. The list is 16.
+>
+> **Nothing is in flight.** The WIP=1 slot is free and §4 names what is left — including a
+> question for the operator, which §7 now carries.
+>
 > ## ✅ `1.7.3` LANDED — THE ARABIC PROBLEM, AND THE FONT STACK TWO ADVISORIES CHOSE
 >
 > `1.7.3` (#218, issue #217) takes Phase 1 to **33 of 112** — the raster pipeline, so a receipt
@@ -204,8 +237,8 @@ guard-hardening on shipped code, not a microstep. **19 September moved it to 25 
 §2c and §2d are the 14–15 September windows; §2a keeps 13 September and §2 the 9–11 September
 record, where twenty-six pull requests changed the governance layer and no microstep advanced.
 
-**`development` is green, tip included.** `just pre-push` exits 0 at `cf79325`, all 37
-`just guards` steps pass, and `ci` run **`35722044565` is a success on the tip**, queried by SHA
+**`development` is green, tip included.** `just pre-push` exits 0 at `5335c78`, all 37
+`just guards` steps pass, and `ci` run **`35730710697` is a success on the tip**, queried by SHA
 rather than taken as the newest green one — `ci.yml`'s ref-scoped concurrency group cancels runs
 when merges land inside two minutes of each other, and the cancellation is invisible unless you ask
 about the tip specifically.
@@ -247,13 +280,13 @@ cd ~/My_Projects/pos
 git checkout development && git pull --ff-only
 git fetch --all --prune            # your local staging is 51 commits stale — see §14
 mise exec -- just setup
-mise exec -- just pre-push          # passes at cf79325
+mise exec -- just pre-push          # passes at 5335c78
 ```
 
-Nothing is in flight, so there is no branch to resume. `phase-1/group-7-raster-pipeline` merged as
-#218. **Its local branch is still here**, unlike every microstep before it: the manual merge
-recipe deletes the remote branch and `just merge`'s local cleanup never ran, which is why the
-`[gone]` count moved 30 → 31. `git branch -D phase-1/group-7-raster-pipeline` when it bothers you.
+Nothing is in flight, so there is no branch to resume. `phase-1/group-7-escpos` merged as #221 and
+`just merge` removed it on both sides. **`phase-1/group-7-raster-pipeline` is still here** as a
+`[gone]` local branch, because #218 took §9's manual recipe and that path deletes only the remote
+— `git branch -D phase-1/group-7-raster-pipeline` when it bothers you.
 
 **Two reds are open and neither is a diff of yours.** `protected-paths` on any PR that edits
 `scripts/check-test-catalog.py` is by design (§2k), and **the weekly `security` workflow is red
@@ -271,20 +304,18 @@ with `couldn't exec process: No such file or directory`, because the whole unspl
 `cd <repo> && mise exec -- node --version` prints `v24.19.0` — and a relative script path works.
 Re-measured 13 September; the `cd` clause that stood here was false.
 
-### Verified gate baselines at `cf79325`
+### Verified gate baselines at `5335c78`
 
-Use these as the "nothing is broken" reference. **`1.7.3` moved the Rust row and the dependency
-graph**: 340 → **378**, all thirty-eight in `crates/pos-hardware/src/render/`, and `Cargo.lock`
-gains four direct dependencies plus their tree. The JavaScript rows are unchanged at 9 files / 79
-tests and the schema chain did not move.
+Use these as the "nothing is broken" reference. **`1.7.4` moved the Rust row and only that**:
+378 → **392**, all fourteen in `crates/pos-hardware/src/escpos.rs`. `Cargo.lock` is byte-identical
+— the emitter takes no dependency — the JavaScript rows are unchanged at 9 files / 79 tests, and
+the schema chain did not move.
 
-**`just audit` is the row to read this time.** It is clean — *advisories ok, bans ok, licenses ok,
-sources ok* — and that is a result rather than a formality: the first draft of `1.7.3` failed it
-twice, on two separate unmaintained advisories, and the stack changed because of it. The
-JavaScript licence count is unchanged at **135 releases and 11 expressions**, because nothing here
-is JavaScript.
+**`just audit` is still the row worth reading**, and still clean. `1.7.3` made it a result rather
+than a formality one microstep ago: its first draft failed twice on two separate unmaintained
+advisories and the font stack changed because of it. Nothing moved since.
 
-**Every row below was re-measured on the merged tip `cf79325`.** `just pre-push`'s five, plus
+**Every row below was re-measured on the merged tip `5335c78`.** `just pre-push`'s five, plus
 `verify-schema`, `verify-pg` — **real engine pass** through the Docker fallback — `just audit`,
 and `bench-gate`, which refuses with exit 3 as it should. `just audit` still reports **135 package
 releases and 11 reviewed expressions**: no *third-party* dependency entered either graph, so no
@@ -296,7 +327,7 @@ are dated observations.
 | `just pre-push` | **exit 0** — `lint test build-web guards secrets`, `justfile:368`, ~1:30 warm |
 | `just check` | exit 0 — all **seven** workspace members |
 | `just lint` | exit 0 — 2 prerequisites + 14 body steps = **16 checkers** |
-| `just test` | exit 0 — **378 tests run: 378 passed, 2 skipped** in ~21 s; JS **9 files / 79 tests** |
+| `just test` | exit 0 — **392 tests run: 392 passed, 2 skipped**; JS **9 files / 79 tests** |
 | `just build-web` | exit 0 — `tsc -b` + vite 8.2.2 across 5 packages |
 | `just guards` | exit 0 — **37 steps** |
 | `just verify-schema` | exit 0 — **5 migrations, 48 tables, 457 columns** |
@@ -316,7 +347,7 @@ are dated observations.
 | `check-protected-paths.sh --self-test` | 18 passed · `watch-pr-checks.sh --self-test` **49** |
 | `test-settings.py` | **30 passed**; `.claude/settings.json` is **4,426 bytes** |
 
-**The three per-package vitest rows must sum to the `just test` row.** They do, and `1.7.3` did
+**The three per-package vitest rows must sum to the `just test` row.** They do, and `1.7.4` did
 not touch them: **7 + 1 + 1 = 9 files, 66 + 3 + 10 = 79 tests**.
 
 **This paragraph existed to catch exactly the drift it had itself acquired, so the failure is
@@ -369,34 +400,33 @@ vitest 5.0.0, gitleaks 8.30.1, Docker Engine 29.5.2.
 
 | | |
 |---|---|
-| `development` | **`cf79325`** — `just pre-push` exits 0 and `ci` run **`35722044565` is a success on the tip**, queried by SHA. Carries `1.9.1`, migration `0005`, `1.1.9`'s `ClockRepository`, `1.2.6`, the audit's fixes, #185's seven tests, `1.11.6`'s scan capture with #189's fix, `1.11.11`'s keyboard map, `1.9.2`'s document counters, `1.7.2`'s embedded typeface, `1.6.6`'s audit repository, `1.6.6b`'s `verify-audit`, `1.11.1`'s i18n infrastructure, `1.7.1`'s receipt model and `1.7.3`'s raster pipeline |
-| `staging` | **`f2edbb6`** — **52 behind** `origin/development`, 5 ahead (its own five promotion merges). Re-measured 21 September with `git rev-list --count origin/staging..origin/development`; **this row has been wrong before and §9 states it independently** — if the two disagree, run the command rather than picking one. **Use the `origin/` refs**: a local `staging` left stale by 51 commits answers 92, which is how this row went wrong before |
-| `main` | `24a0283` — **180 behind** `origin/development`, **133 behind** `origin/staging`, untouched since 20 August |
-| Phase 1 | **33 of 112** executable microsteps (~29%) — `1.7.3` (#218) and `1.7.1` (#215) both landed 22 September, after `1.11.1` (#212), `1.6.6b` (#208) and `1.6.6` (#204) on 21 September. **The percentage did not move on `1.7.3`** and that is arithmetic rather than a stall: 32 and 33 share a rounded value. **Group 1.1 is closed**; group 1.7 is **3 of 10** and `1.7.4` is next in the chain |
+| `development` | **`5335c78`** — `just pre-push` exits 0 and `ci` run **`35730710697` is a success on the tip**, queried by SHA. Carries `1.9.1`, migration `0005`, `1.1.9`'s `ClockRepository`, `1.2.6`, the audit's fixes, #185's seven tests, `1.11.6`'s scan capture with #189's fix, `1.11.11`'s keyboard map, `1.9.2`'s document counters, `1.7.2`'s embedded typeface, `1.6.6`'s audit repository, `1.6.6b`'s `verify-audit`, `1.11.1`'s i18n infrastructure, `1.7.1`'s receipt model, `1.7.3`'s raster pipeline and `1.7.4`'s ESC/POS emitter |
+| `staging` | **`f2edbb6`** — **54 behind** `origin/development`, 5 ahead (its own five promotion merges). Re-measured 21 September with `git rev-list --count origin/staging..origin/development`; **this row has been wrong before and §9 states it independently** — if the two disagree, run the command rather than picking one. **Use the `origin/` refs**: a local `staging` left stale by 51 commits answers 92, which is how this row went wrong before |
+| `main` | `24a0283` — **182 behind** `origin/development`, **133 behind** `origin/staging`, untouched since 20 August |
+| Phase 1 | **34 of 112** executable microsteps (~30%) — `1.7.4` (#221), `1.7.3` (#218) and `1.7.1` (#215) all landed 22 September, after `1.11.1` (#212), `1.6.6b` (#208) and `1.6.6` (#204) on 21 September. The percentage moved again after holding on `1.7.3`, which both editions predicted. **Group 1.1 is closed**; group 1.7 is **4 of 10** and has supplied its own successor three times running |
 | Open PRs | **0**, and **nothing is in flight**. The WIP=1 slot is free |
-| Open issues | **11** — #68, #69, #70, #71, #111, #112, **#113 (reopened)**, #114, #174, #197 and **#203**, listed live rather than carried forward. #211, #214 and #217 opened and closed with their microsteps, so the count is unchanged rather than static. **#203 is the one every handoff since 21 September has missed**: the weekly `security` workflow filed it automatically at 09:08 UTC, it carries no labels, it is **not on board #4**, and it is a real red — §3 diagnoses it. #202 opened and closed with `1.6.6`; #207 opened and closed with `1.6.6b`. Both of the issues this session closed with their substance unresolved have been put right: **#113 is reopened** and **#197 carries #179's three surviving findings**, with `1.10.1` amended (#198) so `0006` is where they land. Nine of the ten are blocked on a human; **#174 is the exception**. #187, #191, #194 and #199 opened and closed with their microsteps |
-| Board #4 | **26 items — 10 `Todo`, 16 `Done`**, counted live after `1.7.3` merged rather than incremented. `Done` gains #217; `Todo` is unchanged and is **ten of the eleven open issues — #203 is still not on the board at all**, which remains the only case where the "Todo is exactly the open issues" equation is false. Archived items are excluded from the listing and their count is not readable through it |
+| Open issues | **11** — #68, #69, #70, #71, #111, #112, **#113 (reopened)**, #114, #174, #197 and **#203**, listed live rather than carried forward. #211, #214, #217 and #220 opened and closed with their microsteps, so the count is unchanged rather than static. **#203 is the one every handoff since 21 September has missed**: the weekly `security` workflow filed it automatically at 09:08 UTC, it carries no labels, it is **not on board #4**, and it is a real red — §3 diagnoses it. #202 opened and closed with `1.6.6`; #207 opened and closed with `1.6.6b`. Both of the issues this session closed with their substance unresolved have been put right: **#113 is reopened** and **#197 carries #179's three surviving findings**, with `1.10.1` amended (#198) so `0006` is where they land. Nine of the ten are blocked on a human; **#174 is the exception**. #187, #191, #194 and #199 opened and closed with their microsteps |
+| Board #4 | **27 items — 10 `Todo`, 17 `Done`**, counted live after `1.7.4` merged rather than incremented. `Done` gains #220; `Todo` is unchanged and is **ten of the eleven open issues — #203 is still not on the board at all**, which remains the only case where the "Todo is exactly the open issues" equation is false. Archived items are excluded from the listing and their count is not readable through it |
 | Rulesets | **four, all active**, all four checked in under `.github/rulesets/`. **Re-diffed by hand on 21 September: all four still match live** on enforcement, target, conditions, rules and bypass actors. No gate does this, so it stays a dated observation rather than an invariant — but the date is now today's. See §3 |
 | Tags / releases | **zero of each.** The append-only tag ruleset has never been exercised |
 | Repository | **PUBLIC**, GitHub Free, `OmarSweiti` the sole collaborator (admin) |
 
-### Complete: 33 microsteps
+### Complete: 34 microsteps
 
 Read live from the frontier region — the block between the `<!-- frontier:begin -->` and
 `<!-- frontier:end -->` markers in `docs/implementation/README.md` — in its own order:
 
 `1.1.0` `1.1.1` `1.1.2a` `1.1.6` `1.1.3` `1.1.4` `1.1.2b` `1.1.7` `1.1.5` `1.1.8` `1.2.1` `1.2.2`
 `1.3.1` `1.8.9` `1.8.5` `1.11.2` `1.6.5` `1.6.1` `1.6.3` `1.11.0` `1.11.3` `1.9.1` `1.1.9` `1.2.6`
-`1.11.6` `1.11.11` `1.9.2` `1.7.2` `1.6.6` `1.6.6b` `1.11.1` `1.7.1` `1.7.3`
+`1.11.6` `1.11.11` `1.9.2` `1.7.2` `1.6.6` `1.6.6b` `1.11.1` `1.7.1` `1.7.3` `1.7.4`
 
-**Nine predictions, nine held, and the ninth was that nothing would move.** `round(100*32/112)`
-and `round(100*33/112)` are both 29, so `1.7.3` moved the count and the prose list and left the
-percentage alone — the first time since `1.2.6` that has happened, and it was written down before
-it did. **The 34th moves it again**: `round(100*34/112) == 30`.
+**Ten predictions, ten held**, including the one that said nothing would move: `round(100*32/112)`
+and `round(100*33/112)` are both 29, and `round(100*34/112)` is 30. **The 35th does not move it**
+— `round(100*35/112)` is 31, so it does. The next pair that share a value is 42/43.
 
 **The heading above said "28 microsteps" while the list under it held 29 and the region said 29.**
 It was a third hand-typed copy of a number two other surfaces already carry, and
-`check-implementation-frontier.py` does not read this file. It is 33 now; if you change the list,
+`check-implementation-frontier.py` does not read this file. It is 34 now; if you change the list,
 change the heading in the same edit or delete the heading's number.
 
 **`1.2.6` was the exception and it happened as predicted.** `round(100*23/112)` and
@@ -441,7 +471,7 @@ the opposite direction with a message about a missing `Done when`. Promoting tha
 `Done when:` over all three commands is the third deletion. **`1.2.0` carries the same
 `Current half done when:` shape** (`phase-1:214`), so whoever finishes it meets rule 4 too.
 
-### What is LEFT: 79 microsteps, and four files that gate a third of them
+### What is LEFT: 78 microsteps, and four files that gate a third of them
 
 **Derived, not typed.** Every number below comes from walking `phase-1-sellable-mvp.md`'s `### 1.x`
 headings against the frontier region's declared-complete list, and from asking the filesystem
@@ -457,7 +487,7 @@ the snippet is at the end of this block, and it is the only view in this documen
 | `1.4` cart | **0 / 13** | 13 | the largest untouched group, and eight of the thirteen wait on one file |
 | `1.5` tender | **0 / 4** | 4 | three of the four wait on `1.5.1` |
 | `1.6` auth & audit | 5 / 9 | 4 | `1.6.2` `1.6.4`(partial) `1.6.7` `1.6.8` |
-| `1.7` receipts & printing | **3 / 10** | 7 | `1.7.1` and `1.7.3` both landed 22 September; `1.7.4` is next, and the group still wants #68's hardware |
+| `1.7` receipts & printing | **4 / 10** | 6 | three landed on 22 September; `1.7.5` is next and is **partly human-gated** — see §4 — and the group still wants #68's hardware |
 | `1.8` storage & lifecycle | 2 / 14 | 12 | `1.8.0`/`1.8.1` first, and `1.8.1` is externally blocked |
 | `1.9` documents | 2 / 5 | 3 | `1.9.3` `1.9.4` `1.9.5` — all three behind the IPC wall |
 | `1.10` stock | **0 / 5** | 5 | `1.10.1` is migration `0006`, and it carries #197 |
@@ -484,7 +514,7 @@ notice: thirteen microsteps, zero done, and it is the cart.
 That is the strongest argument this document can make about sequencing, and it is the first time it
 has been able to make it — nothing here is a judgement, it is a file-existence check.
 
-#### 37 of the 79 are startable by file dependency alone
+#### 36 of the 78 are startable by file dependency alone
 
 Startable means *every file its `Files:` line names that is not marked `(new)` already exists*. It
 does **not** mean unblocked — seven carry a `**Scheduled in:**` line deferring them behind other
@@ -492,7 +522,7 @@ work, and several are blocked by a `⚠️ OPEN` item or an issue that no file c
 
 ```
 1.2.0  1.2.3  1.2.4  1.2.7  1.2.8  1.3.2  1.3.3  1.3.5  1.3.6  1.3.7  1.3.8
-1.4.1  1.4.5  1.5.1  1.6.4  1.6.7  1.6.8  1.7.4  1.7.5  1.7.6
+1.4.1  1.4.5  1.5.1  1.6.4  1.6.7  1.6.8  1.7.5  1.7.6
 1.7.7  1.7.8  1.7.8b 1.8.0  1.8.1  1.8.1b 1.8.2  1.8.3  1.8.4  1.8.6  1.8.8
 1.10.2 1.11.13 1.11.14 1.11.15 1.12.3 1.12.4
 ```
@@ -500,9 +530,9 @@ work, and several are blocked by a `⚠️ OPEN` item or an issue that no file c
 Subtract what the rest of this document already knows: `1.2.0` and `1.2.7` and `1.12.3` wait on #68's
 hardware, `1.2.4` on #71, `1.3.2`/`1.3.4`/`1.3.5`/`1.3.7` on two OPEN items and #70, `1.6.2` on #68
 *and* an OPEN item, `1.8.1` on an OPEN item nobody filed, and seven carry `Scheduled in:`. **What is
-left after that subtraction is small, and `1.4.1`, `1.5.1`, `1.6.7`, `1.6.8` and **`1.7.4`** are
-the names on it** — group 1.7 keeps supplying its own successor, which is what a chain does and
-why it was worth starting.
+left after that subtraction is small, and `1.4.1`, `1.5.1`, `1.6.7`, `1.6.8` and **`1.7.5`** are
+the names on it** — though `1.7.5` is the first of the five whose `Done when` a human has to
+satisfy, which §4 spells out.
 
 **`1.4.1` is on that list by file existence and is not as startable as it looks**, which is worth
 one line here because §4 has been recommending it. Its `Files:` line names one new file, so the
@@ -1961,11 +1991,102 @@ as `build_receipt_model` and `lib/ipc.ts`. Reported rather than invented.
 
 ---
 
+## 2o · 22 September — `1.7.4`, and the test everybody would write first
+
+**#221 merged `1.7.4`** — `crates/pos-hardware/src/escpos.rs` (509 lines, 14 tests) and one
+`lib.rs` line. Issue #220 is the microstep issue, filed before the branch and closed by the PR.
+Phase 1 is **34 of 112 (~30%)** and the Rust suite is **378 → 392**. `Cargo.lock` does not move:
+the emitter takes no dependency.
+
+`1.7.3` stopped at a bitmap that is 1 bit per pixel, MSB first and row-major — exactly the layout
+`GS v 0` takes — so this is a header and a copy rather than a re-encode:
+
+```text
+ESC @            1B 40                      initialise
+GS  v 0          1D 76 30 00 xL xH yL yH    raster, normal size
+                 <the bitmap's own bytes>
+GS  V            1D 56 01                   partial cut
+```
+
+### The obvious test is wrong, and it would have been intermittently red
+
+`ref/hardware-and-receipts.md` §4 is unusually direct about why the drawer pulse is not in a
+document: *"the stream is persisted and retried; the pulse is a physical, non-idempotent,
+cash-access effect. Retrying a stream that contains one opens the drawer again, with no cashier
+action, no audit entry and nobody watching."* The **cut** stays, because cutting twice wastes a
+few millimetres of paper and cutting is what makes the document a document.
+
+The assertion everybody reaches for is `assert!(!stream.contains(&[0x1B, 0x70]))`. **It is
+wrong.** The raster payload is an arbitrary bitmap, so `1B 70` occurs inside it by coincidence
+about once in every 65 536 byte pairs — which a 576-dot receipt reaches within roughly 900 rows.
+The test would pass on the fixtures and fail on a real receipt, some of the time, for a reason
+nobody would find quickly.
+
+The assertion is structural instead: a stream is exactly `INIT ++ header ++ payload ++ CUT`, and
+the pulse is absent from everything that is not the payload.
+`a_bitmap_containing_the_pulse_bytes_is_still_a_document` makes the coincidence deliberate — it
+builds a page that really does contain those bytes, asserts the naive test *would* have failed,
+and asserts the correct one passes.
+
+**Worth generalising:** a payload of arbitrary bytes makes every "this sequence never appears"
+assertion a probabilistic one. The question to ask is always *where* it may not appear.
+
+### The finding this microstep could not fix
+
+On many thermal printers the cutter sits ten to fifteen millimetres above the print head, so a
+bare `GS V` severs the paper at a point the document has not reached and **the last lines stay
+inside the machine**. Feeding first — `ESC d n`, or `GS V 66 n` in one command — is the usual
+answer and the distance is a device property, which is why §6a makes `cut_command` a profile field
+beside `raster_command`. **The matrix ships empty except the simulator**, so choosing a distance
+would be the same defect §6a.1 refuses for the reference register.
+
+**What is missing is not the feed but the check.** §9's hardware-lab checklist covers truncation
+*across* the paper — check 2, *"58 mm profile prints without truncation"* — and nothing at all
+covers it *along* the paper. A receipt that loses its footer inside the printer passes every check
+in that table. Recorded in `1.7.4`'s phase entry and in the module, where whoever qualifies the
+first printer behind #68 will be looking.
+
+The same reasoning settles banding, which is why one `GS v 0` ships rather than a banded sequence:
+field libraries split a raster because real printers have finite buffers, the spec does not
+require it, and there is no device whose buffer could be measured.
+
+### The sweep and the read, for the sixth microstep running
+
+**22 mutations, 22 caught** on the first pass — a big-endian header, swapped width and height, the
+dot count where the byte count belonged, a payload emitted twice, a document carrying a pulse.
+
+**The read then found two things no mutation could**, because neither was code: the cut gap above,
+and **an empty page was accepted**. A zero-line bitmap emitted an initialise and a cut with
+nothing between them — paper and a cutter cycle spent to hand a customer a blank tab. It is
+refused now. `render_receipt` cannot produce one, so reaching it is a caller's bug, and a loud one
+is cheaper than a quiet one.
+
+### Three smaller things
+
+* **`encode` takes a bitmap and not a bitmap and a profile.** A `Bitmap` already carries its
+  width, height and row stride; a second argument naming the paper would be a second source of
+  truth for the same three numbers and a way to hand the emitter a mismatched pair.
+* **`payload_range` is public** for the same reason the structural assertion exists: a caller
+  checking what is *outside* the payload should not have to re-derive the offset arithmetic and
+  get it wrong.
+* **`1.7.4` cleared a missing `Done when`** — the fourth step ever, after `1.1.9`, `1.6.6` and
+  `1.7.1`, and the second to author it in its own commit before any code. The list is 16.
+
+### Two gaps named rather than absorbed
+
+`ref/hardware-and-receipts.md` §1 specifies a richer `ReceiptPrinter` than `lib.rs` ships — four
+`PrintOutcome` variants and a `profile()` — and closing that gap is on no microstep's `Files:`
+line that this session could find. And §2.1's plain-codepage fallback for *"exotic printers that
+reject raster"* has **no owning microstep at all**. Neither was in `1.7.4`'s scope; both are on
+the pile with the receipt logo and `build_receipt_model`.
+
+---
+
 ## 3 · The eleven open issues
 
 **Ten are on board #4, all `Todo`, all assigned** — #68, #69, #70, #71, #111, #112, #113, #114,
 #174 and #197 — and **#203 is not on it**, which is why every handoff since it was filed has
-reported ten. Re-read live at `cf79325` with `gh issue list --state open`, which is the command
+reported ten. Re-read live at `5335c78` with `gh issue list --state open`, which is the command
 that finds the eleventh. **Nine are blocked on a human** — one on `hardware`, five on a
 `decision`, two on a `merchant answer`, and #197 on the sequencing of `0006`. **#174 and #203 are
 the two code alone can close today.**
@@ -2162,8 +2283,8 @@ candidate this file has named since 14 September is spent — `1.9.1` (§2b), `1
 `1.11.11` (#192, §2g), `1.9.2` (#195, §2h), `1.7.2` (#200, §2i), `1.6.6` (#204, §2j),
 **`1.6.6b`, which this section named as the closest successor and which landed the same day**
 (#208, §2k), **`1.11.1`, named here as `1.6.6b`'s closest successor and landed the same day
-again** (#212, §2l), **`1.7.1`** (#215, §2m) and **`1.7.3`**, which §4 named as `1.7.1`'s successor and
-which landed the same day (#218, §2n).
+again** (#212, §2l), **`1.7.1`** (#215, §2m) and **`1.7.3`** (#218, §2n) and **`1.7.4`**, which §4 named as `1.7.3`'s successor and which landed
+the same day again (#221, §2o).
 
 **§1's "What is LEFT" block is the view to open first.** It is derived from the phase file and the
 filesystem rather than from this list, it says which of the 82 remaining steps are startable, and it
@@ -2172,16 +2293,24 @@ names the two files — `apps/terminal/src-tauri/src/ipc/registry.rs` (`1.6.7`) 
 are startable today. This section is the human judgement on top of that; the block is the evidence
 under it.
 
-**The shortlist, after subtracting everything blocked:** **`1.7.4`**, `1.5.1`, `1.6.7` and
+**The shortlist, after subtracting everything blocked:** **`1.7.5`**, `1.5.1`, `1.6.7` and
 `1.6.8`, with `1.4.1` behind them and not as free as the file check makes it look.
 
-**`1.7.4` is the successor `1.7.3` created, and it is the smallest thing on this list.** The
-ESC/POS emitter: `ESC @` init, `GS v 0` raster, `GS V` cut, and the `ESC p` drawer pulse kept
-*out* of printable bytes so a retried receipt never re-opens the drawer (E.49's sibling, and the
-reason the pulse is a separate audited hardware effect). `1.7.3` deliberately stopped at a
-`Bitmap` that is already 1 bit per pixel, MSB first, row-major — the layout `GS v 0` takes — so
-this step is a header and a copy rather than a re-encode. Two named tests, and **no `Done when`
-line**, so it writes one first (conventions §6).
+**`1.7.5` is the successor `1.7.4` created, and it is the first on this list whose `Done when` a
+human has to satisfy.** Seven golden fixtures, a `.png` projection beside every `.bin`, and
+`scripts/check-golden-review.py`. Its completion condition ends *"every changed Arabic/bilingual
+pair has a dated `docs/drills/` record naming the commit and native reader. A hexdump cannot show
+a lost medial form."*
+
+So the code half is startable today — `1.7.3` and `1.7.4` between them produce both the raster and
+the bytes, and `tiny-skia`'s `png-format` feature comes back on as a **dev** dependency for the
+projection, which is what `1.7.4` said it was for. The other half is a person reading Arabic on a
+screen and signing a dated record. **§7 now carries that as a question for the operator**, because
+it is the same shape as `1.7.2`'s font choice: a microstep that waits on an answer nobody has been
+asked for.
+
+Whoever takes it should also expect **`protected-paths` red**: `golden_receipt_ar_80mm` and
+`golden_receipt_ar_58mm` are both in the `PLANNED` ceiling.
 
 **Read §2n before picking anything that adds a dependency.** `1.7.3` found that a crate named in a
 reference can be unshippable by the time the microstep arrives: two RUSTSEC unmaintained
@@ -2192,9 +2321,10 @@ advisories retired the stack the plan named, `cosmic-text` inherits one of them 
 **will be red on `protected-paths`**, because retiring its `PLANNED` entry means editing
 `scripts/check-test-catalog.py` inside the frozen policy surface. That red is the review, the edit
 is not optional, and §2k has the recipe. Budget for it rather than being surprised by it —
-`1.11.12`, `1.2.3`, `1.2.4` and `1.2.5` carry `PLANNED` names today. **`1.7.3` took this red on
-22 September**: the CI refusal names exactly one path, and §9's recipe turned out to be missing a
-flag.
+`1.11.12`, `1.2.3`, `1.2.4`, `1.2.5` and **`1.7.5`** carry `PLANNED` names today. **`1.7.3` took
+this red on 22 September**: the CI refusal names exactly one path, and §9's recipe turned out to
+be missing a flag. **`1.7.4` did not**, because neither of its tests was in the ceiling — checked
+with `grep` rather than assumed, which is what §15 lesson 12 asks for.
 
 > **This list said `1.11.1` carried them too, and it did not.** #212 was **green on
 > `protected-paths`** and touched `scripts/check-test-catalog.py` not at all. Neither of
@@ -2213,10 +2343,21 @@ flag.
 | ~~`1.11.1` — i18n infrastructure~~ | **DONE, #212** | §2l. It discharged §5 ruling 4 and was **green on `protected-paths`** against this section's own prediction |
 | ~~`1.7.1` — `ReceiptModel`~~ | **DONE, #215** | §2m. It cleared its own missing `Done when` in a commit before any code, and unblocked `1.7.3` |
 | ~~`1.7.3` — the raster pipeline~~ | **DONE, #218** | §2n. It shipped a stack the plan does not name, because two advisories retired the one it does — and it took the `protected-paths` red this section predicts for every catalogued test |
+| ~~`1.7.4` — ESC/POS emitter~~ | **DONE, #221** | §2o. Green on `protected-paths`, as predicted, and the test worth reading is the one that would have been intermittently red |
 | `1.2.4` pure half | **blocked** | `ref/schema.md:3410` is an `⚠️ **OPEN` item that names it, and #71 is the issue |
 | `1.11.12` — empty and edge states | **blocked** | needs rendered screens that do not exist; `1.11.1` created none |
 
-**`1.7.3` leaves two things behind and `1.7.1` left two. Read all four before choosing.**
+**`1.7.4` leaves three things behind, `1.7.3` two and `1.7.1` two. Read them before choosing.**
+
+* **The cut has no feed and §9's checklist has no check for it.** §2o has the detail. It is not a
+  code defect — the distance is a device property behind #68 — but the *missing check* is a gap
+  anybody can close, and a receipt that loses its footer inside the printer passes every check in
+  that table today.
+* **`ReceiptPrinter` is poorer than its specification.** §1 of `ref/hardware-and-receipts.md`
+  gives it four `PrintOutcome` variants and a `profile()`; `lib.rs` has neither. No microstep's
+  `Files:` line claims the gap.
+* **§2.1's plain-codepage fallback has no owning microstep**, for *"exotic printers that reject
+  raster"*. Fourth of its kind, after the receipt logo, `build_receipt_model` and `lib/ipc.ts`.
 
 * **The receipt has no logo, and no microstep gives it one.** §2.3 lists it first and §2.4 makes it
   back-office-editable beside the header and footer text, so the product expects one —
@@ -2355,13 +2496,13 @@ front of `0006`, `0007`, `1.2.3`, `1.9.2`–`1.9.5`, `1.10.2`–`1.10.5`, the `1
 | `1.6.2` — Argon2id PINs | **Blocked twice**, neither time by code: `just bench-gate pin-verify` refuses until #68, **and** `ref/security-compliance.md:415` |
 | `1.2.3` | Blocked three migrations deep — its FTS repository needs `0007`'s tables |
 
-**Seventeen executable Phase-1 microsteps carry no `**Done when:**` line at all** — `1.2.0`
+**Sixteen executable Phase-1 microsteps carry no `**Done when:**` line at all** — `1.2.0`
 `1.3.2` `1.3.3` `1.4.1` `1.4.2` `1.4.3` `1.4.4` `1.4.5` `1.4.7` `1.4.8` `1.4.10` `1.5.1` `1.5.2`
-`1.5.4` `1.7.4` `1.7.6` `1.7.8`. **`1.7.1` left this list on 22 September** — the third step ever
-to clear one rather than add it, after `1.1.9` and `1.6.6`, and the first to author it in its own
-commit **before any code**, which is the order conventions §6 asks for and the first time it is
-visible in the history rather than asserted in a PR. Re-run the snippet below rather than trusting
-that sentence.
+`1.5.4` `1.7.6` `1.7.8`. **`1.7.1` and `1.7.4` both left this list on 22 September** — the third
+and fourth steps ever to clear one rather than add it, after `1.1.9` and `1.6.6`, and both
+authored it in **its own commit before any code**, which is the order conventions §6 asks for and
+is now visible in the history twice rather than asserted in a PR. Re-run the snippet below rather
+than trusting that sentence.
 
 **The number did not fall, and the reason is a counting bug this document carried for a week.**
 The list that stood here named eighteen steps *excluding* `1.2.0`, while claiming to be the result
@@ -2382,7 +2523,7 @@ print(len(out), out)
 EOF
 ```
 
-It prints `17`, and 113 `### 1.x` headings against 112 executable microsteps — the difference
+It prints `16`, and 113 `### 1.x` headings against 112 executable microsteps — the difference
 being `1.1.2`:
 
 * **`1.7.1` gained one on 22 September**, authored before the code and then *widened* — the line
@@ -2398,7 +2539,7 @@ being `1.1.2`:
   *"**Concordance only:** this retained anchor is not an executable microstep"*. Anyone re-running
   this count mechanically will find it and must exclude it.
 
-For the seventeen, checker rule 4 refuses a completion claim until one is written, and the issue form
+For the sixteen, checker rule 4 refuses a completion claim until one is written, and the issue form
 will not accept the microstep without a proving command. **Each is a documentation prerequisite to
 its own delivery.**
 
@@ -2682,6 +2823,18 @@ Established by introspection and corrected in #122; do not re-litigate.
    to adopt it. Leaving the weekly workflow red is the option with a real cost: the next genuine
    finding arrives as "still failing". §3 has the diagnosis. **The issue also needs a label and a
    board item** — it has neither, which is why it went unnoticed for three merges.
+6. **`1.7.5` needs a native reader, and nobody has been asked.** Its `Done when` ends *"every
+   changed Arabic/bilingual pair has a dated `docs/drills/` record naming the commit and native
+   reader. A hexdump cannot show a lost medial form."* The code half is startable today — `1.7.3`
+   renders and `1.7.4` emits — and the other half is a person looking at seven rendered receipts
+   and signing a record. It is the same shape as `1.7.2`'s font choice, which sat unblocked and
+   unasked until somebody answered it, and it is the first item on §4's shortlist.
+
+   **The question is who, and it may well be you.** This is a product for the Jordanian market;
+   if the operator reads Arabic, the review is an hour with seven PNGs rather than a hiring
+   problem. Nobody has written down which it is, so `1.7.5` looks startable and is not quite.
+   §9's hardware-lab checklist wants the same reader again on paper at check 1, so the answer is
+   needed twice regardless.
 
 ---
 
@@ -2711,14 +2864,14 @@ Established by introspection and corrected in #122; do not re-litigate.
 
 ### `development → staging`
 
-`staging` is **52 behind** — `git rev-list --count origin/staging..origin/development`,
-re-measured 22 September after #218, and the `origin/` spellings matter: a local `staging` left at
-#91 answers 92. The gap now carries **thirteen** microsteps — `1.11.3`, `1.9.1`, `1.1.9`, `1.2.6`,
-`1.11.6`, `1.11.11`, `1.9.2`, `1.7.2`, `1.6.6`, `1.6.6b`, `1.11.1`, `1.7.1` and `1.7.3` —
+`staging` is **54 behind** — `git rev-list --count origin/staging..origin/development`,
+re-measured 22 September after #221, and the `origin/` spellings matter: a local `staging` left at
+#91 answers 92. The gap now carries **fourteen** microsteps — `1.11.3`, `1.9.1`, `1.1.9`, `1.2.6`,
+`1.11.6`, `1.11.11`, `1.9.2`, `1.7.2`, `1.6.6`, `1.6.6b`, `1.11.1`, `1.7.1`, `1.7.3` and `1.7.4` —
 migration `0005`, an embedded typeface, the audit chain's writer, reader and verifier, the i18n
-infrastructure, the receipt model and its rasteriser, a security bump and a code fix (#164) rather
-than documentation alone. **A promotion now also carries four new runtime dependencies**, so the
-cross-platform matrix is doing more than it was. Open a promotion when you want the cross-platform matrix
+infrastructure, and a receipt that is now a model, a raster and a printable document. **A promotion
+also carries four new runtime dependencies**, so the cross-platform matrix is doing more than it
+was. Open a promotion when you want the cross-platform matrix
 over the current tip:
 
 ```bash
@@ -3374,3 +3527,10 @@ documentation surface **no gate reads** (`status-page.html`'s prose — see §14
     and the same shape answers the y-flip, which needed a *balance* rather than a presence:
     1 234 dots above the baseline against 327 below when it is right, 148 against 1 340 when the
     page is mirrored.
+22. **A payload of arbitrary bytes makes "this sequence never appears" a probabilistic claim.**
+    `1.7.4`'s drawer pulse must not be in a receipt's bytes, and the assertion everybody reaches
+    for — scan the stream for `1B 70` — would have been **intermittently red**: the raster payload
+    is a bitmap, so those two bytes occur by coincidence about once in every 65 536 pairs, which a
+    576-dot receipt reaches within roughly 900 rows. It would have passed on the fixtures and
+    failed in the field, for a reason nobody would find quickly. **Ask where a sequence may not
+    appear, not whether it appears**, and write the test that makes the coincidence deliberate.
