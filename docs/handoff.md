@@ -1,6 +1,6 @@
 # Handoff — the single current one
 
-**Reflects `development` @ `5335c78`, 22 September 2026 — re-measured, not incremented.**
+**Reflects `development` @ `c289466`, 22 September 2026 — re-measured, not incremented.**
 
 There is one handoff — keep updating this file rather than adding a dated one.
 
@@ -26,6 +26,40 @@ There is one handoff — keep updating this file rather than adding a dated one.
 > ruleset ledger at 28 bypasses of 68, and all four rulesets re-diffed against live by hand — they
 > still match.
 
+> ## ✅ `1.5.1` LANDED — A TABLE WRITTEN TO MATCH A SEED IT CANNOT CHANGE
+>
+> `1.5.1` (#224, issue #223) takes Phase 1 to **35 of 112 (~31%)** — the tender vocabulary, and
+> the first thing in group 1.5. §2p is the record.
+>
+> **It is `1.6.3` in reverse, and the direction is the point.** `1.6.3`'s capability grid is *"what
+> 1.6.1 writes its seed from"* — grid first, migration second. Here the **seed came first**: the
+> complete `tender_type` insert shipped inside `0005` at `1.9.1`, and a committed migration is
+> never reopened. So the domain table is written to match `0005:657-662` column for column, the
+> test pins all six rows against literals transcribed from the `.sql`, and a disagreement is fixed
+> in the **domain type**. Worth knowing before the next microstep whose types a migration already
+> describes.
+>
+> **The distinction a shift closes short without.** `0005`'s own comment: *"`is_internal` is NOT
+> implied by `is_cash_counted = 0`: `card` and `cliq` count no drawer cash but do move real value
+> through a PSP."* `exchange` must carry both, *"or the offset would appear in expected drawer cash
+> on both documents and the shift would close short by twice the exchanged value."* Two flags that
+> look redundant and are not, now held apart by a test with `card` and `cliq` as the witnesses.
+>
+> **20 mutations, 20 caught** — and the read then found a gap this module **inherited**: `as_str`
+> and `#[serde(rename_all = "snake_case")]` are the same mapping written twice, coinciding, which
+> is exactly when a change to one goes unnoticed. Closed here; **`catalog.rs` and `permissions.rs`
+> carry the same unchecked pair**, noted rather than fixed.
+>
+> **No property test, and that is conventions §5.1 rather than an omission.** Six rows and six
+> columns is a bounded claim, and §5.1 says a bounded universal claim uses an exhaustive loop when
+> that loop is feasible. `.claude/rules/rust-domain.md` asks for a `prop_` per business rule; the
+> unbounded ones here are `1.5.2`'s and `1.5.3`'s and already carry the names.
+>
+> **`1.7.5` is still the head of §4's shortlist and still needs an answer from a human** — §7 item
+> 6. `1.5.1` was taken because it needed one from nobody.
+>
+> **Nothing is in flight.** The WIP=1 slot is free.
+>
 > ## ✅ `1.7.4` LANDED — A DOCUMENT THAT CUTS AND NEVER OPENS THE DRAWER
 >
 > `1.7.4` (#221, issue #220) takes Phase 1 to **34 of 112 (~30%)** — the ESC/POS emitter, so
@@ -237,8 +271,8 @@ guard-hardening on shipped code, not a microstep. **19 September moved it to 25 
 §2c and §2d are the 14–15 September windows; §2a keeps 13 September and §2 the 9–11 September
 record, where twenty-six pull requests changed the governance layer and no microstep advanced.
 
-**`development` is green, tip included.** `just pre-push` exits 0 at `5335c78`, all 37
-`just guards` steps pass, and `ci` run **`35730710697` is a success on the tip**, queried by SHA
+**`development` is green, tip included.** `just pre-push` exits 0 at `c289466`, all 37
+`just guards` steps pass, and `ci` run **`35766609624` is a success on the tip**, queried by SHA
 rather than taken as the newest green one — `ci.yml`'s ref-scoped concurrency group cancels runs
 when merges land inside two minutes of each other, and the cancellation is invisible unless you ask
 about the tip specifically.
@@ -280,11 +314,11 @@ cd ~/My_Projects/pos
 git checkout development && git pull --ff-only
 git fetch --all --prune            # your local staging is 51 commits stale — see §14
 mise exec -- just setup
-mise exec -- just pre-push          # passes at 5335c78
+mise exec -- just pre-push          # passes at c289466
 ```
 
-Nothing is in flight, so there is no branch to resume. `phase-1/group-7-escpos` merged as #221 and
-`just merge` removed it on both sides. **`phase-1/group-7-raster-pipeline` is still here** as a
+Nothing is in flight, so there is no branch to resume. `phase-1/group-5-tender-types` merged as
+#224 and `just merge` removed it on both sides. **`phase-1/group-7-raster-pipeline` is still here** as a
 `[gone]` local branch, because #218 took §9's manual recipe and that path deletes only the remote
 — `git branch -D phase-1/group-7-raster-pipeline` when it bothers you.
 
@@ -304,18 +338,14 @@ with `couldn't exec process: No such file or directory`, because the whole unspl
 `cd <repo> && mise exec -- node --version` prints `v24.19.0` — and a relative script path works.
 Re-measured 13 September; the `cd` clause that stood here was false.
 
-### Verified gate baselines at `5335c78`
+### Verified gate baselines at `c289466`
 
-Use these as the "nothing is broken" reference. **`1.7.4` moved the Rust row and only that**:
-378 → **392**, all fourteen in `crates/pos-hardware/src/escpos.rs`. `Cargo.lock` is byte-identical
-— the emitter takes no dependency — the JavaScript rows are unchanged at 9 files / 79 tests, and
-the schema chain did not move.
+Use these as the "nothing is broken" reference. **`1.5.1` moved the Rust row and only that**:
+392 → **402**, all ten in `crates/pos-domain/src/tender.rs`. `Cargo.lock` is byte-identical, the
+JavaScript rows are unchanged at 9 files / 79 tests, and the schema chain did not move — this
+microstep *reads* migration `0005` and touches no migration at all.
 
-**`just audit` is still the row worth reading**, and still clean. `1.7.3` made it a result rather
-than a formality one microstep ago: its first draft failed twice on two separate unmaintained
-advisories and the font stack changed because of it. Nothing moved since.
-
-**Every row below was re-measured on the merged tip `5335c78`.** `just pre-push`'s five, plus
+**Every row below was re-measured on the merged tip `c289466`.** `just pre-push`'s five, plus
 `verify-schema`, `verify-pg` — **real engine pass** through the Docker fallback — `just audit`,
 and `bench-gate`, which refuses with exit 3 as it should. `just audit` still reports **135 package
 releases and 11 reviewed expressions**: no *third-party* dependency entered either graph, so no
@@ -327,7 +357,7 @@ are dated observations.
 | `just pre-push` | **exit 0** — `lint test build-web guards secrets`, `justfile:368`, ~1:30 warm |
 | `just check` | exit 0 — all **seven** workspace members |
 | `just lint` | exit 0 — 2 prerequisites + 14 body steps = **16 checkers** |
-| `just test` | exit 0 — **392 tests run: 392 passed, 2 skipped**; JS **9 files / 79 tests** |
+| `just test` | exit 0 — **402 tests run: 402 passed, 2 skipped**; JS **9 files / 79 tests** |
 | `just build-web` | exit 0 — `tsc -b` + vite 8.2.2 across 5 packages |
 | `just guards` | exit 0 — **37 steps** |
 | `just verify-schema` | exit 0 — **5 migrations, 48 tables, 457 columns** |
@@ -347,7 +377,7 @@ are dated observations.
 | `check-protected-paths.sh --self-test` | 18 passed · `watch-pr-checks.sh --self-test` **49** |
 | `test-settings.py` | **30 passed**; `.claude/settings.json` is **4,426 bytes** |
 
-**The three per-package vitest rows must sum to the `just test` row.** They do, and `1.7.4` did
+**The three per-package vitest rows must sum to the `just test` row.** They do, and `1.5.1` did
 not touch them: **7 + 1 + 1 = 9 files, 66 + 3 + 10 = 79 tests**.
 
 **This paragraph existed to catch exactly the drift it had itself acquired, so the failure is
@@ -400,33 +430,34 @@ vitest 5.0.0, gitleaks 8.30.1, Docker Engine 29.5.2.
 
 | | |
 |---|---|
-| `development` | **`5335c78`** — `just pre-push` exits 0 and `ci` run **`35730710697` is a success on the tip**, queried by SHA. Carries `1.9.1`, migration `0005`, `1.1.9`'s `ClockRepository`, `1.2.6`, the audit's fixes, #185's seven tests, `1.11.6`'s scan capture with #189's fix, `1.11.11`'s keyboard map, `1.9.2`'s document counters, `1.7.2`'s embedded typeface, `1.6.6`'s audit repository, `1.6.6b`'s `verify-audit`, `1.11.1`'s i18n infrastructure, `1.7.1`'s receipt model, `1.7.3`'s raster pipeline and `1.7.4`'s ESC/POS emitter |
-| `staging` | **`f2edbb6`** — **54 behind** `origin/development`, 5 ahead (its own five promotion merges). Re-measured 21 September with `git rev-list --count origin/staging..origin/development`; **this row has been wrong before and §9 states it independently** — if the two disagree, run the command rather than picking one. **Use the `origin/` refs**: a local `staging` left stale by 51 commits answers 92, which is how this row went wrong before |
-| `main` | `24a0283` — **182 behind** `origin/development`, **133 behind** `origin/staging`, untouched since 20 August |
-| Phase 1 | **34 of 112** executable microsteps (~30%) — `1.7.4` (#221), `1.7.3` (#218) and `1.7.1` (#215) all landed 22 September, after `1.11.1` (#212), `1.6.6b` (#208) and `1.6.6` (#204) on 21 September. The percentage moved again after holding on `1.7.3`, which both editions predicted. **Group 1.1 is closed**; group 1.7 is **4 of 10** and has supplied its own successor three times running |
+| `development` | **`c289466`** — `just pre-push` exits 0 and `ci` run **`35766609624` is a success on the tip**, queried by SHA. Carries `1.9.1`, migration `0005`, `1.1.9`'s `ClockRepository`, `1.2.6`, the audit's fixes, #185's seven tests, `1.11.6`'s scan capture with #189's fix, `1.11.11`'s keyboard map, `1.9.2`'s document counters, `1.7.2`'s embedded typeface, `1.6.6`'s audit repository, `1.6.6b`'s `verify-audit`, `1.11.1`'s i18n infrastructure, `1.7.1`'s receipt model, `1.7.3`'s raster pipeline, `1.7.4`'s ESC/POS emitter and `1.5.1`'s tender vocabulary |
+| `staging` | **`f2edbb6`** — **56 behind** `origin/development`, 5 ahead (its own five promotion merges). Re-measured 21 September with `git rev-list --count origin/staging..origin/development`; **this row has been wrong before and §9 states it independently** — if the two disagree, run the command rather than picking one. **Use the `origin/` refs**: a local `staging` left stale by 51 commits answers 92, which is how this row went wrong before |
+| `main` | `24a0283` — **184 behind** `origin/development`, **133 behind** `origin/staging`, untouched since 20 August |
+| Phase 1 | **35 of 112** executable microsteps (~31%) — `1.5.1` (#224), `1.7.4` (#221), `1.7.3` (#218) and `1.7.1` (#215) all landed 22 September. **Group 1.1 is closed**; group 1.7 is **4 of 10** and group 1.5 has opened at **1 of 4**. The next pair of counts sharing a rounded percentage is 42/43, so every microstep until then moves it |
 | Open PRs | **0**, and **nothing is in flight**. The WIP=1 slot is free |
-| Open issues | **11** — #68, #69, #70, #71, #111, #112, **#113 (reopened)**, #114, #174, #197 and **#203**, listed live rather than carried forward. #211, #214, #217 and #220 opened and closed with their microsteps, so the count is unchanged rather than static. **#203 is the one every handoff since 21 September has missed**: the weekly `security` workflow filed it automatically at 09:08 UTC, it carries no labels, it is **not on board #4**, and it is a real red — §3 diagnoses it. #202 opened and closed with `1.6.6`; #207 opened and closed with `1.6.6b`. Both of the issues this session closed with their substance unresolved have been put right: **#113 is reopened** and **#197 carries #179's three surviving findings**, with `1.10.1` amended (#198) so `0006` is where they land. Nine of the ten are blocked on a human; **#174 is the exception**. #187, #191, #194 and #199 opened and closed with their microsteps |
-| Board #4 | **27 items — 10 `Todo`, 17 `Done`**, counted live after `1.7.4` merged rather than incremented. `Done` gains #220; `Todo` is unchanged and is **ten of the eleven open issues — #203 is still not on the board at all**, which remains the only case where the "Todo is exactly the open issues" equation is false. Archived items are excluded from the listing and their count is not readable through it |
+| Open issues | **11** — #68, #69, #70, #71, #111, #112, **#113 (reopened)**, #114, #174, #197 and **#203**, listed live rather than carried forward. #211, #214, #217, #220 and #223 opened and closed with their microsteps, so the count is unchanged rather than static. **#203 is the one every handoff since 21 September has missed**: the weekly `security` workflow filed it automatically at 09:08 UTC, it carries no labels, it is **not on board #4**, and it is a real red — §3 diagnoses it. #202 opened and closed with `1.6.6`; #207 opened and closed with `1.6.6b`. Both of the issues this session closed with their substance unresolved have been put right: **#113 is reopened** and **#197 carries #179's three surviving findings**, with `1.10.1` amended (#198) so `0006` is where they land. Nine of the ten are blocked on a human; **#174 is the exception**. #187, #191, #194 and #199 opened and closed with their microsteps |
+| Board #4 | **28 items — 10 `Todo`, 18 `Done`**, counted live after `1.5.1` merged rather than incremented. `Done` gains #223; `Todo` is unchanged and is **ten of the eleven open issues — #203 is still not on the board at all**, which remains the only case where the "Todo is exactly the open issues" equation is false. Archived items are excluded from the listing and their count is not readable through it |
 | Rulesets | **four, all active**, all four checked in under `.github/rulesets/`. **Re-diffed by hand on 21 September: all four still match live** on enforcement, target, conditions, rules and bypass actors. No gate does this, so it stays a dated observation rather than an invariant — but the date is now today's. See §3 |
 | Tags / releases | **zero of each.** The append-only tag ruleset has never been exercised |
 | Repository | **PUBLIC**, GitHub Free, `OmarSweiti` the sole collaborator (admin) |
 
-### Complete: 34 microsteps
+### Complete: 35 microsteps
 
 Read live from the frontier region — the block between the `<!-- frontier:begin -->` and
 `<!-- frontier:end -->` markers in `docs/implementation/README.md` — in its own order:
 
 `1.1.0` `1.1.1` `1.1.2a` `1.1.6` `1.1.3` `1.1.4` `1.1.2b` `1.1.7` `1.1.5` `1.1.8` `1.2.1` `1.2.2`
 `1.3.1` `1.8.9` `1.8.5` `1.11.2` `1.6.5` `1.6.1` `1.6.3` `1.11.0` `1.11.3` `1.9.1` `1.1.9` `1.2.6`
-`1.11.6` `1.11.11` `1.9.2` `1.7.2` `1.6.6` `1.6.6b` `1.11.1` `1.7.1` `1.7.3` `1.7.4`
+`1.11.6` `1.11.11` `1.9.2` `1.7.2` `1.6.6` `1.6.6b` `1.11.1` `1.7.1` `1.7.3` `1.7.4` `1.5.1`
 
-**Ten predictions, ten held**, including the one that said nothing would move: `round(100*32/112)`
-and `round(100*33/112)` are both 29, and `round(100*34/112)` is 30. **The 35th does not move it**
-— `round(100*35/112)` is 31, so it does. The next pair that share a value is 42/43.
+**Eleven predictions, eleven held.** `round(100*35/112)` is 31 and the region says so. **The next
+pair that share a rounded value is 42/43**, so every microstep from here to the 42nd moves the
+percentage, and the 43rd will not. Computed, not guessed — the full list of colliding counts is
+32/33, 42/43, 51/52, 60/61, 69/70, 79/80, 88/89, 98/99 and 107/108.
 
 **The heading above said "28 microsteps" while the list under it held 29 and the region said 29.**
 It was a third hand-typed copy of a number two other surfaces already carry, and
-`check-implementation-frontier.py` does not read this file. It is 34 now; if you change the list,
+`check-implementation-frontier.py` does not read this file. It is 35 now; if you change the list,
 change the heading in the same edit or delete the heading's number.
 
 **`1.2.6` was the exception and it happened as predicted.** `round(100*23/112)` and
@@ -471,7 +502,7 @@ the opposite direction with a message about a missing `Done when`. Promoting tha
 `Done when:` over all three commands is the third deletion. **`1.2.0` carries the same
 `Current half done when:` shape** (`phase-1:214`), so whoever finishes it meets rule 4 too.
 
-### What is LEFT: 78 microsteps, and four files that gate a third of them
+### What is LEFT: 77 microsteps, and four files that gate a third of them
 
 **Derived, not typed.** Every number below comes from walking `phase-1-sellable-mvp.md`'s `### 1.x`
 headings against the frontier region's declared-complete list, and from asking the filesystem
@@ -485,7 +516,7 @@ the snippet is at the end of this block, and it is the only view in this documen
 | `1.2` catalogue & scanning | 3 / 9 | 6 | `1.2.0` `1.2.3` `1.2.4` `1.2.5` `1.2.7` `1.2.8` |
 | `1.3` tax engine | 1 / 8 | 7 | `1.3.2`–`1.3.8` — **four of the seven are externally blocked**, by two different authorities |
 | `1.4` cart | **0 / 13** | 13 | the largest untouched group, and eight of the thirteen wait on one file |
-| `1.5` tender | **0 / 4** | 4 | three of the four wait on `1.5.1` |
+| `1.5` tender | **1 / 4** | 3 | `1.5.1` landed 22 September; `1.5.3` and `1.5.4` are genuinely startable now and `1.5.2` is not — see §4 |
 | `1.6` auth & audit | 5 / 9 | 4 | `1.6.2` `1.6.4`(partial) `1.6.7` `1.6.8` |
 | `1.7` receipts & printing | **4 / 10** | 6 | three landed on 22 September; `1.7.5` is next and is **partly human-gated** — see §4 — and the group still wants #68's hardware |
 | `1.8` storage & lifecycle | 2 / 14 | 12 | `1.8.0`/`1.8.1` first, and `1.8.1` is externally blocked |
@@ -514,7 +545,7 @@ notice: thirteen microsteps, zero done, and it is the cart.
 That is the strongest argument this document can make about sequencing, and it is the first time it
 has been able to make it — nothing here is a judgement, it is a file-existence check.
 
-#### 36 of the 78 are startable by file dependency alone
+#### 38 of the 77 are startable by file dependency alone
 
 Startable means *every file its `Files:` line names that is not marked `(new)` already exists*. It
 does **not** mean unblocked — seven carry a `**Scheduled in:**` line deferring them behind other
@@ -522,7 +553,7 @@ work, and several are blocked by a `⚠️ OPEN` item or an issue that no file c
 
 ```
 1.2.0  1.2.3  1.2.4  1.2.7  1.2.8  1.3.2  1.3.3  1.3.5  1.3.6  1.3.7  1.3.8
-1.4.1  1.4.5  1.5.1  1.6.4  1.6.7  1.6.8  1.7.5  1.7.6
+1.4.1  1.4.5  1.5.2  1.5.3  1.5.4  1.6.4  1.6.7  1.6.8  1.7.5  1.7.6
 1.7.7  1.7.8  1.7.8b 1.8.0  1.8.1  1.8.1b 1.8.2  1.8.3  1.8.4  1.8.6  1.8.8
 1.10.2 1.11.13 1.11.14 1.11.15 1.12.3 1.12.4
 ```
@@ -530,9 +561,16 @@ work, and several are blocked by a `⚠️ OPEN` item or an issue that no file c
 Subtract what the rest of this document already knows: `1.2.0` and `1.2.7` and `1.12.3` wait on #68's
 hardware, `1.2.4` on #71, `1.3.2`/`1.3.4`/`1.3.5`/`1.3.7` on two OPEN items and #70, `1.6.2` on #68
 *and* an OPEN item, `1.8.1` on an OPEN item nobody filed, and seven carry `Scheduled in:`. **What is
-left after that subtraction is small, and `1.4.1`, `1.5.1`, `1.6.7`, `1.6.8` and **`1.7.5`** are
-the names on it** — though `1.7.5` is the first of the five whose `Done when` a human has to
+left after that subtraction is small, and `1.4.1`, **`1.5.3`**, **`1.5.4`**, `1.6.7`, `1.6.8` and
+`1.7.5` are the names on it** — though `1.7.5` is the one whose `Done when` a human has to
 satisfy, which §4 spells out.
+
+**`1.5.1` raised this count rather than lowering it, and the reason is the trap this block already
+warns about.** Creating `crates/pos-domain/src/tender.rs` made `1.5.2`, `1.5.3` and `1.5.4`
+file-startable at once, so 36 became 38. Only two of the three really are: `1.5.3`'s
+`compute_cash_rounding` takes a `Money`, a step and a direction, and `1.5.4`'s denominations take
+nothing — but **`1.5.2` needs `Tendering`, which holds a `Cart` and a `PricedCart`**, and neither
+name exists under `crates/`. Same shape as `1.4.1`: the file exists, the types do not.
 
 **`1.4.1` is on that list by file existence and is not as startable as it looks**, which is worth
 one line here because §4 has been recommending it. Its `Files:` line names one new file, so the
@@ -2082,11 +2120,103 @@ the pile with the receipt logo and `build_receipt_model`.
 
 ---
 
+## 2p · 22 September — `1.5.1`, and a table written to match a seed it cannot change
+
+**#224 merged `1.5.1`** — `crates/pos-domain/src/tender.rs` (601 lines, ten tests) and six
+`lib.rs` re-exports. Issue #223 is the microstep issue, filed before the branch and closed by the
+PR. Phase 1 is **35 of 112 (~31%)** and the Rust suite is **392 → 402**. `Cargo.lock` does not
+move; no migration is touched.
+
+**Not `1.7.5`, which §4 still names first.** §7 item 6 records why: its `Done when` needs a dated
+record naming a native reader, and nobody has been asked who that is. `1.5.1` was the next name on
+the list and needed an answer from nobody.
+
+### `1.6.3` in reverse, and the direction is the part to carry
+
+`1.6.3`'s entry says its capability grid is *"what 1.6.1 writes its seed from, so the two
+microsteps stop pointing at each other"* — grid first, migration second. Here it is the other way
+round: `tender_type`'s **complete seed shipped inside migration `0005` at `1.9.1`**, months before
+the type that describes it, and a committed migration is never reopened.
+
+So `standard_tender_types()` is written to match `0005:657-662` column for column, and
+`the_standard_grid_matches_the_committed_seed` pins all six rows against literals **transcribed
+from the `.sql`** rather than built from the function they check — a fixture derived from its
+subject asserts nothing. If the two ever disagree, the domain type is what changes.
+
+**Worth knowing before the next microstep whose types a migration already describes**, and there
+are several: `1.2.4`'s barcode rules, `1.10.x`'s stock ledger columns, `1.3.x`'s tax rules. The
+question to ask first is which came first.
+
+### The distinction that keeps a shift from closing short
+
+`0005` carries its own comment about this, which is unusual and is the reason it was noticed:
+*"`is_internal` is NOT implied by `is_cash_counted = 0`: `card` and `cliq` count no drawer cash
+but do move real value through a PSP."*
+
+Two predicates that look redundant on five of six rows. §7.1 states what confusing them costs:
+`exchange` must carry `is_cash_counted = 0` **and** `is_internal = 1`, *"or the offset would appear
+in expected drawer cash on both documents and the shift would close short by twice the exchanged
+value."* `an_internal_tender_is_not_merely_uncounted_cash` holds them apart with `card` and `cliq`
+as the witnesses, so collapsing the two flags into one fails a test rather than a shift.
+
+### Four columns the domain type does not carry
+
+`tender_type` has ten and `ref/domain-api.md` §7's `TenderType` has six. `name_ar`, `name_en` and
+`sort_order` are presentation. **`is_active` is the one worth naming**: the seed ships `cash`
+active and the other five inactive, because *"later payment/refund microsteps enable behavior;
+they never reopen 0005 to append codes"*. Activation is therefore a property of one store's row,
+not of a kind of tender, and putting it on a pure type would invite a pure function to answer a
+question only the database can.
+
+### The gap this module inherited rather than created
+
+**20 mutations, 20 caught.** The read then found something the sweep had no way to ask about:
+`as_str` and `#[serde(rename_all = "snake_case")]` are **the same mapping written twice** — one
+for a SQL bind against `0005`'s `CHECK` constraints, one for the JSON wire form. They coincide,
+which is exactly the condition under which a change to one goes unnoticed. Both were already
+checked separately against the migration's constraint lists;
+`the_wire_form_and_the_storage_form_are_the_same_word` asserts the third edge of the triangle, and
+two added mutations prove it.
+
+**`catalog.rs` and `permissions.rs` carry the same unchecked pair** — an `as_str` beside a
+`rename_all` on four enums between them. Noted rather than fixed: conventions §6 rule 6 keeps a
+microstep inside its own `Files:` list, and this is a two-line test whenever somebody is in those
+files anyway.
+
+### One test lost an assertion it should not have carried
+
+`only_cash_opens_the_drawer_and_gives_change` was additionally pinning `is_cash_counted`, which is
+neither what its name promises nor a rule — it is one column of a grid
+`the_standard_grid_matches_the_committed_seed` already pins in full. Removed. A test whose name
+under-describes it is a test somebody will later "fix" by deleting the wrong half.
+
+### No property test, and that is §5.1 rather than an omission
+
+`.claude/rules/rust-domain.md` asks for a `prop_<invariant>` per business rule, and this microstep
+ships none. The rules are bounded — six rows, six columns — and conventions §5.1 is explicit that
+*"a bounded universal claim uses an exhaustive `#[test]` loop when that loop is feasible"*. A
+generator over six fixed rows samples what a loop enumerates and tests strictly less.
+
+The unbounded rules in group 1.5 are `1.5.2`'s and `1.5.3`'s — split tender summing to the total,
+cash rounding only on the final cash tender — and both already carry `prop_` names the catalogue
+lists. **Stated here because a future sweep of "does every module have a property" would flag this
+file**, and the answer is written down rather than re-argued.
+
+### And a number that went the wrong way, correctly
+
+§1's startable count rose from 36 to **38** on a microstep that completed one. Creating
+`tender.rs` made `1.5.2`, `1.5.3` and `1.5.4` file-startable at once. Only two of the three really
+are: `1.5.2` needs `Tendering`, which holds a `Cart` and a `PricedCart`, and neither name exists
+under `crates/` — the same trap `1.4.1` sits in. The file-existence check is doing what it says;
+what it says is narrower than "startable".
+
+---
+
 ## 3 · The eleven open issues
 
 **Ten are on board #4, all `Todo`, all assigned** — #68, #69, #70, #71, #111, #112, #113, #114,
 #174 and #197 — and **#203 is not on it**, which is why every handoff since it was filed has
-reported ten. Re-read live at `5335c78` with `gh issue list --state open`, which is the command
+reported ten. Re-read live at `c289466` with `gh issue list --state open`, which is the command
 that finds the eleventh. **Nine are blocked on a human** — one on `hardware`, five on a
 `decision`, two on a `merchant answer`, and #197 on the sequencing of `0006`. **#174 and #203 are
 the two code alone can close today.**
@@ -2283,8 +2413,7 @@ candidate this file has named since 14 September is spent — `1.9.1` (§2b), `1
 `1.11.11` (#192, §2g), `1.9.2` (#195, §2h), `1.7.2` (#200, §2i), `1.6.6` (#204, §2j),
 **`1.6.6b`, which this section named as the closest successor and which landed the same day**
 (#208, §2k), **`1.11.1`, named here as `1.6.6b`'s closest successor and landed the same day
-again** (#212, §2l), **`1.7.1`** (#215, §2m) and **`1.7.3`** (#218, §2n) and **`1.7.4`**, which §4 named as `1.7.3`'s successor and which landed
-the same day again (#221, §2o).
+again** (#212, §2l), **`1.7.1`** (#215, §2m) and **`1.7.3`** (#218, §2n) and **`1.7.4`** (#221, §2o) and **`1.5.1`** (#224, §2p).
 
 **§1's "What is LEFT" block is the view to open first.** It is derived from the phase file and the
 filesystem rather than from this list, it says which of the 82 remaining steps are startable, and it
@@ -2293,8 +2422,29 @@ names the two files — `apps/terminal/src-tauri/src/ipc/registry.rs` (`1.6.7`) 
 are startable today. This section is the human judgement on top of that; the block is the evidence
 under it.
 
-**The shortlist, after subtracting everything blocked:** **`1.7.5`**, `1.5.1`, `1.6.7` and
-`1.6.8`, with `1.4.1` behind them and not as free as the file check makes it look.
+**The shortlist, after subtracting everything blocked:** **`1.5.3`**, `1.5.4`, `1.6.7` and
+`1.6.8`, with `1.7.5` ahead of all of them on value and behind all of them on readiness, and
+`1.4.1` still not as free as the file check makes it look.
+
+**`1.5.3` is the successor `1.5.1` created and the strongest thing on this list.** Cash rounding —
+master plan B.5, applied **only when the final tender is cash** and only to the remaining cash
+amount (E.14). It already has a `Done when`, and it is the most concrete one in Phase 1:
+*"`mixed_tender_1247_card_624_cash_620_adjustment_minus_3` exits zero, proving that a `1.247` JOD
+sale charged `0.624` to card leaves `0.623`, rounds the final cash tender to `0.620`, records
+`-0.003`, and settles `1.244` exactly."* Its inputs are all present — `compute_cash_rounding`
+takes a `Money`, a step and a `RoundingDirection`, nothing more — and it is a **money path**, so
+it earns the property tests `1.5.1` correctly did not have.
+
+Two things to budget for. It carries two `PLANNED` names, so **`protected-paths` will be red** and
+§2k's recipe applies with §9's `--admin` correction. And `ref/tax-jordan.md` §5 has an open item
+on cash-rounding treatment that keeps the tender-level adjustment **provisional** — the entry says
+so, and the microstep's job is to not silently move it into a tax base or a fiscal line.
+
+**`1.5.4` is the small one** — the JOD denomination table for the numpad and the close grid, one
+named test, no `Done when` yet.
+
+**`1.5.2` is not startable**, whatever §1's file check says: `remaining_due`, `change_due` and
+`is_settled` all take a `Tendering`, which holds a `Cart` and a `PricedCart`, and neither exists.
 
 **`1.7.5` is the successor `1.7.4` created, and it is the first on this list whose `Done when` a
 human has to satisfy.** Seven golden fixtures, a `.png` projection beside every `.bin`, and
@@ -2321,7 +2471,7 @@ advisories retired the stack the plan named, `cosmic-text` inherits one of them 
 **will be red on `protected-paths`**, because retiring its `PLANNED` entry means editing
 `scripts/check-test-catalog.py` inside the frozen policy surface. That red is the review, the edit
 is not optional, and §2k has the recipe. Budget for it rather than being surprised by it —
-`1.11.12`, `1.2.3`, `1.2.4`, `1.2.5` and **`1.7.5`** carry `PLANNED` names today. **`1.7.3` took
+`1.11.12`, `1.2.3`, `1.2.4`, `1.2.5`, **`1.5.3`** and **`1.7.5`** carry `PLANNED` names today. **`1.7.3` took
 this red on 22 September**: the CI refusal names exactly one path, and §9's recipe turned out to
 be missing a flag. **`1.7.4` did not**, because neither of its tests was in the ceiling — checked
 with `grep` rather than assumed, which is what §15 lesson 12 asks for.
@@ -2344,10 +2494,20 @@ with `grep` rather than assumed, which is what §15 lesson 12 asks for.
 | ~~`1.7.1` — `ReceiptModel`~~ | **DONE, #215** | §2m. It cleared its own missing `Done when` in a commit before any code, and unblocked `1.7.3` |
 | ~~`1.7.3` — the raster pipeline~~ | **DONE, #218** | §2n. It shipped a stack the plan does not name, because two advisories retired the one it does — and it took the `protected-paths` red this section predicts for every catalogued test |
 | ~~`1.7.4` — ESC/POS emitter~~ | **DONE, #221** | §2o. Green on `protected-paths`, as predicted, and the test worth reading is the one that would have been intermittently red |
+| ~~`1.5.1` — `TenderType` and `Tender`~~ | **DONE, #224** | §2p. It matches a seed that shipped before it, ships no property test on purpose, and raised the startable count while completing |
 | `1.2.4` pure half | **blocked** | `ref/schema.md:3410` is an `⚠️ **OPEN` item that names it, and #71 is the issue |
 | `1.11.12` — empty and edge states | **blocked** | needs rendered screens that do not exist; `1.11.1` created none |
 
-**`1.7.4` leaves three things behind, `1.7.3` two and `1.7.1` two. Read them before choosing.**
+**`1.5.1` leaves two things behind, `1.7.4` three, `1.7.3` two and `1.7.1` two.**
+
+* **`catalog.rs` and `permissions.rs` carry an `as_str` beside a `rename_all` and nothing compares
+  them.** Four enums between them. `1.5.1` closed its own instance with a two-line test and left
+  theirs, because conventions §6 rule 6 keeps a microstep inside its `Files:` list — so this is
+  free for whoever is next in either file.
+* **A module with no property test now needs its reason written down.** `1.5.1`'s is in §2p and in
+  its phase entry: the rules are bounded and §5.1 prefers an exhaustive loop. A future sweep for
+  *"does every domain module have a `prop_`"* will find `tender.rs` and should find the answer
+  beside it rather than re-arguing it.
 
 * **The cut has no feed and §9's checklist has no check for it.** §2o has the detail. It is not a
   code defect — the distance is a device property behind #68 — but the *missing check* is a gap
@@ -2496,13 +2656,14 @@ front of `0006`, `0007`, `1.2.3`, `1.9.2`–`1.9.5`, `1.10.2`–`1.10.5`, the `1
 | `1.6.2` — Argon2id PINs | **Blocked twice**, neither time by code: `just bench-gate pin-verify` refuses until #68, **and** `ref/security-compliance.md:415` |
 | `1.2.3` | Blocked three migrations deep — its FTS repository needs `0007`'s tables |
 
-**Sixteen executable Phase-1 microsteps carry no `**Done when:**` line at all** — `1.2.0`
-`1.3.2` `1.3.3` `1.4.1` `1.4.2` `1.4.3` `1.4.4` `1.4.5` `1.4.7` `1.4.8` `1.4.10` `1.5.1` `1.5.2`
-`1.5.4` `1.7.6` `1.7.8`. **`1.7.1` and `1.7.4` both left this list on 22 September** — the third
-and fourth steps ever to clear one rather than add it, after `1.1.9` and `1.6.6`, and both
-authored it in **its own commit before any code**, which is the order conventions §6 asks for and
-is now visible in the history twice rather than asserted in a PR. Re-run the snippet below rather
-than trusting that sentence.
+**Fifteen executable Phase-1 microsteps carry no `**Done when:**` line at all** — `1.2.0`
+`1.3.2` `1.3.3` `1.4.1` `1.4.2` `1.4.3` `1.4.4` `1.4.5` `1.4.7` `1.4.8` `1.4.10` `1.5.2` `1.5.4`
+`1.7.6` `1.7.8`. **Three left it on 22 September** — `1.7.1`, `1.7.4` and `1.5.1` — taking the
+running total to five ever, after `1.1.9` and `1.6.6`, and all three authored the line in **its
+own commit before any code**. That is the order conventions §6 asks for, and it is now visible in
+the history three times rather than asserted in a PR. **Eleven of the fifteen remaining are group
+1.4**, which is the cart, so whoever opens that group writes most of what is left. Re-run the
+snippet below rather than trusting that sentence.
 
 **The number did not fall, and the reason is a counting bug this document carried for a week.**
 The list that stood here named eighteen steps *excluding* `1.2.0`, while claiming to be the result
@@ -2523,7 +2684,7 @@ print(len(out), out)
 EOF
 ```
 
-It prints `16`, and 113 `### 1.x` headings against 112 executable microsteps — the difference
+It prints `15`, and 113 `### 1.x` headings against 112 executable microsteps — the difference
 being `1.1.2`:
 
 * **`1.7.1` gained one on 22 September**, authored before the code and then *widened* — the line
@@ -2539,7 +2700,7 @@ being `1.1.2`:
   *"**Concordance only:** this retained anchor is not an executable microstep"*. Anyone re-running
   this count mechanically will find it and must exclude it.
 
-For the sixteen, checker rule 4 refuses a completion claim until one is written, and the issue form
+For the fifteen, checker rule 4 refuses a completion claim until one is written, and the issue form
 will not accept the microstep without a proving command. **Each is a documentation prerequisite to
 its own delivery.**
 
@@ -2864,12 +3025,13 @@ Established by introspection and corrected in #122; do not re-litigate.
 
 ### `development → staging`
 
-`staging` is **54 behind** — `git rev-list --count origin/staging..origin/development`,
-re-measured 22 September after #221, and the `origin/` spellings matter: a local `staging` left at
-#91 answers 92. The gap now carries **fourteen** microsteps — `1.11.3`, `1.9.1`, `1.1.9`, `1.2.6`,
-`1.11.6`, `1.11.11`, `1.9.2`, `1.7.2`, `1.6.6`, `1.6.6b`, `1.11.1`, `1.7.1`, `1.7.3` and `1.7.4` —
-migration `0005`, an embedded typeface, the audit chain's writer, reader and verifier, the i18n
-infrastructure, and a receipt that is now a model, a raster and a printable document. **A promotion
+`staging` is **56 behind** — `git rev-list --count origin/staging..origin/development`,
+re-measured 22 September after #224, and the `origin/` spellings matter: a local `staging` left at
+#91 answers 92. The gap now carries **fifteen** microsteps — `1.11.3`, `1.9.1`, `1.1.9`, `1.2.6`,
+`1.11.6`, `1.11.11`, `1.9.2`, `1.7.2`, `1.6.6`, `1.6.6b`, `1.11.1`, `1.7.1`, `1.7.3`, `1.7.4` and
+`1.5.1` — migration `0005`, an embedded typeface, the audit chain's writer, reader and verifier,
+the i18n infrastructure, a receipt that is now a model, a raster and a printable document, and the
+tender vocabulary. **A promotion
 also carries four new runtime dependencies**, so the cross-platform matrix is doing more than it
 was. Open a promotion when you want the cross-platform matrix
 over the current tip:
@@ -3534,3 +3696,15 @@ documentation surface **no gate reads** (`status-page.html`'s prose — see §14
     576-dot receipt reaches within roughly 900 rows. It would have passed on the fixtures and
     failed in the field, for a reason nobody would find quickly. **Ask where a sequence may not
     appear, not whether it appears**, and write the test that makes the coincidence deliberate.
+23. **When a migration already describes a type, the migration wins — check which came first.**
+    `1.6.3` built its grid and `1.6.1` seeded from it; `1.5.1` found the opposite, because
+    `tender_type`'s complete seed shipped inside `0005` months before the domain type existed and
+    a committed migration is never reopened. The test therefore pins the type against literals
+    **transcribed from the `.sql`**, not built from the function it checks — a fixture derived
+    from its subject asserts nothing. Several microsteps ahead are in the same position:
+    `1.2.4`'s barcode rules, `1.3.x`'s tax rules, `1.10.x`'s stock columns.
+24. **A second definition of one mapping is a second chance to get it wrong, even when both are
+    already checked.** `as_str` and `#[serde(rename_all = "snake_case")]` produce the same words,
+    and both were separately checked against a `CHECK` constraint — so each was right and nothing
+    said they agreed with *each other*. They coincide, which is exactly when a change to one goes
+    unnoticed. The third edge of a triangle is cheap and is the one nobody draws.
