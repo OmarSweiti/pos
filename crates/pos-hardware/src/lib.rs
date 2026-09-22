@@ -1,6 +1,7 @@
 //! Hardware abstraction layer (blueprint §5).
 //! Traits here; drivers (ESC/POS over TCP/serial/USB) in submodules later.
 
+pub mod escpos;
 pub mod font;
 pub mod render;
 

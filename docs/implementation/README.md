@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **33 of 112 executable microsteps fully complete (~29%)**: `1.1.0`
+Phase 1 has **34 of 112 executable microsteps fully complete (~30%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -68,7 +68,9 @@ five whole-document rules refused rather than hoped for, including the one that 
 non-fiscal acknowledgement printing a fiscal QR), and `1.7.3` (the raster pipeline — Arabic that
 joins, a Latin SKU and a Western-digit price that keep their own direction inside a right-to-left
 line, both paper widths, and every measurement an integer so the same receipt is the same dots on
-any machine).
+any machine), and `1.7.4` (the ESC/POS emitter — a document that is an initialise, one raster and a
+cut, carrying the bitmap's bytes unchanged and the drawer pulse nowhere, because a stream is
+persisted and retried and a pulse is cash moving).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
