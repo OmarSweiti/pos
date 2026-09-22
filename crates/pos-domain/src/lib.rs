@@ -8,6 +8,7 @@ pub mod money;
 pub mod permissions;
 pub mod receipt;
 pub mod tax;
+pub mod tender;
 pub mod time;
 
 // The module graph points one way (ref/domain-api.md §15): `ids`, `money` and
@@ -48,6 +49,9 @@ pub use tax::{
     ComponentTax, LineTax, PriceMode, StoreTaxProfile, SupplyDestination, SupplyTaxContext,
     TaxBase, TaxBasis, TaxComponent, TaxError, TaxRateRule, TaxSummaryRow, TaxTreatment,
     ZeroRatingReason,
+};
+pub use tender::{
+    RefundRouting, Tender, TenderState, TenderType, standard_tender_type, standard_tender_types,
 };
 pub use time::{
     BusinessDate, Clock, ClockAnomaly, ClockConfidence, ClockPolicy, ClockState, DayBoundary,
