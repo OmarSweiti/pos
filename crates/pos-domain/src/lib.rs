@@ -51,7 +51,8 @@ pub use tax::{
     ZeroRatingReason,
 };
 pub use tender::{
-    RefundRouting, Tender, TenderState, TenderType, standard_tender_type, standard_tender_types,
+    CashRounding, RefundRouting, Tender, TenderState, TenderType, compute_cash_rounding,
+    final_tender_rounding, standard_tender_type, standard_tender_types,
 };
 pub use time::{
     BusinessDate, Clock, ClockAnomaly, ClockConfidence, ClockPolicy, ClockState, DayBoundary,

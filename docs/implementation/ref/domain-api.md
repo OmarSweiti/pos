@@ -1729,11 +1729,34 @@ pub fn is_settled(t: &Tendering)    -> bool;
 /// Cash rounding (master plan B.5) applies ONLY when the FINAL tender is cash,
 /// and only to the remaining cash amount (E.14). Card charges the exact total.
 /// The adjustment is an explicit field so books and fiscal totals reconcile.
+/// A negative `remaining` is refused with `MoneyError::Negative`: a sale's
+/// remainder is never negative, and a negative balance is CHANGE, which is
+/// never rounded — it is what the drawer hands back from an amount that was.
 pub fn compute_cash_rounding(
     remaining: Money, step_minor: i64, dir: RoundingDirection,
 ) -> Result<CashRounding, MoneyError>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+/// The rule over that arithmetic [1.5.3]: what the tender that settles a sale
+/// is asked for. A kind that `is_cash_counted` gets
+/// `Some(compute_cash_rounding(remaining, ..))`; every other kind gets `None`
+/// and is asked for `remaining` exactly. The `Some` is what
+/// `Tendering.cash_rounding` stores, and deciding WHICH tender is final is
+/// `add_tender`'s (§6.1, 1.4.8) — a cash tender that does not cover `rounded`
+/// is a partial one, applied exactly.
+///
+/// Keyed on `is_cash_counted`, not on the code: that flag is what makes a
+/// tender's amount coin — §11 counts `amount − change` into expected drawer
+/// cash over exactly those tenders, and needs no rounding term because the
+/// rounded amount arrives as the tender's amount — while every other kind can
+/// carry any fil. `tax-jordan.md` §5 rule 5 pairs "never cash-counted" with
+/// "never receives cash rounding". A step or a remainder
+/// `compute_cash_rounding` would refuse is refused for EVERY kind, so a policy
+/// that cannot round fails the first sale, not the first cash one.
+pub fn final_tender_rounding(
+    kind: &TenderType, remaining: Money, step_minor: i64, dir: RoundingDirection,
+) -> Result<Option<CashRounding>, MoneyError>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CashRounding { pub original: Money, pub rounded: Money, pub adjustment: Money }
 
 /// A cash PAYOUT rounds to the same coin step. Refunding a cash-rounded sale

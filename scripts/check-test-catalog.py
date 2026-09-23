@@ -116,10 +116,6 @@ PLANNED: dict[str, tuple[str, ...]] = {
     ),
     "1.4.11": ("no_command_argument_carries_a_price",),
     "1.4.12": ("queue_never_stalls_on_unknown_code",),
-    "1.5.3": (
-        "card_charged_exact_unrounded_total",
-        "prop_cash_rounding_only_on_final_cash_tender",
-    ),
     "1.6.2": ("manager_reset_retires_old_hash_and_audits",),
     "1.7.5": (
         "golden_receipt_ar_58mm",
@@ -559,10 +555,12 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "a_pack_quantity_of_zero_is_refused_at_save",
         "an_altered_amount_is_refused",
         "an_expired_handle_is_refused",
+        "card_charged_exact_unrounded_total",
         "clock_jump_back_reports_anomaly",
         "manager_self_approval_denied_when_policy_bans_it",
         "mutating_an_identity_column_breaks_the_chain",
         "narrow_profile_reflows_rather_than_truncates",
+        "prop_cash_rounding_only_on_final_cash_tender",
         "prop_monotonic_clock_never_decreases",
         "tail_deletion_is_detected_against_the_last_anchor",
         "the_effect_and_the_consumption_commit_together_or_not_at_all",
