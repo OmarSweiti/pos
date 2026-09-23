@@ -431,8 +431,8 @@ vitest 5.0.0, gitleaks 8.30.1, Docker Engine 29.5.2.
 | | |
 |---|---|
 | `development` | **`c289466`** — `just pre-push` exits 0 and `ci` run **`35766609624` is a success on the tip**, queried by SHA. Carries `1.9.1`, migration `0005`, `1.1.9`'s `ClockRepository`, `1.2.6`, the audit's fixes, #185's seven tests, `1.11.6`'s scan capture with #189's fix, `1.11.11`'s keyboard map, `1.9.2`'s document counters, `1.7.2`'s embedded typeface, `1.6.6`'s audit repository, `1.6.6b`'s `verify-audit`, `1.11.1`'s i18n infrastructure, `1.7.1`'s receipt model, `1.7.3`'s raster pipeline, `1.7.4`'s ESC/POS emitter and `1.5.1`'s tender vocabulary |
-| `staging` | **`f2edbb6`** — **56 behind** `origin/development`, 5 ahead (its own five promotion merges). Re-measured 21 September with `git rev-list --count origin/staging..origin/development`; **this row has been wrong before and §9 states it independently** — if the two disagree, run the command rather than picking one. **Use the `origin/` refs**: a local `staging` left stale by 51 commits answers 92, which is how this row went wrong before |
-| `main` | `24a0283` — **184 behind** `origin/development`, **133 behind** `origin/staging`, untouched since 20 August |
+| `staging` | **`f2edbb6`** — **57 behind** `origin/development` at `c285761`, 5 ahead (its own five promotion merges). Re-measured 23 September with `git rev-list --count origin/staging..origin/development`; **this row has been wrong before and §9 states it independently** — if the two disagree, run the command rather than picking one. **Use the `origin/` refs**: a local `staging` left stale by 51 commits answers 92, which is how this row went wrong before |
+| `main` | `24a0283` — **185 behind** `origin/development` at `c285761`, **133 behind** `origin/staging`, untouched since 20 August |
 | Phase 1 | **35 of 112** executable microsteps (~31%) — `1.5.1` (#224), `1.7.4` (#221), `1.7.3` (#218) and `1.7.1` (#215) all landed 22 September. **Group 1.1 is closed**; group 1.7 is **4 of 10** and group 1.5 has opened at **1 of 4**. The next pair of counts sharing a rounded percentage is 42/43, so every microstep until then moves it |
 | Open PRs | **0**, and **nothing is in flight**. The WIP=1 slot is free |
 | Open issues | **11** — #68, #69, #70, #71, #111, #112, **#113 (reopened)**, #114, #174, #197 and **#203**, listed live rather than carried forward. #211, #214, #217, #220 and #223 opened and closed with their microsteps, so the count is unchanged rather than static. **#203 is the one every handoff since 21 September has missed**: the weekly `security` workflow filed it automatically at 09:08 UTC, it carries no labels, it is **not on board #4**, and it is a real red — §3 diagnoses it. #202 opened and closed with `1.6.6`; #207 opened and closed with `1.6.6b`. Both of the issues this session closed with their substance unresolved have been put right: **#113 is reopened** and **#197 carries #179's three surviving findings**, with `1.10.1` amended (#198) so `0006` is where they land. Nine of the ten are blocked on a human; **#174 is the exception**. #187, #191, #194 and #199 opened and closed with their microsteps |
@@ -3025,9 +3025,20 @@ Established by introspection and corrected in #122; do not re-litigate.
 
 ### `development → staging`
 
-`staging` is **56 behind** — `git rev-list --count origin/staging..origin/development`,
-re-measured 22 September after #224, and the `origin/` spellings matter: a local `staging` left at
-#91 answers 92. The gap now carries **fifteen** microsteps — `1.11.3`, `1.9.1`, `1.1.9`, `1.2.6`,
+`staging` is **57 behind at `c285761`** — `git rev-list --count origin/staging..origin/development`,
+re-measured 23 September, and the `origin/` spellings matter: a local `staging` left at #91
+answers 92.
+
+> **This row is stale by one the moment a handoff merges, and that is structural rather than
+> careless.** An edition measures the distance while writing, which is necessarily *before* its own
+> documentation commit lands — so the number it records is true at the microstep tip and one short
+> at the tip a reader actually has. It read 56 at `c289466` and 57 at `c285761`, which is #225,
+> this document. Every edition has done this.
+>
+> **So the row now names the commit it was measured at**, and the rule for the next one is: write
+> the distance at the microstep tip, then re-measure and correct it in the *following* edition, or
+> quote the reference point as these two rows now do. Do not "fix" it by adding one and hoping —
+> a promotion PR that lands between the two moves it again. The gap now carries **fifteen** microsteps — `1.11.3`, `1.9.1`, `1.1.9`, `1.2.6`,
 `1.11.6`, `1.11.11`, `1.9.2`, `1.7.2`, `1.6.6`, `1.6.6b`, `1.11.1`, `1.7.1`, `1.7.3`, `1.7.4` and
 `1.5.1` — migration `0005`, an embedded typeface, the audit chain's writer, reader and verifier,
 the i18n infrastructure, a receipt that is now a model, a raster and a printable document, and the
@@ -3708,3 +3719,9 @@ documentation surface **no gate reads** (`status-page.html`'s prose — see §14
     and both were separately checked against a `CHECK` constraint — so each was right and nothing
     said they agreed with *each other*. They coincide, which is exactly when a change to one goes
     unnoticed. The third edge of a triangle is cheap and is the one nobody draws.
+25. **A document that measures the repository cannot measure itself.** Every edition of this file
+    has recorded `staging`'s promotion distance one short, because the number is taken while
+    writing and the edition's own merge commit lands afterwards. It is not carelessness and it
+    cannot be fixed by adding one — a promotion or a microstep landing in between moves it again.
+    **Quote the commit a drifting number was measured at**, and let the next edition correct it.
+    The same shape reaches any count that includes the act of recording it.
