@@ -1,10 +1,11 @@
 //! How a sale is paid for (microstep 1.5.x).
 //!
-//! This module is the *vocabulary* — what kinds of tender exist, what each one
-//! does, and what one collected tender records. The arithmetic is next door:
-//! `remaining_due`, `change_due` and `is_settled` are 1.5.2's, cash rounding is
-//! 1.5.3's, and the denomination table is 1.5.4's. Nothing here computes with
-//! a [`Money`]; it only carries one.
+//! Two things live here. The *vocabulary* (1.5.1) — what kinds of tender
+//! exist, what each one does, and what one collected tender records — and
+//! **cash rounding** (1.5.3): what the tender that settles a sale is asked for
+//! when the smallest coin cannot make up the fils. `remaining_due`,
+//! `change_due` and `is_settled` are still to come with 1.5.2, and the
+//! denomination table with 1.5.4.
 //!
 //! Shape is [`ref/domain-api.md`](../../../docs/implementation/ref/domain-api.md) §7 and the
 //! table is its §7.1.
@@ -30,7 +31,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ids::TenderId;
-use crate::money::Money;
+use crate::money::{Money, MoneyError, RoundingDirection};
 
 /// Where a refund of this tender is allowed to go.
 ///
@@ -279,13 +280,166 @@ impl TenderState {
     }
 }
 
+/// What a final cash tender is asked for, and the signed difference from what
+/// was owed (master plan B.5).
+///
+/// Cash rounding exists because an amount paid in coin has to be one the coins
+/// in use can make, and `0.623` is not. The step is the store's operational
+/// choice — one qirsh, ten fils, is the provisional default (merchant decision
+/// 2.1) — and `ref/tax-jordan.md` §5 is explicit that it is not a claim about
+/// legal tender or tax law. The final cash tender is asked for a payable
+/// amount, and the difference is kept as a figure of its own rather than
+/// absorbed anywhere, so the books still reconcile to the fil (§5, rule 3):
+///
+/// ```text
+/// Σ tenders − change == total + adjustment
+/// ```
+///
+/// `adjustment` is what `sale.rounding_adj_minor` persists and what the
+/// receipt prints as its own line. Under the provisional default it moves no
+/// line, no line tax component and no tax summary row: whether a cash-rounding
+/// adjustment changes taxable consideration or a JoFotara total is an OPEN
+/// item owned by 2.7.0, and until it is answered this is only a signed
+/// tender-level amount.
+///
+/// The fields are public because §7 specifies them so. [`compute_cash_rounding`]
+/// is the constructor that keeps `original + adjustment == rounded`, and
+/// `prop_rounding_adjustment_keeps_total_exact` is what holds it to that.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CashRounding {
+    /// The exact remainder the earlier tenders left.
+    pub original: Money,
+    /// What the final cash tender is asked for: `original`, moved to the coin
+    /// step.
+    pub rounded: Money,
+    /// `rounded − original`. Negative when the customer is asked for less than
+    /// was owed, positive when for more, and zero when the remainder was
+    /// already payable.
+    pub adjustment: Money,
+}
+
+/// Round what the earlier tenders left to the store's coin step (master plan
+/// B.5), and record by how much.
+///
+/// `step_minor` is in the remainder's own minor units — `10` is one qirsh, the
+/// provisional merchant default (merchant decision 2.1) — and `dir` is the
+/// store's direction (2.2, default `Nearest`, which breaks an exact half-step
+/// tie away from zero, so `1.245` is asked as `1.250`). Both are the store's
+/// policy and arrive as arguments, never as a read (I-8).
+///
+/// **This computes a rounding; it does not decide that one applies.** Cash
+/// rounding applies only when the *final* tender is cash (E.14), and a card is
+/// charged the exact amount. [`final_tender_rounding`] is that rule, and this
+/// is the arithmetic under it.
+///
+/// # Errors
+///
+/// - [`MoneyError::Negative`] for a negative remainder. A sale's remainder is
+///   never negative: a negative balance is **change**, and change is never
+///   rounded — it is what the drawer hands back from an amount that already
+///   was. A cash *refund* payout is `compute_refund_rounding`, 2.3.3's, with
+///   its own direction default; it is not this function.
+/// - [`MoneyError::InvalidStep`] for a step that is not positive, which
+///   `tax_computation_policy`'s `CHECK (cash_round_step_minor > 0)` refuses
+///   too.
+/// - [`MoneyError::Overflow`] when the step multiple lies outside `i64`.
+pub fn compute_cash_rounding(
+    remaining: Money,
+    step_minor: i64,
+    dir: RoundingDirection,
+) -> Result<CashRounding, MoneyError> {
+    refuse_unroundable(remaining, step_minor)?;
+    let rounded = remaining.round_to_step(step_minor, dir)?;
+    let adjustment = rounded.checked_sub(remaining)?;
+    Ok(CashRounding {
+        original: remaining,
+        rounded,
+        adjustment,
+    })
+}
+
+/// What the tender that settles a sale is asked for (master plan B.5, E.14).
+///
+/// Cash rounding applies **only when the final tender is cash, and only to
+/// what the earlier tenders left**. So a cash `kind` gets the
+/// [`CashRounding`] of `remaining`, and every other kind gets `None` and is
+/// asked for `remaining` exactly — a card is charged the exact, unrounded
+/// amount. The earlier tenders never pass through here, which is what keeps
+/// them exact and makes "cash rounds once" structural rather than remembered.
+///
+/// **"Cash" means [`TenderType::is_cash_counted`], not the code `"cash"`.**
+/// Rounding exists because an amount paid in coin has to be one the coins can
+/// make, and `is_cash_counted` is the flag that makes a tender's amount coin:
+/// `ref/domain-api.md` §11 counts `amount − change` into
+/// expected drawer cash over exactly those tenders — which is also why that
+/// formula needs no rounding term of its own, since the rounded amount arrives
+/// as the tender's amount. Every other kind moves its amount electronically or
+/// on paper and can carry any fil, so rounding it would charge the customer
+/// fils nothing required. `ref/tax-jordan.md` §5 rule 5 pairs the two in one
+/// sentence: the `exchange` tender *"is never cash-counted and never receives
+/// cash rounding"*.
+///
+/// **This answers "if this tender settles the sale"; it does not decide that
+/// it does.** A cash tender that covers `rounded` is final. One that does not
+/// is a partial cash tender, applied exactly, and the next tender is asked
+/// again. Making that call is `add_tender`'s (1.4.8), and the `Some` returned
+/// here is exactly what §7's `Tendering.cash_rounding` stores.
+///
+/// A zero adjustment is still `Some`: the tender was cash and nothing moved.
+/// The receipt model refuses a zero rounding *line* (1.7.1), so whatever maps
+/// a sale into it keeps the line only when the adjustment is non-zero.
+///
+/// # Errors
+///
+/// The same as [`compute_cash_rounding`], **for every kind**. A non-positive
+/// step or a negative remainder is refused even where no rounding would
+/// happen, so a policy that cannot round is found by the first sale rather
+/// than by the first cash sale.
+pub fn final_tender_rounding(
+    kind: &TenderType,
+    remaining: Money,
+    step_minor: i64,
+    dir: RoundingDirection,
+) -> Result<Option<CashRounding>, MoneyError> {
+    if kind.is_cash_counted {
+        compute_cash_rounding(remaining, step_minor, dir).map(Some)
+    } else {
+        refuse_unroundable(remaining, step_minor)?;
+        Ok(None)
+    }
+}
+
+/// The two requests no coin step can serve, refused in one place so the
+/// rounding and the rule that decides whether to round cannot disagree about
+/// them.
+fn refuse_unroundable(remaining: Money, step_minor: i64) -> Result<(), MoneyError> {
+    if step_minor <= 0 {
+        return Err(MoneyError::InvalidStep(step_minor));
+    }
+    if remaining.is_negative() {
+        return Err(MoneyError::Negative);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
     use crate::money::Currency;
+    use pos_test_support::domain_proptest_config;
+    use proptest::prelude::*;
     use uuid::Uuid;
+
+    use RoundingDirection::{Down, Nearest, Up};
+
+    /// One qirsh — ten fils — the provisional merchant default step
+    /// (`ref/merchant-decisions.md` 2.1).
+    const QIRSH: i64 = 10;
+
+    /// The three directions merchant decision 2.2 offers, each once.
+    const DIRECTIONS: [RoundingDirection; 3] = [Nearest, Up, Down];
 
     /// Migration `0005_sale_columns_and_sequences.sql:657-662`, transcribed.
     ///
@@ -592,6 +746,459 @@ mod tests {
             masked_pan: None,
             scheme: None,
             state: TenderState::Collected,
+        }
+    }
+
+    fn jod(minor: i64) -> Money {
+        Money::from_minor(minor, Currency::JOD)
+    }
+
+    fn seeded(code: &str) -> TenderType {
+        standard_tender_type(code).expect("a seeded kind")
+    }
+
+    /// The Done-when, figure for figure: a `1.247` sale, `0.624` of it on a
+    /// card, and cash for the rest.
+    #[test]
+    fn mixed_tender_1247_card_624_cash_620_adjustment_minus_3() {
+        let total = jod(1_247);
+        let card = jod(624);
+
+        // The card is not the final tender, so it is charged exactly what
+        // the cashier asked of it and leaves the rest exact.
+        let remaining = total.checked_sub(card).unwrap();
+        assert_eq!(remaining, jod(623));
+
+        let rounding = final_tender_rounding(&seeded("cash"), remaining, QIRSH, Nearest)
+            .unwrap()
+            .expect("a final cash tender is rounded");
+        assert_eq!(
+            rounding,
+            CashRounding {
+                original: jod(623),
+                rounded: jod(620),
+                adjustment: jod(-3),
+            }
+        );
+
+        // Settled exactly: what was collected is the total plus the one
+        // recorded adjustment, and not a fil appears or disappears between
+        // them (`ref/tax-jordan.md` §5, rule 3).
+        let settled = card.checked_add(rounding.rounded).unwrap();
+        assert_eq!(settled, jod(1_244));
+        assert_eq!(settled, total.checked_add(rounding.adjustment).unwrap());
+
+        // The same figures as a receipt prints them, at the currency's own
+        // exponent (I-2) — a three-fil line at two decimals would read 0.00.
+        assert_eq!(remaining.format_exact(), "0.623");
+        assert_eq!(rounding.rounded.format_exact(), "0.620");
+        assert_eq!(rounding.adjustment.format_exact(), "-0.003");
+        assert_eq!(settled.format_exact(), "1.244");
+    }
+
+    /// E.14, the half a card owns: charged the exact amount, never a rounded
+    /// one, whatever step or direction the store chose.
+    #[test]
+    fn card_charged_exact_unrounded_total() {
+        let card = seeded("card");
+
+        // The whole sale on one card: 1.247 is charged as 1.247, not 1.250.
+        for step in [1, 5, QIRSH, 50, 100, 1_000] {
+            for dir in DIRECTIONS {
+                assert_eq!(
+                    final_tender_rounding(&card, jod(1_247), step, dir),
+                    Ok(None),
+                    "step {step}, {dir:?}"
+                );
+            }
+        }
+
+        // And as the final tender after cash went first: exact again. The
+        // cash was not final, so it was applied exactly too.
+        let remaining = jod(1_247).checked_sub(jod(1_000)).unwrap();
+        assert_eq!(
+            final_tender_rounding(&card, remaining, QIRSH, Nearest),
+            Ok(None)
+        );
+    }
+
+    /// An exact half-step tie goes away from zero.
+    ///
+    /// `1.245` is the case that separates the rules: banker's rounding asks
+    /// for `1.240` because 124 qirsh is even, and B.5's default asks for
+    /// `1.250`. `1.235` separates it from rounding half *down*, which would
+    /// ask for `1.230`. Between them the two rule out both of the other tie
+    /// rules a plausible implementation reaches for.
+    #[test]
+    fn half_away_tie_1245_rounds_to_1250() {
+        let r = compute_cash_rounding(jod(1_245), QIRSH, Nearest).unwrap();
+        assert_eq!(
+            r,
+            CashRounding {
+                original: jod(1_245),
+                rounded: jod(1_250),
+                adjustment: jod(5),
+            }
+        );
+        assert_eq!(r.rounded.format_exact(), "1.250");
+
+        let r = compute_cash_rounding(jod(1_235), QIRSH, Nearest).unwrap();
+        assert_eq!(r.rounded, jod(1_240));
+
+        // And through the rule a cash tender actually meets.
+        let r = final_tender_rounding(&seeded("cash"), jod(1_245), QIRSH, Nearest).unwrap();
+        assert_eq!(r.map(|r| r.rounded), Some(jod(1_250)));
+    }
+
+    /// The customer hands over more than is asked. The rounding is decided by
+    /// the remainder alone, before any cash is counted; the change is what the
+    /// drawer hands back from the *rounded* amount. Two figures, and neither
+    /// absorbs the other.
+    ///
+    /// Rounding the change instead would invert the store's direction: a
+    /// store that chose `Up` would be rounding in the customer's favour, and
+    /// every tie would go the other way. The remainder here is a tie so that
+    /// the two readings disagree — `2.000 − 1.245` is a change of `0.755`,
+    /// which rounds away from zero to `0.760`, where the right answer is
+    /// `2.000 − 1.250 = 0.750`.
+    #[test]
+    fn cash_overtender_and_change_are_separate_from_rounding() {
+        let cash = seeded("cash");
+        let remaining = jod(1_245);
+        let rounding = final_tender_rounding(&cash, remaining, QIRSH, Nearest)
+            .unwrap()
+            .expect("a final cash tender is rounded");
+        assert_eq!(rounding.adjustment, jod(5));
+
+        for (handed, change) in [(1_250, 0), (2_000, 750), (5_000, 3_750)] {
+            // The subtraction is `change_due`'s (1.5.2); what this pins is the
+            // amount it subtracts from — the rounded one.
+            let given = jod(handed).checked_sub(rounding.rounded).unwrap();
+            assert_eq!(given, jod(change), "handed {handed}");
+            assert_eq!(given.minor() % QIRSH, 0, "change a drawer can pay");
+
+            // What stays in the drawer is the remainder plus the adjustment,
+            // however large the note.
+            assert_eq!(
+                jod(handed).checked_sub(given).unwrap(),
+                remaining.checked_add(rounding.adjustment).unwrap()
+            );
+        }
+
+        // The balance after an over-tender is change, and change is refused
+        // rather than rounded — there is no way to hand it to either function.
+        let balance = remaining.checked_sub(jod(2_000)).unwrap();
+        assert_eq!(balance, jod(-755));
+        assert_eq!(
+            compute_cash_rounding(balance, QIRSH, Nearest),
+            Err(MoneyError::Negative)
+        );
+        assert_eq!(
+            final_tender_rounding(&cash, balance, QIRSH, Nearest),
+            Err(MoneyError::Negative)
+        );
+    }
+
+    /// The rule keys on `is_cash_counted`. On today's grid that cannot be told
+    /// apart from `code == "cash"`, `opens_drawer` or `allows_change` — all
+    /// four select the same row — so two constructed kinds pull them apart,
+    /// and the choice is held by a test rather than by a coincidence of the
+    /// seed.
+    #[test]
+    fn rounding_follows_the_drawer_count_not_the_code() {
+        for kind in standard_tender_types() {
+            let rounding = final_tender_rounding(&kind, jod(1_247), QIRSH, Nearest).unwrap();
+            assert_eq!(rounding.is_some(), kind.is_cash_counted, "{}", kind.code);
+        }
+
+        // `ref/tax-jordan.md` §5 rule 5, by name: the internal tender is
+        // never cash-counted and never receives cash rounding.
+        assert_eq!(
+            final_tender_rounding(&seeded("exchange"), jod(1_247), QIRSH, Nearest),
+            Ok(None)
+        );
+
+        // Counted into the drawer under another name, opening nothing and
+        // giving no change: rounded.
+        let counted = TenderType {
+            code: "coins".to_owned(),
+            opens_drawer: false,
+            allows_change: false,
+            is_cash_counted: true,
+            refundable_to: RefundRouting::Cash,
+            is_internal: false,
+        };
+        assert!(
+            final_tender_rounding(&counted, jod(1_247), QIRSH, Nearest)
+                .unwrap()
+                .is_some()
+        );
+
+        // Called "cash", opening the drawer and giving change, but counted
+        // nowhere: not rounded, because an amount that never reaches the
+        // drawer is never paid in coin and can carry any fil.
+        let uncounted = TenderType {
+            code: "cash".to_owned(),
+            opens_drawer: true,
+            allows_change: true,
+            is_cash_counted: false,
+            refundable_to: RefundRouting::Cash,
+            is_internal: false,
+        };
+        assert_eq!(
+            final_tender_rounding(&uncounted, jod(1_247), QIRSH, Nearest),
+            Ok(None)
+        );
+    }
+
+    /// Merchant decision 2.2 offers three directions, and each moves the
+    /// remainder the way its name says — `Up` asks for more, `Down` for less,
+    /// `Nearest` for whichever payable amount is closer.
+    ///
+    /// The last row is the one a cashier will meet: a three-fil remainder is
+    /// asked as nothing at all under `Nearest` and `Down`, and the adjustment
+    /// alone settles it.
+    #[test]
+    fn each_direction_moves_the_remainder_its_own_way() {
+        let rows = [
+            // remaining, Nearest, Up, Down
+            (1_241, 1_240, 1_250, 1_240),
+            (1_249, 1_250, 1_250, 1_240),
+            (1_245, 1_250, 1_250, 1_240),
+            (3, 0, 10, 0),
+        ];
+        for (remaining, nearest, up, down) in rows {
+            for (dir, expected) in [(Nearest, nearest), (Up, up), (Down, down)] {
+                let r = compute_cash_rounding(jod(remaining), QIRSH, dir).unwrap();
+                assert_eq!(r.rounded, jod(expected), "{remaining} {dir:?}");
+                assert_eq!(
+                    r.adjustment,
+                    jod(expected - remaining),
+                    "{remaining} {dir:?}"
+                );
+            }
+        }
+    }
+
+    /// A remainder already on the step is asked for exactly, by every
+    /// direction — and a cash tender still reports `Some`.
+    #[test]
+    fn an_already_payable_remainder_is_rounded_by_nothing() {
+        for remaining in [0, 620, 1_000_000] {
+            for dir in DIRECTIONS {
+                assert_eq!(
+                    compute_cash_rounding(jod(remaining), QIRSH, dir),
+                    Ok(CashRounding {
+                        original: jod(remaining),
+                        rounded: jod(remaining),
+                        adjustment: jod(0),
+                    }),
+                    "{remaining} {dir:?}"
+                );
+            }
+        }
+
+        // `Some` with a zero adjustment, not `None`: the tender was cash and
+        // nothing moved. 1.7.1's receipt model refuses a zero rounding line
+        // (`a_zero_rounding_adjustment_is_absent_rather_than_zero`), so the
+        // mapping into it is where the zero is dropped — not here.
+        let r = final_tender_rounding(&seeded("cash"), jod(620), QIRSH, Nearest).unwrap();
+        assert_eq!(r.map(|r| r.adjustment), Some(jod(0)));
+    }
+
+    /// Requests no coin step can serve are refused, and refused by every kind
+    /// — so a policy that cannot round fails the first sale, not the first
+    /// cash one.
+    #[test]
+    fn an_unroundable_request_is_refused_whatever_the_tender() {
+        for kind in standard_tender_types() {
+            for step in [0, -10] {
+                assert_eq!(
+                    final_tender_rounding(&kind, jod(1_247), step, Nearest),
+                    Err(MoneyError::InvalidStep(step)),
+                    "{} with step {step}",
+                    kind.code
+                );
+            }
+            assert_eq!(
+                final_tender_rounding(&kind, jod(-3), QIRSH, Nearest),
+                Err(MoneyError::Negative),
+                "{} with a negative remainder",
+                kind.code
+            );
+        }
+
+        assert_eq!(
+            compute_cash_rounding(jod(1_247), 0, Nearest),
+            Err(MoneyError::InvalidStep(0))
+        );
+        assert_eq!(
+            compute_cash_rounding(jod(-1), QIRSH, Nearest),
+            Err(MoneyError::Negative)
+        );
+
+        // There is no multiple of ten above the largest amount, so asking to
+        // round it up is an error rather than a wrapped or saturated figure.
+        assert_eq!(
+            compute_cash_rounding(jod(i64::MAX), QIRSH, Up),
+            Err(MoneyError::Overflow)
+        );
+    }
+
+    /// The wire form is `Tendering.cash_rounding`'s, so its field names are
+    /// pinned as literally as `Money`'s golden pins its own.
+    #[test]
+    fn a_cash_rounding_round_trips_through_canonical_json() {
+        let r = compute_cash_rounding(jod(623), QIRSH, Nearest).unwrap();
+        let json = serde_json::to_string(&r).expect("serialises");
+        assert_eq!(
+            json,
+            concat!(
+                r#"{"original":{"minor":623,"currency":"JOD"},"#,
+                r#""rounded":{"minor":620,"currency":"JOD"},"#,
+                r#""adjustment":{"minor":-3,"currency":"JOD"}}"#
+            )
+        );
+
+        let back: CashRounding = serde_json::from_str(&json).expect("deserialises");
+        assert_eq!(back, r);
+    }
+
+    // Covers every currency the build knows. The step is in each currency's
+    // own minor units, so nothing about rounding may assume three decimals.
+    fn known_currency() -> impl Strategy<Value = Currency> {
+        prop_oneof![
+            Just(Currency::JOD),
+            Just(Currency::USD),
+            Just(Currency::EUR),
+        ]
+    }
+
+    // Covers the steps a store would actually choose — one fil, five, a
+    // qirsh, and up to a whole dinar — beside any positive step up to ten
+    // thousand minor units, so no claim leans on a tidy one. Non-positive
+    // steps are excluded: they are a refusal, tested by example.
+    fn coin_steps() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            proptest::sample::select(vec![1_i64, 5, 10, 25, 50, 100, 250, 500, 1_000]),
+            1_i64..=10_000,
+        ]
+    }
+
+    // Covers each cash direction once. Kept apart from any tax rounding rule
+    // because the two axes must never be conflated.
+    fn every_direction() -> impl Strategy<Value = RoundingDirection> {
+        proptest::sample::select(DIRECTIONS.to_vec())
+    }
+
+    // Covers split sales: a total from nothing to 10^15 minor units in every
+    // known currency, the part of it the earlier tenders already paid —
+    // anywhere from none of it to all of it — a coin step and a direction.
+    //
+    // The earlier tenders are drawn as their exact sum, not as a list of
+    // kinds, and that is deliberate: a tender that does not settle the sale
+    // is applied exactly whatever its kind, so its kind is not an input to
+    // the rule under test. Negative totals are excluded because a sale's
+    // total never is one; the refusal of a negative remainder is an example
+    // test. Totals near `i64::MAX` are excluded too — the overflow refusal
+    // has its own example.
+    fn split_sales() -> impl Strategy<Value = (Money, Money, i64, RoundingDirection)> {
+        (0_i64..=1_000_000_000_000_000, known_currency()).prop_flat_map(|(total, currency)| {
+            (
+                Just(Money::from_minor(total, currency)),
+                (0..=total).prop_map(move |paid| Money::from_minor(paid, currency)),
+                coin_steps(),
+                every_direction(),
+            )
+        })
+    }
+
+    // Covers every split sale above, settled by a final tender of each of
+    // the six seeded kinds. Constructed kinds are left to
+    // `rounding_follows_the_drawer_count_not_the_code`: this property is
+    // about the grid the register actually ships.
+    fn split_sales_with_a_final_kind()
+    -> impl Strategy<Value = (Money, Money, TenderType, i64, RoundingDirection)> {
+        (
+            split_sales(),
+            proptest::sample::select(standard_tender_types()),
+        )
+            .prop_map(|((total, paid, step, dir), kind)| (total, paid, kind, step, dir))
+    }
+
+    proptest! {
+        // The crate's one shared configuration: 4,096 cases, the recorded
+        // seed, and a minimized failure persisted under proptest-regressions/.
+        // Conventions §5.1 is the rule and microstep 1.1.0 owns it.
+        #![proptest_config(domain_proptest_config())]
+
+        /// E.14. A split sale is rounded only when its final tender is cash,
+        /// and then only on what the earlier tenders left: any other final
+        /// kind — a card first of all — is asked for that remainder exactly.
+        /// "Once" is structural: one tender reaches the rule.
+        #[test]
+        fn prop_cash_rounding_only_on_final_cash_tender(
+            (total, paid, kind, step, dir) in split_sales_with_a_final_kind()
+        ) {
+            let remaining = total.checked_sub(paid).unwrap();
+            let rounding = final_tender_rounding(&kind, remaining, step, dir).unwrap();
+
+            if let Some(r) = rounding {
+                prop_assert_eq!(kind.code.as_str(), "cash", "only cash is rounded");
+                // On the final remainder — not on the total, and not on
+                // anything an earlier tender paid.
+                prop_assert_eq!(r.original, remaining);
+                // In the store's own direction, exactly as the arithmetic
+                // rounds: the rule decides whether, never how.
+                prop_assert_eq!(
+                    Ok(r),
+                    compute_cash_rounding(remaining, step, dir),
+                    "the rule must delegate to the arithmetic"
+                );
+                prop_assert_eq!(r.rounded.minor() % step, 0, "asked for a payable amount");
+                prop_assert!(r.adjustment.minor().abs() < step, "moved by less than a step");
+                prop_assert_eq!(
+                    paid.checked_add(r.rounded).unwrap(),
+                    total.checked_add(r.adjustment).unwrap(),
+                    "settled at the total plus the one adjustment"
+                );
+            } else {
+                prop_assert!(!kind.is_cash_counted, "{} went unrounded", kind.code);
+            }
+        }
+
+        /// The books still reconcile. Whatever the step and direction, a sale
+        /// settled by cash is collected at exactly its total plus the one
+        /// recorded adjustment — no fil appears or disappears between what was
+        /// owed, what was asked for and what was written down — and the
+        /// adjustment moves the way the store's direction says, by less than a
+        /// coin.
+        #[test]
+        fn prop_rounding_adjustment_keeps_total_exact(
+            (total, paid, step, dir) in split_sales()
+        ) {
+            let remaining = total.checked_sub(paid).unwrap();
+            let r = compute_cash_rounding(remaining, step, dir).unwrap();
+
+            prop_assert_eq!(r.original, remaining);
+            prop_assert_eq!(r.original.checked_add(r.adjustment), Ok(r.rounded));
+            prop_assert_eq!(
+                paid.checked_add(r.rounded).unwrap(),
+                total.checked_add(r.adjustment).unwrap()
+            );
+            prop_assert!(
+                r.rounded.currency() == total.currency()
+                    && r.adjustment.currency() == total.currency(),
+                "rounding never changes currency"
+            );
+            prop_assert_eq!(r.rounded.minor() % step, 0, "asked for a payable amount");
+
+            let adjustment = r.adjustment.minor();
+            match dir {
+                Nearest => prop_assert!(adjustment.abs() * 2 <= step, "{adjustment} for step {step}"),
+                Up => prop_assert!((0..step).contains(&adjustment), "{adjustment} for step {step}"),
+                Down => prop_assert!((1 - step..=0).contains(&adjustment), "{adjustment} for step {step}"),
+            }
         }
     }
 }
