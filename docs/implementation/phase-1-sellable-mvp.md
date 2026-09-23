@@ -144,8 +144,9 @@ Microstep 1.1.2a owns `prop_add_sub_roundtrip`, `prop_split_preserves_total` and
 Both enums from [`ref/domain-api.md`](ref/domain-api.md) §1.2, **and the one rounding primitive
 `RoundingRule::round_to_i64`** that 1.1.2b's arithmetic calls. Two bare enums have no behaviour, and
 I-1's "rounds once" needs exactly one implementation rather than one per caller, so the primitive
-belongs to the step that introduces the parameter. `RoundingDirection` stays behaviourless until
-1.5.3 builds `round_to_step`. Default `HalfAwayFromZero`, not banker's — see
+belongs to the step that introduces the parameter. `RoundingDirection` gained its behaviour at
+1.1.2b, which built `round_to_step`; 1.5.3 builds the cash-rounding policy on top of that primitive
+rather than the primitive itself. Default `HalfAwayFromZero`, not banker's — see
 [`ref/tax-jordan.md`](ref/tax-jordan.md) §4 for why, and note it is a jurisdiction default rather
 than a `Default` impl.
 **Tests:** `half_away_from_zero_rounds_1_5_to_2_and_neg_1_5_to_neg_2` · `half_even_rounds_1_5_and_2_5_both_to_2`
@@ -475,6 +476,7 @@ Requires `Authorized<cap::PriceOverride>`, a reason code, and respects a floor (
 ### 1.4.8 — Tendering transitions
 **Files:** `crates/pos-domain/src/cart.rs`
 `begin_tender`, `back_to_building` (only with zero tenders collected), `add_tender`, `remove_tender`, `begin_finalize`, `complete`, `void_sale`.
+**`add_tender` inherits an obligation from 1.5.3.** `final_tender_rounding` answers what a tender of a given kind is asked for *if* it settles the sale; whether it settles is decided here. A cash tender that covers the rounded remainder is final, and its `CashRounding` is what `Tendering.cash_rounding` stores; one that does not is a partial cash tender, applied exactly, and the next tender is asked again — so a sale carries at most one rounding and never rounds a card. §6.1's `add_tender(t, tender)` carries no step and no direction, so this step also decides where they reach the transition from. They live on `tax_computation_policy` (`0003`), which a store references — not on `store`, whatever [`ref/tax-jordan.md`](ref/tax-jordan.md) §5 rule 1 and merchant decisions 2.1–2.2 say, and whatever `0003`'s own comment says two lines above the columns.
 **Tests:** `back_to_building_denied_after_first_tender` · `complete_requires_settled` · `prop_no_operation_mutates_a_complete_sale` (I-4)
 
 ### 1.4.9 — `price_cart`
@@ -539,9 +541,13 @@ Split tender is the **core model**, not a feature: a sale holds `Vec<Tender>` un
 **Tests:** `prop_split_tender_sums_to_total` · `prop_change_never_negative` · `overtender_only_allowed_for_cash`
 
 ### 1.5.3 — Cash rounding
-**Files:** `crates/pos-domain/src/tender.rs`
+**Files:** `crates/pos-domain/src/tender.rs` · `crates/pos-domain/src/lib.rs` (the tender re-export block) · [`ref/domain-api.md`](ref/domain-api.md) (§7 — `final_tender_rounding`, and the refused negative remainder) · [`README.md`](README.md) (implementation frontier) · `scripts/check-test-catalog.py` (this microstep's two `PLANNED` names retired) · this file (this microstep's `Files:` and `Tests:` lines, the obligation it writes onto 1.4.8, and 1.1.6's clause claiming this step builds `round_to_step`)
 `compute_cash_rounding`, applied only when the **final** tender is cash and only to the remaining cash amount. The existing cash-rounding-treatment OPEN item in [`ref/tax-jordan.md`](ref/tax-jordan.md) §5 keeps the default tender-level adjustment provisional; the POS does not silently move it into a tax base or fiscal line.
-**Tests:** `prop_cash_rounding_only_on_final_cash_tender` (E.14) · `prop_rounding_adjustment_keeps_total_exact` · `card_charged_exact_unrounded_total` · `mixed_tender_1247_card_624_cash_620_adjustment_minus_3` · `half_away_tie_1245_rounds_to_1250` · `cash_overtender_and_change_are_separate_from_rounding`
+**"Final" is a property of a sequence, and the sequence type does not exist yet.** §7's `Tendering` holds a `Cart` and a `PricedCart` (1.4.1, 1.4.9), so this step states the E.14 rule over the vocabulary 1.5.1 left behind: `final_tender_rounding(kind, remaining, step, dir)` answers what the tender that settles a sale is asked for — a cash tender the remainder moved to the coin step, any other kind the exact remainder and `None`. Its result is the `Option<CashRounding>` that `Tendering.cash_rounding` holds, so 1.4.8's `add_tender` stores it rather than re-deriving it. Deciding *which* tender is final is 1.4.8's, and its entry carries that obligation.
+**The rule follows `is_cash_counted`, not the code `"cash"`.** [`ref/tax-jordan.md`](ref/tax-jordan.md) §5 rule 5 pairs the two — the `exchange` tender *"is never cash-counted and never receives cash rounding"* — and expected cash subtracts the rounding given away, so the adjustment is a drawer quantity: carried by a tender that never touches the drawer, it would move expected cash by money that never moved. On today's six-row grid four predicates select the same row, so constructed kinds are what make the choice a test rather than a coincidence.
+**A negative remainder is refused, because it is change.** A sale's remainder is never negative, and rounding a negative balance would be rounding change — the confusion `cash_overtender_and_change_are_separate_from_rounding` exists to prevent. A refund payout is `compute_refund_rounding`, 2.3.3's, with its own direction default.
+**A zero adjustment is still `Some`.** The tender was cash and nothing moved. 1.7.1's receipt model refuses a zero rounding line, so whatever maps a sale into it filters zero.
+**Tests:** `prop_cash_rounding_only_on_final_cash_tender` (E.14) · `prop_rounding_adjustment_keeps_total_exact` · `card_charged_exact_unrounded_total` · `mixed_tender_1247_card_624_cash_620_adjustment_minus_3` · `half_away_tie_1245_rounds_to_1250` · `cash_overtender_and_change_are_separate_from_rounding` · `rounding_follows_the_drawer_count_not_the_code` · `each_direction_moves_the_remainder_its_own_way` · `an_already_payable_remainder_is_rounded_by_nothing` · `an_unroundable_request_is_refused_whatever_the_tender` · `a_cash_rounding_round_trips_through_canonical_json`
 **Done when:** `cargo nextest run -p pos-domain mixed_tender_1247_card_624_cash_620_adjustment_minus_3` exits zero, proving that a `1.247` JOD sale charged `0.624` to card leaves `0.623`, rounds the final cash tender to `0.620`, records `-0.003`, and settles `1.244` exactly.
 
 ### 1.5.4 — Denomination helper
