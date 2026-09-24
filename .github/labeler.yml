@@ -96,7 +96,8 @@
           - "crates/pos-domain/src/money*"
           - "crates/pos-domain/src/tax*"
           - "crates/pos-domain/src/cart*"
-          - "crates/pos-domain/src/discount*"
+          - "crates/pos-domain/src/pricing*"
+          - "crates/pos-domain/src/tender*"
           - "packages/money/**"
           - "docs/implementation/ref/tax-jordan.md"
 "risk: security":
