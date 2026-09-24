@@ -1,6 +1,6 @@
 # Handoff — the single current one
 
-**Reflects `development` @ `84347eb`, 24 September 2026 — re-measured, not incremented.**
+**Reflects `development` @ `1ccdd63`, 24 September 2026 — re-measured, not incremented.**
 
 There is one handoff — keep updating this file rather than adding a dated one.
 
@@ -28,8 +28,9 @@ There is one handoff — keep updating this file rather than adding a dated one.
 
 > ## ✅ 24 SEPTEMBER — `1.5.4` LANDED, #203 IS CLOSED, AND NOTHING THIS FILE CALLED UNTRACKED STILL IS
 >
-> **Six pull requests before this edition's own, one microstep, ten issues filed, one spike
-> answered, and the longest-running red closed.** §2r is the record.
+> **Eight pull requests before this edition's own, one microstep, ten issues filed and five closed
+> (#203, #230, #234, #236, #241), one spike answered, and the longest-running red closed.** §2r is the
+> record.
 >
 > - **`1.5.4` (#238, issue #236)** takes Phase 1 to **37 of 112 (~33%)**: the dinar's denominations
 >   for the numpad and the float and close grids. **Its own first test run refuted a rule its
@@ -54,6 +55,9 @@ There is one handoff — keep updating this file rather than adding a dated one.
 >   that bump**, which is also why Dependabot never proposed it. **#244** tracks the three routes
 >   past it. So the one-source-connection rule is a standing constraint, and `00-master-plan.md`
 >   lists **six** Phase-1 blockers, not seven.
+> - **#241 is closed (#247).** `docs/drills/` exists with its index and record format, ahead of
+>   the first drill, and a fifth issue form, **Drill result**, files a result from the lab. `1.7.5`'s
+>   native-reader record now has somewhere agreed to land.
 > - **Every item this file carried as *"no issue tracks it"* now has one.**
 >   - The four ⚠️ OPEN items: **#232** (tax adviser: `1.3.5`, `1.3.2`), **#233** (second factor:
 >     `1.6.2`) and **#234** (WAL-reset spike: `1.8.1`).
@@ -359,8 +363,8 @@ guard-hardening on shipped code, not a microstep. **19 September moved it to 25 
 record, where twenty-six pull requests changed the governance layer and no microstep advanced.
 
 **`development` is green, tip included.** `just pre-push` exits 0 at `d573662`, the last code-bearing
-tip, where all 37 `just guards` steps pass. Two documentation merges followed, #243 and #245, each
-with `just pre-push` run by `just pr`. `ci` run **`35978371854` is a success on the tip `84347eb`**,
+tip, where all 37 `just guards` steps pass. Four documentation merges followed, #243, #245, #246 and #247, each with
+`just pre-push` run by `just pr`. `ci` run **`35981557707` is a success on the tip `1ccdd63`**,
 queried by SHA
 rather than taken as the newest green one — `ci.yml`'s ref-scoped concurrency group cancels runs
 when merges land inside two minutes of each other, and the cancellation is invisible unless you ask
@@ -388,11 +392,11 @@ regression.** On 24 September every item this file had carried as *"no issue tra
 from 21 September had missed, was labelled, put on the board and then **closed** by #240. Every open
 issue is on board #4. §3 is the list.
 
-**Three open issues can be closed by work rather than by waiting**: #174 (a guard on shipped code),
-#235 (the ruleset drift check) and #241 (the drill directory and form). #234 was the fourth, and
-work closed it the same day (#245). **Thirteen wait on a person**: a merchant, the adviser, ISTD,
-hardware, or an operator decision, now including #244's. **#197 waits on `1.10.1`'s migration
-`0006`**, where #179's three surviving items ride.
+**Two open issues can be closed by work rather than by waiting**: #174 (a guard on shipped code) and
+#235 (the ruleset drift check). #234 and #241 were the other two, and work closed both the same day
+(#245, #247). **Thirteen wait on a person**: a merchant, the adviser, ISTD, hardware, or an operator
+decision, now including #244's. **#197 waits on `1.10.1`'s migration `0006`**, where #179's three
+surviving items ride.
 
 **Read `CLAUDE.md` first.** This document assumes it. Where this file and the repository disagree,
 **the repository is right** — every number here was read from `git`, `gh` or a command, and where
@@ -526,13 +530,13 @@ vitest 5.0.0, gitleaks 8.30.1, Docker Engine 29.5.2.
 
 | | |
 |---|---|
-| `development` | **`84347eb`** — `ci` run **`35978371854` is a success on the tip**, queried by SHA; `just pre-push` last ran on a code-bearing tip at `d573662` (exit 0), and the two documentation merges since each ran it through `just pr`. Carries `1.9.1`, migration `0005`, `1.1.9`'s `ClockRepository`, `1.2.6`, the audit's fixes, #185's seven tests, `1.11.6`'s scan capture with #189's fix, `1.11.11`'s keyboard map, `1.9.2`'s document counters, `1.7.2`'s embedded typeface, `1.6.6`'s audit repository, `1.6.6b`'s `verify-audit`, `1.11.1`'s i18n infrastructure, `1.7.1`'s receipt model, `1.7.3`'s raster pipeline, `1.7.4`'s ESC/POS emitter, `1.5.1`'s tender vocabulary, `1.5.3`'s cash rounding and `1.5.4`'s denominations |
-| `staging` | **`531ea04`**, #148's merge — **66 behind** `origin/development` at `84347eb`, 5 ahead (its own five promotion merges). Re-measured 24 September with `git rev-list --count origin/staging..origin/development`; **this row has been wrong before and §9 states it independently**, so if the two disagree, run the command rather than picking one. **Use the `origin/` refs**: the local `staging` is still #91's `f2edbb6`, which is how this row once named the wrong commit |
-| `main` | `24a0283` — **194 behind** `origin/development` at `84347eb`, **133 behind** `origin/staging`, untouched since 20 August |
+| `development` | **`1ccdd63`** — `ci` run **`35981557707` is a success on the tip**, queried by SHA; `just pre-push` last ran on a code-bearing tip at `d573662` (exit 0), and the four documentation merges since each ran it through `just pr`. Carries `1.9.1`, migration `0005`, `1.1.9`'s `ClockRepository`, `1.2.6`, the audit's fixes, #185's seven tests, `1.11.6`'s scan capture with #189's fix, `1.11.11`'s keyboard map, `1.9.2`'s document counters, `1.7.2`'s embedded typeface, `1.6.6`'s audit repository, `1.6.6b`'s `verify-audit`, `1.11.1`'s i18n infrastructure, `1.7.1`'s receipt model, `1.7.3`'s raster pipeline, `1.7.4`'s ESC/POS emitter, `1.5.1`'s tender vocabulary, `1.5.3`'s cash rounding and `1.5.4`'s denominations |
+| `staging` | **`531ea04`**, #148's merge — **68 behind** `origin/development` at `1ccdd63`, 5 ahead (its own five promotion merges). Re-measured 24 September with `git rev-list --count origin/staging..origin/development`; **this row has been wrong before and §9 states it independently**, so if the two disagree, run the command rather than picking one. **Use the `origin/` refs**: the local `staging` is still #91's `f2edbb6`, which is how this row once named the wrong commit |
+| `main` | `24a0283` — **196 behind** `origin/development` at `1ccdd63`, **133 behind** `origin/staging`, untouched since 20 August |
 | Phase 1 | **37 of 112** executable microsteps (~33%) — `1.5.4` (#238) landed 24 September and `1.5.3` (#228) on 23 September, after `1.5.1`, `1.7.4`, `1.7.3` and `1.7.1` on 22 September. **Group 1.1 is closed**; group 1.7 is **4 of 10** and group 1.5 is **3 of 4**, its last step (`1.5.2`) waiting on `Tendering`. The next pair of counts sharing a rounded percentage is 42/43, so every microstep until then moves it |
 | Open PRs | **0**, and **nothing is in flight**. The WIP=1 slot is free |
-| Open issues | **17**, listed live: #68, #69, #70, #71, #111, #112, **#113 (reopened)**, #114, #174, #197, **#231**, **#232**, **#233**, **#235**, **#237**, **#241** and **#244**. Up from 11 **on purpose**: 24 September filed every item this file had carried as untracked, plus #237, which `1.5.4`'s first test run produced, and #244, which #234's answer produced. **#203 is closed** (#240), #230 opened and closed the same morning (#239), **#234 was answered the same day** (#245), and #236 opened and closed with `1.5.4`. **Every open issue is on board #4.** Three can be closed by work alone (#174, #235, #241), thirteen wait on a person, and #197 waits on migration `0006`. §3 is the table |
-| Board #4 | **40 items — 17 `Todo`, 23 `Done`**, counted live on 24 September after #245, and **17 `Todo` is exactly the 17 open issues**, the first time that equation has held since #203 was filed on 21 September. **#227's item is listed again**: on 23 September the listing and `items { totalCount }` both omitted it for at least 2h44m while its node read `Done`. So the listing **lagged** rather than dropped it. Count from the listing, but re-count before trusting a figure taken right after an edit. Archived items are excluded |
+| Open issues | **16**, listed live: #68, #69, #70, #71, #111, #112, **#113 (reopened)**, #114, #174, #197, **#231**, **#232**, **#233**, **#235**, **#237** and **#244**. 24 September filed every item this file had carried as untracked, plus #237, which `1.5.4`'s first test run produced, and #244, which #234's answer produced. **Closed the same day:** #203 (#240), #230 (#239), #234 (#245), #236 (with `1.5.4`) and #241 (#247). **Every open issue is on board #4.** Two can be closed by work alone (#174, #235), thirteen wait on a person, and #197 waits on migration `0006`. §3 is the table |
+| Board #4 | **40 items — 16 `Todo`, 24 `Done`**, counted live on 24 September after #247, and **16 `Todo` is exactly the 16 open issues**, the first time that equation has held since #203 was filed on 21 September. **#227's item is listed again**: on 23 September the listing and `items { totalCount }` both omitted it for at least 2h44m while its node read `Done`. So the listing **lagged** rather than dropped it. Count from the listing, but re-count before trusting a figure taken right after an edit. Archived items are excluded |
 | Rulesets | **four, all active**, all four checked in under `.github/rulesets/`. **Re-diffed by hand on 21 September: all four still match live** on enforcement, target, conditions, rules and bypass actors. **Not re-diffed since**, so the observation is three days old. No gate does this; **#235** now tracks building one. See §3 |
 | Tags / releases | **zero of each.** The append-only tag ruleset has never been exercised |
 | Repository | **PUBLIC**, GitHub Free, `OmarSweiti` the sole collaborator (admin) |
@@ -2579,6 +2583,22 @@ that method (#245):
 backup; the backup is `1.8.6`, and `1.8.5b` is key custody. The sweep across the docs that lesson 1
 asks for found it, along with two more sites that still called the question open.
 
+### #241: the drill home, built before the first drill
+
+`02-development-workflow.md` §5.10 specifies `docs/drills/` and a `05-drill-result.yml` issue form
+*"so it can be filed from a phone in the lab"*, and neither existed. §5.10 had said the first drill
+would create the directory, and nothing at all owned the form. **#247** built both:
+
+- the index, with an empty runs table that says so, and §5.10's record format (drill, ran against,
+  hardware, operator, times, outcome, surprises), extended to reviews done by a person, because
+  `1.7.5` and `1.11.14` each need one;
+- the fifth issue form;
+- `03-github-workflow.md` §4 now lists five forms, and §5.10 now says why the directory predates
+  its first drill.
+
+Issue templates are not frozen (#166 edited one with `protected-paths` green), so #247 was green
+throughout, `workflow-analysis` included.
+
 ### `PROJECT-GUIDE.md` is tracked, as a snapshot
 
 The operator's answer to the question put on 8 and 9 September was *"start track it"*. It is
@@ -2595,9 +2615,9 @@ true (no `docs/drills/`, no drill-result form) is **#241**.
 
 **All seventeen are on board #4, all `Todo`, all assigned**, re-read live at `d573662` with
 `gh issue list --state open`. That is still the command to count with, because the board is only as
-complete as the last person who added to it. **Three can be closed by work alone**: #174, #235 and
-#241, where #234 was the fourth until #245 closed it. **The other fourteen wait**, thirteen of them on
-a person:
+complete as the last person who added to it. **Two can be closed by work alone**: #174 and #235.
+#234 and #241 were the others until #245 and #247 closed them the same day. **The other fourteen
+wait**, thirteen of them on a person:
 
 - one on `hardware` (#68);
 - seven on a `decision` (#69, #71, #111, #113, #114, #231, #244);
@@ -2650,7 +2670,7 @@ therefore **deliberately-red `protected-paths` PRs** of their own:
 Nothing about this blocks a microstep. It should get a label, a board item and a decision. *(It got
 all three on 24 September, and then the fix.)*
 
-**#174 is one of three that code alone can close**, with #235 and #241. **#179 was closed by
+**#174 is one of two that code alone can close**, with #235. **#179 was closed by
 hand on 15 September** with three of its four findings unaddressed; they ride in #197, and the block
 below re-measures each.
 
@@ -2673,7 +2693,7 @@ below re-measures each.
 | **244** | `gap: the WAL-reset fix is one rusqlite bump away, and sqlx's libsqlite3-sys bound blocks it` | P1 | — | decision | every second connection on the source file. The routes are wait for `sqlx`, patch `sqlx-sqlite`, or split the workspace. `1.8.0` pins the minimums either way |
 | **235** | `gap: nothing checks the checked-in rulesets against live, and gh-protect.sh is obsolete` | P2 | security | **not blocked, closed by work** | nothing; it is a control. Each fix is a frozen-surface, deliberately red PR |
 | **237** | `decision: confirm the dinar coin set — the plan lists 25 fils and omits 5 fils` | P2 | money path | merchant answer | nothing in code (E.17). A coin missing from the grid reads **short at every close** |
-| **241** | `gap: docs/drills/ and the drill-result issue form are promised and do not exist` | P2 | — | **not blocked, closed by work** | the first drill record: `1.7.5`, then `1.11.14`. The natural moment is `1.7.5`'s `Files:` line |
+| ~~241~~ | ~~`gap: docs/drills/ and the drill-result issue form are promised and do not exist`~~ | P2 | — | — | **CLOSED by #247 on 24 September**: the index, the record format and the fifth form exist, ahead of the first drill |
 
 **#69 does not gate a Phase-1 microstep**, but the sentence this document used to prove it **does
 not exist**. Until 21 September this block quoted `phase-1:1066` as saying *"Owner: 2.7.0 ratifies
@@ -2828,8 +2848,8 @@ under it.
 **There is no clean next microstep, and saying so is this section's job.** Every name left on the
 shortlist needs one thing settled before it is honest to start:
 
-- **`1.7.5`**, the most valuable, needs a **native reader** (§7 item 6) and now **#241's** drill
-  directory and form, which its `Files:` line should absorb.
+- **`1.7.5`**, the most valuable, needs a **native reader** (§7 item 6). Its record now has
+  somewhere to land: #247 built `docs/drills/` and the Drill result form.
 - **`1.6.7`**, capability exhaustiveness, needs a **scoping decision**. It *creates* the registry,
   but its `Done when` requires *"the department threshold boundary"*, and there is no department
   command and no IPC command of any kind: `apps/terminal/src-tauri/src/` holds only `lib.rs`,
@@ -2849,7 +2869,7 @@ is stopping you:
 - ~~**#234**, the WAL-reset spike~~, **done the same day (#245)**. It found the fix absent and filed
   #244. `1.8.1` may now proceed under the one-connection rule, and `1.8.0` has its minimums plus one
   design question to settle.
-- **#241**, the drill directory and form, ideally folded into `1.7.5`.
+- ~~**#241**, the drill directory and form~~, **done the same day (#247)**.
 - **#235**, the ruleset drift check, which is frozen-surface and so deliberately red.
 - **#174**, the `Debug` redaction decision.
 
@@ -3297,8 +3317,8 @@ change would demand an approval no second account can supply.
 gh api 'repos/:owner/:repo/rulesets/rule-suites?per_page=100&time_period=month'
 ```
 
-**89 evaluations in the trailing month: 32 bypass, 56 pass, 1 fail**, re-read live on
-24 September after #245. It read 82 (30 bypass) on 23 September and 68 (28 bypass) on 21 September. The four
+**91 evaluations in the trailing month: 32 bypass, 58 pass, 1 fail**, re-read live on
+24 September after #247. It read 82 (30 bypass) on 23 September and 68 (28 bypass) on 21 September. The four
 newest bypasses are all frozen-surface reds, and **each names exactly one failing check**:
 
 | Suite | PR | What was frozen |
@@ -3514,11 +3534,11 @@ Established by introspection and corrected in #122; do not re-litigate.
 
 ### `development → staging`
 
-`staging` is **66 behind at `84347eb`** — `git rev-list --count origin/staging..origin/development`,
+`staging` is **68 behind at `1ccdd63`** — `git rev-list --count origin/staging..origin/development`,
 re-measured 24 September, and the `origin/` spellings matter: a local `staging` left at #91 answers
 far more. It was **60 at `b9fcb28`**, the #229 tip the previous edition predicted it could not
-measure, which confirms the rule a second time: 56, 57, 58, 59, 60, then six more for #238, #240,
-#239, #242, #243 and #245, one per merge and no promotion between.
+measure, which confirms the rule a second time: 56, 57, 58, 59, 60, then eight more for #238, #240,
+#239, #242, #243, #245, #246 and #247, one per merge and no promotion between.
 
 > **This row is stale by one the moment a handoff merges, and that is structural rather than
 > careless.** An edition measures the distance while writing, which is necessarily *before* its own
