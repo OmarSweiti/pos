@@ -502,7 +502,7 @@ flight, what is blocked, what surprised you, what you owe the merchant.
 | a toolchain gap — a §17 row | a note to yourself that belongs in the PR description |
 | a time-boxed spike, with the question it must answer | "improve error handling" |
 
-Blank issues are **off**. The four forms exist because the fields are exactly the parts that get
+Blank issues are **off**. The five forms exist because the fields are exactly the parts that get
 skipped, and a bug report without a reproduction is a memory, not a task.
 
 | Form | Demands, and will not let you skip |
@@ -511,6 +511,7 @@ skipped, and a bug report without a reproduction is a memory, not a task.
 | **Bug** | expected, actual **with figures to the fil**, a reproduction from a *clean* test bed, a severity, the invariant broken, and the new `E.n` row |
 | **Merchant decision** | the question in a merchant's words, what it blocks, the assumption running in the code meanwhile, and the cost of being wrong |
 | **Toolchain gap** | the gap, what it costs to leave open, and what closes it |
+| **Drill result** | the drill and its case number, the exact commit or tag, the hardware, **the operator's name**, the times, the outcome against *Must happen*, and every surprise with the case it became: [`docs/drills/`](../drills/README.md)'s record, fileable from a phone in the lab (added 24 September, #241) |
 
 The `Done when` field is the one that earns its keep. "The tax engine works" is not a done-when.
 "Σ line tax == receipt tax, exactly, ∀ inputs" is — and it is also a test name.

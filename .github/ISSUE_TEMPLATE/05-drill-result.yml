@@ -1,0 +1,68 @@
+name: Drill result
+description: One run of a drill, or one review by a person, recorded from the lab. Transcribed into docs/drills/ afterwards.
+title: "drill: "
+labels: ["type: test"]
+projects: ["OmarSweiti/4"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A drill produces a record or it did not happen (development workflow §5.10).
+        These fields are docs/drills/README.md's record, in the same order. After filing,
+        transcribe the result into `docs/drills/YYYY-MM-DD-<drill>.md` and add its index row.
+  - type: input
+    id: drill
+    attributes:
+      label: Drill
+      description: Its name and case number from ref/test-catalog.md, or the microstep whose Done when requires the review.
+      placeholder: "Real power loss after the receipt printed (E.1b)"
+    validations:
+      required: true
+  - type: input
+    id: ran-against
+    attributes:
+      label: Ran against
+      description: The exact commit SHA or tag. A branch name is not evidence.
+      placeholder: "v0.4.0-rc.1 (a1b2c3d)"
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: Hardware
+      description: The machine and OS, and for a register drill its row in ref/hardware-and-receipts.md §6a.
+      placeholder: "reference register, row 1 of §6a.1, Windows 11 IoT"
+    validations:
+      required: true
+  - type: input
+    id: operator
+    attributes:
+      label: Operator
+      description: The person who ran it. Phase 5 requires someone who did not write the code.
+    validations:
+      required: true
+  - type: input
+    id: timing
+    attributes:
+      label: Started, ended, elapsed
+      placeholder: "2026-10-02 10:05 to 10:41 (36 min)"
+    validations:
+      required: true
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: Outcome
+      description: Judged against the drill's Must happen column in §5.10.
+      options:
+        - Passed
+        - Failed
+        - Could not complete
+    validations:
+      required: true
+  - type: textarea
+    id: surprises
+    attributes:
+      label: Surprises, and what each became
+      description: Anything unexpected, with the case number or issue it became. "None" is an answer.
+    validations:
+      required: true
