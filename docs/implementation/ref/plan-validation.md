@@ -302,8 +302,9 @@ See [`security-compliance.md`](security-compliance.md) §3.
 ## 5. Stack currency check
 
 Dependency versions were compared with crates.io on `2026-08-20`. Version currency is not a safety
-proof for the embedded SQLCipher/SQLite runtime, and the WAL prerequisite below must close before
-the Phase-1 storage layer permits concurrent source connections.
+proof for the embedded SQLCipher/SQLite runtime. The WAL prerequisite below was **answered on
+24 September**: the compiled runtime lacks the fix, so the Phase-1 storage layer permits no
+concurrent source connection until #244 lands the fixed build.
 
 | Crate / tool | Repo pins | Latest | Action |
 |---|---|---|---|
@@ -313,7 +314,7 @@ the Phase-1 storage layer permits concurrent source connections.
 | `rust_decimal` | 1 | 1.42.1 | none |
 | `proptest` | 1 | 1.11.0 | none |
 | `keyring` | 4 | 4.1.6 | none |
-| `rusqlite` | **0.39** | 0.40.2 | retain until the `libsqlite3-sys` `links` collision documented in [`docs/phase-0-remaining-setup.md`](../../phase-0-remaining-setup.md) is resolved; independently verify the compiled SQLCipher/SQLite WAL safety before storage work |
+| `rusqlite` | **0.39** | 0.40.2 | retain until the `libsqlite3-sys` `links` collision documented in [`docs/phase-0-remaining-setup.md`](../../phase-0-remaining-setup.md) is resolved. The compiled WAL safety was **verified on 24 September (#234)**: it lacks the WAL-reset fix, and the bump that carries it is #244 |
 
 Versions recorded for crates the phases may add, to be rechecked when each dependency lands:
 `argon2` 0.5.3 · `cosmic-text` 0.19 · `rustybuzz` 0.20 · `tiny-skia` 0.12 ·
@@ -321,8 +322,41 @@ Versions recorded for crates the phases may add, to be rechecked when each depen
 0.13 · `jiff` 0.2 · `sentry` 0.49 · `ed25519-dalek` 3.0 · `serialport` 4.9 · `rusb`
 0.9.
 
-> ⚠️ **OPEN — blocks 1.8.1.** Does the resolved bundled SQLCipher/SQLite runtime contain the upstream WAL-reset corruption fix for every supported source-connection and checkpoint pattern? Default until answered: permit one source database connection only and do not start a concurrent checkpoint, backup, reporting, or sync connection.
-> Owner: `1.8.1`. Source that settles it: runtime `sqlite_version()` and `cipher_version()` matched to the official SQLite and SQLCipher advisories/release notes, plus the upstream concurrency regression on the compiled build.
+> ✅ **ANSWERED on 24 September 2026 (#234): the bundled runtime does NOT carry the WAL-reset
+> fix.** The one-connection rule is therefore a standing constraint, not a default awaiting an
+> answer. The question it replaces was: *"Does the resolved bundled SQLCipher/SQLite runtime contain
+> the upstream WAL-reset corruption fix for every supported source-connection and checkpoint
+> pattern?"* Its stated method was used in full:
+>
+> - **The compiled build, read at runtime** from the exact crates `Cargo.lock` pins (`rusqlite`
+>   0.39.0 → `libsqlite3-sys` 0.37.0, feature `bundled-sqlcipher-vendored-openssl`):
+>   `sqlite_version()` = **`3.50.4`** (source id `2025-07-30 19:33:53 4d8adfb3…`) and
+>   `PRAGMA cipher_version` = **`4.10.0 community`**.
+> - **The official SQLite advisory**, [§11 "The WAL-Reset Bug"](https://sqlite.org/wal.html):
+>   *"likely present in all version of SQLite from 3.7.0 (2010-07-21) through 3.51.2 (2026-01-09).
+>   It is fixed in version 3.51.3 (2026-03-13) and later. Backports of the fix are available for some
+>   earlier releases: 3.44.6 and 3.50.7."* It needs WAL mode and *"two or more database connections
+>   open on the same file, in separate threads or processes"* writing or checkpointing at the same
+>   instant. `3.50.4` predates the `3.50.7` backport.
+> - **The official SQLCipher notes**,
+>   [4.14.0 of 17 March 2026](https://www.zetetic.net/blog/2026/03/17/sqlcipher-4.14.0-release/):
+>   *"Updates the upstream SQLite baseline to 3.51.3, which fixes a critical WAL-reset database
+>   corruption bug."* That is the first SQLCipher release found to name the fix. The first `rusqlite`
+>   to bundle it is **0.40.0** (`libsqlite3-sys` 0.38.0), per `rusqlite`'s `upgrade_sqlcipher.sh`
+>   at each release tag.
+> - **The upstream concurrency regression was not run**, because there is no fix in this build for
+>   it to prove. It becomes the evidence on the day the bump lands.
+>
+> **Why the fixed build is not simply adopted.** `sqlx-sqlite` 0.9.0, the newest `sqlx`, requires
+> `libsqlite3-sys >=0.30.1, <0.38.0`. Cargo enforces `links` uniqueness over that *optional* driver
+> even though nothing here enables it, so `rusqlite` 0.40 does not resolve, and no Dependabot PR for
+> it ever appeared. **#244** tracks the bump and the three routes past the bound.
+>
+> **What stands until #244 closes: one source database connection**, with no concurrent checkpoint,
+> backup, reporting or sync connection. The multi-connection minimums `1.8.0` pins are **SQLite
+> `3.51.3`** and **SQLCipher `4.14.0`**, sourced from the two pages above. Owner of the constraint:
+> `1.8.0`'s storage gate. `1.8.1`, which this item used to block, adds no connection and may proceed
+> under it.
 
 One thing to check rather than assume: `rusqlite` exposes **no `fts5` feature flag**. FTS5 arrives through the bundled SQLite build. With `bundled-sqlcipher-vendored-openssl` this needs *verifying*, not hoping — microstep 1.2.6 adds a startup assertion and a test that fails loudly if FTS5 is absent, rather than discovering it when product search silently returns nothing.
 
@@ -397,7 +431,7 @@ not described as primary ISTD or PCI authority.
 
 **Engineering**
 - [SQLite FTS5 extension](https://www.sqlite.org/fts5.html) — *tokenizer options for Arabic search*
-- [SQLite WAL documentation](https://www.sqlite.org/wal.html) and [SQLCipher release notes](https://www.zetetic.net/blog/) — *official sources that settle the compiled-runtime WAL prerequisite; this audit does not guess the fixed version boundary*
+- [SQLite WAL documentation](https://www.sqlite.org/wal.html) and [SQLCipher release notes](https://www.zetetic.net/blog/) — *official sources that settle the compiled-runtime WAL prerequisite; this audit did not guess the fixed version boundary, and #234 took it from them on 24 September: SQLite `3.51.3`, SQLCipher `4.14.0`*
 - [Star Micronics — ESC/POS command specification](https://www.starmicronics.com/support/Mannualfolder/escpos_cm_en.pdf) — *`GS v 0` raster*
 - [Tauri core releases](https://tauri.app/release/core/)
 - crates.io API, queried `2026-08-20`, for every version in §5

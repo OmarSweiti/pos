@@ -227,18 +227,19 @@ these are the ones that can change an architecture rather than a value.
 **Nothing in this set may state one of these as resolved.** Claiming an unearned compliance
 validation is a standing repository rule, and a fabricated tax fact is worse than a visible gap.
 
-#### The seven that block Phase 1
+#### The six that still block Phase 1, and one answered
 
 Every owner above is Phase 2 or later, which read as though nothing in Phase 1 waits on an outside
-answer. Seven `⚠️ OPEN` blocks say otherwise, and two of them contradict Phase 1's own exit gate.
-Find them all with `grep -rn 'OPEN — blocks 1\.' docs/implementation/`.
+answer. Six `⚠️ OPEN` blocks say otherwise, and two of them contradict Phase 1's own exit gate. The
+count was seven until 24 September, when #234 answered the WAL-reset question below. Find the rest
+with `grep -rn 'OPEN — blocks 1\.' docs/implementation/`.
 
 | Question | Owner | Default today | Settled by |
 |---|---|---|---|
 | Which tie rule, cash-rounding step/direction and tax treatment the Jordan jurisdiction policy requires | `1.3.4` | **no `tax_computation_policy` row is approved and store provisioning/finalization stays blocked** | the official ISTD arithmetic/business-rule package, or a written clarification reviewed by the merchant's tax advisor |
 | Which effective-dated categories, components and jurisdiction packs apply to the merchant's assortment | `1.3.7` | `0003` seeds no guessed rate rows; unknown categories fail closed | the official ISTD rate catalogue plus the merchant's accountant-approved classification |
 | Which JSMO mark or certificate proves a trade scale is verified, when it expires, and what forces reverification | `1.2.4` | **`embedded_barcode_rule.is_active` stays `0`; no scale-derived price reaches checkout** | current JSMO metrology instructions, or written JSMO confirmation for the commissioned scale |
-| Whether the bundled SQLCipher/SQLite runtime carries the upstream WAL-reset corruption fix for every source-connection and checkpoint pattern | `1.8.1`, constants at `1.8.0` | one source connection only — no concurrent checkpoint, backup, reporting or sync connection | the resolved runtime's own advisory and release evidence |
+| Whether the bundled SQLCipher/SQLite runtime carries the upstream WAL-reset corruption fix for every source-connection and checkpoint pattern | `1.8.1`, constants at `1.8.0` | **Answered 24 September (#234): it does not.** The build is SQLite `3.50.4` under SQLCipher `4.10.0`, and the fix is SQLite `3.51.3` / SQLCipher `4.14.0`. So **one source connection only** stands as a constraint until #244 lands the bump | the resolved runtime's own advisory and release evidence: [`ref/plan-validation.md`](ref/plan-validation.md) §5 carries it |
 | The taxable base when a line carries both General and Special Sales Tax | `1.3.5` | the engine fails closed; no SST rule is seeded | the merchant's tax advisor on their own SST position |
 | Which `ZeroRatingReason` values the filing return distinguishes | `1.3.2` | — | the return's own instructions, via the accountant |
 | Which second factor exists on a Jordanian minimarket counter for high-value refunds, user administration and recovery | `1.6.2` | manager PIN + audited reason + exception report | the merchant, on what hardware and process they will actually operate |
@@ -247,9 +248,12 @@ Find them all with `grep -rn 'OPEN — blocks 1\.' docs/implementation/`.
 resolvable by writing code.** Exit demonstration 2 requires selling "a weighed item via
 price-embedded barcode", which `1.2.4`'s default refuses outright; and all ten demonstrations
 require finalizing a sale, which `1.3.4`'s default blocks. Phase 1 cannot be *declared* done until
-those two answers arrive, however complete the implementation is. The `1.8.1` row is the one that
-can still change an architecture: it decides whether `1.8.6`'s online backup may open a second
-connection or must serialize with checkout.
+those two answers arrive, however complete the implementation is. The `1.8.1` row was the one that
+could still change an architecture, and its answer did: until #244 lands the fixed build, `1.8.6`'s
+online backup must run through the one source connection and serialize with checkout. Its
+`snapshot(conn: &Connection, …)` signature already takes that connection. The WAL-reset bug needs
+two connections to the **same** file, so a backup written from the source connection into a
+separate destination file stays inside the rule.
 
 ---
 
