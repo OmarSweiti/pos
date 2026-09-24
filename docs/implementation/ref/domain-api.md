@@ -1772,6 +1772,19 @@ pub struct CashRounding { pub original: Money, pub rounded: Money, pub adjustmen
 pub fn compute_refund_rounding(
     payout: Money, step_minor: i64, dir: RoundingDirection,
 ) -> Result<CashRounding, MoneyError>;
+
+/// The notes and coins a cashier counts and hands over, largest first: the
+/// numpad's quick-keys, and the denomination grid for a shift's opening float
+/// and its blind close count (`ui-spec.md` `DenominationGrid`) [1.5.4]. JOD is 50, 20,
+/// 10, 5 and 1 dinar and 500, 250, 100, 50, 25 and 10 fils. `None` for a
+/// currency with no table means "no helper", never an error, because master
+/// plan E.17 says denominations are never needed for correctness. It must never
+/// mean the dinar's table borrowed (I-2).
+///
+/// NOT a change-maker: with 25 fils and no 5, largest-first strands a
+/// remainder at 30 fils. The 25-fil piece is also not a whole number of qirsh,
+/// which is inconsistent with a ten-fil cash step; #237 asks the merchant.
+pub fn denominations(currency: Currency) -> Option<&'static [Money]>;
 ```
 
 ### 7.1 The tender-type table — [1.5.1]

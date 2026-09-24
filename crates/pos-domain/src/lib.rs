@@ -52,7 +52,7 @@ pub use tax::{
 };
 pub use tender::{
     CashRounding, RefundRouting, Tender, TenderState, TenderType, compute_cash_rounding,
-    final_tender_rounding, standard_tender_type, standard_tender_types,
+    denominations, final_tender_rounding, standard_tender_type, standard_tender_types,
 };
 pub use time::{
     BusinessDate, Clock, ClockAnomaly, ClockConfidence, ClockPolicy, ClockState, DayBoundary,
