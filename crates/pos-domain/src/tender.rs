@@ -1,11 +1,11 @@
 //! How a sale is paid for (microstep 1.5.x).
 //!
-//! Two things live here. The *vocabulary* (1.5.1) — what kinds of tender
-//! exist, what each one does, and what one collected tender records — and
-//! **cash rounding** (1.5.3): what the tender that settles a sale is asked for
-//! when the smallest coin cannot make up the fils. `remaining_due`,
-//! `change_due` and `is_settled` are still to come with 1.5.2, and the
-//! denomination table with 1.5.4.
+//! Three things live here. The *vocabulary* (1.5.1) — what kinds of tender
+//! exist, what each one does, and what one collected tender records;
+//! **cash rounding** (1.5.3) — what the tender that settles a sale is asked
+//! for when the smallest coin cannot make up the fils; and the **denomination
+//! table** (1.5.4) — the notes and coins a cashier counts. `remaining_due`,
+//! `change_due` and `is_settled` are still to come with 1.5.2.
 //!
 //! Shape is [`ref/domain-api.md`](../../../docs/implementation/ref/domain-api.md) §7 and the
 //! table is its §7.1.
@@ -31,7 +31,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ids::TenderId;
-use crate::money::{Money, MoneyError, RoundingDirection};
+use crate::money::{Currency, Money, MoneyError, RoundingDirection};
 
 /// Where a refund of this tender is allowed to go.
 ///
@@ -422,6 +422,68 @@ fn refuse_unroundable(remaining: Money, step_minor: i64) -> Result<(), MoneyErro
     Ok(())
 }
 
+/// The dinar's notes and coins, largest first, as the plan lists them.
+///
+/// Fifty, twenty, ten, five and one dinar; 500, 250, 100, 50, 25 and 10 fils.
+/// Written as minor units against [`Currency::JOD`], whose exponent is three,
+/// so one dinar is `1_000` — the value `100` would be the classic mistake I-2
+/// exists to prevent.
+const JOD_DENOMINATIONS: [Money; 11] = [
+    Money::from_minor(50_000, Currency::JOD),
+    Money::from_minor(20_000, Currency::JOD),
+    Money::from_minor(10_000, Currency::JOD),
+    Money::from_minor(5_000, Currency::JOD),
+    Money::from_minor(1_000, Currency::JOD),
+    Money::from_minor(500, Currency::JOD),
+    Money::from_minor(250, Currency::JOD),
+    Money::from_minor(100, Currency::JOD),
+    Money::from_minor(50, Currency::JOD),
+    Money::from_minor(25, Currency::JOD),
+    Money::from_minor(10, Currency::JOD),
+];
+
+/// The notes and coins a cashier counts and hands over in `currency`,
+/// largest first — the numpad's quick-keys, and the denomination grid a shift
+/// opens with (float entry) and closes with (the blind count).
+///
+/// **`None` means "no helper", never an error.** Master plan E.17 is the
+/// reason: *"system doesn't care about denominations for correctness, but
+/// count helper does"*, so the numpad works without quick-keys and the count
+/// grids without rows. What `None` must never become is the dinar's table
+/// borrowed: a USD amount has two minor digits, and ten fils read as ten cents
+/// is off by a factor of ten (I-2).
+///
+/// **The smallest piece is ten fils, one qirsh**, merchant decision 2.1's
+/// default cash step, so every amount on that step can be counted. A store
+/// whose answer to 2.1 is a five-fil step needs a five-fil row, and that change
+/// is made here together with `the_smallest_denomination_is_one_qirsh`, not by
+/// one silent edit.
+///
+/// **The plan's set is not consistent with a ten-fil step, and that is recorded
+/// rather than repaired.** Its 25-fil piece is not a whole number of qirsh: a
+/// customer who hands one over against a remainder rounded to `0.020` is owed
+/// five fils of change, and no piece here pays it. Either the 25-fil piece is
+/// not in everyday use or the 5-fil piece is and belongs here. That is master
+/// plan B.5's standing *"Verify the store's actual coin practice with the
+/// merchant"*, and issue #237 carries it. The values stay the plan's until
+/// then.
+///
+/// **This is not a change-maker, and nothing may use it as one.** With 25 fils
+/// in the table and no 5, counting out largest-first strands a remainder no
+/// coin can cover: 30 fils takes 25 and leaves 5, where the answer is
+/// 10 + 10 + 10. Measured, 80 of the 200 qirsh-multiples up to 2.000 JOD fail
+/// that way. Quick-keys add amounts and the count grid counts them, so neither
+/// needs change made. Anything that ever suggests change in coins needs an
+/// exact algorithm, not a greedy pass over this list.
+#[must_use]
+pub fn denominations(currency: Currency) -> Option<&'static [Money]> {
+    if currency == Currency::JOD {
+        Some(&JOD_DENOMINATIONS)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -751,6 +813,73 @@ mod tests {
 
     fn jod(minor: i64) -> Money {
         Money::from_minor(minor, Currency::JOD)
+    }
+
+    /// The phase entry's eleven, transcribed as literals rather than built
+    /// from the table they check: 50, 20, 10, 5 and 1 dinar; 500, 250, 100,
+    /// 50, 25 and 10 fils.
+    const PLANNED_DINAR_TABLE: [i64; 11] = [
+        50_000, 20_000, 10_000, 5_000, 1_000, 500, 250, 100, 50, 25, 10,
+    ];
+
+    #[test]
+    fn denominations_are_descending_and_complete() {
+        let table = denominations(Currency::JOD).expect("the dinar has a table");
+
+        // Complete, and in order: the plan's eleven, value for value.
+        let minor: Vec<i64> = table.iter().map(|d| d.minor()).collect();
+        assert_eq!(minor, PLANNED_DINAR_TABLE);
+
+        // Largest first, strictly. A repeated value would be a count-grid row
+        // counted twice, and a quick-key the cashier cannot tell from its
+        // neighbour.
+        for (larger, smaller) in minor.iter().zip(minor.iter().skip(1)) {
+            assert!(larger > smaller, "{larger} is not above {smaller}");
+        }
+
+        // Every entry is a positive dinar amount — `shift_count_line` refuses a
+        // denomination that is zero or negative, and a fils value tagged with
+        // another currency would carry the wrong exponent.
+        for d in table {
+            assert_eq!(d.currency(), Currency::JOD, "{}", d.format_exact());
+            assert!(d.minor() > 0, "{}", d.format_exact());
+        }
+    }
+
+    /// Merchant decision 2.1's default step is one qirsh, ten fils, and the
+    /// table reaches it: the smallest piece is exactly one qirsh, so every
+    /// amount on that step can be counted into the grid.
+    ///
+    /// This test was first written as "every denomination is a whole number of
+    /// qirsh", and the plan's own table refused it — 25 fils is not. The
+    /// inconsistency is recorded on `denominations` and in #237 rather than
+    /// asserted here, because a test of a hole has to be deleted the day the
+    /// hole closes. A store whose answer to 2.1 is a five-fil step changes this
+    /// test and the table together.
+    #[test]
+    fn the_smallest_denomination_is_one_qirsh() {
+        let table = denominations(Currency::JOD).expect("the dinar has a table");
+        assert_eq!(table.iter().map(|d| d.minor()).min(), Some(QIRSH));
+    }
+
+    /// I-2: the exponent is per-currency data, and so is the table. A currency
+    /// with no table gets no helper; it never gets the dinar's.
+    #[test]
+    fn no_other_currency_borrows_the_dinar_denominations() {
+        assert_eq!(denominations(Currency::USD), None);
+        assert_eq!(denominations(Currency::EUR), None);
+
+        // And the table that does exist is written in its own currency's
+        // exponent: the one-dinar piece is exactly one major unit, 1000 fils,
+        // not the 100 a two-decimal habit would write.
+        let one_dinar = Money::from_minor(Currency::JOD.minor_per_major(), Currency::JOD);
+        assert!(
+            denominations(Currency::JOD)
+                .expect("the dinar has a table")
+                .contains(&one_dinar),
+            "one dinar is {} fils",
+            Currency::JOD.minor_per_major()
+        );
     }
 
     fn seeded(code: &str) -> TenderType {
