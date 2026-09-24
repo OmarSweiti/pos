@@ -16,11 +16,11 @@ The buildable plan for this POS: what to type, in what order, and how you will k
 
 Then work the phase you are in, consulting `ref/` as the microsteps point you there.
 
-**Current implementation frontier (23 September 2026):** Phase 0 is closed by transfer: `0.3.2`
+**Current implementation frontier (24 September 2026):** Phase 0 is closed by transfer: `0.3.2`
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **36 of 112 executable microsteps fully complete (~32%)**: `1.1.0`
+Phase 1 has **37 of 112 executable microsteps fully complete (~33%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -75,7 +75,10 @@ written to match a seed that shipped before them in a migration nobody may reope
 distinction a shift closes short without: an internal tender is not merely a tender that counts no
 drawer cash), and `1.5.3` (cash rounding — a final cash tender asked for the remainder moved to the
 store's coin step while a card is charged the exact amount, the signed difference kept as a figure
-of its own so the books reconcile to the fil, and change refused rather than rounded).
+of its own so the books reconcile to the fil, and change refused rather than rounded), and `1.5.4`
+(the dinar's denominations — the plan's eleven pieces for the quick-keys and the float and close
+grids, no table borrowed across currencies, and a coin set its own first test showed to be
+inconsistent with a ten-fil step, recorded and put to the merchant rather than guessed).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
