@@ -958,8 +958,10 @@ on their worst day.
 Restore your clock afterwards (`sudo sntp -sS time.apple.com`).
 
 **A drill produces a record or it did not happen**, and "signed off and dated" needs somewhere to be
-signed — a normative reference document is not a log. Every run is a dated file under `docs/drills/`,
-which the first drill creates:
+signed — a normative reference document is not a log. Every run is a dated file under
+[`docs/drills/`](../drills/README.md). This sentence used to say the first drill creates it; it was
+created ahead of the first drill on 24 September (#241), with its index and record format, so that
+the first run has an agreed shape to land in:
 
 ```
 docs/drills/
