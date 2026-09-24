@@ -1,6 +1,6 @@
 # Handoff — the single current one
 
-**Reflects `development` @ `d573662`, 24 September 2026 — re-measured, not incremented.**
+**Reflects `development` @ `84347eb`, 24 September 2026 — re-measured, not incremented.**
 
 There is one handoff — keep updating this file rather than adding a dated one.
 
@@ -28,8 +28,8 @@ There is one handoff — keep updating this file rather than adding a dated one.
 
 > ## ✅ 24 SEPTEMBER — `1.5.4` LANDED, #203 IS CLOSED, AND NOTHING THIS FILE CALLED UNTRACKED STILL IS
 >
-> **Four pull requests before this edition's own, one microstep, nine issues filed, and the
-> longest-running red closed.** §2r is the record.
+> **Six pull requests before this edition's own, one microstep, ten issues filed, one spike
+> answered, and the longest-running red closed.** §2r is the record.
 >
 > - **`1.5.4` (#238, issue #236)** takes Phase 1 to **37 of 112 (~33%)**: the dinar's denominations
 >   for the numpad and the float and close grids. **Its own first test run refuted a rule its
@@ -47,6 +47,13 @@ There is one handoff — keep updating this file rather than adding a dated one.
 >   covered, and the dead `discount*` glob is gone.
 > - **`PROJECT-GUIDE.md` is tracked (#242),** at the operator's word, as a dated snapshot with a
 >   status banner and an errata table of eight claims measured false. It is no longer a loose end.
+> - **#234, the WAL-reset spike, is answered (#245), and the answer is that the fix is absent.**
+>   The compiled build reads `sqlite_version()` `3.50.4` and `PRAGMA cipher_version`
+>   `4.10.0 community`, and SQLite's own §11 puts the fix in `3.51.3`. The fixed SQLCipher (`4.14.0`)
+>   is one `rusqlite` bump away (0.40), and **`sqlx-sqlite`'s `libsqlite3-sys <0.38.0` bound blocks
+>   that bump**, which is also why Dependabot never proposed it. **#244** tracks the three routes
+>   past it. So the one-source-connection rule is a standing constraint, and `00-master-plan.md`
+>   lists **six** Phase-1 blockers, not seven.
 > - **Every item this file carried as *"no issue tracks it"* now has one.**
 >   - The four ⚠️ OPEN items: **#232** (tax adviser: `1.3.5`, `1.3.2`), **#233** (second factor:
 >     `1.6.2`) and **#234** (WAL-reset spike: `1.8.1`).
@@ -351,8 +358,10 @@ guard-hardening on shipped code, not a microstep. **19 September moved it to 25 
 §2c and §2d are the 14–15 September windows; §2a keeps 13 September and §2 the 9–11 September
 record, where twenty-six pull requests changed the governance layer and no microstep advanced.
 
-**`development` is green, tip included.** `just pre-push` exits 0 at `d573662`, all 37
-`just guards` steps pass, and `ci` run **`35974622915` is a success on the tip**, queried by SHA
+**`development` is green, tip included.** `just pre-push` exits 0 at `d573662`, the last code-bearing
+tip, where all 37 `just guards` steps pass. Two documentation merges followed, #243 and #245, each
+with `just pre-push` run by `just pr`. `ci` run **`35978371854` is a success on the tip `84347eb`**,
+queried by SHA
 rather than taken as the newest green one — `ci.yml`'s ref-scoped concurrency group cancels runs
 when merges land inside two minutes of each other, and the cancellation is invisible unless you ask
 about the tip specifically.
@@ -379,11 +388,11 @@ regression.** On 24 September every item this file had carried as *"no issue tra
 from 21 September had missed, was labelled, put on the board and then **closed** by #240. Every open
 issue is on board #4. §3 is the list.
 
-**Four open issues can be closed by work rather than by waiting**: #174 (a guard on shipped code),
-#234 (the WAL-reset spike, with a stated method), #235 (the ruleset drift check) and #241 (the drill
-directory and form). **Twelve wait on a person**: a merchant, the adviser, ISTD, hardware or an
-operator decision. **#197 waits on `1.10.1`'s migration `0006`**, where #179's three surviving
-items ride.
+**Three open issues can be closed by work rather than by waiting**: #174 (a guard on shipped code),
+#235 (the ruleset drift check) and #241 (the drill directory and form). #234 was the fourth, and
+work closed it the same day (#245). **Thirteen wait on a person**: a merchant, the adviser, ISTD,
+hardware, or an operator decision, now including #244's. **#197 waits on `1.10.1`'s migration
+`0006`**, where #179's three surviving items ride.
 
 **Read `CLAUDE.md` first.** This document assumes it. Where this file and the repository disagree,
 **the repository is right** — every number here was read from `git`, `gh` or a command, and where
@@ -517,13 +526,13 @@ vitest 5.0.0, gitleaks 8.30.1, Docker Engine 29.5.2.
 
 | | |
 |---|---|
-| `development` | **`d573662`** — `just pre-push` exits 0 on the tip itself and `ci` run **`35974622915` is a success on the tip**, queried by SHA. Carries `1.9.1`, migration `0005`, `1.1.9`'s `ClockRepository`, `1.2.6`, the audit's fixes, #185's seven tests, `1.11.6`'s scan capture with #189's fix, `1.11.11`'s keyboard map, `1.9.2`'s document counters, `1.7.2`'s embedded typeface, `1.6.6`'s audit repository, `1.6.6b`'s `verify-audit`, `1.11.1`'s i18n infrastructure, `1.7.1`'s receipt model, `1.7.3`'s raster pipeline, `1.7.4`'s ESC/POS emitter, `1.5.1`'s tender vocabulary, `1.5.3`'s cash rounding and `1.5.4`'s denominations |
-| `staging` | **`531ea04`**, #148's merge — **64 behind** `origin/development` at `d573662`, 5 ahead (its own five promotion merges). Re-measured 24 September with `git rev-list --count origin/staging..origin/development`; **this row has been wrong before and §9 states it independently**, so if the two disagree, run the command rather than picking one. **Use the `origin/` refs**: the local `staging` is still #91's `f2edbb6`, which is how this row once named the wrong commit |
-| `main` | `24a0283` — **192 behind** `origin/development` at `d573662`, **133 behind** `origin/staging`, untouched since 20 August |
+| `development` | **`84347eb`** — `ci` run **`35978371854` is a success on the tip**, queried by SHA; `just pre-push` last ran on a code-bearing tip at `d573662` (exit 0), and the two documentation merges since each ran it through `just pr`. Carries `1.9.1`, migration `0005`, `1.1.9`'s `ClockRepository`, `1.2.6`, the audit's fixes, #185's seven tests, `1.11.6`'s scan capture with #189's fix, `1.11.11`'s keyboard map, `1.9.2`'s document counters, `1.7.2`'s embedded typeface, `1.6.6`'s audit repository, `1.6.6b`'s `verify-audit`, `1.11.1`'s i18n infrastructure, `1.7.1`'s receipt model, `1.7.3`'s raster pipeline, `1.7.4`'s ESC/POS emitter, `1.5.1`'s tender vocabulary, `1.5.3`'s cash rounding and `1.5.4`'s denominations |
+| `staging` | **`531ea04`**, #148's merge — **66 behind** `origin/development` at `84347eb`, 5 ahead (its own five promotion merges). Re-measured 24 September with `git rev-list --count origin/staging..origin/development`; **this row has been wrong before and §9 states it independently**, so if the two disagree, run the command rather than picking one. **Use the `origin/` refs**: the local `staging` is still #91's `f2edbb6`, which is how this row once named the wrong commit |
+| `main` | `24a0283` — **194 behind** `origin/development` at `84347eb`, **133 behind** `origin/staging`, untouched since 20 August |
 | Phase 1 | **37 of 112** executable microsteps (~33%) — `1.5.4` (#238) landed 24 September and `1.5.3` (#228) on 23 September, after `1.5.1`, `1.7.4`, `1.7.3` and `1.7.1` on 22 September. **Group 1.1 is closed**; group 1.7 is **4 of 10** and group 1.5 is **3 of 4**, its last step (`1.5.2`) waiting on `Tendering`. The next pair of counts sharing a rounded percentage is 42/43, so every microstep until then moves it |
 | Open PRs | **0**, and **nothing is in flight**. The WIP=1 slot is free |
-| Open issues | **17**, listed live: #68, #69, #70, #71, #111, #112, **#113 (reopened)**, #114, #174, #197, **#231**, **#232**, **#233**, **#234**, **#235**, **#237** and **#241**. Up from 11 **on purpose**: 24 September filed every item this file had carried as untracked, plus #237, which `1.5.4`'s first test run produced. **#203 is closed** (#240), and #230 opened and closed the same morning (#239). #236 opened and closed with `1.5.4`. **Every open issue is on board #4.** Four can be closed by work alone (#174, #234, #235, #241), twelve wait on a person, and #197 waits on migration `0006`. §3 is the table |
-| Board #4 | **39 items — 17 `Todo`, 22 `Done`**, counted live on 24 September, and **17 `Todo` is exactly the 17 open issues**, the first time that equation has held since #203 was filed on 21 September. **#227's item is listed again**: on 23 September the listing and `items { totalCount }` both omitted it for at least 2h44m while its node read `Done`. So the listing **lagged** rather than dropped it. Count from the listing, but re-count before trusting a figure taken right after an edit. Archived items are excluded |
+| Open issues | **17**, listed live: #68, #69, #70, #71, #111, #112, **#113 (reopened)**, #114, #174, #197, **#231**, **#232**, **#233**, **#235**, **#237**, **#241** and **#244**. Up from 11 **on purpose**: 24 September filed every item this file had carried as untracked, plus #237, which `1.5.4`'s first test run produced, and #244, which #234's answer produced. **#203 is closed** (#240), #230 opened and closed the same morning (#239), **#234 was answered the same day** (#245), and #236 opened and closed with `1.5.4`. **Every open issue is on board #4.** Three can be closed by work alone (#174, #235, #241), thirteen wait on a person, and #197 waits on migration `0006`. §3 is the table |
+| Board #4 | **40 items — 17 `Todo`, 23 `Done`**, counted live on 24 September after #245, and **17 `Todo` is exactly the 17 open issues**, the first time that equation has held since #203 was filed on 21 September. **#227's item is listed again**: on 23 September the listing and `items { totalCount }` both omitted it for at least 2h44m while its node read `Done`. So the listing **lagged** rather than dropped it. Count from the listing, but re-count before trusting a figure taken right after an edit. Archived items are excluded |
 | Rulesets | **four, all active**, all four checked in under `.github/rulesets/`. **Re-diffed by hand on 21 September: all four still match live** on enforcement, target, conditions, rules and bypass actors. **Not re-diffed since**, so the observation is three days old. No gate does this; **#235** now tracks building one. See §3 |
 | Tags / releases | **zero of each.** The append-only tag ruleset has never been exercised |
 | Repository | **PUBLIC**, GitHub Free, `OmarSweiti` the sole collaborator (admin) |
@@ -2534,6 +2543,42 @@ the ledger entry. So #240 merged first, #239 was brought up to date **on the ser
 was it bypass-merged. Both ledger entries name one check: **`4206181799`** and **`4206239586`**. As
 a side effect, #239's re-run showed `workflow-analysis` green from a second PR.
 
+### #234, answered the same day: the fix is absent, and `sqlx` is why
+
+#234 was the one board item that work alone could close with a stated method, and it closed by
+that method (#245):
+
+- **The runtime, read from the compiled build.** A throwaway crate in the session scratchpad, not
+  the repository, built the exact `rusqlite` 0.39.0 / `libsqlite3-sys` 0.37.0 that `Cargo.lock`
+  pins. It printed `sqlite_version()` **`3.50.4`**, source id `2025-07-30 19:33:53 4d8adfb3…`,
+  and `PRAGMA cipher_version` **`4.10.0 community`**. The amalgamation's `#define`s in the crate
+  source agree.
+- **The advisory.** [SQLite §11](https://sqlite.org/wal.html) says the bug is present from 3.7.0
+  through 3.51.2, fixed in **3.51.3**, with backports in 3.44.6 and 3.50.7. It needs two
+  connections on the **same** file writing or checkpointing at once.
+  [SQLCipher 4.14.0](https://www.zetetic.net/blog/2026/03/17/sqlcipher-4.14.0-release/) is the first
+  release found to carry the fix.
+- **The blocker.** `rusqlite`'s `upgrade_sqlcipher.sh` at each release tag puts SQLCipher 4.14.0
+  first in **`rusqlite` 0.40.0**. But `sqlx-sqlite` 0.9.0 requires
+  `libsqlite3-sys >=0.30.1, <0.38.0`, and Cargo's `links` rule covers that optional driver, so 0.40
+  does not resolve. **That is why Dependabot, which proposes cargo majors here, never proposed it.**
+  #244 carries the three routes: wait for `sqlx`, patch `sqlx-sqlite`, or split the workspace.
+
+**What changed in the plan of record:**
+
+- `ref/plan-validation.md`'s OPEN block is now an *ANSWERED* block with every source.
+- `1.8.0`'s entry names the minimums, SQLite `3.51.3` and SQLCipher `4.14.0`, and **the design
+  question they raise**: those minimums, read as *"refuse an unsupported build"*, would refuse
+  today's build at every open, so the policy must gate a second connection rather than the open,
+  or carry two tiers.
+- `00-master-plan.md` counts six Phase-1 blockers, not seven, and settles its architectural note:
+  `1.8.6`'s backup runs through the one source connection, which its `snapshot(conn: &Connection, …)`
+  already takes.
+
+**One citation was wrong and is corrected.** #234's first body and #244's cited `1.8.5b` for the
+backup; the backup is `1.8.6`, and `1.8.5b` is key custody. The sweep across the docs that lesson 1
+asks for found it, along with two more sites that still called the question open.
+
 ### `PROJECT-GUIDE.md` is tracked, as a snapshot
 
 The operator's answer to the question put on 8 and 9 September was *"start track it"*. It is
@@ -2550,11 +2595,12 @@ true (no `docs/drills/`, no drill-result form) is **#241**.
 
 **All seventeen are on board #4, all `Todo`, all assigned**, re-read live at `d573662` with
 `gh issue list --state open`. That is still the command to count with, because the board is only as
-complete as the last person who added to it. **Four can be closed by work alone**: #174, #234, #235
-and #241. **The other thirteen wait**, twelve of them on a person:
+complete as the last person who added to it. **Three can be closed by work alone**: #174, #235 and
+#241, where #234 was the fourth until #245 closed it. **The other fourteen wait**, thirteen of them on
+a person:
 
 - one on `hardware` (#68);
-- six on a `decision` (#69, #71, #111, #113, #114, #231);
+- seven on a `decision` (#69, #71, #111, #113, #114, #231, #244);
 - five on a `merchant answer` (#70, #112, #232, #233, #237);
 - #197 on the sequencing of `0006`.
 
@@ -2604,7 +2650,7 @@ therefore **deliberately-red `protected-paths` PRs** of their own:
 Nothing about this blocks a microstep. It should get a label, a board item and a decision. *(It got
 all three on 24 September, and then the fix.)*
 
-**#174 is one of four that code alone can close**, with #234, #235 and #241. **#179 was closed by
+**#174 is one of three that code alone can close**, with #235 and #241. **#179 was closed by
 hand on 15 September** with three of its four findings unaddressed; they ride in #197, and the block
 below re-measures each.
 
@@ -2623,7 +2669,8 @@ below re-measures each.
 | **231** | `decision: is a store's cash-rounding step a jurisdiction policy or the merchant's setting?` | P2 | money path | decision | `1.4.8`'s wiring of `add_tender`, and what #70's item 3 must contain. `0003` put the columns on `tax_computation_policy`, while `ref/tax-jordan.md` §5 and merchant decisions 2.1–2.2 say `store` |
 | **232** | `decision: two more tax-adviser questions — the SST base (1.3.5) and zero-rating reasons (1.3.2)` | P1 | money path · compliance | merchant answer | `1.3.5` and `1.3.2`. Belongs in **#70's engagement**, and #70 is cross-linked |
 | **233** | `decision: what second factor exists on a Jordanian minimarket counter (1.6.2)` | P1 | security | merchant answer | `1.6.2`, which is also blocked by #68's bench gate. Answering this alone does not unblock it |
-| **234** | `spike: does the bundled SQLCipher carry SQLite's WAL-reset fix? (blocks 1.8.1)` | P1 | — | **not blocked, closed by work** | `1.8.1`, and every second-connection pattern: checkpoint, backup (`1.8.5b`), reporting, sync |
+| ~~234~~ | ~~`spike: does the bundled SQLCipher carry SQLite's WAL-reset fix?`~~ | P1 | — | — | **CLOSED by #245 on 24 September**: the fix is absent (SQLite `3.50.4`, SQLCipher `4.10.0`). Its successor is #244 |
+| **244** | `gap: the WAL-reset fix is one rusqlite bump away, and sqlx's libsqlite3-sys bound blocks it` | P1 | — | decision | every second connection on the source file. The routes are wait for `sqlx`, patch `sqlx-sqlite`, or split the workspace. `1.8.0` pins the minimums either way |
 | **235** | `gap: nothing checks the checked-in rulesets against live, and gh-protect.sh is obsolete` | P2 | security | **not blocked, closed by work** | nothing; it is a control. Each fix is a frozen-surface, deliberately red PR |
 | **237** | `decision: confirm the dinar coin set — the plan lists 25 fils and omits 5 fils` | P2 | money path | merchant answer | nothing in code (E.17). A coin missing from the grid reads **short at every close** |
 | **241** | `gap: docs/drills/ and the drill-result issue form are promised and do not exist` | P2 | — | **not blocked, closed by work** | the first drill record: `1.7.5`, then `1.11.14`. The natural moment is `1.7.5`'s `Files:` line |
@@ -2716,15 +2763,16 @@ below have been waiting on since 13 September.
 
 `1.9.2` closes the *test* half of the third one without any migration at all — see §4.
 
-### Four ⚠️ OPEN items gate Phase-1 microsteps — tracked since 24 September by #232, #233 and #234
+### Four ⚠️ OPEN items gated Phase-1 microsteps — three still do (#232, #233), and #234 answered one
 
 Two more than this document carried until 13 September. The sweep that found them is
 `grep -rn '⚠️ \*\*OPEN' docs/implementation/ref/*.md docs/implementation/phase-1-sellable-mvp.md`,
 filtered to those naming a `1.x` microstep — run that, not a keyword search, because the two new
 ones share no vocabulary with the two old ones.
 
-* `ref/plan-validation.md:324` — **blocks `1.8.1`**: the SQLCipher/SQLite WAL-reset corruption
-  question and the two minimum version constants `1.8.0` must pin and hash.
+* ~~`ref/plan-validation.md:324` — **blocks `1.8.1`**~~ — **ANSWERED on 24 September (#234,
+  #245): the compiled build lacks the fix.** The one-connection rule stands as a constraint, and
+  `1.8.0`'s minimums are SQLite `3.51.3` and SQLCipher `4.14.0`. The bump is #244.
 * `ref/security-compliance.md:415` — **blocks `1.6.2`**: what second factor exists on a Jordanian
   minimarket counter. **Buying #68's hardware does not unblock `1.6.2`** — it is blocked twice.
 * `ref/domain-api.md:1290` — **blocks `1.3.5`**: for a line carrying both General Sales Tax and
@@ -2739,9 +2787,9 @@ and `1.3.7`. `1.3.2` and `1.3.5` are not among them, so group 1.3 is blocked in 
 different authorities.
 
 **Filed on 24 September.** The two tax questions are **#232**, in #70's engagement because it is the
-same adviser. The second factor is **#233**, and the WAL-reset question is **#234**. That one is a
-*spike*, not a decision: its source is the runtime's own version strings matched to the upstream
-advisories, so work can close it. The sentence that stood here, *"File them, or record deliberately
+same adviser. The second factor is **#233**, and the WAL-reset question was **#234**. That one was a
+*spike*, not a decision, and work closed it the same day, with #244 as its successor. The sentence
+that stood here, *"File them, or record deliberately
 that they live only in the reference documents"*, had waited eleven days for a decision, and the
 operator's instruction that *"everything gets documented"* made it.
 
@@ -2798,8 +2846,9 @@ shortlist needs one thing settled before it is honest to start:
 **Work that is not a microstep, and is fully unblocked.** Take one of these if the WIP rule is what
 is stopping you:
 
-- **#234**, the WAL-reset spike. It has a method and a one-session time box, and it produces the
-  evidence `1.8.0` and `1.8.1` need.
+- ~~**#234**, the WAL-reset spike~~, **done the same day (#245)**. It found the fix absent and filed
+  #244. `1.8.1` may now proceed under the one-connection rule, and `1.8.0` has its minimums plus one
+  design question to settle.
 - **#241**, the drill directory and form, ideally folded into `1.7.5`.
 - **#235**, the ruleset drift check, which is frozen-surface and so deliberately red.
 - **#174**, the `Debug` redaction decision.
@@ -3248,8 +3297,8 @@ change would demand an approval no second account can supply.
 gh api 'repos/:owner/:repo/rulesets/rule-suites?per_page=100&time_period=month'
 ```
 
-**87 evaluations in the trailing month: 32 bypass, 54 pass, 1 fail**, re-read live on
-24 September. It read 82 (30 bypass) on 23 September and 68 (28 bypass) on 21 September. The four
+**89 evaluations in the trailing month: 32 bypass, 56 pass, 1 fail**, re-read live on
+24 September after #245. It read 82 (30 bypass) on 23 September and 68 (28 bypass) on 21 September. The four
 newest bypasses are all frozen-surface reds, and **each names exactly one failing check**:
 
 | Suite | PR | What was frozen |
@@ -3432,6 +3481,11 @@ Established by introspection and corrected in #122; do not re-litigate.
    **Two of them can go in one meeting**: #232 with #70's adviser, and #237 with the merchant
    conversation merchant decision 2.1 already needs.
 
+   **A fifth, filed the same afternoon: #244, an operator decision.** The SQLite WAL-reset fix is
+   one `rusqlite` bump away, and `sqlx-sqlite`'s `libsqlite3-sys <0.38.0` bound blocks it. Wait for
+   `sqlx`, patch `sqlx-sqlite`, or split the workspace. Nothing breaks while it waits, because the
+   one-connection rule holds, but every storage design taken until then works around it.
+
 ---
 
 ## 8 · The repository queue
@@ -3460,11 +3514,11 @@ Established by introspection and corrected in #122; do not re-litigate.
 
 ### `development → staging`
 
-`staging` is **64 behind at `d573662`** — `git rev-list --count origin/staging..origin/development`,
+`staging` is **66 behind at `84347eb`** — `git rev-list --count origin/staging..origin/development`,
 re-measured 24 September, and the `origin/` spellings matter: a local `staging` left at #91 answers
-far more. It is **60 at `b9fcb28`**, the #229 tip the last edition predicted it could not measure,
-which confirms the rule a second time: 56, 57, 58, 59, 60, then four more for #238, #240, #239 and
-#242, one per merge and no promotion between.
+far more. It was **60 at `b9fcb28`**, the #229 tip the previous edition predicted it could not
+measure, which confirms the rule a second time: 56, 57, 58, 59, 60, then six more for #238, #240,
+#239, #242, #243 and #245, one per merge and no promotion between.
 
 > **This row is stale by one the moment a handoff merges, and that is structural rather than
 > careless.** An edition measures the distance while writing, which is necessarily *before* its own
@@ -3887,6 +3941,7 @@ label on the issue at all** — see §3.
 | **The board's item listing can omit a live item** | #227's item read `Done` and `isArchived: false` when queried by node id, while `gh project item-list` and GraphQL's `items { totalCount }` both said 28 without it, for at least 2h44m after creation. Count from the node when a figure matters, and write the count as a floor |
 | **Two frozen-surface PRs open at once** | `development` is `strict: true`, so the second becomes *behind* the moment the first merges, and a bypass of a behind branch can put a second failure into its ledger entry. Merge one, run `gh pr update-branch <n>` on the other (a server-side merge commit that squash flattens, and one the local `commit-msg` hook never sees), wait for its checks, then take the second bypass. Done this way on 24 September with #240 then #239, and both entries name one check |
 | **`gh pr merge` fast-forwards your local `development` only when run from the merged branch** | #240's merge, run from its own branch, switched to `development` and pulled. #238's `just merge`, run from `development`, left the local ref one merge behind. Run `git pull --ff-only` after every merge regardless: a stale local `development` is how #184's empty commit happened |
+| **No Dependabot PR does not mean no update** | Dependabot drops an update that Cargo cannot resolve, and it leaves no PR and no issue behind. `rusqlite` 0.40, which carries the SQLite WAL-reset fix, was never proposed, because `sqlx-sqlite`'s `libsqlite3-sys <0.38.0` bound and Cargo's `links` rule make it unresolvable (#244). For a dependency that matters, compare `Cargo.lock` against crates.io yourself, as `ref/plan-validation.md` §5's currency table does |
 | **Prose naming the forward-only SQLx revert inside backticks within a *shell* command is refused** | Known false positive; the hook's segmenter splits before `shlex` sees the quoting. Ordinary quoting is safe, and editing a file that discusses it through Edit/Write is unaffected. Deliberately not softened |
 
 **One trap from the last handoff is now half obsolete.** *"A stale branch reds `protected-paths` on
@@ -4215,3 +4270,12 @@ documentation surface **no gate reads** (`status-page.html`'s prose — see §14
     each on the board where the operator plans. **When a document keeps saying something is
     untracked, the cheap half of the decision is to track it**, and the handoff should record the
     issue number rather than the absence.
+31. **The absence of an update is not evidence that none exists.** `rusqlite` 0.40, released with
+    `libsqlite3-sys` 0.38 in May, carries the fix for a corruption bug in this register's storage
+    engine. This repository pinned 0.39 on purpose, because of the `links` collision recorded in
+    `docs/phase-0-remaining-setup.md` (`7dda4f4`). Nothing revisited the pin, because the tool
+    that re-proposes upgrades drops one that Cargo cannot resolve and says nothing. #234 found the
+    consequence only by running the method its OPEN item had written down: ask the runtime for its
+    version, then read the upstream advisory. **When a question names its own method, run the
+    method.** It is usually cheaper than the reasoning that stood in for it, and it is the only
+    thing that turns a pin nobody questions into a reason somebody wrote down.
