@@ -19,7 +19,7 @@ pub trait ReceiptPrinter: Send + Sync {
     /// no-sale flow — never by the print worker, and never by a retry (§4).
     fn open_drawer(&self) -> Result<(), HwError>;
 
-    fn status(&self) -> PrinterStatus;                  // paper-out, cover-open, offline
+    fn status(&self) -> PrinterStatus;                  // paper-out, cover-open, offline — or unsupported (§2)
 
     /// The profile this driver was qualified against (§6a). A driver that
     /// cannot name a qualified profile cannot be bound to a register.
@@ -86,6 +86,8 @@ pub trait Scale: Send + Sync { /* only if grocery/deli — §7 */ }
 
 **Raw ESC/POS**, over TCP port 9100 for network printers, `serialport` for RS-232, `rusb`/`hidapi` for USB. **Never webview printing** — spooler latency and per-OS quirks make it slow and non-deterministic; raw bytes are identical everywhere.
 
+**The driver is [1.7.10](../phase-1-sellable-mvp.md), and it is network first.** Port 9100 needs no driver on any operating system. USB does not share that property: current Epson and Star printers default to a vendor-specific USB class, which Windows reaches only through the vendor's driver or a WinUSB binding, so serial and USB transports wait for a qualified device that needs them. A printer that never answers a real-time status request reports *status unsupported* rather than ready — some answer `DLE EOT` on serial only — and §3 rule 1 then knows it cannot warn before the money is taken.
+
 ### 2.1 The Arabic problem, and its answer
 
 Thermal printers in text mode expect a codepage (Windows-1256 for Arabic). Codepage text mode does two things wrong that cannot be worked around:
@@ -104,6 +106,8 @@ ReceiptModel                          (pure, from pos-domain)
 ```
 
 Widths: **576 px at 80 mm**, **384 px at 58 mm** (E.49). Two profiles, two sets of golden files.
+
+**And a height limit per command, which is a device fact.** Epson's ESC/POS reference caps one `GS v 0` at 2303 dot rows on the TM-T20III, TM-T20IV and TM-m30III, and at 4095 on the TM-T88VII, and marks the command obsolete in favour of `GS ( L`. A taller page goes out in strips at the profile's limit ([1.7.9](../phase-1-sellable-mvp.md)); the strips join to the same bitmap, so the paper cannot show the seam.
 
 Keep a plain-codepage fallback for exotic printers that reject raster, and make it a store setting — but the default is raster and the Arabic goldens are raster. A device that can only take the fallback is recorded in the matrix (§6a) as *not qualified for Arabic*, because a codepage receipt is not an Arabic receipt and calling it one is the failure this section exists to prevent.
 
@@ -319,11 +323,11 @@ Full treatment in [`phase-2-money-grade.md`](../phase-2-money-grade.md) §2.1 an
 |---|---|
 | `profile_id`, `maker`, `model` | what a support call is about |
 | `firmware_qualified` | a range, because behaviour changes under a firmware update |
-| `transport` | TCP 9100 · serial · USB |
+| `transport` | TCP 9100 · serial · USB — TCP first ([1.7.10](../phase-1-sellable-mvp.md)) |
 | `dot_width`, `paper_mm` | 576 px / 80 mm, 384 px / 58 mm — the layout input |
-| `raster_command` | `GS v 0` and its alternates are not interchangeable |
-| `cut_command`, `drawer_pulse` | pin, on-time and off-time; wrong timings do not open the drawer |
-| `status_protocol` | real-time status is what makes rule 1 of §3 possible; a device without it cannot warn before the money is taken |
+| `raster_command`, `raster_max_rows` | `GS v 0` and `GS ( L` are not interchangeable, and one command carries a device-specific number of dot rows — 2303 on an Epson TM-T20III, 4095 on a TM-T88VII. A taller page is sent in strips at that limit ([1.7.9](../phase-1-sellable-mvp.md)) |
+| `cut_command`, `drawer_pulse` | pin (2 or 5), on-time and off-time; wrong timings do not open the drawer, and the drawer's solenoid voltage must match the port's (usually 24 V) |
+| `status_protocol` | real-time status is what makes rule 1 of §3 possible; a device without it — or with it on serial only, when it is bound over the network — cannot warn before the money is taken |
 | `supports_raster_arabic` | `false` means the device is **not qualified for Arabic** and may not be sold to an Arabic-first store |
 | `qualified_at`, `qualified_by`, `qualifying_commit` | when this was last true, and against what |
 
