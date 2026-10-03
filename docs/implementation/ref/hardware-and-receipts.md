@@ -299,6 +299,8 @@ A scan resolves to a `ScanLookup` ([`domain-api.md`](domain-api.md) §4.3) and n
 
 Serial and HID-POS modes come later behind `BarcodeSource`, for merchants whose environment makes wedge mode unreliable.
 
+**The layout trap.** A wedge scanner sends key presses, and the operating system's active layout turns them into characters. Under Arabic (101), a scanner on its default US layout types Arabic letters wherever its code had Latin ones — a *different* code, not an unreadable one — while digit-only EAN and UPC codes usually survive, which is why the defect hides in a demo. [1.11.6b](../phase-1-sellable-mvp.md) decodes a recognised burst by physical key (`KeyboardEvent.code`) rather than by character. A scanner's own keyboard-country or ALT/keypad setting is the device-side answer, and the matrix's scanner row records which one a device was qualified with.
+
 ---
 
 ## 6 · Payment terminals
