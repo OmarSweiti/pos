@@ -305,7 +305,7 @@ One document a prospective merchant's accountant can read:
 5. **Restore drills** performed on real hardware by someone who did not write the code, and timed: data loss, keychain loss, **and recovery-code-only on a second machine**. Plus the key-rotation drill.
 6. **Year-one soak** passes every performance budget through `just bench-gate`, and the full migration chain runs inside its stated 60-second budget.
 7. **The packaged application** is exercised automatically on every supported OS, and the breach tabletop has been run against both clocks.
-8. **`ref/test-catalog.md` is complete**: every one of the 92 numbered cases is a passing test, an accepted risk with a written rationale, an open question with a stated default, or explicitly out of scope with one — checked by `scripts/check-test-catalog.py`, not by reading the table.
+8. **`ref/test-catalog.md` is complete**: every one of the 95 numbered cases is a passing test, an accepted risk with a written rationale, an open question with a stated default, or explicitly out of scope with one — checked by `scripts/check-test-catalog.py`, not by reading the table.
 
 **Commercial**
 

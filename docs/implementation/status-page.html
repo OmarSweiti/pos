@@ -355,7 +355,7 @@
       <li><div><b>Stock is a ledger, not a column.</b> Append-only rows merge across offline registers without a lock.</div></li>
       <li><div><b>Tax rates are data with effective dates.</b> Jordan changes reduced rates by Cabinet decree; a hardcoded 16% is a re-release every time.</div></li>
     </ol>
-    <p>Add correct instincts on semi-integrated payments, on treating a card timeout as <em>unknown</em> rather than <em>failed</em>, on rasterising Arabic receipts instead of fighting printer codepages, and a rare willingness to enumerate the edge cases before writing code — now 92 numbered ones, reconciled against the test suite by a script rather than by reading a table.</p>
+    <p>Add correct instincts on semi-integrated payments, on treating a card timeout as <em>unknown</em> rather than <em>failed</em>, on rasterising Arabic receipts instead of fighting printer codepages, and a rare willingness to enumerate the edge cases before writing code — now 95 numbered ones, reconciled against the test suite by a script rather than by reading a table.</p>
     <p>Build on it, but not <em>from</em> it. The three source plans under <code>docs/plan/</code> are immutable historical inputs, and a superseded name in them reads as current truth: <code>rate_bp</code>, banker's rounding, <code>stock_movement</code>, <code>tax_group</code>, <code>role_perm</code>, a mutable <code>loyalty_points</code> column, <code>down</code> migrations. Master plan §4a is the ledger of every one.</p>
   </section>
 
@@ -599,7 +599,7 @@
       <div class="doc"><span class="path">ref/sync-protocol.md</span><span class="what">Ownership classes, push/pull, chaos convergence and the canonical dump it is proved over, the accepted risks stated plainly</span></div>
       <div class="doc"><span class="path">ref/hardware-and-receipts.md</span><span class="what">Traits, the Arabic raster pipeline, the supported-device matrix, the hardware-lab checklist</span></div>
       <div class="doc"><span class="path">ref/ui-spec.md</span><span class="what">Screen by screen, RTL mechanics, the keyboard map</span></div>
-      <div class="doc"><span class="path">ref/test-catalog.md</span><span class="what"><b>92 numbered edge cases</b> mapped to named tests, accepted risks, deferrals, or explicit scope decisions — reconciled against the suite and the phase files by a script, not by reading the table</span></div>
+      <div class="doc"><span class="path">ref/test-catalog.md</span><span class="what"><b>95 numbered edge cases</b> mapped to named tests, accepted risks, deferrals, or explicit scope decisions — reconciled against the suite and the phase files by a script, not by reading the table</span></div>
       <div class="doc"><span class="path">ref/security-compliance.md</span><span class="what">PDPL, PCI, the audit chain, permissions, tenancy, key custody, secrets</span></div>
       <div class="doc"><span class="path">ref/merchant-decisions.md</span><span class="what">The questionnaire to fill in with the merchant, with defaults</span></div>
     </div>

@@ -148,7 +148,7 @@ docs/implementation/
     ├── sync-protocol.md           ownership, chaos, accepted risks
     ├── hardware-and-receipts.md   traits, Arabic raster, lab checklist
     ├── ui-spec.md                 screens, RTL, keyboard map
-    ├── test-catalog.md            92 edge cases → named tests
+    ├── test-catalog.md            95 edge cases → named tests
     ├── security-compliance.md     PDPL · PCI · tenancy · keys · audit chain
     └── merchant-decisions.md      the questionnaire
 ```
@@ -254,7 +254,7 @@ If you read nothing else:
 ## Keeping this set alive
 
 - **Re-run the validation audit quarterly**, and re-diff the pinned ISTD manifest in the same pass. Jordanian rates move by Cabinet decree, JoFotara is still adding waves and changing validation, and the PDPL register is now live. A compliance claim has a shelf life.
-- **When a merchant or a pilot surfaces something new, it becomes E.93** in the test catalog — with a test, an accepted risk, an open question with a stated default, or an explicit out-of-scope. A surprise that becomes none of those will happen again.
+- **When a merchant or a pilot surfaces something new, it becomes E.96** in the test catalog — with a test, an accepted risk, an open question with a stated default, or an explicit out-of-scope. A surprise that becomes none of those will happen again.
 - **When a correction turns out to be wrong, correct it in [`00-master-plan.md`](00-master-plan.md) §4a and mark it in place in `ref/plan-validation.md`.** Two of the original four were wrong; leaving an audit reading as still-true is how a fix becomes a defect.
 - **When a microstep turns out to be wrong at the keyboard, fix the microstep.** These files are the plan of record, not a historical artefact.
 

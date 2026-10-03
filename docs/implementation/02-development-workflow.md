@@ -702,7 +702,7 @@ The station that gets skipped, and the reason a doc set rots:
 | added or changed a command | update [`ref/ipc-contract.md`](ref/ipc-contract.md) |
 | proved a microstep wrong | fix the microstep in the phase file |
 | **completed a numbered product microstep** | move the **current implementation frontier** line in [`README.md`](README.md) to the next one. Nothing else maintains it, and a dated pointer nobody moves is worse than no pointer |
-| surfaced a new edge case | it becomes **E.93** in [`ref/test-catalog.md`](ref/test-catalog.md) — with a test, a written accepted risk, an open question carrying a stated default and an owning microstep, or an explicit out-of-scope. A surprise that becomes none of those will happen again |
+| surfaced a new edge case | it becomes **E.96** in [`ref/test-catalog.md`](ref/test-catalog.md) — with a test, a written accepted risk, an open question carrying a stated default and an owning microstep, or an explicit out-of-scope. A surprise that becomes none of those will happen again |
 | superseded something a source plan states | record it in [`00-master-plan.md`](00-master-plan.md) §4a. `docs/plan/` is immutable and a reader is routed there first, so an uncorrected name is a name someone will build |
 | hit an external unknown — legal, tax, regulatory, protocol | add a `⚠️ OPEN` block to the reference document that owns it: the question, the default the code runs on meanwhile, the owning microstep, and the source that settles it. **Never a guessed fact** |
 | needed a merchant's answer | add it to [`ref/merchant-decisions.md`](ref/merchant-decisions.md) rather than guessing in code |
@@ -1410,7 +1410,7 @@ The recurring jobs, from [`README.md`](README.md):
   Jordanian rates move by Cabinet decree, JoFotara keeps adding waves and changing validation, and
   the PDPL authority is still standing up. A compliance claim has a shelf life. *(Last verified
   20 August 2026 — next due November 2026.)*
-- **Per surprise:** it becomes `E.93` in [`ref/test-catalog.md`](ref/test-catalog.md), with a test, a
+- **Per surprise:** it becomes `E.96` in [`ref/test-catalog.md`](ref/test-catalog.md), with a test, a
   written accepted risk, an open question carrying a stated default and an owning microstep, or an
   explicit out-of-scope. `just test-catalog` is what keeps that promise mechanical.
 - **Per merchant question:** into [`ref/merchant-decisions.md`](ref/merchant-decisions.md) rather

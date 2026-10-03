@@ -1,6 +1,6 @@
 # Test catalog — the coverage matrix
 
-Master plan Parts E and J.4 enumerate 72 things that can happen. The plan audit and the phase work added twenty more. This file maps **every one** to a named test, an accepted risk with a written rationale, an open question with a stated default, or an explicit out-of-scope with a reason.
+Master plan Parts E and J.4 enumerate 72 things that can happen. The plan audit, the phase work and the hardware research of 3 October 2026 added twenty-three more. This file maps **every one** to a named test, an accepted risk with a written rationale, an open question with a stated default, or an explicit out-of-scope with a reason.
 
 **The rule (master plan J.0, applied to itself):** an edge case with no row here is a gap, not an absence. A row with no test and no rationale is an unfinished job.
 
@@ -153,6 +153,8 @@ Nothing mechanically reconciled this matrix against the test suite, so the Phase
 | 50 | Drawer jammed/open at shift close | `jammed_drawer_does_not_block_shift_close` | 2 | unit |
 | 85 | **No printer at all** — unplugged at shift open, or dead at 09:00 on a Saturday. The set handled paper running out mid-receipt and never handled the printer being absent | `a_sale_completes_with_no_printer_and_queues_the_artifact`, `the_missing_printer_is_an_alarm_not_a_modal`, `a_queued_artifact_prints_unchanged_once_a_printer_returns` | 1 | integration |
 | | | ❓ **Open.** The tests encode the default below | | |
+| 93 | A receipt taller than the printer accepts in one raster command — 2303 dot rows on an Epson TM-T20III, about 29 cm of paper | 🧩 **Deferred with a hook — 1.7.9**, which sends a taller page in strips at its profile's limit and names its tests in the pull request that builds it, which turns this row into a tested one | 1 | unit + drill |
+| 94 | A barcode scanned while Windows is on the Arabic keyboard layout — Latin letters in the code arrive as Arabic ones, so a Code 128 or QR value becomes a *different* code | 🧩 **Deferred with a hook — 1.11.6b**, which decodes a recognised burst by physical key and names its tests in the pull request that builds it; the scanner row of the device matrix is the device half | 1 | web + drill |
 
 > ⚠️ **OPEN — blocks 2.7.0.** May a fiscally-enabled store trade when it cannot print, given that the cleared QR must appear on the document handed to the customer? Default until answered: the sale completes, the artifact is persisted and queued, and the register raises an alarm — never a refusal to sell, because a printer fault is not a reason to close a shop. Owner: 2.7.0, with the merchant-facing choice recorded in [`merchant-decisions.md`](merchant-decisions.md). Source that settles it: the official ISTD guidance on document issuance, and the merchant's tax advisor in writing.
 
@@ -179,6 +181,7 @@ Nothing mechanically reconciled this matrix against the test suite, so the Phase
 | 58 | Migration failure on update | `half_migrated_db_refuses_to_open_with_a_named_error` (1.8.1b), `all_migrations_run_against_soak_dataset_within_budget` (5.5.3, against its 60-second budget) | 1 / 5 | integration |
 | 59 | Telemetry offline | `offline_telemetry_is_buffered_and_capped`, `no_pii_in_a_captured_panic` | 3 | unit |
 | 60 | Multi-monitor / resolution chaos | `sale_screen_min_size_guard`, kiosk fullscreen mode | 1 | unit |
+| 95 | The Windows installer run on a register with no WebView2 runtime and no network | 🧩 **Deferred with a hook — 2.9.5b**, which bundles the runtime with the installer and records an install with neither; its tests land with it | 2 | drill |
 
 ## J.4 additions — stored value, wallets, age, price control
 
@@ -376,15 +379,15 @@ Not tests. Procedures, performed on real hardware, written down, and repeated by
 | ⏳ Named test, no owning microstep yet | 0 | — |
 | ⚠️ Accepted risk, disclosed | 4 | 31, 55, 61 *(only when enabled)*, 63 |
 | ❓ Open — behaviour defaulted, pending an external answer | 2 | 85, 87 |
-| 🧩 Deferred with a named hook | 4 | 45, 64, 66, 68 |
+| 🧩 Deferred with a named hook | 7 | 45, 64, 66, 68, 93, 94, 95 |
 | 🚫 Out of v1 scope with a rationale | 2 | 67, 72 |
 
-80 + 0 + 4 + 2 + 4 + 2 = 92. Cases 1b, 2b, 4b, 4c, 4d, 19b, 39b and 41b are *variants* of cases 1, 2, 4, 19, 39 and 41, not additional numbered cases.
+80 + 0 + 4 + 2 + 7 + 2 = 95. Cases 1b, 2b, 4b, 4c, 4d, 19b, 39b and 41b are *variants* of cases 1, 2, 4, 19, 39 and 41, not additional numbered cases.
 
 An earlier revision of this table said 62 + 4 + 4 + 2 = 72 while the deferred column named four cases against a typed 3, summing to 73 — caught here rather than left for the reader. Assertion 6 of the checker above now recomputes every one of these numbers from the rows, so the next such error fails `just lint` instead of surviving a review.
 
 **Two statuses are new and both are deliberate.** ⏳ replaces a ✅ that was not true: a case whose named test nobody is scheduled to write is not covered, and saying so is the only way it gets an owner. ❓ marks a case where the *behaviour* is implemented against a stated default while an external answer is outstanding — the greppable `⚠️ OPEN` blocks above carry the question, the default, the owning microstep, and the document that settles it.
 
-**Every one of the 92 has a row.** That is what "comprehensive" means operationally: not that nothing exists beyond this list, but that everything on it has a deliberate status, and that a script rather than a reader checks it.
+**Every one of the 95 has a row.** That is what "comprehensive" means operationally: not that nothing exists beyond this list, but that everything on it has a deliberate status, and that a script rather than a reader checks it.
 
-When the three-store pilot (Phase 4) or a merchant surfaces something new, it becomes E.93 here — with a test, an accepted risk, an open question with a default, or an out-of-scope. **A surprise that becomes none of those will happen again.**
+When the three-store pilot (Phase 4) or a merchant surfaces something new, it becomes E.96 here — with a test, an accepted risk, an open question with a default, or an out-of-scope. **A surprise that becomes none of those will happen again.**

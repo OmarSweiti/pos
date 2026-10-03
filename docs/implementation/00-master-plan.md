@@ -63,7 +63,7 @@ is superseded, and what is still open — is **§4a** below. Read §4a before ac
 | [`ref/sync-protocol.md`](ref/sync-protocol.md) | ownership classes, push/pull, chaos, accepted risks |
 | [`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) | traits, the Arabic raster pipeline, the lab checklist |
 | [`ref/ui-spec.md`](ref/ui-spec.md) | screen by screen, RTL mechanics, keyboard map |
-| [`ref/test-catalog.md`](ref/test-catalog.md) | 92 edge cases → named tests, checked by a script. **The coverage matrix** |
+| [`ref/test-catalog.md`](ref/test-catalog.md) | 95 edge cases → named tests, checked by a script. **The coverage matrix** |
 | [`ref/security-compliance.md`](ref/security-compliance.md) | PDPL, PCI, the audit chain, permissions, tenancy, key custody, secrets |
 | [`ref/merchant-decisions.md`](ref/merchant-decisions.md) | the questionnaire to fill in with the merchant |
 
@@ -194,7 +194,7 @@ A reader arriving from a source plan will meet every left-hand column as though 
 | `prop_discount_percentage_roundtrip_is_exact` | correction C-2, first revision | `prop_document_allowance_recap_equals_sum_of_line_allowances` |
 | `Money::split_evenly` as the proration tool | correction C-2, first revision | `Money::split_proportional`. Equal splitting is not proportional-by-line-value allocation; `split_evenly` keeps its narrower job |
 | "The four golden fiscal documents" | correction C-1, first revision | **Five** — plain, discounted, multi-rate, weighed, credit note — plus a training-absence case |
-| "E.1–E.72" | master plan Part E, and this set's own earlier text | **92 numbered cases**, reconciled against the suite by `scripts/check-test-catalog.py` |
+| "E.1–E.72" | master plan Part E, and this set's own earlier text | **95 numbered cases**, reconciled against the suite by `scripts/check-test-catalog.py` |
 | "The tax report by rate is the accountant's filing input" | master plan C.12, `ref/tax-jordan.md` first revision | A **sales-side tax reconciliation**. The statutory return also needs purchases, imports, input-tax deductibility and apportionment, credits, adjustments and box mapping, which arrive in Phase 4 |
 | "The electronic controller/processor registry is not yet activated" | `ref/plan-validation.md`, first revision | MoDEE publishes the register. Each deployment needs its own dated controller/processor/DPO determination and entry before customer PII is processed |
 | "The engineering posture does not change; only the claim changes" (PCI) | `ref/plan-validation.md` §4, first revision | It does change. SAQ B-IP carries eligibility and isolation requirements; SAQ C pulls the store network, patching, access control, monitoring and policy evidence into scope |
@@ -363,7 +363,7 @@ by the one person who can also edit the sentence; two of these were in that stat
   audit. A quarter is a quarter of uncleared documents. The alarm is a number, not a habit:
   `rejection_rate_24h` above 2%, or three consecutive rejections carrying the same pinned ISTD error
   code, is an ISTD change until proven otherwise, and it reaches a person through microstep `3.9.3`.
-- **Keep [`ref/test-catalog.md`](ref/test-catalog.md) honest.** Every new surprise becomes E.93,
+- **Keep [`ref/test-catalog.md`](ref/test-catalog.md) honest.** Every new surprise becomes E.96,
   E.94 — with a test, an accepted risk, an open question with a stated default, or an out-of-scope.
   **A surprise that becomes none of those will happen again.** `scripts/check-test-catalog.py` is
   what stops the matrix drifting back into a hand-maintained table.
