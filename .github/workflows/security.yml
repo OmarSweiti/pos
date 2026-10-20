@@ -60,7 +60,7 @@ jobs:
           shellcheck: true
 
       - name: Audit GitHub Actions security through check annotations
-        uses: zizmorcore/zizmor-action@70fb788f84895a7701f5643d103d587e460b5c99 # v0.6.3
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
         with:
           inputs: .github
           collect: all
@@ -89,7 +89,7 @@ jobs:
       # ci.yml's `supply-chain` job now uses; the full reasoning for dropping the
       # action wrapper is recorded there once rather than in both files.
       - name: Install the pinned cargo-deny release
-        uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: cargo-deny@0.20.2
           fallback: none
