@@ -33,7 +33,7 @@ use skrifa::{GlyphId, MetadataProvider};
 use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Transform};
 
 use super::layout::{Faces, Layout};
-use super::{PrinterProfile, RenderError};
+use super::{PaperWidth, RenderError};
 
 /// A 1-bit page.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,9 +140,9 @@ fn dots_per_unit(px_per_em: i32, units_per_em: i32) -> Option<f32> {
 /// # Errors
 ///
 /// Refuses an unreadable embedded face and a page too tall to allocate.
-pub fn rasterise(layout: &Layout, profile: PrinterProfile) -> Result<Bitmap, RenderError> {
+pub fn rasterise(layout: &Layout, paper: PaperWidth) -> Result<Bitmap, RenderError> {
     let faces = Faces::load()?;
-    rasterise_with(&faces, layout, profile)
+    rasterise_with(&faces, layout, paper)
 }
 
 /// [`rasterise`], against faces the caller already parsed.
@@ -153,7 +153,7 @@ pub fn rasterise(layout: &Layout, profile: PrinterProfile) -> Result<Bitmap, Ren
 pub(crate) fn rasterise_with(
     faces: &Faces<'_>,
     layout: &Layout,
-    profile: PrinterProfile,
+    paper: PaperWidth,
 ) -> Result<Bitmap, RenderError> {
     let units_per_em = faces.units_per_em;
 
@@ -231,7 +231,7 @@ pub(crate) fn rasterise_with(
     }
 
     for y in &layout.rules {
-        draw_rule(&mut pixmap, *y, profile);
+        draw_rule(&mut pixmap, *y, paper);
     }
 
     Ok(threshold(&pixmap, layout.width_px, layout.height_px))
@@ -256,14 +256,14 @@ const fn pixel(value: i32) -> f32 {
 /// tenders. Setting one as a row of box-drawing characters would depend on the
 /// font having them and on their advance dividing the width exactly; a filled
 /// row of dots depends on neither, and is what a thermal printer draws anyway.
-fn draw_rule(pixmap: &mut Pixmap, y_px: i32, profile: PrinterProfile) {
+fn draw_rule(pixmap: &mut Pixmap, y_px: i32, paper: PaperWidth) {
     let Ok(y) = u32::try_from(y_px) else {
         return;
     };
     if y >= pixmap.height() {
         return;
     }
-    let Ok(margin) = u32::try_from(profile.margin_px()) else {
+    let Ok(margin) = u32::try_from(paper.margin_px()) else {
         return;
     };
     let width = pixmap.width();
@@ -286,7 +286,7 @@ fn draw_rule(pixmap: &mut Pixmap, y_px: i32, profile: PrinterProfile) {
 /// Coverage to dots.
 ///
 /// The threshold is the midpoint: a dot whose glyph covers more than half of it
-/// is printed. Anything cleverer — dithering, a different cutoff per profile —
+/// is printed. Anything cleverer — dithering, a different cutoff per paper —
 /// is a decision about how paper looks that belongs with the goldens a native
 /// reader signs off in 1.7.5, not in the first version of the rasteriser.
 fn threshold(pixmap: &Pixmap, width_px: u32, height_px: u32) -> Bitmap {
@@ -329,30 +329,30 @@ mod tests {
     use proptest::prelude::*;
 
     /// The named test: a page is exactly as wide as the paper it is for, at
-    /// both profiles, and there are dots on it.
+    /// both papers, and there are dots on it.
     #[test]
     fn raster_width_matches_profile() {
-        for profile in PrinterProfile::ALL {
-            let page = render_receipt(&model(), profile).expect("renders");
+        for paper in PaperWidth::ALL {
+            let page = render_receipt(&model(), paper).expect("renders");
 
-            assert_eq!(page.width_px, profile.width_px());
-            assert_eq!(page.row_bytes(), profile.width_px().div_ceil(8));
+            assert_eq!(page.width_px, paper.width_px());
+            assert_eq!(page.row_bytes(), paper.width_px().div_ceil(8));
             assert_eq!(
                 page.bits.len() as u32,
                 page.row_bytes() * page.height_px,
-                "{profile:?} allocated the wrong number of bytes"
+                "{paper:?} allocated the wrong number of bytes"
             );
-            assert!(page.ink() > 0, "{profile:?} produced a blank page");
+            assert!(page.ink() > 0, "{paper:?} produced a blank page");
         }
     }
 
-    /// The named test (E.49): the narrow profile **reflows** rather than losing
+    /// The named test (E.49): the narrow paper **reflows** rather than losing
     /// the end of every line.
     ///
     /// The measurement has to be made where reflow actually happens. An earlier
     /// draft compared the two pages' heights on the plain fixture and asserted
     /// the 58 mm page was taller; it is *shorter* (811 dots against 986), and
-    /// correctly so — the narrow profile sets 20 px/em against 24, so a receipt
+    /// correctly so — the narrow paper sets 20 px/em against 24, so a receipt
     /// whose lines all fit at both widths simply comes out smaller. The test was
     /// measuring type size and calling it reflow.
     ///
@@ -376,26 +376,26 @@ mod tests {
         // and read 31 against 31: the totals block's own wrapping moves the
         // other way on narrow paper and cancelled the effect exactly. Isolating
         // the variable is what makes the measurement mean what its name says.
-        let added = |profile: PrinterProfile| -> usize {
-            let long = lay_out(&m, profile).expect("lays out").lines.len();
-            let short = lay_out(&model(), profile).expect("lays out").lines.len();
+        let added = |paper: PaperWidth| -> usize {
+            let long = lay_out(&m, paper).expect("lays out").lines.len();
+            let short = lay_out(&model(), paper).expect("lays out").lines.len();
             long.saturating_sub(short)
         };
 
-        let wide_rows = added(PrinterProfile::Mm80);
-        let narrow_rows = added(PrinterProfile::Mm58);
+        let wide_rows = added(PaperWidth::Mm80);
+        let narrow_rows = added(PaperWidth::Mm58);
         assert!(
             narrow_rows > wide_rows,
             "the long name took {narrow_rows} extra rows at 58 mm and {wide_rows} at 80 mm — it did not reflow"
         );
 
-        let wide_page = render_receipt(&m, PrinterProfile::Mm80).expect("renders 80mm");
-        let narrow_page = render_receipt(&m, PrinterProfile::Mm58).expect("renders 58mm");
+        let wide_page = render_receipt(&m, PaperWidth::Mm80).expect("renders 80mm");
+        let narrow_page = render_receipt(&m, PaperWidth::Mm58).expect("renders 58mm");
         assert_eq!(wide_page.width_px, 576);
         assert_eq!(narrow_page.width_px, 384);
 
         // Ink scales with type size, not with how much text survived. The
-        // narrow profile sets 20 px/em against 24, so its glyphs cover roughly
+        // narrow paper sets 20 px/em against 24, so its glyphs cover roughly
         // (20/24)² of the area — call it half, generously, and anything below
         // that is text that went missing rather than text that got smaller.
         let floor = wide_page.ink() / 2;
@@ -480,7 +480,7 @@ mod tests {
             qr_payload: "AQIDBAU=".to_owned(),
         });
 
-        let refusal = render_receipt(&m, PrinterProfile::Mm80);
+        let refusal = render_receipt(&m, PaperWidth::Mm80);
         assert!(
             matches!(refusal, Err(RenderError::InvalidModel(_))),
             "a non-fiscal acknowledgement carrying a fiscal block was rendered: {refusal:?}"
@@ -489,7 +489,7 @@ mod tests {
         // The same document without the block renders, so the refusal is the
         // rule and not the fixture.
         m.fiscal = None;
-        assert!(render_receipt(&m, PrinterProfile::Mm80).is_ok());
+        assert!(render_receipt(&m, PaperWidth::Mm80).is_ok());
     }
 
     #[test]
@@ -502,7 +502,7 @@ mod tests {
             direction: pos_domain::receipt::TextDirection::RightToLeft,
         };
         assert!(matches!(
-            rasterise(&layout, PrinterProfile::Mm80),
+            rasterise(&layout, PaperWidth::Mm80),
             Err(RenderError::PageTooTall { .. })
         ));
     }
@@ -536,13 +536,13 @@ mod tests {
     /// identical in both, so the difference is glyphs and nothing else.
     #[test]
     fn a_longer_receipt_carries_more_ink_than_a_shorter_one() {
-        let short = render_receipt(&minimal(), PrinterProfile::Mm80).expect("renders");
+        let short = render_receipt(&minimal(), PaperWidth::Mm80).expect("renders");
 
         let mut long_model = minimal();
         if let Some(line) = long_model.lines.first_mut() {
             line.name = "خبز عربي طازج مخبوز على الحجر مع بذور السمسم والحبة السوداء".to_owned();
         }
-        let long = render_receipt(&long_model, PrinterProfile::Mm80).expect("renders");
+        let long = render_receipt(&long_model, PaperWidth::Mm80).expect("renders");
 
         assert!(
             long.ink() > short.ink(),
@@ -568,9 +568,9 @@ mod tests {
         use crate::render::layout::lay_out;
 
         let m = minimal();
-        let profile = PrinterProfile::Mm80;
-        let layout = lay_out(&m, profile).expect("lays out");
-        let page = render_receipt(&m, profile).expect("renders");
+        let paper = PaperWidth::Mm80;
+        let layout = lay_out(&m, paper).expect("lays out");
+        let page = render_receipt(&m, paper).expect("renders");
 
         let mut baselines = layout.lines.iter().map(|line| line.baseline_y_px);
         let first = baselines.next().expect("the receipt has a first line");
@@ -610,10 +610,10 @@ mod tests {
     fn a_rule_runs_between_the_margins_and_reads_back_msb_first() {
         use crate::render::layout::lay_out;
 
-        for profile in PrinterProfile::ALL {
+        for paper in PaperWidth::ALL {
             let m = model();
-            let layout = lay_out(&m, profile).expect("lays out");
-            let page = render_receipt(&m, profile).expect("renders");
+            let layout = lay_out(&m, paper).expect("lays out");
+            let page = render_receipt(&m, paper).expect("renders");
 
             let y = layout
                 .rules
@@ -621,25 +621,25 @@ mod tests {
                 .copied()
                 .expect("the anatomy has rules");
             let y = u32::try_from(y).expect("a rule on the page");
-            let margin = u32::try_from(profile.margin_px()).expect("a margin");
+            let margin = u32::try_from(paper.margin_px()).expect("a margin");
 
             for x in 0..margin {
                 assert!(
                     !page.dot(x, y),
-                    "{profile:?}: the rule reaches x={x}, inside the {margin}-dot margin"
+                    "{paper:?}: the rule reaches x={x}, inside the {margin}-dot margin"
                 );
                 assert!(
                     !page.dot(page.width_px - 1 - x, y),
-                    "{profile:?}: the rule reaches the far margin"
+                    "{paper:?}: the rule reaches the far margin"
                 );
             }
             assert!(
                 page.dot(margin, y),
-                "{profile:?}: the rule does not start at the margin"
+                "{paper:?}: the rule does not start at the margin"
             );
             assert!(
                 page.dot(page.width_px - margin - 1, y),
-                "{profile:?}: the rule does not reach the far margin"
+                "{paper:?}: the rule does not reach the far margin"
             );
         }
     }
@@ -669,17 +669,17 @@ mod tests {
             name in "[\\u0600-\\u06FFa-zA-Z0-9][\\u0600-\\u06FF a-zA-Z0-9]{0,48}",
             profile_index in 0usize..2,
         ) {
-            let profile = PrinterProfile::ALL
+            let paper = PaperWidth::ALL
                 .get(profile_index)
                 .copied()
-                .unwrap_or(PrinterProfile::Mm80);
+                .unwrap_or(PaperWidth::Mm80);
 
             let mut m = minimal();
             if let Some(line) = m.lines.first_mut() {
                 line.name = name;
             }
 
-            prop_assert_eq!(lay_out(&m, profile)?, lay_out(&m, profile)?);
+            prop_assert_eq!(lay_out(&m, paper)?, lay_out(&m, paper)?);
         }
 
         /// Nothing is placed outside the paper, whatever the receipt says.
@@ -697,10 +697,10 @@ mod tests {
             name in "[\\u0600-\\u06FFa-zA-Z0-9][\\u0600-\\u06FF a-zA-Z0-9]{0,48}",
             profile_index in 0usize..2,
         ) {
-            let profile = PrinterProfile::ALL
+            let paper = PaperWidth::ALL
                 .get(profile_index)
                 .copied()
-                .unwrap_or(PrinterProfile::Mm80);
+                .unwrap_or(PaperWidth::Mm80);
 
             let mut m = minimal();
             if let Some(line) = m.lines.first_mut() {
@@ -708,8 +708,8 @@ mod tests {
             }
             m.merchant.legal_name = name;
 
-            let layout = lay_out(&m, profile)?;
-            prop_assert_eq!(layout.width_px, profile.width_px());
+            let layout = lay_out(&m, paper)?;
+            prop_assert_eq!(layout.width_px, paper.width_px());
 
             let width = i32::try_from(layout.width_px).unwrap_or(i32::MAX);
             for line in &layout.lines {
@@ -754,20 +754,20 @@ mod tests {
             "9f1c0f7a-0000-4000-8000-000000000000",         // unbreakable, wider than 58 mm
         ];
 
-        for profile in PrinterProfile::ALL {
+        for paper in PaperWidth::ALL {
             for subject in SUBJECTS {
                 let mut m = model();
                 if let Some(line) = m.lines.first_mut() {
                     line.name = subject.to_owned();
                 }
 
-                let first = render_receipt(&m, profile).expect("renders");
-                let second = render_receipt(&m, profile).expect("renders");
+                let first = render_receipt(&m, paper).expect("renders");
+                let second = render_receipt(&m, paper).expect("renders");
                 assert_eq!(
                     first, second,
-                    "{profile:?} rendered {subject:?} differently twice"
+                    "{paper:?} rendered {subject:?} differently twice"
                 );
-                assert!(first.ink() > 0, "{profile:?}/{subject:?} came out blank");
+                assert!(first.ink() > 0, "{paper:?}/{subject:?} came out blank");
             }
         }
     }

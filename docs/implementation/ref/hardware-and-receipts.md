@@ -333,6 +333,8 @@ Full treatment in [`phase-2-money-grade.md`](../phase-2-money-grade.md) §2.1 an
 | `supports_raster_arabic` | `false` means the device is **not qualified for Arabic** and may not be sold to an Arabic-first store |
 | `qualified_at`, `qualified_by`, `qualifying_commit` | when this was last true, and against what |
 
+The record is `pos_hardware::profile::PrinterProfile` ([1.7.9](../phase-1-sellable-mvp.md)): every field present — the three qualification columns as one `Qualification` value, because a profile has all three or none — and a fact nobody has measured is `Fact::Unknown` rather than a guess, so a profile whose row limit is unknown refuses to encode and cannot be bound. [1.7.11](../phase-1-sellable-mvp.md) loads the same shape from data files, a cited source beside every value.
+
 **The matrix itself.** One row per device the vendor supports, per class:
 
 | Class | Rows the matrix must carry |

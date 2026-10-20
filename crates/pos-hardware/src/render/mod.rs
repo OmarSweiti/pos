@@ -49,25 +49,25 @@ pub use raster::Bitmap;
 /// raster wider than the head is truncated by the printer, and a narrower one
 /// leaves the receipt visibly off-centre.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PrinterProfile {
+pub enum PaperWidth {
     /// 80 mm paper — 576 printable dots.
     Mm80,
     /// 58 mm paper — 384 printable dots.
     Mm58,
 }
 
-impl PrinterProfile {
-    /// Every profile, once, so a sweep and a test cannot disagree about the
+impl PaperWidth {
+    /// Every paper, once, so a sweep and a test cannot disagree about the
     /// list. Written as a full `match` below rather than a `matches!` so a
     /// third paper width fails to compile until somebody decides its dots.
-    pub const ALL: [PrinterProfile; 2] = [PrinterProfile::Mm80, PrinterProfile::Mm58];
+    pub const ALL: [PaperWidth; 2] = [PaperWidth::Mm80, PaperWidth::Mm58];
 
     /// Printable dots across.
     #[must_use]
     pub const fn width_px(self) -> u32 {
         match self {
-            PrinterProfile::Mm80 => 576,
-            PrinterProfile::Mm58 => 384,
+            PaperWidth::Mm80 => 576,
+            PaperWidth::Mm58 => 384,
         }
     }
 
@@ -75,8 +75,8 @@ impl PrinterProfile {
     #[must_use]
     pub const fn margin_px(self) -> i32 {
         match self {
-            PrinterProfile::Mm80 => 12,
-            PrinterProfile::Mm58 => 8,
+            PaperWidth::Mm80 => 12,
+            PaperWidth::Mm58 => 8,
         }
     }
 
@@ -84,7 +84,7 @@ impl PrinterProfile {
     #[must_use]
     pub const fn content_width_px(self) -> i32 {
         // `width_px` is 576 or 384 and `margin_px` is 12 or 8, so this cannot
-        // overflow or go negative; the profile list is closed and both are
+        // overflow or go negative; the paper list is closed and both are
         // `const`.
         self.width_px() as i32 - 2 * self.margin_px()
     }
@@ -109,18 +109,18 @@ pub enum RenderError {
 
 /// The body text size, in dots per em, on every paper.
 ///
-/// **The same on both profiles, and that is the point.** A first draft set
+/// **The same on both papers, and that is the point.** A first draft set
 /// smaller type on 58 mm so the receipt would keep its shape, and the effect
 /// was that a long product name occupied the same number of rows on both
 /// papers — the narrow measure and the smaller type cancelled. That is not
 /// reflow; it is the same document photographed smaller, and E.49
 /// (`ref/hardware-and-receipts.md`) asks for the other thing.
 ///
-/// Neither reference specifies a size per paper, so the per-profile figure was
+/// Neither reference specifies a size per paper, so the per-paper figure was
 /// an invention, and removing it makes the narrow paper behave the way its
-/// name says: one measure of type, a shorter line, more rows. A future profile
+/// name says: one measure of type, a shorter line, more rows. A future paper
 /// that genuinely needs its own size changes this to a method on
-/// [`PrinterProfile`]; nothing today does.
+/// [`PaperWidth`]; nothing today does.
 ///
 /// 24 dots at 203 dpi is about 3 mm, which puts roughly 30 Arabic characters on
 /// a 58 mm line — the density thermal receipts are actually set at.
@@ -131,7 +131,7 @@ pub const BODY_PX_PER_EM: i32 = 24;
 /// A receipt is continuous paper, so nothing physical stops one growing — but a
 /// 20 000-line document is a runaway loop rather than a sale, and a rasteriser
 /// that allocates for it before failing is a register that dies instead of
-/// refusing. Generous enough for a hundred-line basket at either profile.
+/// refusing. Generous enough for a hundred-line basket at either paper.
 pub const MAX_PAGE_HEIGHT_PX: u32 = 32_768;
 
 /// Turn a receipt into the dots a thermal head prints.
@@ -140,10 +140,7 @@ pub const MAX_PAGE_HEIGHT_PX: u32 = 32_768;
 ///
 /// Refuses an invalid model before laying anything out, an unreadable embedded
 /// face, and a page past [`MAX_PAGE_HEIGHT_PX`].
-pub fn render_receipt(
-    model: &ReceiptModel,
-    profile: PrinterProfile,
-) -> Result<Bitmap, RenderError> {
+pub fn render_receipt(model: &ReceiptModel, paper: PaperWidth) -> Result<Bitmap, RenderError> {
     // 1.7.1 left `ReceiptModel`'s fields public, as `ref/domain-api.md` §13
     // specifies, so nothing forces this call except this line and
     // `an_invalid_model_is_refused_before_anything_is_laid_out`. It is first on
@@ -154,8 +151,8 @@ pub fn render_receipt(
     // Parsed once and handed to both halves: measuring against one parse and
     // drawing against another is two answers to "how wide is this glyph".
     let faces = layout::Faces::load()?;
-    let page = layout::lay_out_with(&faces, model, profile)?;
-    raster::rasterise_with(&faces, &page, profile)
+    let page = layout::lay_out_with(&faces, model, paper)?;
+    raster::rasterise_with(&faces, &page, paper)
 }
 
 /// The receipt every test in this module renders.
@@ -315,29 +312,29 @@ mod tests {
 
     #[test]
     fn every_profile_has_a_width_a_margin_and_a_type_size() {
-        for profile in PrinterProfile::ALL {
-            assert!(profile.width_px() > 0);
-            assert!(profile.margin_px() > 0);
+        for paper in PaperWidth::ALL {
+            assert!(paper.width_px() > 0);
+            assert!(paper.margin_px() > 0);
             // Content must fit inside the paper with both margins to spare.
-            assert!(profile.content_width_px() > 0);
+            assert!(paper.content_width_px() > 0);
             assert!(
-                profile.content_width_px() < profile.width_px() as i32,
-                "{profile:?} content is not inside its paper"
+                paper.content_width_px() < paper.width_px() as i32,
+                "{paper:?} content is not inside its paper"
             );
         }
-        assert_eq!(PrinterProfile::ALL.len(), 2);
+        assert_eq!(PaperWidth::ALL.len(), 2);
     }
 
-    /// One type size, both papers — see [`BODY_PX_PER_EM`]. The narrow profile
+    /// One type size, both papers — see [`BODY_PX_PER_EM`]. The narrow paper
     /// reflows because its *measure* is shorter, which is what E.49 asks for;
-    /// a per-profile size cancelled the effect and was removed.
+    /// a per-paper size cancelled the effect and was removed.
     #[test]
     fn both_papers_are_set_in_the_same_type() {
         // A 58 mm line still holds a useful number of ems; below about ten the
         // receipt stops being a document and becomes a column.
-        for profile in PrinterProfile::ALL {
-            let ems = profile.content_width_px() / BODY_PX_PER_EM;
-            assert!(ems >= 10, "{profile:?} fits only {ems} ems per line");
+        for paper in PaperWidth::ALL {
+            let ems = paper.content_width_px() / BODY_PX_PER_EM;
+            assert!(ems >= 10, "{paper:?} fits only {ems} ems per line");
         }
     }
 
@@ -347,7 +344,7 @@ mod tests {
     /// machine nobody has bought yet (#68).
     #[test]
     fn the_paper_widths_are_the_specified_dot_counts() {
-        assert_eq!(PrinterProfile::Mm80.width_px(), 576);
-        assert_eq!(PrinterProfile::Mm58.width_px(), 384);
+        assert_eq!(PaperWidth::Mm80.width_px(), 576);
+        assert_eq!(PaperWidth::Mm58.width_px(), 384);
     }
 }

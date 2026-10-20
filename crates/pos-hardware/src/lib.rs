@@ -3,6 +3,7 @@
 
 pub mod escpos;
 pub mod font;
+pub mod profile;
 pub mod render;
 
 use std::sync::{Mutex, MutexGuard};

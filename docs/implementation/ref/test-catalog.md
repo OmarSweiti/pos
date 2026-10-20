@@ -153,7 +153,7 @@ Nothing mechanically reconciled this matrix against the test suite, so the Phase
 | 50 | Drawer jammed/open at shift close | `jammed_drawer_does_not_block_shift_close` | 2 | unit |
 | 85 | **No printer at all** — unplugged at shift open, or dead at 09:00 on a Saturday. The set handled paper running out mid-receipt and never handled the printer being absent | `a_sale_completes_with_no_printer_and_queues_the_artifact`, `the_missing_printer_is_an_alarm_not_a_modal`, `a_queued_artifact_prints_unchanged_once_a_printer_returns` | 1 | integration |
 | | | ❓ **Open.** The tests encode the default below | | |
-| 93 | A receipt taller than the printer accepts in one raster command — 2303 dot rows on an Epson TM-T20III, about 29 cm of paper | 🧩 **Deferred with a hook — 1.7.9**, which sends a taller page in strips at its profile's limit and names its tests in the pull request that builds it, which turns this row into a tested one; its paper half — a receipt printed whole on a TM-T20III — is milestone 5.8's (5.8.3) | 1 / 5 | unit + drill |
+| 93 | A receipt taller than the printer accepts in one raster command — 2303 dot rows on an Epson TM-T20III, about 29 cm of paper | `a_page_one_row_taller_than_the_limit_becomes_two_commands`, `joined_strip_payloads_are_the_bitmap_unchanged`, `prop_strips_join_to_the_bitmap_and_respect_the_limit` (1.7.9) — strips at the profile's limit, and within `GS ( L`'s own 16-bit count; its paper half — a receipt printed whole on a TM-T20III — is milestone 5.8's (5.8.3) | 1 / 5 | unit + drill |
 | 94 | A barcode scanned while Windows is on the Arabic keyboard layout — Latin letters in the code arrive as Arabic ones, so a Code 128 or QR value becomes a *different* code | 🧩 **Deferred with a hook — 1.11.6b**, which decodes a recognised burst by physical key and names its tests in the pull request that builds it, and **1.11.6d**, whose HID-POS source never produces a key press for a layout to re-map; the device half — the scanner row of the matrix — is milestone 5.8's (5.8.3) | 1 / 5 | web + drill |
 
 > ⚠️ **OPEN — blocks 2.7.0.** May a fiscally-enabled store trade when it cannot print, given that the cleared QR must appear on the document handed to the customer? Default until answered: the sale completes, the artifact is persisted and queued, and the register raises an alarm — never a refusal to sell, because a printer fault is not a reason to close a shop. Owner: 2.7.0, with the merchant-facing choice recorded in [`merchant-decisions.md`](merchant-decisions.md). Source that settles it: the official ISTD guidance on document issuance, and the merchant's tax advisor in writing.
@@ -376,14 +376,14 @@ Not tests. Procedures — performed on real hardware, or before milestone 5.8 on
 
 | Status | Count | Cases |
 |---|---|---|
-| ✅ Tested — a named test with an owning microstep | 80 | all except those below |
+| ✅ Tested — a named test with an owning microstep | 81 | all except those below |
 | ⏳ Named test, no owning microstep yet | 0 | — |
 | ⚠️ Accepted risk, disclosed | 4 | 31, 55, 61 *(only when enabled)*, 63 |
 | ❓ Open — behaviour defaulted, pending an external answer | 2 | 85, 87 |
-| 🧩 Deferred with a named hook | 7 | 45, 64, 66, 68, 93, 94, 95 |
+| 🧩 Deferred with a named hook | 6 | 45, 64, 66, 68, 94, 95 |
 | 🚫 Out of v1 scope with a rationale | 2 | 67, 72 |
 
-80 + 0 + 4 + 2 + 7 + 2 = 95. Cases 1b, 2b, 4b, 4c, 4d, 19b, 39b and 41b are *variants* of cases 1, 2, 4, 19, 39 and 41, not additional numbered cases.
+81 + 0 + 4 + 2 + 6 + 2 = 95. Cases 1b, 2b, 4b, 4c, 4d, 19b, 39b and 41b are *variants* of cases 1, 2, 4, 19, 39 and 41, not additional numbered cases.
 
 An earlier revision of this table said 62 + 4 + 4 + 2 = 72 while the deferred column named four cases against a typed 3, summing to 73 — caught here rather than left for the reader. Assertion 6 of the checker above now recomputes every one of these numbers from the rows, so the next such error fails `just lint` instead of surviving a review.
 
