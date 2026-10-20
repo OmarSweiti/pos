@@ -840,6 +840,10 @@ xxd crates/pos-hardware/tests/golden/receipt_ar_80mm.bin | head -40
 A golden-file diff is regenerated **deliberately**, reviewed as a diff, and committed. A golden
 file updated to make a test pass is a test deleted.
 
+Our emulator and our encoder read the same specification, so CI also sends every golden through
+an independent emulator, a pinned emupos ([`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md)
+§6b.8), and requires a dot-identical render: a byte both of ours misread still has a second reader.
+
 #### Reviewing a binary golden
 
 "Look at the diff" is earned for the five fiscal goldens: they are XML, a diff is readable, and a

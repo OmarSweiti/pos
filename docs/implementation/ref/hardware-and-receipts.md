@@ -297,7 +297,7 @@ The UI keeps a hidden input capturing keystrokes anywhere on the sale screen and
 
 A scan resolves to a `ScanLookup` ([`domain-api.md`](domain-api.md) §4.3) and never to a bare price. The **only** price a scanned label may carry is a `PriceSource` derived from a matched `embedded_barcode_rule`, and that type has no constructor taking a number the caller chose — which is what keeps the scan path from quietly becoming the price-entry path. A corrupt code is rejected, never guessed (E.40), and `parse_scan` is a fuzz target because a scanner emits whatever it read off a damaged label.
 
-Serial and HID-POS modes come later behind `BarcodeSource`, for merchants whose environment makes wedge mode unreliable.
+**HID-POS is the preferred interface wherever a scanner supports it; wedge mode is the fallback.** Windows ships an in-box class driver for USB scanners in *USB HID POS* mode — the USB.org HID POS Scanner Usage Table (0x8C) — and delivers each scan as data through `Windows.Devices.PointOfService.BarcodeScanner` rather than as key presses ([Microsoft: Point of Service hardware support](https://learn.microsoft.com/en-us/windows/uwp/devices-sensors/pos-device-support)). A scan that never becomes a key press cannot be re-mapped by a keyboard layout, so the layout trap below cannot reach it — and in Jordan, where every register runs an Arabic layout beside English, that trap is the normal case rather than an edge. [1.11.6d](../phase-1-sellable-mvp.md) builds that source behind `BarcodeSource`; wedge decoding (1.11.6b) stays for scanners that cannot do HID POS. Both end in the same `ScanLookup` through one routing rule. Serial scanners come later, behind the same trait, for a merchant whose device needs one.
 
 **The layout trap.** A wedge scanner sends key presses, and the operating system's active layout turns them into characters. Under Arabic (101), a scanner on its default US layout types Arabic letters wherever its code had Latin ones — a *different* code, not an unreadable one — while digit-only EAN and UPC codes usually survive, which is why the defect hides in a demo. [1.11.6b](../phase-1-sellable-mvp.md) decodes a recognised burst by physical key (`KeyboardEvent.code`) rather than by character. A scanner's own keyboard-country or ALT/keypad setting is the device-side answer, and the matrix's scanner row records which one a device was qualified with.
 
@@ -417,6 +417,8 @@ budget is watched relatively and none is claimed ([`../01-conventions.md`](../01
 
 **When a device may be bought earlier.** Only with a written reason, recorded beside the purchase: a risk-register trigger has fired — a provisional measurement puts the floor machine in danger — or a question only a device can answer would change a design decision now. A device an acquirer or a merchant supplies at no cost is not a purchase and is welcome; it qualifies through the same procedure, and its evidence counts once it is a dated record.
 
+**Recommended, and the owner's call: one calibration device when the emulated printer lands (1.7.12).** Simulation's documented failure mode is an emulator faithful to a wrong model — NASA's lessons learned warn of teams that *"become overconfident in low-fidelity simulators or mock environments, missing nuances of real-world hardware behavior"* ([NASA SWE Handbook](https://swehb.nasa.gov/x/54DcD)). The cheapest guard is one common 80 mm network ESC/POS printer for a day — borrowed from a shop or a supplier, which is not a purchase and needs no reason — to capture its `DLE EOT` replies and its behaviour at the raster limit once, committed as rung-3 captures. It replaces nothing in milestone 5.8; it moves the first comparison with reality from Phase 4 to Phase 1.
+
 ### 6b.1 · The fidelity ladder
 
 Four rungs. Each proves something the rung below cannot, and none proves what the rung above it proves.
@@ -487,6 +489,8 @@ What makes deferral safe is that **the gate runs the suite CI already runs**. Ea
 - **the emulator**, once per profile, on every commit;
 - **a physical device**, with the profile it is being qualified against, at the gate — and only when the device's address and the profile id are both given explicitly, so no test can reach a stranger's printer on a shared network.
 
+CI also replays the suite's byte streams through an independent emulator nobody here wrote (§6b.8), so the bytes are never graded only by this project's own reading of the specification.
+
 The suite asserts §3's and §4's contract, never a device's convenience: the four print outcomes, status read or reported unsupported, strips at the profile's limit (case 93), exactly one drawer pulse per authorised opening and none on a retry, a reprint or a queue drain, paper pulled mid-print, a printer absent at shift open (§3a), and §9's scan kinds. A device that fails it has disagreed with its profile or with the contract, and §6b.6 says how the gate tells which.
 
 **Tests:** `every_device_profile_names_a_source_for_every_value` · `the_printer_conformance_suite_passes_for_every_profile` · `the_device_target_refuses_to_run_without_an_explicit_device_and_profile` · `a_captured_device_trace_replays_through_the_emulator`
@@ -540,7 +544,25 @@ Its output is the first matrix rows (§6a), each with a qualifying commit; row 1
 - **That a budget is met before 5.8.2.** Until then regressions are caught relatively and nothing is accepted as a baseline ([`../01-conventions.md`](../01-conventions.md) §7.2).
 - **That Arabic is right on paper before 5.8.4.** Until then the goldens prove bytes, the PNGs prove the rasteriser's image, and the native reader confirms the image.
 - **That a datasheet is a fact.** It is a maker's claim, and the gate exists partly to catch the ones that are wrong.
+- **That an independent emulator agreeing with us proves a device will.** emupos (§6b.8) proves our bytes are read the same way by a second implementation of the specification; a device can still disagree with both, which is what 5.8.3 is for.
 - **Anything about payment certification, PCI scope or the acquirer's listing.** Those were never device questions, and nothing here settles them.
+
+### 6b.8 · The second opinion — an independent emulator
+
+**An emulator this project writes cannot catch a misreading of the specification that this project's driver shares.** Both read the same reference and the same profiles, so one misreading can pass every suite in the repository. The professional answer is a second, independent implementation of the protocol as a cross-check — not a replacement for 1.7.12, which owns what only a profile can say, but a reader nobody here wrote.
+
+**Measured, not assumed: a spike on 20 October 2026** rendered real receipts through this pipeline (1.7.1–1.7.4) — Arabic at 80 mm (576 × 1238 dots) and 58 mm (384 × 1266), and a 60-line basket at 80 mm (576 × 5450, past the TM-T20III's 2303-row command limit) — and sent each, in every framing 1.7.9 will produce, to the candidates, each run in a throwaway container bound to `127.0.0.1`:
+
+| Candidate | What it did with our bytes | Verdict |
+|---|---|---|
+| **emupos 0.4.0** (Apache-2.0, Python) | Every render **dot-identical** to ours: the 80 mm receipt as one `GS v 0` (0 of 713 088 dots differ), the 5450-row basket as one command and as ≤ 2303-row `GS v 0` strips, and the 80 mm receipt as ≤ 900-row `GS ( L` store-and-print strips. `DLE EOT` 1–4 replies for ready, paper-out and cover-open match Epson's bit definitions; a job sent at paper-out is held and completes when paper returns; `ESC p` opens its drawer and sets the drawer bit. **It does not model** per-command raster limits — it printed whole the 5450-row command a TM-T20III refuses — nor a raster whose width disagrees with its profile | **Adopted as a cross-check** (below). Young: alpha, one maintainer, first release 14 September 2026, and the container image its documentation names does not exist |
+| **escpos-netprinter 3.2** (AGPL-3.0) | Renders a tiny raster, but **fails** on our real receipts (`esc2html` exits 255: *"zero-byte-long argument specified"*); amd64 only; a 10-second print limit | Rejected |
+| **CrossEscPos 1.2.0** (.NET) | Not run: it describes itself as an unfinished experiment with a partial command set | Rejected |
+| **POS for .NET simulators** (Microsoft, UnifiedPOS) | API-level simulators for .NET service objects; this register is not a .NET application | Not applicable — but Microsoft's own framing of them is this section's: simulators *"during the early stages of development … and for testing configurations before deployment"* ([POS for .NET FAQ](https://learn.microsoft.com/en-us/previous-versions/windows/embedded/ee406171(v=winembedded.0))) |
+
+**What follows from it.** 1.7.13 replays every golden and every conformance byte stream through a pinned emupos and requires a dot-identical render and a status reading that agrees with ours. Pinned means exact: one version, installed from hash-locked requirements into a container image built in CI from `infra/emulators/emupos/`, never published, never on a register, never in a release. Where emupos models nothing — row limits, width agreement — 1.7.12's profile-driven emulator remains the only judge. A disagreement fails the build and is investigated, never suppressed: it means our bytes, our emulator or theirs is wrong, and where the specification cannot settle which, a device does (5.8.3). If emupos stops being maintained, the cross-check keeps its last good version; nothing in the suite depends on it for a property our own emulator does not also prove.
+
+**And one design fact the spike surfaced for 1.7.9.** `GS ( L` counts its parameters in a 16-bit field — `(pL + pH × 256) = 10 + k` in Epson's definition of function 112 — so one store carries at most 65 525 data bytes: **910 rows at 576 dots, 1365 at 384**, whatever the device would take. A `GS ( L` strip is therefore the smaller of the profile's `raster_max_rows` and the command's own limit, unless the extended `GS 8 L` form is chosen.
 
 ---
 

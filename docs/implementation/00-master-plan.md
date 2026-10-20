@@ -93,7 +93,7 @@ concordance heading while counting its executable `1.1.2a` and `1.1.2b` children
 
 | Phase | Microsteps | Weeks | Implied rate |
 |---|---:|---|---|
-| 1 | 120 | **15–21**, split 1A 8–11 / 1B 7–10 | 5.7–8.0 / week |
+| 1 | 121 | **15–21**, split 1A 8–11 / 1B 7–10 | 5.8–8.1 / week |
 | 2 | 62 | **10–13** | 4.8–6.2 / week |
 | 3 | 45 | **11–14** | 3.2–4.1 / week |
 | 4 | 42 | **9–12** | 3.5–4.7 / week, plus the pilot week |
