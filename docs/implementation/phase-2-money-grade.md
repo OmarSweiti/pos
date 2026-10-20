@@ -66,12 +66,12 @@ For each candidate, get in writing: the integration protocol (JSON over local ne
 
 **Record, with the answer:** the acquirer's legal entity, its authorisation or licence, and a funds-flow diagram from card tap to merchant settlement. A driver written before that diagram exists is a driver written twice.
 
-**Done when:** one acquirer chosen, protocol documentation in hand, the responsibility matrix and listing numbers recorded in [`ref/merchant-decisions.md`](ref/merchant-decisions.md) section K, and a physical test terminal on the desk.
+**Done when:** one acquirer chosen, protocol documentation in hand, the responsibility matrix and listing numbers recorded in [`ref/merchant-decisions.md`](ref/merchant-decisions.md) section K, and the acquirer's test host, terminal simulator or written test procedure in hand. The physical test terminal is the acquirer's to supply and is qualified at milestone 5.8 (5.8.3) — ask for it now, because the conversation is the long lead, not the device.
 
 > ⚠️ **OPEN — blocks 2.1.1.** Which exact PCI SAQ applies to the selected acquirer, terminal model and firmware, PTS/P2PE listing, integration protocol, store network and support model? Default until answered: design and operate to the SAQ C baseline, reject any integration that exposes a full PAN to this process, and make no P2PE-eligibility claim anywhere.
 > Owner: `2.1.1` collects the evidence; `5.3.3` determines the SAQ. Source that settles it: the acquirer's written responsibility matrix and a QSA determination against the current PCI SSC eligibility criteria.
 
-> **If no acquirer will supply a terminal to a pre-revenue vendor** — a real possibility, and the reason [`00-master-plan.md`](00-master-plan.md) §6a orders this conversation in Phase 1 — the stated fallback is: Phase 2 ships against the simulator, microstep 2.1.5 moves to Phase 5 alongside the terminal, and the Phase-2 gate says so out loud. That is a decision, not a discovery at the gate.
+> **What used to be the fallback is now the plan.** No device is bought before milestone 5.8 ([`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6b), so Phase 2 ships against 2.1.4's simulator — parameterised by a terminal profile written from this step's answers — and against the acquirer's own test host wherever it offers one. 2.1.5's physical half is 5.8.3's, and the Phase-2 gate says so out loud. What stays early is the conversation, which is why [`00-master-plan.md`](00-master-plan.md) §6a orders it in Phase 1: an acquirer that will not supply a terminal to a pre-revenue vendor has to be found out in Phase 2, not at the gate.
 
 ### 2.1.2 — The `PaymentTerminal` trait
 **Files:** `crates/pos-hardware/src/payment.rs` (new)
@@ -114,13 +114,14 @@ Unknown  →  poll last_transaction_status(sale_ref), backoff, up to N times
 ### 2.1.4 — Simulated terminal with fault injection
 **Files:** `crates/pos-hardware/src/payment/simulator.rs` (new)
 Scriptable: approve, decline (each code), partial approval, timeout-then-approved, timeout-then-declined, timeout-then-still-unknown, disconnected, slow, reversal failure.
+**Its behaviour comes from a terminal profile** ([`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6b.2) written from 2.1.1's answers — protocol, the status query, partial approval, refund by reference, timeouts — so the simulator models the acquirer that was chosen rather than a generic one.
 **Tests:** `simulator_covers_every_tender_result_variant`
 **Done when:** CI exercises every card path with no hardware attached.
 
 ### 2.1.5 — The real driver
 **Files:** `crates/pos-hardware/src/payment/<acquirer>.rs` (new)
 Implement against the chosen acquirer. Keep it thin: protocol translation only, no business logic. Every decision that matters already lives in 2.1.3.
-**Tests:** integration tests behind `#[ignore]`, run by hand against the physical terminal and recorded in the hardware-lab checklist (2.9.4).
+**Tests:** integration tests behind `#[ignore]`, run against the acquirer's test host wherever it offers one, and against the physical terminal at milestone 5.8 (5.8.3), each run a dated record in `docs/drills/`.
 
 ---
 
@@ -551,14 +552,14 @@ A scripted day including a drop to the safe, a bank deposit taken from the safe 
 
 ### 2.9.3 — Cold-start budget
 **Depends on:** 2.9.5
-**Files:** `apps/terminal/tests/e2e/coldstart.e2e.ts`
-Measured through the packaged-app harness from 2.9.5, on the reference register named in [`01-conventions.md`](01-conventions.md) §7 — not on a hosted runner, whose variance on a three-second workload exceeds the budget.
-**Done when:** packaged app, cold start to sellable, median of at least five runs under 3 seconds, and `just bench-gate` exits non-zero on a regression beyond the stated tolerance. `cargo bench` alone exits 0 whatever it measures, which is why the gate is a recipe and not a bench invocation.
+**Files:** `apps/terminal/tests/e2e/coldstart.e2e.ts` · `scripts/bench-gate.py` (the `cold-start` slug) · `scripts/tests/bench_gate_test.py`
+Measured through the packaged-app harness from 2.9.5. The 3-second median is the reference register's ([`01-conventions.md`](01-conventions.md) §7), so it is proven at milestone 5.8 (5.8.2), which commits `benchmarks/baselines/cold-start.json`; before then the median of five launches on the development machine is recorded as indicative and claims nothing — and it is never taken on a hosted runner, whose variance on a three-second workload exceeds the budget.
+**Done when:** `coldstart.e2e.ts` records the median of at least five packaged launches to sellable, and `python3 scripts/tests/bench_gate_test.py` proves the `cold-start` slug fails a slower fixture beyond the stated tolerance; the 3-second median on the reference register is 5.8.2's. `cargo bench` alone exits 0 whatever it measures, which is why the gate is a recipe and not a bench invocation.
 
 ### 2.9.4 — Hardware-lab checklist
 **Files:** `docs/implementation/ref/hardware-and-receipts.md` (the checklist section), `docs/drills/` (the record)
-One real thermal printer at **each** supported width, one scanner, one payment terminal. Run diagnostics; print every receipt golden on paper; confirm the Arabic **by eye**, by a native reader who is not you.
-**Done when:** a dated record exists in `docs/drills/` naming the drill, the commit or tag, the hardware, the operator, the elapsed time and every surprise with the case number it became. "Signed off and dated" needs somewhere to be signed, and a normative reference document is not a log. A golden file proves bytes; only paper proves a receipt.
+**Before milestone 5.8 the checklist runs against the emulators; at 5.8 it runs on paper** ([`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6b). Run every check §9 marks *emulated* or *simulated* — the drawer pulses the emulated printer records, paper pulled mid-print, a printer absent at shift open, the scan kinds and the focused search box through 1.11.6c, every terminal result through 2.1.4 — across the profiles the matrix's candidates name, and run diagnostics against the emulators. The checks marked *device only* are 5.8.4's: every golden printed on paper and confirmed **by eye** by a native reader who is not you, the 58 mm printer, the label printer, and cold start and the screen on the reference register.
+**Done when:** a dated record exists in `docs/drills/` naming the drill, the commit or tag, **each emulator and the profile versions it ran**, listing each device-only check as carried to 5.8.4, and naming the operator, the elapsed time and every surprise with the case number it became. "Signed off and dated" needs somewhere to be signed, and a normative reference document is not a log. A golden file proves bytes; only paper proves a receipt.
 
 ### 2.9.5 — The packaged-application smoke suite
 **Files:** `apps/terminal/tests/e2e/` (new), `.github/workflows/ci.yml`
@@ -569,6 +570,14 @@ WebdriverIO plus `tauri-driver`, three scenarios: launch → the lock screen ren
 This is the blueprint's own WebDriver smoke suite, dropped from the implementation set without a reason ([`00-master-plan.md`](00-master-plan.md) §4a).
 **Tests:** `packaged_app_launches_to_the_lock_screen_in_arabic` · `packaged_app_completes_a_cash_sale` · `packaged_app_retrieves_its_key_from_the_credential_store`
 **Done when:** CI fails when the packaged application does not start, on every platform the driver supports.
+
+### 2.9.5b — An installer that needs no internet
+**Files:** `apps/terminal/src-tauri/tauri.conf.json` (`bundle.windows.webviewInstallMode`) · [`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6a (the register-OS row) · [`02-development-workflow.md`](02-development-workflow.md) §15 (the release checklist) · `docs/drills/` (the install record) · this file (this microstep's `Files:`, `Tests:` and `Done when:` lines)
+**The Windows bundle depends on the WebView2 runtime, and the installer fetches it from the internet.** `tauri.conf.json` sets no `webviewInstallMode`, so Tauri's default applies: `downloadBootstrapper`, which Tauri's own documentation says requires an internet connection during installation. A shop register is exactly the machine that has none at the moment someone installs on it. Windows 11 ships the runtime, but Microsoft says a small number of Windows 10 devices do not have it, and the IoT Enterprise LTSC editions are to be checked rather than assumed. An installer that fails offline is the first support call of a pilot.
+**Set `offlineInstaller`.** It embeds the runtime's standalone installer, roughly 127 MB more per Windows bundle — the price of installing in a shop with the cable unplugged. `embedBootstrapper` is small but still downloads the runtime, so it does not answer the problem; `fixedVersion` pins a runtime this product would then have to patch itself.
+**Name the floor while here.** WebView2 stopped at version 109 on Windows 7, 8 and 8.1 in January 2023, and Rust 1.78 made Windows 10 the minimum for its standard Windows targets, so this product cannot run on Windows 7 or POSReady 7 — terminals some shops still own. The matrix's register-OS row names Windows 10 22H2, Windows 11, and the Windows 10 and 11 IoT Enterprise LTSC editions, and nothing older.
+Its tests are named in the pull request that builds it ([`01-conventions.md`](01-conventions.md) §6): at least that the configuration declares the offline mode, and that 2.9.5's packaged-application suite launches from that installer. Edge case E.95.
+**Done when:** `tauri.conf.json` declares `offlineInstaller`, the register-OS row names its floor, and a dated record in `docs/drills/` shows the Windows installer completing and the application reaching its lock screen on a Windows machine with no WebView2 runtime and no network connection — a clean virtual machine qualifies, and the reference register repeats it at milestone 5.8 (5.8.4).
 
 ### 2.9.6 — The soak dataset generator
 **Files:** `justfile`, `.config/nextest.toml`, `crates/pos-db/tests/common/soak_dataset.rs` (new)
@@ -586,8 +595,9 @@ Phase 5 then *uses* it (5.1.1, 5.5.3) rather than inventing it.
 just lint && just test
 cargo nextest run -p pos-fiscal              # 22 rules × 5 goldens + training case, all mock faults
 cargo nextest run --workspace -E 'test(prop_)'
-just bench-gate                              # budgets, on the reference register, exits non-zero on regression
 ```
+
+**`just bench-gate` is not in that list until milestone 5.8** fills the reference-register records; 1.12.3's relative comparison stands in for it and claims no budget ([`01-conventions.md`](01-conventions.md) §7.2).
 
 By demonstration:
 
@@ -607,6 +617,8 @@ By demonstration:
 14. **Automated tests exist** for E.2, E.2b, E.15, E.16, E.17, E.20, E.21, E.22, E.23, E.24, E.25, E.26, E.27, E.28, E.29, E.30, E.32, E.34, E.35, E.50, E.53, E.65, E.73, E.74, E.75, E.76, E.77, E.79, E.81, E.82, E.84, E.92, and for the Phase-2 half of E.7, E.18, E.19, E.46, E.54 and E.69.
 
 > **Three multi-node cases live later because there is no server, sync or second register here.** Case 31 is serial refund abuse across two stores, enforced later by a server-side check. Case 47 is cross-register reprint through the server-owned `reprint_bundle`. Case 87 is the two-register ICV collision fixture, now owned by Phase 3's server allocator and lease microstep. A gate item nobody can satisfy honestly teaches the reader that the whole list is decorative.
+
+**Not claimed at this gate, either: that any device works.** The card demonstrations ran against 2.1.4's simulator and, where the acquirer offers one, its test host; the receipts and the Z printed through the emulated printer. The physical terminal, printers and drawer are milestone 5.8's, and 5.8.4 repeats demonstrations 1, 2, 3, 7 and 12 on them.
 
 **Not claimed at this gate:** that ISTD accepts anything. That claim requires Phase 5 milestone 5.2 and nothing else can produce it. Say so out loud to anyone who asks — including the merchant. What *is* claimed is narrower and true: the documents pass our conformance harness **against the pinned official specification**, which is a materially stronger statement than it was before 2.7.0 existed.
 

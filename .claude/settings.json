@@ -85,7 +85,15 @@
       "Read(~/.codex/**)",
       "Read(~/Library/Keychains/**)",
       "Read(~/Library/Application Support/1Password/**)",
-      "Read(~/Library/Application Support/Bitwarden/**)"
+      "Read(~/Library/Application Support/Bitwarden/**)",
+      "Bash(gh pr review *)"
+    ],
+    "ask": [
+      "Bash(gh pr merge *)",
+      "Bash(just merge)",
+      "Bash(just merge *)",
+      "Bash(just promote-merge)",
+      "Bash(just promote-merge *)"
     ]
   },
   "sandbox": {

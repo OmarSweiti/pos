@@ -61,9 +61,9 @@ is superseded, and what is still open — is **§4a** below. Read §4a before ac
 | [`ref/fiscal-jofotara.md`](ref/fiscal-jofotara.md) | the highest-risk component in the product |
 | [`ref/ipc-contract.md`](ref/ipc-contract.md) | every Tauri command, its capability, its audit |
 | [`ref/sync-protocol.md`](ref/sync-protocol.md) | ownership classes, push/pull, chaos, accepted risks |
-| [`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) | traits, the Arabic raster pipeline, the lab checklist |
+| [`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) | traits, the Arabic raster pipeline, simulator-first and the qualification gate, the lab checklist |
 | [`ref/ui-spec.md`](ref/ui-spec.md) | screen by screen, RTL mechanics, keyboard map |
-| [`ref/test-catalog.md`](ref/test-catalog.md) | 92 edge cases → named tests, checked by a script. **The coverage matrix** |
+| [`ref/test-catalog.md`](ref/test-catalog.md) | 95 edge cases → named tests, checked by a script. **The coverage matrix** |
 | [`ref/security-compliance.md`](ref/security-compliance.md) | PDPL, PCI, the audit chain, permissions, tenancy, key custody, secrets |
 | [`ref/merchant-decisions.md`](ref/merchant-decisions.md) | the questionnaire to fill in with the merchant |
 
@@ -77,11 +77,11 @@ Blueprint Part 10 and master-plan Part G, reconciled with the corrections, the g
 | Phase | Adds | A real store could… | Exit gate |
 |---|---|---|---|
 | **0** | workspace hygiene, CI on a remote, product identity, panic lints | …nothing. It compiles and ships | 7 checks, all green |
-| **1** | `Money`/`Qty`/ids/time · catalog + FTS · **tax engine** · cart machine · cash tenders · users/permissions/audit chain + `ApprovalHandle` · **Arabic receipts** · atomic finalize · **backup with a recovery code** · shift skeleton · sequences · stock ledger + `stock_adjust` · the sales-side tax report · RTL UI · seed fixture | **…sell for cash, all day, fully offline, in Arabic, with correct GST and a printed receipt** | 10 demonstrations, done with the cable unplugged |
+| **1** | `Money`/`Qty`/ids/time · catalog + FTS · **tax engine** · cart machine · cash tenders · users/permissions/audit chain + `ApprovalHandle` · **Arabic receipts** · device profiles and emulators · atomic finalize · **backup with a recovery code** · shift skeleton · sequences · stock ledger + `stock_adjust` · the sales-side tax report · RTL UI · seed fixture | **…sell for cash, all day, fully offline, in Arabic, with correct GST and a printed receipt** | 10 demonstrations, done with the cable unplugged |
 | **2** | **2.7.0: obtain and pin the official ISTD specification** · card terminal + the `Unknown` protocol · refunds/returns/exchanges + minimal store credit · shifts, cash locations, X/Z · **the fiscal pipeline** · electronic journal · diagnostics · packaged-app smoke suite | …take cards that reconcile, handle returns without being defrauded, close a shift that balances | 14 demonstrations + drills |
 | **3** | sync push/pull · **chaos convergence** · customers & loyalty under PDPL · back office with real human authentication · **multi-tenant isolation** · device provisioning · licensing · Sentry · **operating the server** | …run more than one register, administer centrally, keep customers | 15 demonstrations |
 | **4** | price lists · receiving + WAC · counts · transfers · **promotions** · supplier tax invoices and filing periods · report suite · **shelf labels** · multi-store · **the pre-pilot gate** | …run three stores with promotions and full inventory | the pre-pilot gate, then 10 demonstrations and a three-store pilot week |
-| **5** | soak · **Fiscal Certification** · PDPL registration walkthrough · PCI SAQ · restore drills · signing · the update service · onboarding · **commercial and legal readiness** | **…be sold to someone who is not you** | 13 items, of which the last is: someone else installs, provisions, and sells from the docs alone |
+| **5** | soak · **hardware qualification**, pulled in front of the pilot · **Fiscal Certification** · PDPL registration walkthrough · PCI SAQ · restore drills · signing · the update service · onboarding · **commercial and legal readiness** | **…be sold to someone who is not you** | 13 items, of which the last is: someone else installs, provisions, and sells from the docs alone |
 
 **Effort, and why it is falsifiable.** The old estimate — 40–52 weeks — priced Phase 1 at 8–12 weeks
 for 87 microsteps, in the only phase whose author is learning the language, and then asserted that
@@ -93,24 +93,26 @@ concordance heading while counting its executable `1.1.2a` and `1.1.2b` children
 
 | Phase | Microsteps | Weeks | Implied rate |
 |---|---:|---|---|
-| 1 | 112 | **14–20**, split 1A 8–11 / 1B 6–9 | 5.6–8.0 / week |
-| 2 | 61 | **10–13** | 4.7–6.1 / week |
+| 1 | 120 | **15–21**, split 1A 8–11 / 1B 7–10 | 5.7–8.0 / week |
+| 2 | 62 | **10–13** | 4.8–6.2 / week |
 | 3 | 45 | **11–14** | 3.2–4.1 / week |
 | 4 | 42 | **9–12** | 3.5–4.7 / week, plus the pilot week |
-| 5 | 36 | **9–13** | 2.8–4.0 / week, and gated on other people |
+| 5 | 40 | **11–16** | 2.5–3.6 / week, and gated on other people |
 
 Phase 1's rate is the highest and that is deliberate, not optimism: its microsteps are the finest in
 the set — many are a single type, a single trigger or a single test — and its 1A/1B split makes a
 slip visible at week 9 rather than at the final gate. Phases 3 and 5 carry the lowest rates because
 their work waits on a host, a QSA, counsel, an acquirer and a merchant.
 
-**Total: roughly 53–72 weeks solo**, a range and not a commitment. Record the actual per-microstep
+**Total: roughly 56–76 weeks solo**, a range and not a commitment. Record the actual per-microstep
 cycle time over the first two groups and correct this table from evidence; an estimate nobody
 revises against measurement is a decoration. Nothing in it prices the long-lead items in §6a — those
 are queue time, not effort, and they are why several of them are ordered phases before they are used.
 
 Phases 1–2 deliberately front-load the unforgiving parts — hardware, money, offline, fiscal —
-because they dictate the architecture. Dashboards never do.
+because they dictate the architecture. Dashboards never do. For hardware, front-loading means its
+software — the traits, the raster pipeline, the drivers, and the emulators that stand in for every
+device until milestone 5.8 buys them ([`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6b).
 
 ---
 
@@ -128,6 +130,7 @@ because they dictate the architecture. Dashboards never do.
 | **Backup moves from Phase 5 to Phase 1** | Between a sale and its successful push, the only copy of that money is one SQLCipher file |
 | **Operating the server becomes Phase-3 work** (`2026-08-25`) | Phase 4's gate is "three stores trade for a week with no intervention from you", which needs a host, a tested `pg_dump` restore, a migration procedure with live registers attached, and an alert that reaches a person |
 | **A pre-pilot gate is inserted before Phase 4's pilot** (`2026-08-25`) | The pilot put real customers and real cards into three shops ahead of fiscal certification, the PDPL determination, the breach runbook, the SAQ determination and any independent security assessment |
+| **Hardware is bought at a qualification gate, not before Phase 1's receipts** (`2026-10-20`) | A device bought in Phase 1 is bought against a guess about a pilot nobody has met, and a desk device injects one fault, once, by hand. Emulators parameterised by device profiles run a wider matrix on every commit than a lab would buy; milestone 5.8 buys a narrow set against a frozen matrix and must pass before the pre-pilot gate. What that costs — budgets, paper and a real power cut unproven until the gate — is written down rather than discovered ([`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6b) |
 
 ---
 
@@ -194,7 +197,7 @@ A reader arriving from a source plan will meet every left-hand column as though 
 | `prop_discount_percentage_roundtrip_is_exact` | correction C-2, first revision | `prop_document_allowance_recap_equals_sum_of_line_allowances` |
 | `Money::split_evenly` as the proration tool | correction C-2, first revision | `Money::split_proportional`. Equal splitting is not proportional-by-line-value allocation; `split_evenly` keeps its narrower job |
 | "The four golden fiscal documents" | correction C-1, first revision | **Five** — plain, discounted, multi-rate, weighed, credit note — plus a training-absence case |
-| "E.1–E.72" | master plan Part E, and this set's own earlier text | **92 numbered cases**, reconciled against the suite by `scripts/check-test-catalog.py` |
+| "E.1–E.72" | master plan Part E, and this set's own earlier text | **95 numbered cases**, reconciled against the suite by `scripts/check-test-catalog.py` |
 | "The tax report by rate is the accountant's filing input" | master plan C.12, `ref/tax-jordan.md` first revision | A **sales-side tax reconciliation**. The statutory return also needs purchases, imports, input-tax deductibility and apportionment, credits, adjustments and box mapping, which arrive in Phase 4 |
 | "The electronic controller/processor registry is not yet activated" | `ref/plan-validation.md`, first revision | MoDEE publishes the register. Each deployment needs its own dated controller/processor/DPO determination and entry before customer PII is processed |
 | "The engineering posture does not change; only the claim changes" (PCI) | `ref/plan-validation.md` §4, first revision | It does change. SAQ B-IP carries eligibility and isolation requirements; SAQ C pulls the store network, patching, access control, monitoring and policy evidence into scope |
@@ -204,6 +207,7 @@ A reader arriving from a source plan will meet every left-hand column as though 
 | "`merchant-decisions.md` §11" as the home of the offline-clearance answer | `ref/fiscal-jofotara.md`, first revision | [`ref/merchant-decisions.md`](ref/merchant-decisions.md) **section F, row 6.7**. There is no §11; §K is *Payments* |
 | Source-plan companion filenames | the three source plans cross-reference each other under older names | The current names are [`business-functional-master-plan.md`](../plan/business-functional-master-plan.md), [`engineering-blueprint.md`](../plan/engineering-blueprint.md) and [`phase-0-setup-guide.md`](../plan/phase-0-setup-guide.md). Where a source plan names a file that does not exist, this set's names win |
 | `docs/plan/phase-0-setup-guide.md` line 87 → `../justfile` | source plan | Resolves to `docs/justfile`, which does not exist; the target is `../../justfile`. The link checker allowlists exactly this one immutable-source path and says so rather than reporting unconditional success |
+| A hardware-lab checklist *"before each release: one real thermal printer, one scanner, one terminal"* | blueprint §8 | Before milestone 5.8 no release reaches a merchant, so a tagged candidate runs the checklist's emulated and simulated checks against the emulators and its device-only checks wait for the gate ([`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6b, §9). From 5.8 on, every release runs the whole checklist on the matrix's devices — the blueprint's rule, with its devices bought at the gate rather than before the first receipt |
 
 ### 4a.3 · Open items that the corrections did not close
 
@@ -287,10 +291,12 @@ date is when the row is re-read whether or not anything triggered; the per-phase
 | **A cross-tenant leak on the shared server** | medium | **critical** — it is a personal-data breach *caused by the vendor*, it hits every merchant on the instance at once, and both statutory clocks start for all of them | `org_id NOT NULL`, tenant-scoped unique keys, composite foreign keys, forced row-level security under a non-owner role, and an adversarial two-org property test rather than a review | any query that reaches the database without a principal-derived `org_id`; any new merchant-owned table without an RLS policy | 3.6.6 | every phase gate from 3 |
 | **Jordan changes a rate by decree mid-build** | medium | low | Rates are time-effective data. A decree is a row, not a release | an ISTD rate-catalogue publication | 1.3 | quarterly |
 | **Learning Rust slows Phase 1 badly** | medium | medium | Groups 1.1–1.3 are the steep part. The §3 estimate now prices it, and the implied microstep rate makes the slip visible in week 3 rather than week 16 | actual rate below 4 microsteps/week for two consecutive weeks | 1.x | weekly through Phase 1 |
-| **No acquirer will give a pre-revenue vendor a test terminal** | medium | **high** — it blocks microstep 2.1.1, the real driver, and the hardware lab | Start the conversation in Phase 1 (§6a) and establish the legal entity first. Stated fallback: Phase 2 ships against the simulator and the real driver moves to Phase 5 with the terminal | four weeks of no answer from the second candidate acquirer | 2.1.1 | monthly from Phase 1 |
+| **No acquirer will give a pre-revenue vendor a test terminal** | medium | **high** — it blocks 2.1.5's physical half and the terminal row of milestone 5.8, and with them card acceptance in the pilot | Start the conversation in Phase 1 (§6a) and establish the legal entity first. Phase 2 ships against the simulator by design ([`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6b), so the terminal is needed by 5.8, not by Phase 2 | four weeks of no answer from the second candidate acquirer | 2.1.1 | monthly from Phase 1 |
 | **Acquirer terminal lacks a status query** | medium | **high** | Ask before choosing (11.3 in the questionnaire). Without it there is no safe timeout recovery — **choose a different acquirer** | any candidate's written protocol omits it | 2.1.1 | at 2.1.1 |
-| **Arabic receipt looks wrong on real paper** | medium | medium | Raster pipeline + seven goldens + a committed PNG beside every raster golden + the hardware lab, where a native reader confirms on paper | any diff under the golden directory, or a `cosmic-text`/`rustybuzz`/`tiny-skia`/font bump | 1.7, 2.9.4 | every release |
-| **Performance degrades at year-one volume** | medium | medium | Budgets are failing CI benchmarks from Phase 1 against named reference hardware, **and the soak dataset is generated at the end of Phase 2** rather than Phase 5 — a Phase-5 soak is a detector, not a mitigation, because an index or an archival strategy found then lands after the schema and the reports have shipped | any budget within 20% of its limit | 5.1.1, dataset at 2.9 | every phase gate |
+| **Arabic receipt looks wrong on real paper** | medium | medium | Raster pipeline + seven goldens + a committed PNG beside every raster golden, read by a native reader in the pull request that changes it + the hardware lab, where the same reader confirms on paper — at milestone 5.8 and every release after, because no printer is bought before it | any diff under the golden directory, or a `cosmic-text`/`rustybuzz`/`tiny-skia`/font bump | 1.7, 5.8 | every release |
+| **Performance degrades at year-one volume** | medium | medium | Budgets are watched relatively in CI from Phase 1 and proven on named reference hardware at milestone 5.8 ([`01-conventions.md`](01-conventions.md) §7.2), **and the soak dataset is generated at the end of Phase 2** rather than Phase 5 — a Phase-5 soak is a detector, not a mitigation, because an index or an archival strategy found then lands after the schema and the reports have shipped | any budget within 20% of its limit | 5.1.1, dataset at 2.9 | every phase gate |
+| **The floor machine misses a budget nobody could measure** — the reference register is bought at milestone 5.8, so the first absolute measurement comes weeks before a pilot rather than in Phase 1 | medium | **high** — a fix found at 5.8.2 may be architectural, and the pilot waits on it | Relative regression on every pull request from 1.12.3; budgets kept with headroom; and the written exception in [`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6b that buys the register early | an indicative development-machine measurement above a quarter of any budget's absolute limit — conservative on purpose, because the floor is slower than a development machine by a factor nobody has measured yet — or the relative job flagging the same budget twice in one phase | 1.12.3, 5.8.2 | every phase gate |
+| **A device disagrees with its profile at the gate** — found weeks before the pilot rather than months | medium | medium — a driver or profile change under pilot pressure | Every profile value cites its source and no unknown is guessed; CI runs every profile on every commit; the selection rule puts each unknown the pilot depends on in front of a device first; the order goes out when Phase 4 begins, so a disagreement has weeks to land; and a corrected profile becomes a capture the emulator replays from then on ([`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6b) | any profile the pilot will use still carrying an `unknown` when Phase 4 begins | 5.8 | every phase gate from Phase 3 |
 | **PDPL enforcement arrives suddenly** | low | medium | Built to the law, not to the lag. Consent as an event ledger, export, anonymisation, scrubbed logs, both breach clocks — all tested. The electronic register is live, so registration is a dated determination rather than a wait | any MoDEE publication; the registration determination at 3.4.1 | 3.4 | quarterly |
 | **Scope creep from J.1's deferred list** | **high** | medium | Every deferred item has a named hook and a merchant-decisions row. A "yes" is a phase, not a rewrite | any merchant answer flipping an L-section row to "yes" | ongoing | weekly |
 | **Runway runs out before Phase 3** | medium | **critical** — Phases 1–2 produce a register nobody can be billed for; there is no revenue path until entitlement issuance exists in Phase 3 | Front-load the commercial decision: the unit of sale is decided **before** microstep 3.8.1 because it determines what an entitlement asserts. §6a orders the legal entity in Phase 1 for the same reason | remaining runway below two phases at the current rate | 3.8, 5.0 | monthly |
@@ -310,9 +316,9 @@ is used.
 | **Legal entity established** | Phase 1 | an acquirer relationship, Apple and Microsoft signing identities, a processing agreement, and ISTD credentials in the vendor's own name | everything below it slips; this is the root dependency |
 | **The official ISTD package** — guide, XSD, business rules, code lists | Phase 1, so `2.7.0` is not waiting | microstep `2.7.0`, and therefore **every** fiscal microstep | group 2.7 stalls at its first step, or worse, proceeds on a reconstruction and regenerates five goldens in Phase 5 with a merchant watching |
 | **Written answers from the ISTD E-Invoicing Directorate** on anything the package leaves silent | Phase 1, alongside the package | the four fiscal `⚠️ OPEN` items owned by `2.7.0` | the architecture defaults hold, and the offline-clearance answer in particular could still invalidate them |
-| **Acquirer conversation opened, then a physical test terminal** | Phase 1 | `2.1.1`, the real driver `2.1.5`, and the hardware lab `2.9.4` | Phase 2 ships against the simulator and `2.1.5` moves to Phase 5 with the terminal — stated, not improvised |
-| **Thermal printers, 80 mm *and* 58 mm, and one scanner** | before group 1.7 | the Arabic raster pipeline, the goldens, and the lab checklist that runs before every release | Arabic is proven by a simulator, which proves nothing about paper |
-| **The reference register itself** — the machine that becomes the lowest register-hardware row | before group 1.7, on the same order as the printers | the deferred half of `1.2.0`, and therefore **every** performance budget: `1.2.7`, `1.4.9`, `1.6.2`, `1.11.13` and the `1.12.3` measurement job | `just bench-gate` keeps refusing, [`01-conventions.md`](01-conventions.md) §7's five limits stay unmeasurable, and four budget microsteps arrive with no machine to run on. A laptop standing in for it is worse than the wait: it makes every budget a number about the wrong computer |
+| **Acquirer conversation opened, then a physical test terminal** | Phase 1 for the conversation; the terminal is delivered for milestone 5.8 | `2.1.1`, the terminal profile `2.1.4` reads, `2.1.5`'s physical half and `5.8.3` | Phase 2 is unaffected — it ships against the simulator by design — and 5.8 waits on the terminal; the pilot takes no card until it is qualified |
+| **The gate's device set** — a thermal printer at each width the pilot uses, a drawer, a scanner, and any label printer, customer display or scale the pilot uses, frozen by `5.8.1` | when Phase 4 begins | milestone 5.8, and through it row 11 of the pre-pilot gate | the pre-pilot gate cannot be signed and the pilot waits — do not start it anyway. Nothing earlier waits on a device: every class is built against emulators until then ([`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6b) |
+| **The reference register itself** — the machine that becomes the lowest register-hardware row | when Phase 4 begins, on the same order as the gate's devices | the deferred half of `1.2.0` at `5.8.2`, and therefore **every** absolute budget: `1.2.7`, `1.4.9`, `1.6.2`, `1.11.13`, `2.9.3` and the `1.12.3` live job | `just bench-gate` keeps refusing, [`01-conventions.md`](01-conventions.md) §7's five limits stay unproven past the point a pilot needs them, and 4.9.0 waits. A laptop standing in for it is worse than the wait: it makes every budget a number about the wrong computer |
 | **Merchant recruitment for the pilot and for certification** | Phase 3 | the Phase-4 pilot and Phase-5 milestone 5.2, which needs *their* portal account and *their* written consent | 5.2 has no host; the whole fiscal claim stalls |
 | **Apple Developer ID and Windows Authenticode identity** | Phase 3 | `5.5.1`, and every installer a merchant runs | releases stay unsigned, and the Phase-5 gate's first item fails |
 | **QSA engagement and an independent security assessment** | Phase 4, before the pre-pilot gate | `5.3.3`, and the pre-pilot gate that lets real cards into three shops | the pilot cannot start; do not start it anyway |
@@ -331,7 +337,7 @@ by the one person who can also edit the sentence; two of these were in that stat
 2. **Money is exact.** No float touches it; every total is a property test.
 3. **Tax is correct.** The **sales-side reconciliation** by rate reconciles to a hand-check on a
    scripted day. It is not a completed GST return, and it is not described as one.
-4. **Arabic is right.** Confirmed on paper, by a native reader, and defended by golden files that a
+4. **Arabic is right.** Confirmed on paper, by a native reader, at milestone 5.8 and before every release after it, and defended by golden files that a
    human can actually review — every raster golden ships a committed PNG beside it.
 5. **Cards never double-charge.** `prop_no_input_sequence_yields_two_tenders_for_one_auth`.
 6. **Refunds cannot exceed what was sold.** `prop_cumulative_refunds_never_exceed_sold_qty`, in any
@@ -363,8 +369,8 @@ by the one person who can also edit the sentence; two of these were in that stat
   audit. A quarter is a quarter of uncleared documents. The alarm is a number, not a habit:
   `rejection_rate_24h` above 2%, or three consecutive rejections carrying the same pinned ISTD error
   code, is an ISTD change until proven otherwise, and it reaches a person through microstep `3.9.3`.
-- **Keep [`ref/test-catalog.md`](ref/test-catalog.md) honest.** Every new surprise becomes E.93,
-  E.94 — with a test, an accepted risk, an open question with a stated default, or an out-of-scope.
+- **Keep [`ref/test-catalog.md`](ref/test-catalog.md) honest.** Every new surprise becomes E.96,
+  E.97 — with a test, an accepted risk, an open question with a stated default, or an out-of-scope.
   **A surprise that becomes none of those will happen again.** `scripts/check-test-catalog.py` is
   what stops the matrix drifting back into a hand-maintained table.
 - **Re-read §4a when a source plan is quoted at you.** The concordance is the reason a superseded
