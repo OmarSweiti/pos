@@ -187,6 +187,9 @@ financial effect and audit row. `docs/implementation/01-conventions.md` sections
 - Work pull requests target `development` and are squash-merged. Promotion pull
   requests (`development` to `staging`, then `staging` to `main`) use merge
   commits; never squash a promotion.
+- Every pull request is assigned to the owner. `just pr` does it; when opening
+  one any other way, pass `--assignee @me` (the labeler workflow assigns the
+  owner as a backstop).
 - Every pull request needs the owner's approval: the `code-owner-review`
   ruleset requires one code-owner approval on all three flow branches. An agent
   never gives it. Never submit a pull-request review (`gh pr review` is

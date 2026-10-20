@@ -44,7 +44,10 @@ forks the branches permanently. `just branch <name>`, `just pr`, `just merge`, `
 `just promote-staging`, `just promote-main`.
 
 **Every pull request needs the owner's approval, and an agent never gives it.** The
-`code-owner-review` ruleset requires one code-owner approval on all three flow branches. GitHub
+`code-owner-review` ruleset requires one code-owner approval on all three flow branches, and every
+pull request is assigned to the owner: by Dependabot's config, by `--assignee @me` in the recipes
+(pass it yourself to a bare `gh pr create`), and by the labeler workflow's first step for any other
+route. GitHub
 never lets an author approve their own pull request, and every pull request an agent opens is the
 owner's own to GitHub. So the agent's part ends at an open, green, evidenced pull request. It never
 submits a review: `gh pr review` is denied in `.claude/settings.json` and forbidden in Codex. It

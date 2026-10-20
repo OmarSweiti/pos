@@ -539,13 +539,13 @@ pr $title='' $body='' $milestone='':
     [ -n "$milestone" ] && ms=(--milestone "$milestone")
 
     if [ -n "$body" ]; then
-      gh pr create --base development --title "$title" --body-file "$body" "${ms[@]+"${ms[@]}"}"
+      gh pr create --base development --assignee @me --title "$title" --body-file "$body" "${ms[@]+"${ms[@]}"}"
     elif [ -n "$title" ]; then
       base=$(git merge-base origin/development HEAD)
-      gh pr create --base development --title "$title" \
+      gh pr create --base development --assignee @me --title "$title" \
         --body "$(git log --reverse --format='- %s' "$base"..HEAD)" "${ms[@]+"${ms[@]}"}"
     else
-      gh pr create --base development --fill-first "${ms[@]+"${ms[@]}"}"
+      gh pr create --base development --assignee @me --fill-first "${ms[@]+"${ms[@]}"}"
     fi
 
     # Independent workflows register at different times. Derive and wait for
@@ -810,13 +810,13 @@ merge $pr='':
 
 # development → staging, as a release candidate. Merge with a MERGE COMMIT.
 promote-staging:
-    gh pr create --base staging --head development \
+    gh pr create --base staging --head development --assignee @me \
       --title "promote development to staging" \
       --body-file .github/PULL_REQUEST_TEMPLATE/promotion.md
 
 # staging → main, for production. Merge with a MERGE COMMIT.
 promote-main:
-    gh pr create --base main --head staging \
+    gh pr create --base main --head staging --assignee @me \
       --title "promote staging to main" \
       --body-file .github/PULL_REQUEST_TEMPLATE/promotion.md
 

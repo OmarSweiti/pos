@@ -22,6 +22,26 @@ HEAD_SHA = "${{ github.event.pull_request.head.sha }}"
 WORKFLOW_SHA = "${{ github.workflow_sha }}"
 CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 LABELER_ACTION = "actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13"
+# The write-token step that assigns every pull request to the repository owner.
+# Pinned byte for byte: its only inputs are the trusted repository owner and the
+# event's number, and a reviewed change to it is a reviewed change to this file.
+LABELER_ASSIGN_NAME = "Assign the pull request to the repository owner"
+LABELER_ASSIGN_ENV = {
+  "GH_TOKEN" => "${{ secrets.GITHUB_TOKEN }}",
+  "GH_REPO" => "${{ github.repository }}",
+  "OWNER" => "${{ github.repository_owner }}",
+  "NUMBER" => "${{ github.event.pull_request.number }}"
+}.freeze
+LABELER_ASSIGN_RUN = <<~'SH'
+  set -euo pipefail
+  gh pr edit "$NUMBER" --add-assignee "$OWNER"
+  assigned=$(gh pr view "$NUMBER" --json assignees --jq '.assignees[].login')
+  if ! grep -Fxq -- "$OWNER" <<< "$assigned"; then
+    printf 'assign: REFUSED — GitHub did not record %s as an assignee of #%s\n' "$OWNER" "$NUMBER" >&2
+    exit 1
+  fi
+  echo "assigned: $OWNER"
+SH
 
 EXPECTED_TOP_LEVEL_KEYS = %w[name on permissions concurrency jobs].freeze
 EXPECTED_JOBS = %w[protected-paths topology promotion-notice].freeze
@@ -596,14 +616,26 @@ def validate_labeler_file(path)
   require_scalar(job, "runs-on", "ubuntu-latest", "labeler jobs.label")
   require_scalar(job, "timeout-minutes", "10", "labeler jobs.label")
   steps = sequence(job.fetch("steps"), "labeler jobs.label.steps")
-  unless steps.length == 4
-    raise PolicyViolation, "labeler job must contain exactly four reviewed steps"
+  unless steps.length == 5
+    raise PolicyViolation, "labeler job must contain exactly five reviewed steps"
   end
 
-  label_step = mapping(steps.fetch(0), "labeler jobs.label.steps[0]")
-  require_exact_keys(label_step, %w[uses with], "labeler jobs.label.steps[0]")
-  require_scalar(label_step, "uses", LABELER_ACTION, "labeler jobs.label.steps[0]")
-  label_inputs = scalar_mapping(label_step.fetch("with"), "labeler jobs.label.steps[0].with")
+  assign_step = mapping(steps.fetch(0), "labeler jobs.label.steps[0]")
+  require_exact_keys(assign_step, %w[name env run], "labeler jobs.label.steps[0]")
+  require_scalar(assign_step, "name", LABELER_ASSIGN_NAME, "labeler jobs.label.steps[0]")
+  assign_env = scalar_mapping(assign_step.fetch("env"), "labeler jobs.label.steps[0].env")
+  unless assign_env == LABELER_ASSIGN_ENV
+    raise PolicyViolation,
+          "labeler owner assignment must read only #{LABELER_ASSIGN_ENV.inspect}; got #{assign_env.inspect}"
+  end
+  unless scalar(assign_step.fetch("run"), "labeler jobs.label.steps[0].run") == LABELER_ASSIGN_RUN
+    raise PolicyViolation, "labeler owner assignment must run exactly the reviewed script"
+  end
+
+  label_step = mapping(steps.fetch(1), "labeler jobs.label.steps[1]")
+  require_exact_keys(label_step, %w[uses with], "labeler jobs.label.steps[1]")
+  require_scalar(label_step, "uses", LABELER_ACTION, "labeler jobs.label.steps[1]")
+  label_inputs = scalar_mapping(label_step.fetch("with"), "labeler jobs.label.steps[1].with")
   expected_label_inputs = {
     "configuration-path" => ".github/labeler.yml",
     "sync-labels" => "true"
@@ -612,10 +644,10 @@ def validate_labeler_file(path)
     raise PolicyViolation, "labeler action inputs changed from #{expected_label_inputs.inspect}"
   end
 
-  checkout_step = mapping(steps.fetch(1), "labeler jobs.label.steps[1]")
-  require_exact_keys(checkout_step, %w[uses with], "labeler jobs.label.steps[1]")
-  require_scalar(checkout_step, "uses", CHECKOUT, "labeler jobs.label.steps[1]")
-  checkout_inputs = scalar_mapping(checkout_step.fetch("with"), "labeler jobs.label.steps[1].with")
+  checkout_step = mapping(steps.fetch(2), "labeler jobs.label.steps[2]")
+  require_exact_keys(checkout_step, %w[uses with], "labeler jobs.label.steps[2]")
+  require_scalar(checkout_step, "uses", CHECKOUT, "labeler jobs.label.steps[2]")
+  checkout_inputs = scalar_mapping(checkout_step.fetch("with"), "labeler jobs.label.steps[2].with")
   expected_checkout_inputs = {
     "ref" => WORKFLOW_SHA,
     "persist-credentials" => "false"
@@ -627,11 +659,11 @@ def validate_labeler_file(path)
   end
 
   run_steps = [
-    [steps.fetch(2), "Normalize a Dependabot title to the repository convention", true],
-    [steps.fetch(3), "The type label comes from the PR title", false]
+    [steps.fetch(3), "Normalize a Dependabot title to the repository convention", true],
+    [steps.fetch(4), "The type label comes from the PR title", false]
   ]
   run_steps.each_with_index do |(node, expected_name, conditional), offset|
-    context = "labeler jobs.label.steps[#{offset + 2}]"
+    context = "labeler jobs.label.steps[#{offset + 3}]"
     step = mapping(node, context)
     keys = %w[name env run]
     keys << "if" if conditional
@@ -1477,6 +1509,22 @@ def self_test(default_path)
       "labeler type selection cannot fall back to ambiguous positional dispatch" => [
         'want=$(./scripts/pr-type-label.sh --label "$TITLE")',
         'want=$(./scripts/pr-type-label.sh "$TITLE")'
+      ],
+      "labeler cannot assign a login the pull request controls" => [
+        "OWNER: ${{ github.repository_owner }}",
+        "OWNER: ${{ github.event.pull_request.user.login }}"
+      ],
+      "labeler owner assignment cannot be dropped" => [
+        "      - name: #{LABELER_ASSIGN_NAME}\n",
+        "      - name: Assign nobody\n"
+      ],
+      "labeler owner assignment script cannot change" => [
+        'gh pr edit "$NUMBER" --add-assignee "$OWNER"',
+        'gh pr edit "$NUMBER" --add-assignee "$OWNER" --add-label "approved"'
+      ],
+      "labeler owner assignment cannot read event fields inline" => [
+        'echo "assigned: $OWNER"',
+        'echo "assigned: ${{ github.event.pull_request.title }}"'
       ]
     }
     labeler_fixture = File.join(directory, "labeler.yml")
