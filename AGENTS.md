@@ -187,6 +187,13 @@ financial effect and audit row. `docs/implementation/01-conventions.md` sections
 - Work pull requests target `development` and are squash-merged. Promotion pull
   requests (`development` to `staging`, then `staging` to `main`) use merge
   commits; never squash a promotion.
+- Every pull request carries validation evidence before it is handed to the
+  owner. Once its checks are green, follow the `validate-pr` skill: the exact
+  head, a fresh database with synthetic data, the emulators the change touches,
+  one screenshot per `Done when` step, every image inspected because the
+  repository is public, then `just evidence <pr> <dir>`. A pull request that
+  changes nothing at runtime posts `Runtime change: none` and why. Never claim
+  a step that did not run.
 - Every pull request is assigned to the owner. `just pr` does it; when opening
   one any other way, pass `--assignee @me` (the labeler workflow assigns the
   owner as a backstop).

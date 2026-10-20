@@ -744,11 +744,18 @@ that are at risk of it.
 Rebase-merge is **disabled** at the repository level. It is the one button that quietly produces a
 history nobody chose.
 
-### The owner approves every PR
+### The owner approves every PR — on evidence
 
 Nothing merges into `development`, `staging` or `main` without the owner's approval — §3's
 `code-owner-review` ruleset enforces it, and every pull request is assigned to the owner so none
-waits unseen. How the approval is given depends on who opened the pull request, because GitHub never
+waits unseen. The owner approves on **evidence**, not on a description: before a pull request is
+handed over, it is run against the emulators and a comment posted by `just evidence` shows each
+step working, with screenshots, and names the exact commit validated. A pull request that changes
+nothing at runtime gets the same comment saying `Runtime change: none` and why. The
+[`validate-pr`](../../.claude/skills/validate-pr/SKILL.md) skill is the procedure and
+[workflow §4.12](02-development-workflow.md) the sequence. The screenshots live on
+`refs/evidence/pr-<n>`, outside the branches, so no clone downloads them and no squash lands them
+on `development`. How the approval is given depends on who opened the pull request, because GitHub never
 lets an author approve their own:
 
 | Opened by | What the owner does | What GitHub records |

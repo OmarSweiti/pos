@@ -74,6 +74,7 @@ REQUIRED_RULE_DECISIONS = {
     '["gh", "repo", ["archive", "delete", "edit", "rename"]]': "prompt",
     '["just", ["pr", "promote-staging", "promote-main", "gh-bootstrap", "gh-actions-policy", "gh-protect", "gh-project"]]': "prompt",
     '["just", ["merge", "promote-merge"]]': "prompt",
+    '["just", "evidence"]': "prompt",
     '["gh", "pr", "review"]': "forbidden",
     '["just", ["migrate", "db-reset", "db-local-reset"]]': "prompt",
     '["sqlx", "migrate", "revert"]': "forbidden",

@@ -101,6 +101,7 @@ STATIC_POLICY_PATHS = %w[
   scripts/install-gitleaks-ci.sh
   scripts/install-script-linters-ci.sh
   scripts/lint-scripts.sh
+  scripts/pr-evidence.py
   scripts/pr-type-label.sh
   scripts/report-test-coverage.sh
   scripts/run-python.sh

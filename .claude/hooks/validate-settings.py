@@ -139,6 +139,12 @@ SKILL_CONTRACTS = {
         "uniquely named scratch database",
         "just guards",
     ),
+    "validate-pr": (
+        "Validate the exact head",
+        "No real customer data, no PIN, no card number, no token or key",
+        "Never claim a check that did not run",
+        "never approves or merges the pull request",
+    ),
 }
 
 

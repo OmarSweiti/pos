@@ -27,6 +27,15 @@
      - `prop_line_tax_sum_equals_receipt_tax` — 4096 cases
      - Manual: hand-checked a 5-line mixed-rate basket against ref/tax-jordan.md §3, to the fil. -->
 
+## Validation evidence
+
+<!-- Posted as a comment once the checks are green, by `just evidence <pr> <dir>` —
+     the validate-pr skill is the procedure: the app run against the emulators from a
+     fresh database, one screenshot per step, every image inspected before it goes
+     public, and the comment naming the exact commit validated. A PR that changes
+     nothing at runtime posts `Runtime change: none`, why, and the checks that ran.
+     The owner approves on that evidence; a new push needs new evidence. -->
+
 ## Test catalog
 
 <!-- Which `E.n` rows this closes, and which it deliberately leaves open. -->
@@ -40,6 +49,7 @@
 - [ ] `just pre-push` green locally (lint · test · guards)
 - [ ] I read my own diff, after a break — §4.8
 - [ ] the manual `Done when` was run on a **fresh** database — §4.10
+- [ ] the validation evidence comment covers the current head — screenshots, or `Runtime change: none` and why — §4.12
 - [ ] no float in a money path; one rounding, at the boundary
 - [ ] no PII or card value reachable by a log line, an `IpcError.detail`, or a test fixture
 - [ ] permission checked in Rust, not only reflected in the UI

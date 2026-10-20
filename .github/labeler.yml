@@ -125,6 +125,7 @@
           - ".gitleaks.toml"
           - "scripts/check-protected-paths.sh"
           - "scripts/approval-gate.sh"
+          - "scripts/pr-evidence.py"
           - "scripts/check-automation-attribution.py"
           - "scripts/check-staged-policy.py"
           - "scripts/check-branch-workflow-policy.rb"

@@ -187,6 +187,21 @@ prefix_rule(
     ],
 )
 
+# Publishing validation evidence pushes a ref and posts a comment: external
+# writes, public forever on this repository. The read-only preview is free.
+prefix_rule(
+    pattern = ["just", "evidence"],
+    decision = "prompt",
+    justification = "This publishes screenshots and a comment to GitHub; confirm the pull request and that every image was inspected.",
+    match = [
+        "just evidence 261 /tmp/evidence",
+    ],
+    not_match = [
+        "just evidence-check 261 /tmp/evidence",
+        "just flow",
+    ],
+)
+
 # A review submitted under the owner's credentials would be the owner's
 # approval, forged. Agents never approve, request changes, or comment-review;
 # the owner reviews on GitHub.

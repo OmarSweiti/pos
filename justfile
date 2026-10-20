@@ -345,6 +345,7 @@ guards:
     bash ./scripts/watch-pr-checks.sh --self-test
     bash ./scripts/validate-branch-flow.sh --self-test
     bash ./scripts/approval-gate.sh --self-test
+    {{ python }} ./scripts/pr-evidence.py --self-test
     bash ./scripts/validate-change-title.sh --self-test
     {{ python }} ./scripts/check-automation-attribution.py --self-test
     bash ./scripts/scan-secrets.sh --self-test
@@ -552,6 +553,24 @@ pr $title='' $body='' $milestone='':
     # the exact workflow-qualified set for this PR route and changed paths.
     created_pr=$(gh pr view --json url --jq .url)
     bash ./scripts/watch-pr-checks.sh "$created_pr"
+
+# Publish a pull request's validation evidence: the screenshots, pushed to
+# refs/evidence/pr-<n> where no clone downloads them, and one comment naming the
+# exact commit that was validated. Every pull request gets one before it is
+# handed to the owner — .claude/skills/validate-pr is the procedure. It refuses
+# unless this checkout is the pull request's exact head with no tracked change,
+# and a pull request touching runtime code must carry at least one screenshot.
+#
+#   just evidence-check 261 /path/to/evidence   # validate and preview; writes nothing
+#   just evidence 261 /path/to/evidence         # push the images, post the comment
+#
+# Publish a pull request's validation evidence: screenshots plus one comment.
+evidence $pr $dir:
+    {{ python }} ./scripts/pr-evidence.py publish "$pr" "$dir"
+
+# Validate a pull request's evidence and preview its comment, writing nothing.
+evidence-check $pr $dir:
+    {{ python }} ./scripts/pr-evidence.py check "$pr" "$dir"
 
 # Squash-merge a work PR into development — but only once its required checks
 # are actually green.

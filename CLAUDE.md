@@ -43,6 +43,15 @@ and its *title* becomes the commit, so the title obeys the commit convention. A 
 forks the branches permanently. `just branch <name>`, `just pr`, `just merge`, `just flow`,
 `just promote-staging`, `just promote-main`.
 
+**Every pull request carries validation evidence before it is handed to the owner — always, as a
+step of the work, not an extra.** Once its checks are green, run the `validate-pr` skill: check out
+the exact head, start from a fresh database with synthetic data, start the emulators the change
+touches, drive the app through every `Done when` claim, and capture one screenshot per step. Inspect
+every image (the repository is public), write `summary.md`, then `just evidence <pr> <dir>`, which
+posts one comment naming the validated commit. A PR that changes nothing at runtime posts
+`Runtime change: none` and why. A new runtime push needs new evidence. Never claim a step that did
+not run.
+
 **Every pull request needs the owner's approval, and an agent never gives it.** The
 `code-owner-review` ruleset requires one code-owner approval on all three flow branches, and every
 pull request is assigned to the owner: by Dependabot's config, by `--assignee @me` in the recipes
@@ -205,6 +214,7 @@ Codex-specific execution policy and hook adapters live under `.codex/`.
 | `.claude/hooks/protect-immutable.py` | writing, deleting, or moving a **committed migration** or anything in `docs/plan/` through Claude write tools, Bash, PowerShell, or Monitor; and the forward-only violation `sqlx migrate revert` in any wrapped or nested spelling, for which no Git hook and no CI job is a backstop — it produces no commit and no diff |
 | `.claude/hooks/docs-links-on-write.py` | leaving a broken cross-reference after Claude changes **any** tracked `.md` — the five root documents included — whatever the link target's extension; the `.sh` file is only an inactive POSIX compatibility wrapper |
 | `.claude/hooks/validate-settings.py` | a session-time weakening of the reviewed project or local Claude settings — including dropping the `gh pr review` deny or any merge-command `ask` — or the loss of a required skill contract. The one hook here that **fails closed** |
+| `scripts/pr-evidence.py` | publishing evidence from anything but the PR's exact, clean head; a runtime PR — code, a dependency manifest or lockfile — without screenshots; a non-runtime PR that does not say `Runtime change: none`; an image that is not what its name claims, over the 2 MB blob cap, or a symlink |
 | `scripts/approval-gate.sh` | a merge recipe merging a pull request the owner has not approved on GitHub, or merging the owner's own pull request at all — that click is the owner's. Called twice by `just merge` and `just promote-merge`; `check-justfile-policy.py` proves no recipe passes `--admin` |
 | `.codex/hooks/` | immutable-path and forward-only SQLx checks for Codex shell, immutable-path checks for `apply_patch`, and complete documentation-link checks after any Markdown `apply_patch` |
 | `.githooks/commit-msg` | a title outside `<type>(<scope>): <summary>  [N.N.N\|N.N.Nx\|N.N.N–N.N.N\|—]`, or coding-assistant attribution |
