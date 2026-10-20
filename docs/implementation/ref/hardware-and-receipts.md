@@ -417,6 +417,8 @@ budget is watched relatively and none is claimed ([`../01-conventions.md`](../01
 
 **When a device may be bought earlier.** Only with a written reason, recorded beside the purchase: a risk-register trigger has fired — a provisional measurement puts the floor machine in danger — or a question only a device can answer would change a design decision now. A device an acquirer or a merchant supplies at no cost is not a purchase and is welcome; it qualifies through the same procedure, and its evidence counts once it is a dated record.
 
+**Recommended, and the owner's call: one calibration device when the emulated printer lands (1.7.12).** Simulation's documented failure mode is an emulator faithful to a wrong model — NASA's lessons learned warn of teams that *"become overconfident in low-fidelity simulators or mock environments, missing nuances of real-world hardware behavior"* ([NASA SWE Handbook](https://swehb.nasa.gov/x/54DcD)). The cheapest guard is one common 80 mm network ESC/POS printer for a day — borrowed from a shop or a supplier, which is not a purchase and needs no reason — to capture its `DLE EOT` replies and its behaviour at the raster limit once, committed as rung-3 captures. It replaces nothing in milestone 5.8; it moves the first comparison with reality from Phase 4 to Phase 1.
+
 ### 6b.1 · The fidelity ladder
 
 Four rungs. Each proves something the rung below cannot, and none proves what the rung above it proves.
