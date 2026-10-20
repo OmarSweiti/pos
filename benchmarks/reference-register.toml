@@ -18,8 +18,9 @@
 # refusal is the designed behaviour of microstep 1.2.0, not a defect in it.
 # §7.1: "no baseline is accepted while either record is blank or they disagree."
 #
-# Filling it in, when the hardware exists (§6a "order the hardware before group
-# 1.7 starts", and §6a's "Qualifying a new device" procedure):
+# Filling it in, at the hardware qualification gate — microstep 5.8.2, because
+# no device is bought before it (§6b) — with §6a's "Qualifying a new device"
+# procedure:
 #
 #   1. Buy the machine, run §6a step 1-6 against it, and add its row to the
 #      register-hardware table between the `bench-gate:register-hardware-matrix`

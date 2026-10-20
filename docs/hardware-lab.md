@@ -1,4 +1,4 @@
-# The hardware lab — what to buy, how to set it up, and what it unblocks
+# The hardware lab — what milestone 5.8 buys, how to set it up, and what it qualifies
 
 **Tracks #68.** Written 24 September 2026 against `development` at `1ccdd63`, and **revised on
 3 October 2026**: every model below was re-checked against its maker's own documents, prices were
@@ -8,6 +8,13 @@ checked with sellers in Amman the same day, and three of the original candidates
 and it hands the agent what it needs to continue. The plan of record is still
 [`implementation/`](implementation/). Every requirement below cites the section it comes from,
 and where this file and the plan disagree, **the plan is right**.
+
+> **Revised again on 20 October 2026: nothing here is bought before milestone 5.8.** The plan now
+> develops every device class against emulators parameterised by device profiles, and buys devices
+> at the hardware qualification gate, whose order goes out when Phase 4 begins
+> ([`implementation/ref/hardware-and-receipts.md`](implementation/ref/hardware-and-receipts.md) §6b).
+> The research below stands — it seeds the profiles and it is the gate's shopping list — but its
+> timing does not, and its prices are a 3 October 2026 snapshot to re-quote before ordering.
 
 > **Candidates, not the matrix.** Models named here are examples that meet the plan's requirements
 > on their makers' published specifications. **Nothing is supported until it has been bought, held
@@ -23,15 +30,15 @@ Owners are marked 👤 **you** and 🤖 **agent** throughout.
 
 ## 0 · The answer in one screen
 
-1. **Buy now. By the plan's own schedule, the order is already late.** The plan says *"Order the
-   hardware before group 1.7 starts"* (`ref/hardware-and-receipts.md` §6a.1, and the master plan's
-   long-lead register, §6a). Group 1.7 started on 20 September, and four of its ten steps have landed
-   with no printer in the building.
-2. **Buy a Windows x86-64 all-in-one touchscreen register, not an Android terminal**, and **never
+1. **Do not buy yet.** The plan changed on 20 October 2026: devices are bought at the hardware
+   qualification gate, milestone 5.8, and the order goes out when Phase 4 begins
+   (`ref/hardware-and-receipts.md` §6b, and the master plan's long-lead register, §6a). Until then
+   the agent builds the emulators instead (§1), and this file is the gate's research.
+2. **At the gate, buy a Windows x86-64 all-in-one touchscreen register, not an Android terminal**, and **never
    one built on an Intel Celeron J1900** (§3).
 3. **Buy the *lowest* machine you are willing to support, not a fast one.** It becomes row 1 of the
    device matrix, and every performance budget in the plan is measured on it (§3).
-4. **The purchase order** (§4):
+4. **The candidate order** (§4), frozen and re-quoted at `5.8.1`:
 
    | Qty | Item | Pick | Key requirement |
    |---|---|---|---|
@@ -44,42 +51,38 @@ Owners are marked 👤 **you** and 🤖 **agent** throughout.
 
    Indicative total: **about 1,290–1,330 JOD** for this set, or **about 790–830 JOD** for what is in
    stock in Amman today, which is a weaker set (§4.7).
-5. **Set it up on one LAN, give the agent key-only SSH to the register, and send the handover
-   checklist** (§6–§7). From then on the agent qualifies the devices, fills the matrix and runs the
+5. **When it arrives, set it up on one LAN, give the agent key-only SSH to the register, and send
+   the handover checklist** (§6–§7). From then on the agent qualifies the devices, fills the matrix and runs the
    lab checks. You are needed for the physical acts: reading Arabic on paper, pulling the plug for the
    power-loss drill, and scanning.
 
 ---
 
-## 1 · What the hardware unblocks, and what it does not
+## 1 · What the emulators carry now, and what waits for the gate
 
-**Unblocked on arrival:**
+**Carried by emulators now** — none of this waits for a device:
 
-| Work | What it needs | Source |
+| Work | Carried by | Source |
 |---|---|---|
-| **`1.2.0`'s deferred half**: fill §6a.1 row 1 and `benchmarks/reference-register.toml`, until `--check-profile` exits **0** | the register | [`phase-1-sellable-mvp.md`](implementation/phase-1-sellable-mvp.md) `1.2.0` |
-| **`1.7.5`'s paper half**: the seven receipt goldens printed on paper and read by a native reader. The goldens themselves are code, which the agent can write before the hardware arrives | both printers and a reader | `ref/hardware-and-receipts.md` §2.2, §9 check 1 |
-| **Printer profiles**: the first 80 mm and 58 mm rows of the §6a matrix, including each printer's raster height limit and status behaviour | both printers | §6a, *"The first printer row is written in Phase 1"* |
-| **`1.7.9` and `1.7.10`**: raster strips sized to each printer, and the network driver that sends them and reads status back. Both are measured against real devices and nothing else | both printers and the drawer | [`phase-1-sellable-mvp.md`](implementation/phase-1-sellable-mvp.md) `1.7.9`, `1.7.10` |
-| **Scanner qualification**: the burst heuristic and the Arabic keyboard layout, which `1.11.6b` makes the decoder survive | the scanner | §6a matrix, the scanner row |
-| **§9 check 2**: the 58 mm profile prints without truncation | the 58 mm printer | §9 |
+| `1.7.9` and `1.7.10`: raster strips at each profile's limit, and the network driver that sends them and reads status back | the emulated network printer (`1.7.12`) and the conformance suite across every printer profile (`1.7.13`) | [`phase-1-sellable-mvp.md`](implementation/phase-1-sellable-mvp.md) |
+| `1.7.5`'s review: the seven goldens read by a native reader | each golden's committed PNG, read in the pull request that changes it | `ref/hardware-and-receipts.md` §2.2 |
+| The scanner: the burst heuristic and the Arabic keyboard layout | the wedge emulator and its scanner matrix (`1.11.6c`), across the seeded scanner profiles | `1.11.6b`, `1.11.6c` |
+| The screen at the registers' resolutions, with touch and without hover | the register-screen profiles (`1.11.14b`) | [`ui-spec.md`](implementation/ref/ui-spec.md) |
+| §9 checks 3–10: the drawer kicks once and never on a reprint or retry, paper pulled mid-print, a printer absent at shift open, the scan kinds, the focused search box, every terminal result | the emulated printer, the wedge emulator and the payment simulator `2.1.4` | `ref/hardware-and-receipts.md` §9 |
+| The budgets of `1.2.7`, `1.4.9`, `1.6.2`, `1.11.13` and `2.9.3` | their benchmarks, and a relative comparison of every pull request with its base (`1.12.3`). No absolute budget is claimed | [`01-conventions.md`](implementation/01-conventions.md) §7.2 |
 
-**Unblocked as the code arrives**, measured on this hardware and on nothing else:
+**Waits for the gate, milestone 5.8**, on this file's devices and nothing else:
 
-| Work | Waits on |
-|---|---|
-| Budgets `1.2.7` (search), `1.4.9` (cart), `1.6.2` (PIN verify), `1.11.13` (scan-to-line) | each step's own code, plus `1.2.0` closed |
-| `1.12.3`: the benchmark CI job on `runs-on: [self-hosted, reference-register]` | `1.2.0` closed, and the runner decision in §8 |
-| §9 checks 3–6 (the drawer kicks once, and never on a reprint or retry; paper pulled mid-print; printer unplugged at shift open) | the print queue and the finalize: `1.7.6b`, `1.7.7`, `1.7.10` and `1.8.3` |
-| §9 checks 7–8 (the scan kinds, and a scan while the search box has focus) | the scan parser `1.2.4` (blocked by #71) and global scan capture `1.11.6` |
-| **Drill E.1b**: real power loss after the receipt printed | the finalize path (`1.8.3`) |
-| §9 check 12 (cold start < 3 s) and check 13 (the sale screen read on the register) | the packaged app |
+| Work | Needs | Owner |
+|---|---|---|
+| **`1.2.0`'s deferred half** — row 1 of §6a.1 and `benchmarks/reference-register.toml`, until `--check-profile` exits **0** — then every absolute budget, and `1.12.3`'s live job | the register | `5.8.2` |
+| Each device against its profile: the printer rows of the §6a matrix with their raster limits and status behaviour, the drawer, the scanner row under Arabic (101), the terminal — corrected where they disagree, and their captures committed | every device | `5.8.3` |
+| The seven goldens **on paper**, read by a native reader; §9 checks 1, 2, 11, 12 and 13; drill **E.1b**, a real power cut; the offline installer on the register | every device | `5.8.4` |
 
-**Not unblocked by hardware.** The cart (`1.4.x`) waits on #71 and #112. The tax engine (`1.3.x`)
-waits on #70 and #232. `1.6.2` also waits on #233. §9 checks 9–11 need a payment terminal and a
-label printer, which are not on this order (§5), and the full checklist, every class before every
-release, arrives at `2.9.4`. Hardware is one of several things between the
-project and the Phase-1 exit gate, not the only one.
+**Not unblocked by hardware at all.** The cart (`1.4.x`) waits on #71 and #112. The tax engine (`1.3.x`)
+waits on #70 and #232. `1.6.2` also waits on #233. §9 checks 9 and 10 need the acquirer's terminal and
+check 11 a label printer; neither is on this order (§5), and both join the set at `5.8.1`. Hardware is
+one of several things between the project and the pre-pilot gate, not the only one.
 
 ---
 
@@ -173,7 +176,8 @@ Windows 7 ([GTS](https://gts.jo/en/gsan-gs-t3-touch-pos-system-all-in-one-quad-c
 
 ## 4 · The shopping list
 
-Prices are **indicative**, as a seller showed them on 3 October 2026. US prices are converted at
+Prices are **indicative**, as a seller showed them on 3 October 2026, and they will be re-quoted at
+`5.8.1`: models and prices both move in the months before the gate. US prices are converted at
 the pegged 1 JOD ≈ 1.41 USD, before shipping, customs and tax. Get local quotes. Buying from an
 authorised reseller in Jordan is worth a small premium: warranty and swaps matter more than a
 discount on lab hardware.
@@ -400,17 +404,17 @@ and the shop.
 
 | Device | When | Why not now |
 |---|---|---|
-| **Payment test terminal** | order in Phase 1, use in Phase 2 | It comes **from the acquirer**, not a shop, and needs the conversation first. The plan: *"Acquirer conversation opened, then a physical test terminal — order by Phase 1"* (`00-master-plan.md` §6a). It must be **semi-integrated**: card data never reaches this software (`ref/hardware-and-receipts.md` §6). **Start that conversation now**; it is the longest lead left |
+| **Payment test terminal** | ask in Phase 1, qualify at 5.8 | It comes **from the acquirer**, not a shop, and needs the conversation first. The plan: the conversation in Phase 1, the terminal delivered for milestone 5.8, and Phase 2 built against the simulator and the acquirer's test host (`00-master-plan.md` §6a, `phase-2-money-grade.md` 2.1.1). It must be **semi-integrated**: card data never reaches this software (`ref/hardware-and-receipts.md` §6). **Start that conversation now**; it is the longest lead left |
 | **An Android POS terminal** (Sunmi, iMin, PAX) | only if a pilot merchant insists | its built-in printer is reached through the maker's service or a virtual Bluetooth printer, not raw TCP; that is a second hardware layer, not a row in this one (§3) |
-| Label printer | Phase 4 (`4.6.x`) | shelf labels are a compliance feature, but a Phase-4 one (§7) |
-| Customer display | Phase 4 and later | §7. A 5×7 dot-matrix pole display cannot show Arabic; a second screen can |
+| Label printer | at 5.8, with the rest | shelf labels are a compliance feature and Phase 4's exit prints them, so one joins the frozen set at `5.8.1` (§7) |
+| Customer display | at 5.8, only if a pilot store has one | §7. A 5×7 dot-matrix pole display cannot show Arabic; a second screen can. Until then a profile and a second window stand in |
 | Trade scale | only if the pilot sells weighed goods | a trade instrument with JSMO verification (#71). Price-embedded labels are tested with printed samples first |
-| A second register | Phase 3 (sync) | the E.12 two-register drill; a second process serves until then |
+| A second register | not bought for Phase 3 | the E.12 two-register drill runs on a second virtual machine; physical registers come with the gate |
 | UPS | production, per merchant | it would defeat drill E.1b, which must lose power for real |
 
 ---
 
-## 6 · Setting it up — arrival day
+## 6 · Setting it up — arrival day, at milestone 5.8
 
 About half a day for you, then the agent takes over. The layout:
 
@@ -557,7 +561,7 @@ deleting one line from `authorized_keys`.
 ## 8 · What the agent does after the handover
 
 In this order, each step through the normal pull-request flow and each result recorded where the plan
-says:
+says. These are milestone 5.8's microsteps, `5.8.2` to `5.8.4`:
 
 1. **Qualify the reference register.** Read its identity over SSH, add **row 1** of §6a.1 in
    `ref/hardware-and-receipts.md`, and copy the twelve cells **byte for byte** into
@@ -569,10 +573,12 @@ says:
    **2303 dot rows** (§4.2). **You read the Arabic.** The agent writes the dated record under
    [`docs/drills/`](drills/README.md), naming the commit, each device and its firmware, and you. That
    is `1.7.5`'s paper half and §9 checks 1 and 2.
-3. **Printer profiles.** Write each printer's profile (maker, model, firmware range, transport, dot
-   width, raster command and its row limit, cut, drawer-pulse pin and timings, status protocol and
-   whether it answers over Ethernet, *supports raster Arabic*) as the first 80 mm and 58 mm rows of
-   the §6a matrix, each with its qualifying commit. The Bixolon gets an 80 mm row before it is
+3. **Printer profiles, confirmed or corrected.** Run the conformance suite (`1.7.13`) against each
+   printer with its seeded profile (maker, model, firmware range, transport, dot width, raster
+   command and its row limit, cut, drawer-pulse pin and timings, status protocol and whether it
+   answers over Ethernet, *supports raster Arabic*). Where the printer disagrees, write a new profile
+   version and commit the capture; then add the first 80 mm and 58 mm rows of the §6a matrix, each
+   with its qualifying commit. The Bixolon gets an 80 mm row before it is
    converted to 58 mm.
 4. **Scanner qualification.** On the register, in the terminal app, scan real products under **Arabic
    (101) and English (US)** and confirm the burst heuristic sees each as one scan. Alphanumeric codes
@@ -580,13 +586,13 @@ says:
    and the scanner's keyboard-country or ALT setting is the device answer, re-timed afterwards
    because ALT/keypad emulation sends several keystrokes per character. The result is the matrix's
    scanner row.
-5. **As each budget microstep lands** (`1.2.7`, `1.4.9`, `1.6.2`, `1.11.13`), measure it **on the
-   register** and commit its baseline.
-6. **As the print, queue and finalize code lands** (`1.7.9`, `1.7.10`, `1.7.7`, `1.8.3`), run §9
-   checks 3–8 and drill **E.1b**. For E.1b the agent prepares the sale and the verification, you pull
+5. **Measure every budget on the register** (`1.2.7`, `1.4.9`, `1.6.2`, `1.11.13`, `2.9.3`) and commit
+   each baseline. The benchmarks exist by then; only the machine was missing.
+6. **Run §9 on the devices** — checks 3–8 have run against the emulators since `2.9.4` and now run
+   on paper — and drill **E.1b**. For E.1b the agent prepares the sale and the verification, you pull
    the plug, and the agent checks that the sale survived.
 
-**Later, and deliberately not now: the self-hosted CI runner (`1.12.3`).** This repository is
+**The self-hosted CI runner — `1.12.3`'s live job, switched on at `5.8.2`.** This repository is
 **public**. A self-hosted runner that executes workflow code from pull requests would let anyone who
 opens one run code on the register. GitHub's documentation says so directly: *"We recommend that you
 only use self-hosted runners with private repositories"*
@@ -598,7 +604,7 @@ only use self-hosted runners with private repositories"*
 - no secrets;
 - the repository setting that requires approval before workflows run for outside contributors.
 
-Until then, the agent runs benchmarks over SSH.
+Until it is registered, the agent runs benchmarks over SSH.
 
 ---
 
@@ -606,6 +612,7 @@ Until then, the agent runs benchmarks over SSH.
 
 | Risk | Consequence | Avoided by |
 |---|---|---|
+| Buying before the profiles and the pilot are known | a floor no merchant runs, or a width no store uses | buy at milestone 5.8, against the frozen matrix (§0) |
 | Buying a fast register | every budget passes in the lab and fails in the shop | buy the floor (§3) |
 | A J1900 register | no supported Windows 11 edition at all | the processor table (§3) |
 | A J6412 register with Windows 11 Pro | an edition Microsoft does not list for that processor | order IoT Enterprise (§3, §4.8) |
@@ -639,7 +646,8 @@ Until then, the agent runs benchmarks over SSH.
 4. **SSH access for the agent** as described in §6.7. It is what makes the agent's work after
    arrival fast.
 5. **The native Arabic reader** (§7).
-6. **Open the acquirer conversation for a test terminal** (§5). It is the longest lead left.
+6. **Open the acquirer conversation now** (§5); the terminal itself is needed at milestone 5.8. The
+   conversation is the longest lead left.
 
 ---
 
