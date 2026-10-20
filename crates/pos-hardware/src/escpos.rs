@@ -1,16 +1,21 @@
-//! Turning a page of dots into a printable document (microstep 1.7.4).
+//! Turning a page of dots into a printable document (microsteps 1.7.4, 1.7.9).
 //!
 //! `1.7.3` stopped at a [`Bitmap`] that is 1 bit per pixel, MSB first and
-//! row-major — which is exactly the layout `GS v 0` takes — so this module is a
-//! header and a copy rather than a re-encode. The stream it produces is what
-//! `receipt_artifact.content_bytes` stores and what a reprint replays byte for
-//! byte.
+//! row-major — which is exactly the layout both raster commands take — so this
+//! module is headers and copies rather than a re-encode. The stream it produces
+//! is what `receipt_artifact.content_bytes` stores and what a reprint replays
+//! byte for byte.
 //!
 //! ```text
 //! ESC @            1B 40                      initialise
+//!   per strip, by the profile's raster command:
 //! GS  v 0          1D 76 30 00 xL xH yL yH    raster, normal size
-//!                  <the bitmap's own bytes>
-//! GS  V            1D 56 01                   partial cut
+//!                  <the strip's own rows>
+//!   or
+//! GS  ( L  fn 112  1D 28 4C pL pH 30 70 30 01 01 31 xL xH yL yH
+//!                  <the strip's own rows>     store in the graphics buffer
+//! GS  ( L  fn 50   1D 28 4C 02 00 30 32       print the buffer
+//! GS  V            1D 56 01                   partial cut, once, last
 //! ```
 //!
 //! # The drawer pulse is not here, and it never will be
@@ -25,21 +30,28 @@
 //! `ReceiptPrinter::open_drawer` is the other call, made once per authorised
 //! opening by the checkout or no-sale flow and never by a print worker.
 //!
-//! # One `GS v 0`, not a banded sequence
+//! # Strips, at the device's limit (1.7.9)
 //!
-//! Field ESC/POS libraries commonly split a raster into bands, because real
-//! printers have finite buffers. The specification does not require it — the
-//! line count is a 16-bit field and one command is correct — and the right band
-//! size is a **device** fact rather than a code fact.
+//! 1.7.4 emitted one `GS v 0`, because no device had been held and the band
+//! size is a device fact rather than a code fact. The device now has a number:
+//! Epson's ESC/POS reference limits one `GS v 0` to **1–2303 dot rows** on the
+//! TM-T20III, TM-T20IV and TM-m30III, and to 1–4095 on the TM-T88VII — so a
+//! long basket is a stream a TM-T20III will not take whole (case E.93). The
+//! limit is [`PrinterProfile::raster_max_rows`], and a page taller than it
+//! becomes consecutive commands, each a whole number of rows and none taller
+//! than the limit, whose payloads joined are the bitmap's bytes unchanged — so
+//! the seam cannot show on paper.
 //!
-//! `ref/hardware-and-receipts.md` §6a is why that settles it: *"'ESC/POS' is a
-//! family, not a standard. Two printers that both claim it disagree about the
-//! raster command, the status protocol, the cut sequence, the drawer pulse
-//! timings and the width in dots."* A profile record carries `raster_command`
-//! for exactly this reason, and **the matrix ships empty except the
-//! simulator** — so there is no device whose buffer could be measured, and
-//! inventing a band size against none would be the defect §6a.1 refuses for
-//! the reference register. Banding belongs to a qualified profile, behind #68.
+//! **`GS ( L` adds a limit of its own.** Its parameter count `(pL + pH × 256)`
+//! is `10 + k` in a 16-bit field, so one function-112 store carries at most
+//! 65 525 data bytes: 910 rows at 576 dots, 1365 at 384, whatever the device
+//! would take. A `GS ( L` strip is the smaller of the two. An independent
+//! emulator printed the 80 mm receipt in 900-row `GS ( L` strips dot-identical
+//! to our bitmap (`ref/hardware-and-receipts.md` §6b.8).
+//!
+//! **An unknown limit refuses the document.** A profile that does not know its
+//! limit cannot be bound to a register, for the reason §6a.1 refuses a referent
+//! nobody measured — and the emitter cannot size a strip without it.
 //!
 //! # The cut carries no feed, and that is an open question rather than a choice
 //!
@@ -52,11 +64,14 @@
 //!
 //! Some devices feed to the cutter on a bare `GS V` and some do not. Choosing a
 //! feed distance with no printer to measure is the same defect as choosing a
-//! band size, so this emits the baseline and the question goes on the record:
-//! **§9's hardware-lab checklist has no check that the cut lands below the
-//! footer.** Check 2 covers truncation across the paper, not along it. Whoever
-//! qualifies the first printer adds both the feed and the check.
+//! band size against none, so this emits the baseline and the question goes on
+//! the record: **§9's hardware-lab checklist has no check that the cut lands
+//! below the footer.** Check 2 covers truncation across the paper, not along
+//! it. Whoever qualifies the first printer adds both the feed and the check.
 
+use core::ops::Range;
+
+use crate::profile::{PrinterProfile, ProfileError, RasterCommand};
 use crate::render::Bitmap;
 
 /// `ESC @` — initialise. Clears any mode a previous document left behind, so a
@@ -72,17 +87,36 @@ pub const CUT: [u8; 3] = [0x1D, 0x56, 0x01];
 /// dimension bytes follow.
 pub const RASTER: [u8; 4] = [0x1D, 0x76, 0x30, 0x00];
 
+/// `GS ( L` — the graphics function prefix. Two parameter-count bytes follow.
+pub const GRAPHICS: [u8; 3] = [0x1D, 0x28, 0x4C];
+
+/// Function 112's fixed parameters after the count: `m = 48`, `fn = 112`,
+/// `a = 48` (monochrome), `bx = by = 1` (normal size), `c = 49` (first colour).
+/// The four dimension bytes — width and height in **dots** — follow.
+pub const GRAPHICS_STORE: [u8; 6] = [0x30, 0x70, 0x30, 0x01, 0x01, 0x31];
+
+/// `GS ( L` function 50 — print the graphics buffer.
+pub const GRAPHICS_PRINT: [u8; 7] = [0x1D, 0x28, 0x4C, 0x02, 0x00, 0x30, 0x32];
+
 /// `ESC p` — the drawer pulse prefix. Declared here so a test can assert its
 /// **absence**, and for no other reason: nothing in this module emits it.
 pub const DRAWER_PULSE_PREFIX: [u8; 2] = [0x1B, 0x70];
 
-/// The largest value either dimension field can carry.
+/// The largest value a 16-bit field can carry.
 ///
-/// `GS v 0` takes both as little-endian `u16`. Neither limit is reachable
+/// `GS v 0` takes both dimensions as little-endian `u16`, and `GS ( L` its
+/// dimensions and its parameter count. Neither dimension limit is reachable
 /// today — the two paper widths are 72 and 48 bytes per row, and
 /// `render::MAX_PAGE_HEIGHT_PX` is 32 768 — which is why they are tested
 /// directly rather than through a page nothing can produce.
 pub const MAX_DIMENSION: u32 = u16::MAX as u32;
+
+/// Function 112's parameters before its data: `m fn a bx by c xL xH yL yH`.
+const GRAPHICS_STORE_FIXED: u32 = 10;
+
+/// The most data one function-112 store can carry: its 16-bit parameter count
+/// is `10 + k`.
+pub const MAX_GRAPHICS_DATA: u32 = MAX_DIMENSION - GRAPHICS_STORE_FIXED;
 
 /// Why a page could not become a document.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -91,6 +125,10 @@ pub enum EscPosError {
     #[error("a page {row_bytes} bytes across cannot be named in a 16-bit header")]
     TooWide { row_bytes: u32 },
     /// More lines down than the header can name.
+    ///
+    /// Pages are sent in strips, but a page's height still has to fit the
+    /// 16-bit field it is measured against: `render::MAX_PAGE_HEIGHT_PX` is
+    /// well below it, so a page past it is a runaway, not a receipt.
     #[error("a page {height_px} dots tall cannot be named in a 16-bit header")]
     TooTall { height_px: u32 },
     /// A page with no lines at all.
@@ -114,30 +152,57 @@ pub enum EscPosError {
         expected: usize,
         found: usize,
     },
+    /// A page rendered for one paper, sent to a device of another.
+    ///
+    /// The width has one source — the bitmap — and the profile's `dot_width` is
+    /// a check on it rather than a second answer. Printed anyway, a 384-dot page
+    /// on a 576-dot head sits off-centre and a 576-dot page on a 384-dot head
+    /// loses its right edge — where an Arabic receipt keeps its labels.
+    #[error("profile {profile_id} prints {profile_px} dots across, the page is {page_px}")]
+    WidthMismatch {
+        profile_id: String,
+        page_px: u32,
+        profile_px: u32,
+    },
+    /// The profile cannot be bound — today, because it does not know its row
+    /// limit.
+    #[error(transparent)]
+    Profile(#[from] ProfileError),
 }
 
-/// The fixed bytes around a page: `ESC @` before, `GS v 0` and its four
-/// dimension bytes, and `GS V` after.
-const FRAME_LEN: usize = INIT.len() + RASTER.len() + 4 + CUT.len();
+/// One raster command's share of the page: whole rows, in order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Strip {
+    first_row: u32,
+    rows: u32,
+}
 
-/// Encode one page as an ESC/POS document.
-///
-/// The bitmap is copied verbatim. `1.7.3` produces MSB-first, row-major bits at
-/// the profile's width for precisely this reason, so nothing here shifts,
-/// pads or reorders a byte — and a transposition bug in the printed output can
-/// therefore only be a bug in the rasteriser.
-///
-/// # Errors
-///
-/// Refuses a page either of whose dimensions exceeds [`MAX_DIMENSION`], and a
-/// bitmap whose buffer does not hold the page it describes.
-pub fn encode(page: &Bitmap) -> Result<Vec<u8>, EscPosError> {
+/// Everything about a document except its bytes, decided once so the emitter
+/// and [`payload_ranges`] cannot disagree about where a strip begins.
+struct Plan {
+    row_bytes: u32,
+    strips: Vec<Strip>,
+}
+
+/// Check a page against its profile, and cut it into strips.
+fn plan(page: &Bitmap, profile: &PrinterProfile) -> Result<Plan, EscPosError> {
     if page.height_px == 0 || page.width_px == 0 {
         return Err(EscPosError::Empty);
     }
+    if page.width_px != profile.dot_width {
+        return Err(EscPosError::WidthMismatch {
+            profile_id: profile.profile_id.clone(),
+            page_px: page.width_px,
+            profile_px: profile.dot_width,
+        });
+    }
 
     let row_bytes = page.row_bytes();
-    if row_bytes > MAX_DIMENSION {
+    let width_field = match profile.raster_command {
+        RasterCommand::GsV0 => row_bytes,
+        RasterCommand::GsParenL => page.width_px,
+    };
+    if width_field > MAX_DIMENSION {
         return Err(EscPosError::TooWide { row_bytes });
     }
     if page.height_px > MAX_DIMENSION {
@@ -156,44 +221,153 @@ pub fn encode(page: &Bitmap) -> Result<Vec<u8>, EscPosError> {
         });
     }
 
-    let mut out = Vec::with_capacity(FRAME_LEN + expected);
+    // The device's limit, and the command's own: `GS v 0` names a strip's
+    // height in 16 bits, and `GS ( L` names its whole payload in 16 bits.
+    let device_rows = profile.row_limit()?.get();
+    let command_rows = match profile.raster_command {
+        RasterCommand::GsV0 => MAX_DIMENSION,
+        RasterCommand::GsParenL => MAX_GRAPHICS_DATA / row_bytes.max(1),
+    };
+    let per_strip = device_rows.min(command_rows);
+    if per_strip == 0 {
+        // A single row is more data than one `GS ( L` store can carry.
+        return Err(EscPosError::TooWide { row_bytes });
+    }
+
+    let mut strips = Vec::new();
+    let mut first_row = 0;
+    while first_row < page.height_px {
+        let rows = per_strip.min(page.height_px - first_row);
+        strips.push(Strip { first_row, rows });
+        first_row += rows;
+    }
+    Ok(Plan { row_bytes, strips })
+}
+
+/// The bytes before a strip's payload, for the profile's raster command.
+fn strip_header(command: RasterCommand, page: &Bitmap, row_bytes: u32, strip: Strip) -> Vec<u8> {
+    match command {
+        RasterCommand::GsV0 => {
+            let mut header = RASTER.to_vec();
+            header.extend_from_slice(&little_endian(row_bytes));
+            header.extend_from_slice(&little_endian(strip.rows));
+            header
+        }
+        RasterCommand::GsParenL => {
+            // `plan` bounded the payload to MAX_GRAPHICS_DATA, so this sum fits
+            // the 16-bit count.
+            let count = GRAPHICS_STORE_FIXED + row_bytes.saturating_mul(strip.rows);
+            let mut header = GRAPHICS.to_vec();
+            header.extend_from_slice(&little_endian(count));
+            header.extend_from_slice(&GRAPHICS_STORE);
+            header.extend_from_slice(&little_endian(page.width_px));
+            header.extend_from_slice(&little_endian(strip.rows));
+            header
+        }
+    }
+}
+
+/// The bytes after a strip's payload.
+const fn strip_trailer(command: RasterCommand) -> &'static [u8] {
+    match command {
+        RasterCommand::GsV0 => &[],
+        RasterCommand::GsParenL => &GRAPHICS_PRINT,
+    }
+}
+
+/// A strip's rows within the bitmap's buffer.
+fn strip_rows(row_bytes: u32, strip: Strip) -> Range<usize> {
+    let start = (row_bytes as usize).saturating_mul(strip.first_row as usize);
+    start..start.saturating_add((row_bytes as usize).saturating_mul(strip.rows as usize))
+}
+
+/// Encode one page as an ESC/POS document for one device.
+///
+/// The bitmap is copied verbatim, a strip at a time. `1.7.3` produces
+/// MSB-first, row-major bits at the paper's width for precisely this reason, so
+/// nothing here shifts, pads or reorders a byte — and a transposition bug in
+/// the printed output can therefore only be a bug in the rasteriser.
+///
+/// # Errors
+///
+/// Refuses a page with no dots, a page whose width disagrees with the
+/// profile's, a page either of whose dimensions exceeds what its command can
+/// name, a bitmap whose buffer does not hold the page it describes, and a
+/// profile that does not know how many rows one raster command carries.
+pub fn encode(page: &Bitmap, profile: &PrinterProfile) -> Result<Vec<u8>, EscPosError> {
+    let plan = plan(page, profile)?;
+    let command = profile.raster_command;
+
+    let mut out = Vec::with_capacity(
+        INIT.len()
+            + CUT.len()
+            + page.bits.len()
+            + plan.strips.len()
+                * (GRAPHICS.len() + 2 + GRAPHICS_STORE.len() + 4 + GRAPHICS_PRINT.len()),
+    );
     out.extend_from_slice(&INIT);
-    out.extend_from_slice(&RASTER);
-    out.extend_from_slice(&little_endian(row_bytes));
-    out.extend_from_slice(&little_endian(page.height_px));
-    out.extend_from_slice(&page.bits);
+    for strip in &plan.strips {
+        let range = strip_rows(plan.row_bytes, *strip);
+        let rows = page.bits.get(range).ok_or(EscPosError::Truncated {
+            width_px: page.width_px,
+            height_px: page.height_px,
+            expected: (plan.row_bytes as usize).saturating_mul(page.height_px as usize),
+            found: page.bits.len(),
+        })?;
+        out.extend_from_slice(&strip_header(command, page, plan.row_bytes, *strip));
+        out.extend_from_slice(rows);
+        out.extend_from_slice(strip_trailer(command));
+    }
     out.extend_from_slice(&CUT);
     Ok(out)
 }
 
-/// A dimension as the two little-endian bytes `GS v 0` wants.
+/// A dimension or count as the two little-endian bytes ESC/POS wants.
 ///
 /// The caller has already refused anything past [`MAX_DIMENSION`], so the
 /// truncation here cannot lose a bit — which is why this is a `const fn` taking
-/// a checked value rather than a fallible conversion repeated at both call
-/// sites.
+/// a checked value rather than a fallible conversion repeated at every call
+/// site.
 const fn little_endian(value: u32) -> [u8; 2] {
     [(value & 0xFF) as u8, ((value >> 8) & 0xFF) as u8]
 }
 
-/// Where the raster payload sits inside an encoded stream.
+/// Where each strip's raster payload sits inside an encoded stream, in order.
 ///
 /// Exported because the interesting assertions about a document are about what
-/// is *outside* the payload — see the module tests and
+/// is *outside* the payloads — see the module tests and
 /// `receipt_retry_never_repeats_the_drawer_pulse`. A caller that wants to check
-/// a stream should not have to re-derive this arithmetic and get it wrong.
-#[must_use]
-pub fn payload_range(page: &Bitmap) -> core::ops::Range<usize> {
-    let start = INIT.len() + RASTER.len() + 4;
-    let len = (page.row_bytes() as usize).saturating_mul(page.height_px as usize);
-    start..start.saturating_add(len)
+/// a stream should not have to re-derive this arithmetic and get it wrong, so
+/// it comes from the same plan the emitter follows.
+///
+/// # Errors
+///
+/// Exactly [`encode`]'s, because it is the same plan.
+pub fn payload_ranges(
+    page: &Bitmap,
+    profile: &PrinterProfile,
+) -> Result<Vec<Range<usize>>, EscPosError> {
+    let plan = plan(page, profile)?;
+    let command = profile.raster_command;
+    let mut at = INIT.len();
+    let mut ranges = Vec::with_capacity(plan.strips.len());
+    for strip in &plan.strips {
+        at += strip_header(command, page, plan.row_bytes, *strip).len();
+        let len = strip_rows(plan.row_bytes, *strip).len();
+        ranges.push(at..at + len);
+        at += len + strip_trailer(command).len();
+    }
+    Ok(ranges)
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+    use core::num::NonZeroU32;
+
     use super::*;
+    use crate::profile::Fact;
     use crate::render::tests_support::model;
     use crate::render::{PaperWidth, render_receipt};
     use crate::{PrinterStatus, ReceiptPrinter, RenderedReceipt, SimulatedPrinter};
@@ -210,6 +384,72 @@ mod tests {
         }
     }
 
+    /// A page whose every byte differs and no two rows agree, so a shift, a
+    /// reversal, a dropped row or a row moved across a strip boundary all show.
+    fn patterned(width_px: u32, height_px: u32) -> Bitmap {
+        let mut bitmap = page(width_px, height_px, 0);
+        for (index, byte) in bitmap.bits.iter_mut().enumerate() {
+            *byte = u8::try_from(index % 251)
+                .unwrap_or(0)
+                .wrapping_mul(37)
+                .wrapping_add(11);
+        }
+        bitmap
+    }
+
+    /// The simulator's profile at an arbitrary width, with a chosen limit and
+    /// command — what every example below binds.
+    fn profile(width_px: u32, max_rows: u32, command: RasterCommand) -> PrinterProfile {
+        let mut profile = PrinterProfile::simulator(PaperWidth::Mm80);
+        profile.dot_width = width_px;
+        profile.raster_max_rows = Fact::Known(NonZeroU32::new(max_rows).unwrap());
+        profile.raster_command = command;
+        profile
+    }
+
+    /// One strip, as 1.7.4 emitted for every page: the limit is never reached.
+    fn one_strip(width_px: u32) -> PrinterProfile {
+        profile(width_px, MAX_DIMENSION, RasterCommand::GsV0)
+    }
+
+    /// Every payload, joined in order.
+    fn joined(stream: &[u8], ranges: &[Range<usize>]) -> Vec<u8> {
+        ranges
+            .iter()
+            .flat_map(|range| stream.get(range.clone()).unwrap().iter().copied())
+            .collect()
+    }
+
+    /// Whether `ESC p` appears anywhere that is not a raster payload.
+    ///
+    /// Scanning the **whole** stream would be the wrong test and would be
+    /// intermittently red: a payload is an arbitrary bitmap, so `1B 70` occurs
+    /// inside one by coincidence about once in every 65 536 byte pairs — which
+    /// a 576-dot receipt reaches within roughly 900 rows.
+    /// `a_bitmap_containing_the_pulse_bytes_is_still_a_document` is that case
+    /// made deliberate.
+    fn pulse_outside_payloads(stream: &[u8], payloads: &[Range<usize>]) -> bool {
+        let inside = |at: usize| payloads.iter().any(|range| range.contains(&at));
+        stream
+            .windows(DRAWER_PULSE_PREFIX.len())
+            .enumerate()
+            .any(|(at, pair)| {
+                pair == DRAWER_PULSE_PREFIX
+                    && !(inside(at) && inside(at + DRAWER_PULSE_PREFIX.len() - 1))
+            })
+    }
+
+    /// How many raster commands a stream carries, read from the stream itself
+    /// rather than from the plan that produced it.
+    fn commands_in(stream: &[u8], payloads: &[Range<usize>], prefix: &[u8]) -> usize {
+        let outside = |at: usize| !payloads.iter().any(|range| range.contains(&at));
+        stream
+            .windows(prefix.len())
+            .enumerate()
+            .filter(|(at, window)| *window == prefix && outside(*at))
+            .count()
+    }
+
     /// The named test: the fixed bytes are the fixed bytes.
     ///
     /// Pinned as literals rather than read back from the constants, because the
@@ -222,8 +462,20 @@ mod tests {
         assert_eq!(CUT, [0x1D, 0x56, 0x01], "GS V 1");
         assert_eq!(RASTER, [0x1D, 0x76, 0x30, 0x00], "GS v 0, m = 0");
         assert_eq!(DRAWER_PULSE_PREFIX, [0x1B, 0x70], "ESC p");
+        assert_eq!(GRAPHICS, [0x1D, 0x28, 0x4C], "GS ( L");
+        assert_eq!(
+            GRAPHICS_STORE,
+            [0x30, 0x70, 0x30, 0x01, 0x01, 0x31],
+            "m 48, fn 112, monochrome, 1×1, first colour"
+        );
+        assert_eq!(
+            GRAPHICS_PRINT,
+            [0x1D, 0x28, 0x4C, 0x02, 0x00, 0x30, 0x32],
+            "GS ( L fn 50"
+        );
+        assert_eq!(MAX_GRAPHICS_DATA, 65_525);
 
-        let stream = encode(&page(64, 2, 0xFF)).expect("encodes");
+        let stream = encode(&page(64, 2, 0xFF), &one_strip(64)).expect("encodes");
         assert!(stream.starts_with(&INIT), "a document begins with ESC @");
         assert!(stream.ends_with(&CUT), "a document ends with a cut");
     }
@@ -233,12 +485,13 @@ mod tests {
     /// Two halves, and the second is the one that matters. A stream is emitted
     /// and sent **twice**, as a retried print job does; the simulator's drawer
     /// counter stays at zero, because nothing in the document can move it. And
-    /// the pulse's two bytes appear nowhere outside the raster payload, which
+    /// the pulse's two bytes appear nowhere outside the raster payloads, which
     /// is where a document could otherwise smuggle one.
     #[test]
     fn receipt_retry_never_repeats_the_drawer_pulse() {
         let bitmap = render_receipt(&model(), PaperWidth::Mm80).expect("renders");
-        let stream = encode(&bitmap).expect("encodes");
+        let profile = PrinterProfile::simulator(PaperWidth::Mm80);
+        let stream = encode(&bitmap, &profile).expect("encodes");
 
         let printer = SimulatedPrinter::new();
         let doc = RenderedReceipt {
@@ -261,41 +514,29 @@ mod tests {
         );
 
         // And the bytes could not have, whatever a driver did with them.
-        assert!(!pulse_outside_payload(&stream, &bitmap));
-    }
-
-    /// Whether `ESC p` appears anywhere that is not the raster payload.
-    ///
-    /// Scanning the **whole** stream would be the wrong test and would be
-    /// intermittently red: the payload is an arbitrary bitmap, so `1B 70`
-    /// occurs inside it by coincidence about once in every 65 536 byte pairs —
-    /// which a 576-dot receipt reaches within roughly 900 rows.
-    /// `a_bitmap_containing_the_pulse_bytes_is_still_a_document` is that case
-    /// made deliberate.
-    fn pulse_outside_payload(stream: &[u8], page: &Bitmap) -> bool {
-        let payload = payload_range(page);
-        stream
-            .windows(DRAWER_PULSE_PREFIX.len())
-            .enumerate()
-            .any(|(at, pair)| {
-                pair == DRAWER_PULSE_PREFIX
-                    && !(payload.contains(&at)
-                        && payload.contains(&(at + DRAWER_PULSE_PREFIX.len() - 1)))
-            })
+        let payloads = payload_ranges(&bitmap, &profile).expect("plans");
+        assert!(!pulse_outside_payloads(&stream, &payloads));
     }
 
     #[test]
     fn a_stream_is_exactly_init_raster_and_cut() {
         let bitmap = page(64, 3, 0xAA);
-        let stream = encode(&bitmap).expect("encodes");
+        let profile = one_strip(64);
+        let stream = encode(&bitmap, &profile).expect("encodes");
 
-        let expected_len = FRAME_LEN + bitmap.bits.len();
-        assert_eq!(stream.len(), expected_len, "no byte is unaccounted for");
+        let frame = INIT.len() + RASTER.len() + 4 + CUT.len();
+        assert_eq!(
+            stream.len(),
+            frame + bitmap.bits.len(),
+            "no byte is unaccounted for"
+        );
 
-        let payload = payload_range(&bitmap);
-        assert_eq!(payload.start, INIT.len() + RASTER.len() + 4);
-        assert_eq!(payload.end, stream.len() - CUT.len());
-        assert_eq!(stream.get(payload.clone()), Some(bitmap.bits.as_slice()));
+        let payloads = payload_ranges(&bitmap, &profile).expect("plans");
+        assert_eq!(payloads.len(), 1);
+        let only = payloads.first().expect("one strip");
+        assert_eq!(only.start, INIT.len() + RASTER.len() + 4);
+        assert_eq!(only.end, stream.len() - CUT.len());
+        assert_eq!(stream.get(only.clone()), Some(bitmap.bits.as_slice()));
     }
 
     #[test]
@@ -305,7 +546,7 @@ mod tests {
         // the height past 255 for the same reason — both fields are asserted
         // where a single-byte confusion is visible.
         let bitmap = page(520, 300, 0);
-        let stream = encode(&bitmap).expect("encodes");
+        let stream = encode(&bitmap, &one_strip(520)).expect("encodes");
         let header = INIT.len() + RASTER.len();
 
         assert_eq!(bitmap.row_bytes(), 65);
@@ -317,37 +558,29 @@ mod tests {
 
     #[test]
     fn the_raster_payload_is_the_bitmaps_bytes_unchanged() {
-        let mut bitmap = page(32, 4, 0);
-        for (index, byte) in bitmap.bits.iter_mut().enumerate() {
-            // A pattern where every byte differs and no two rows agree, so a
-            // shift, a reversal or a row transposition all show.
-            *byte = u8::try_from(index)
-                .unwrap_or(0)
-                .wrapping_mul(37)
-                .wrapping_add(11);
-        }
-
-        let stream = encode(&bitmap).expect("encodes");
-        assert_eq!(
-            stream.get(payload_range(&bitmap)),
-            Some(bitmap.bits.as_slice())
-        );
+        let bitmap = patterned(32, 4);
+        let profile = one_strip(32);
+        let stream = encode(&bitmap, &profile).expect("encodes");
+        let payloads = payload_ranges(&bitmap, &profile).expect("plans");
+        assert_eq!(joined(&stream, &payloads), bitmap.bits);
     }
 
     #[test]
     fn both_profiles_emit_their_own_row_width() {
-        for (profile, row_bytes) in [(PaperWidth::Mm80, 72), (PaperWidth::Mm58, 48)] {
-            let bitmap = render_receipt(&model(), profile).expect("renders");
-            assert_eq!(bitmap.row_bytes(), row_bytes, "{profile:?}");
+        for (paper, row_bytes) in [(PaperWidth::Mm80, 72), (PaperWidth::Mm58, 48)] {
+            let bitmap = render_receipt(&model(), paper).expect("renders");
+            assert_eq!(bitmap.row_bytes(), row_bytes, "{paper:?}");
 
-            let stream = encode(&bitmap).expect("encodes");
+            let profile = PrinterProfile::simulator(paper);
+            let stream = encode(&bitmap, &profile).expect("encodes");
             let header = INIT.len() + RASTER.len();
             assert_eq!(
                 stream.get(header).copied(),
                 u8::try_from(row_bytes).ok(),
-                "{profile:?} declared the wrong width"
+                "{paper:?} declared the wrong width"
             );
-            assert_eq!(stream.len(), FRAME_LEN + bitmap.bits.len());
+            let payloads = payload_ranges(&bitmap, &profile).expect("plans");
+            assert_eq!(joined(&stream, &payloads), bitmap.bits, "{paper:?}");
         }
     }
 
@@ -361,7 +594,7 @@ mod tests {
         let mut short = page(64, 4, 0);
         short.bits.pop();
         assert_eq!(
-            encode(&short),
+            encode(&short, &one_strip(64)),
             Err(EscPosError::Truncated {
                 width_px: 64,
                 height_px: 4,
@@ -372,21 +605,25 @@ mod tests {
 
         let mut long = page(64, 4, 0);
         long.bits.push(0);
-        assert!(matches!(encode(&long), Err(EscPosError::Truncated { .. })));
+        assert!(matches!(
+            encode(&long, &one_strip(64)),
+            Err(EscPosError::Truncated { .. })
+        ));
 
         // And the exact page encodes.
-        assert!(encode(&page(64, 4, 0)).is_ok());
+        assert!(encode(&page(64, 4, 0), &one_strip(64)).is_ok());
     }
 
     #[test]
     fn a_page_too_wide_for_a_sixteen_bit_header_is_refused() {
+        let width_px = (MAX_DIMENSION + 1) * 8;
         let wide = Bitmap {
-            width_px: (MAX_DIMENSION + 1) * 8,
+            width_px,
             height_px: 1,
             bits: Vec::new(),
         };
         assert_eq!(
-            encode(&wide),
+            encode(&wide, &one_strip(width_px)),
             Err(EscPosError::TooWide {
                 row_bytes: MAX_DIMENSION + 1
             })
@@ -401,7 +638,7 @@ mod tests {
             bits: Vec::new(),
         };
         assert_eq!(
-            encode(&tall),
+            encode(&tall, &one_strip(8)),
             Err(EscPosError::TooTall {
                 height_px: MAX_DIMENSION + 1
             })
@@ -414,7 +651,10 @@ mod tests {
             height_px: MAX_DIMENSION,
             bits: Vec::new(),
         };
-        assert!(matches!(encode(&edge), Err(EscPosError::Truncated { .. })));
+        assert!(matches!(
+            encode(&edge, &one_strip(8)),
+            Err(EscPosError::Truncated { .. })
+        ));
     }
 
     /// The case that makes a naive pulse-scan wrong, made deliberate.
@@ -429,7 +669,8 @@ mod tests {
             *byte = 0x70;
         }
 
-        let stream = encode(&bitmap).expect("a page is a page whatever its bits say");
+        let profile = one_strip(16);
+        let stream = encode(&bitmap, &profile).expect("a page is a page whatever its bits say");
 
         // The naive test would fail here — the bytes really are in the stream.
         assert!(
@@ -437,15 +678,22 @@ mod tests {
             "the fixture must actually contain the pulse bytes"
         );
         // The correct one passes: they are inside the payload and nowhere else.
-        assert!(!pulse_outside_payload(&stream, &bitmap));
+        let payloads = payload_ranges(&bitmap, &profile).expect("plans");
+        assert!(!pulse_outside_payloads(&stream, &payloads));
     }
 
     #[test]
     fn a_page_with_no_lines_is_not_a_document() {
-        assert_eq!(encode(&page(64, 0, 0)), Err(EscPosError::Empty));
-        assert_eq!(encode(&page(0, 4, 0)), Err(EscPosError::Empty));
+        assert_eq!(
+            encode(&page(64, 0, 0), &one_strip(64)),
+            Err(EscPosError::Empty)
+        );
+        assert_eq!(
+            encode(&page(0, 4, 0), &one_strip(64)),
+            Err(EscPosError::Empty)
+        );
         // One line is a document, however little it says.
-        assert!(encode(&page(64, 1, 0)).is_ok());
+        assert!(encode(&page(64, 1, 0), &one_strip(64)).is_ok());
     }
 
     /// The simulator refuses a document when the paper is out, so a retry is a
@@ -455,12 +703,178 @@ mod tests {
         let printer = SimulatedPrinter::new();
         *printer.force_status.lock().unwrap() = PrinterStatus::PaperOut;
 
-        let stream = encode(&page(64, 2, 0xFF)).expect("encodes");
+        let stream = encode(&page(64, 2, 0xFF), &one_strip(64)).expect("encodes");
         let doc = RenderedReceipt { bytes: stream };
         assert!(printer.print(&doc).is_err());
 
         assert_eq!(*printer.drawer_opens.lock().unwrap(), 0);
         assert!(printer.printed.lock().unwrap().is_empty());
+    }
+
+    /// The named test (E.93): one row past the limit is two commands, not one
+    /// command a TM-T20III will not take.
+    #[test]
+    fn a_page_one_row_taller_than_the_limit_becomes_two_commands() {
+        let limit = 2303;
+        let bitmap = patterned(576, limit + 1);
+        let profile = profile(576, limit, RasterCommand::GsV0);
+        let stream = encode(&bitmap, &profile).expect("encodes");
+        let payloads = payload_ranges(&bitmap, &profile).expect("plans");
+
+        assert_eq!(payloads.len(), 2, "two strips");
+        assert_eq!(
+            commands_in(&stream, &payloads, &RASTER),
+            2,
+            "two GS v 0 commands"
+        );
+        let row_bytes = 72;
+        assert_eq!(
+            payloads.first().expect("a first strip").len(),
+            row_bytes * limit as usize,
+            "the first is the limit"
+        );
+        assert_eq!(
+            payloads.get(1).expect("a second strip").len(),
+            row_bytes,
+            "the second is the one row left"
+        );
+
+        // And at exactly the limit it is still one.
+        let exact = patterned(576, limit);
+        assert_eq!(payload_ranges(&exact, &profile).expect("plans").len(), 1);
+    }
+
+    /// The named test: the seam cannot show on paper, because the strips joined
+    /// are the bitmap — every byte, in order, with nothing between them that a
+    /// printer would draw.
+    #[test]
+    fn joined_strip_payloads_are_the_bitmap_unchanged() {
+        let bitmap = patterned(576, 5_450);
+        for command in [RasterCommand::GsV0, RasterCommand::GsParenL] {
+            let profile = profile(576, 2303, command);
+            let stream = encode(&bitmap, &profile).expect("encodes");
+            let payloads = payload_ranges(&bitmap, &profile).expect("plans");
+            assert_eq!(joined(&stream, &payloads), bitmap.bits, "{command:?}");
+        }
+    }
+
+    /// The named test: one initialise first, one cut last, whatever the number
+    /// of strips — a cut between strips would hand the customer a receipt in
+    /// pieces.
+    #[test]
+    fn the_cut_appears_once_after_every_strip() {
+        let bitmap = patterned(576, 5_450);
+        for command in [RasterCommand::GsV0, RasterCommand::GsParenL] {
+            let profile = profile(576, 2303, command);
+            let stream = encode(&bitmap, &profile).expect("encodes");
+            let payloads = payload_ranges(&bitmap, &profile).expect("plans");
+
+            assert!(stream.starts_with(&INIT), "{command:?}");
+            assert!(stream.ends_with(&CUT), "{command:?}");
+            assert_eq!(
+                commands_in(&stream, &payloads, &CUT),
+                1,
+                "{command:?}: one cut"
+            );
+            assert_eq!(
+                commands_in(&stream, &payloads, &INIT),
+                1,
+                "{command:?}: one ESC @"
+            );
+            let last_payload_end = payloads.last().map_or(0, |range| range.end);
+            assert!(
+                last_payload_end <= stream.len() - CUT.len(),
+                "{command:?}: the cut follows the last strip"
+            );
+        }
+    }
+
+    /// The named test: `GS ( L` carries the same rows, framed as store-then-
+    /// print, and no strip is taller than the command's own 16-bit count
+    /// allows — 910 rows at 576 dots — even when the device would take more.
+    #[test]
+    fn gs_paren_l_frames_the_same_rows_within_its_own_limit() {
+        let bitmap = patterned(576, 2_000);
+        let device_allows = profile(576, 4095, RasterCommand::GsParenL);
+        let stream = encode(&bitmap, &device_allows).expect("encodes");
+        let payloads = payload_ranges(&bitmap, &device_allows).expect("plans");
+
+        assert_eq!(MAX_GRAPHICS_DATA / 72, 910);
+        assert_eq!(payloads.len(), 3, "910 + 910 + 180 rows");
+        for range in &payloads {
+            assert!(
+                range.len() <= MAX_GRAPHICS_DATA as usize,
+                "a strip past the 16-bit count"
+            );
+        }
+        assert_eq!(
+            commands_in(&stream, &payloads, &GRAPHICS_PRINT),
+            3,
+            "one print per store"
+        );
+        assert_eq!(joined(&stream, &payloads), bitmap.bits, "the same rows");
+
+        // The first store's header: count = 10 + 910 × 72 = 65 530, width 576,
+        // height 910 — all little-endian.
+        let header = INIT.len();
+        assert_eq!(stream.get(header..header + 3), Some(GRAPHICS.as_slice()));
+        assert_eq!(
+            stream.get(header + 3..header + 5),
+            Some([0xFA, 0xFF].as_slice())
+        );
+        assert_eq!(
+            stream.get(header + 5..header + 11),
+            Some(GRAPHICS_STORE.as_slice())
+        );
+        assert_eq!(
+            stream.get(header + 11..header + 13),
+            Some([0x40, 0x02].as_slice())
+        );
+        assert_eq!(
+            stream.get(header + 13..header + 15),
+            Some([0x8E, 0x03].as_slice())
+        );
+
+        // At 384 dots the command allows 1365 rows; a 2303-row device limit
+        // still loses to it.
+        let narrow = patterned(384, 1_366);
+        let narrow_profile = profile(384, 2303, RasterCommand::GsParenL);
+        assert_eq!(
+            payload_ranges(&narrow, &narrow_profile)
+                .expect("plans")
+                .len(),
+            2
+        );
+    }
+
+    /// The named test: a page rendered for one paper and sent to a device of
+    /// another is refused, not printed off-centre or with its edge cut away.
+    #[test]
+    fn a_width_disagreeing_with_the_profile_is_refused() {
+        let narrow = render_receipt(&model(), PaperWidth::Mm58).expect("renders");
+        assert_eq!(
+            encode(&narrow, &PrinterProfile::simulator(PaperWidth::Mm80)),
+            Err(EscPosError::WidthMismatch {
+                profile_id: "simulator-80mm".to_owned(),
+                page_px: 384,
+                profile_px: 576,
+            })
+        );
+    }
+
+    /// The named test: a profile that does not know its row limit refuses the
+    /// document, rather than guessing a band size against no device.
+    #[test]
+    fn an_unknown_row_limit_refuses_the_document() {
+        let mut unknown = PrinterProfile::simulator(PaperWidth::Mm80);
+        unknown.raster_max_rows = Fact::Unknown;
+        let bitmap = render_receipt(&model(), PaperWidth::Mm80).expect("renders");
+        assert_eq!(
+            encode(&bitmap, &unknown),
+            Err(EscPosError::Profile(ProfileError::UnknownRowLimit {
+                profile_id: "simulator-80mm".to_owned()
+            }))
+        );
     }
 
     proptest! {
@@ -476,17 +890,23 @@ mod tests {
             width_px in 8u32..=640,
             height_px in 1u32..64,
             fill in any::<u8>(),
+            limit in 1u32..=80,
+            gs_paren_l in any::<bool>(),
         ) {
+            let command = if gs_paren_l { RasterCommand::GsParenL } else { RasterCommand::GsV0 };
             let bitmap = page(width_px, height_px, fill);
-            prop_assert_eq!(encode(&bitmap)?, encode(&bitmap)?);
+            let profile = profile(width_px, limit, command);
+            prop_assert_eq!(encode(&bitmap, &profile)?, encode(&bitmap, &profile)?);
         }
 
-        /// A stream is the page and a fixed frame, and nothing else.
+        /// A stream is the page and a fixed frame, and nothing else (1.7.4).
         ///
-        /// Stated as arithmetic rather than as a shape: whatever the page, the
-        /// document is exactly eleven bytes longer than the bitmap, the payload
-        /// is the bitmap, and the pulse is absent from every byte that is not
-        /// the payload.
+        /// Stated as arithmetic rather than as a shape, for a page the limit
+        /// leaves whole: the document is exactly thirteen bytes longer than the
+        /// bitmap — `ESC @`, the `GS v 0` header and its four dimension bytes,
+        /// and the cut — the payload is the bitmap, and the pulse is absent from
+        /// every byte that is not the payload. 1.7.9's strips generalise this
+        /// below; a page that fits one command is still exactly 1.7.4's document.
         #[test]
         fn prop_the_stream_is_the_page_plus_a_fixed_frame(
             width_px in 8u32..=640,
@@ -494,16 +914,45 @@ mod tests {
             fill in any::<u8>(),
         ) {
             let bitmap = page(width_px, height_px, fill);
-            let stream = encode(&bitmap)?;
+            let profile = one_strip(width_px);
+            let stream = encode(&bitmap, &profile)?;
+            let payloads = payload_ranges(&bitmap, &profile)?;
 
-            prop_assert_eq!(stream.len(), FRAME_LEN + bitmap.bits.len());
+            prop_assert_eq!(stream.len(), INIT.len() + RASTER.len() + 4 + CUT.len() + bitmap.bits.len());
             prop_assert!(stream.starts_with(&INIT));
             prop_assert!(stream.ends_with(&CUT));
-            prop_assert_eq!(
-                stream.get(payload_range(&bitmap)),
-                Some(bitmap.bits.as_slice())
-            );
-            prop_assert!(!pulse_outside_payload(&stream, &bitmap));
+            prop_assert_eq!(payloads.len(), 1);
+            prop_assert_eq!(joined(&stream, &payloads), bitmap.bits.clone());
+            prop_assert!(!pulse_outside_payloads(&stream, &payloads));
+        }
+
+        /// A stream is the page, cut into strips no taller than the limit, and
+        /// nothing else: an initialise first, a cut last, every payload a whole
+        /// number of rows, the payloads joined the bitmap, and the pulse absent
+        /// from every byte that is not a payload.
+        #[test]
+        fn prop_strips_join_to_the_bitmap_and_respect_the_limit(
+            width_px in 8u32..=640,
+            height_px in 1u32..300,
+            limit in 1u32..=120,
+            gs_paren_l in any::<bool>(),
+        ) {
+            let command = if gs_paren_l { RasterCommand::GsParenL } else { RasterCommand::GsV0 };
+            let bitmap = patterned(width_px, height_px);
+            let profile = profile(width_px, limit, command);
+            let stream = encode(&bitmap, &profile)?;
+            let payloads = payload_ranges(&bitmap, &profile)?;
+            let row_bytes = bitmap.row_bytes() as usize;
+
+            prop_assert!(stream.starts_with(&INIT));
+            prop_assert!(stream.ends_with(&CUT));
+            prop_assert_eq!(joined(&stream, &payloads), bitmap.bits.clone());
+            for range in &payloads {
+                prop_assert_eq!(range.len() % row_bytes, 0);
+                prop_assert!(range.len() / row_bytes <= limit as usize);
+                prop_assert!(range.len() <= MAX_GRAPHICS_DATA as usize || !gs_paren_l);
+            }
+            prop_assert!(!pulse_outside_payloads(&stream, &payloads));
         }
     }
 }
