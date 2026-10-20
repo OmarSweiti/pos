@@ -20,7 +20,7 @@ can be filed from a phone in the lab and transcribed here afterwards.
 |---|---|
 | **Drill** | its name and case number from [`ref/test-catalog.md`](../implementation/ref/test-catalog.md), or the microstep whose `Done when` requires the review |
 | **Ran against** | the exact commit SHA or tag. A branch name is not evidence |
-| **Hardware** | the machine and OS, and for a register drill its row in [`ref/hardware-and-receipts.md`](../implementation/ref/hardware-and-receipts.md) §6a |
+| **Hardware** | the machine and OS, and for a register drill its row in [`ref/hardware-and-receipts.md`](../implementation/ref/hardware-and-receipts.md) §6a — or, for a run before milestone 5.8, each emulator and the profile id and version it ran, because an emulated run and a device run prove different things |
 | **Operator** | the person who ran it. Phase 5 requires someone who did not write the code |
 | **Started, ended, elapsed** | wall-clock times, and the difference |
 | **Outcome** | passed, failed or could not complete, judged against the drill's *Must happen* column in §5.10 |

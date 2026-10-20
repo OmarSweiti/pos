@@ -623,7 +623,7 @@ def a_blank_reference_profile_and_matrix_are_detected_and_refused(
         "the committed records",
         "has no register-hardware row",
         "all 12 identity fields are blank",
-        "order the hardware before group 1.7 starts",
+        "bought at milestone 5.8 (5.8.2)",
     )
     expect.that(
         result.output.count("(no row)") == len(IDENTITY_FIELDS),

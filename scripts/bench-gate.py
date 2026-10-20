@@ -493,8 +493,8 @@ def check_reference(records: Records, report: list[str]) -> Reference:
         )
         raise Refused(
             f"{display(records.matrix)} §6a.1 has no register-hardware row, so "
-            f"no reference register exists and {detail}. §6a: order the "
-            "hardware before group 1.7 starts. Conventions §7.1: no baseline "
+            f"no reference register exists and {detail}. §6b: the register is "
+            "bought at milestone 5.8 (5.8.2). Conventions §7.1: no baseline "
             "is accepted while either record is blank or they disagree"
         )
 

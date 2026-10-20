@@ -2,12 +2,12 @@
 
 > **Exit:** the product can be sold to someone who is not you, with a signed compliance story you could defend to an auditor, a QSA, and a tax advisor in the same week.
 
-**Effort:** 9–13 weeks, and the fiscal milestone (5.2) is gated on a merchant, not on you.
-**Scope:** blueprint §10 hardening, PDPL registration walkthrough, PCI SAQ with a QSA, **Fiscal Certification**, restore drills, the update service, packaging and onboarding, and **milestone 5.0 — commercial and legal readiness**, without which "the product can be sold to someone who is not you" is not a claim anyone can make.
+**Effort:** 11–16 weeks, and the fiscal milestone (5.2) is gated on a merchant, not on you. About three of those weeks are milestone 5.8, which is done in front of Phase 4's pilot.
+**Scope:** blueprint §10 hardening, PDPL registration walkthrough, PCI SAQ with a QSA, **Fiscal Certification**, restore drills, **hardware qualification**, the update service, packaging and onboarding, and **milestone 5.0 — commercial and legal readiness**, without which "the product can be sold to someone who is not you" is not a claim anyone can make.
 
 Phases 0–4 built a product. This phase turns it into something a merchant can buy and a regulator can inspect. Several milestones cannot be completed alone — they require a real merchant, a real accountant, a QSA, and counsel. **Start recruiting and contracting at Phase 1 for the long-lead items and at Phase 3 for the merchants**, per [`00-master-plan.md`](00-master-plan.md) §6a.
 
-**Some of this milestone has already happened.** The Phase-4 pre-pilot gate (4.9.0) pulls fiscal certification, the PDPL determination, the breach runbook, the SAQ determination, the retention matrix and the independent security assessment **in front of the pilot**, because three real shops with real cards may not trade behind them. What remains here is completing, re-testing at launch scope, and writing down.
+**Some of this milestone has already happened.** The Phase-4 pre-pilot gate (4.9.0) pulls fiscal certification, the PDPL determination, the breach runbook, the SAQ determination, the retention matrix, the independent security assessment and the hardware qualification of milestone 5.8 **in front of the pilot**, because three real shops with real cards may not trade behind them. What remains here is completing, re-testing at launch scope, and writing down.
 
 ---
 
@@ -294,6 +294,39 @@ One document a prospective merchant's accountant can read:
 
 ---
 
+## Milestone 5.8 — Hardware qualification
+
+*Pulled forward: row 11 of the pre-pilot gate (4.9.0) cannot be signed until this milestone has passed, so it is done before Phase 4's pilot, not after 5.7.*
+
+**No device is bought before this milestone** ([`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6b). Everything earlier was built and verified against emulators parameterised by device profiles, and this is where the profiles meet devices. The order goes out when Phase 4 begins ([`00-master-plan.md`](00-master-plan.md) §6a); about three weeks of work then stand between the devices arriving and 4.9.0.
+
+### 5.8.1 — Freeze the matrix, and place the order
+**Files:** [`../hardware-lab.md`](../hardware-lab.md) (the frozen set, re-quoted) · [`ref/merchant-decisions.md`](ref/merchant-decisions.md) §G (the pilot stores' own devices) · `docs/drills/` (the order record)
+Apply the reference's selection rule (§6b.5) to the profiles and to the devices the pilot stores already own: every class the pilot uses, the riskiest parameters rather than the most models, and every `unknown` the pilot depends on put in front of a device. Re-quote each item — [`../hardware-lab.md`](../hardware-lab.md)'s prices are a 3 October 2026 snapshot — and order. Ask the acquirer for its test terminal at the same time, if 2.1.1's conversation has not already produced one.
+**Done when:** [`../hardware-lab.md`](../hardware-lab.md) names the frozen set, each device beside the profiles and unknowns it settles, with quotes dated within two weeks of the order, and a dated record in [`../drills/`](../drills/README.md) names what was ordered, from whom and when. Receipts and serial numbers stay out of a public repository.
+
+### 5.8.2 — The reference register, and every absolute budget
+**Depends on:** 5.8.1
+**Files:** [`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6a.1 · `benchmarks/reference-register.toml` · `benchmarks/baselines/` (`search.json`, `price-cart.json`, `pin-verify.json`, `scan-to-line.json`, `cold-start.json`) · `scripts/tests/bench_gate_test.py` · `.github/workflows/ci.yml` (the live job) · `crates/pos-db/src/auth.rs` (only if the register moves the Argon2 profile)
+1.2.0's deferred half, executed: run §6a's qualification procedure on the register, write row 1 of §6a.1, and mirror its twelve cells byte for byte in `benchmarks/reference-register.toml`. Then measure every budget in [`01-conventions.md`](01-conventions.md) §7 on it — search (1.2.7), the cart total (1.4.9), PIN verification (1.6.2), scan to line (1.11.13) and cold start (2.9.3) — and commit each baseline in its own `perf(...)` change carrying the measurement. If PIN verification falls outside its 200–350 ms median band, re-tune the Argon2 profile here: no real PIN exists yet, and a PHC string carries its own parameters. Switch on the live job 1.12.3 defined — `just bench-gate` on `runs-on: [self-hosted, reference-register]`, never on `pull_request` — under the public-repository controls in [`../hardware-lab.md`](../hardware-lab.md) §8.
+**Tests:** `every_phase_1_budget_has_a_committed_baseline`
+**Done when:** `python3 scripts/bench-gate.py --check-profile && just bench-gate` exits zero on the reference register, printing the machine it read and every implemented budget, and the live job has run green once on `development`.
+
+### 5.8.3 — Every device against its profile, and every profile against the evidence
+**Depends on:** 5.8.1, 1.7.13, 1.11.6c
+**Files:** `crates/pos-hardware/profiles/` (a new version wherever a device disagreed) · `crates/pos-hardware/tests/captures/` (the devices' captures) · [`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6a (the matrix rows) · `docs/drills/`
+For each device in the frozen set, run its class's conformance suite with the device as the target and the profile it is being qualified against: the printers and the drawer through 1.7.13, the scanner through 1.11.6c's cases scanned from the device itself under Arabic (101) and English (US), and the payment terminal through 2.1.5's tests against the acquirer's protocol. The device halves of earlier steps land here: a receipt taller than 2303 dot rows printed whole on the TM-T20III (1.7.9, case 93); a golden printed, paper-out and cover-open read back, and the drawer kicked exactly once, on each printer (1.7.10); and the scanner's matrix row, with the configuration it was qualified in (1.11.6b, case 94).
+**Where a device disagrees with its profile, decide which is wrong.** A wrong profile gets a new version, and what the device actually did is committed as a capture the emulator must replay from then on. A device that breaks the reference's §3 or §4 contract does not qualify, whatever its datasheet says.
+**Done when:** every device in the frozen set has a §6a matrix row with a qualifying commit; every `unknown` the pilot depends on is now a value whose source is a capture; `cargo nextest run -p pos-hardware --features emulator --test conformance` still exits zero across every profile, corrected ones included; and each device's run is a dated record in [`../drills/`](../drills/README.md).
+
+### 5.8.4 — The lab on paper, and the drills on real hardware
+**Depends on:** 5.8.2, 5.8.3
+**Files:** `docs/drills/`
+Run the reference's §9 checklist on the matrix's devices — every check, including those 2.9.4 ran against emulators: all seven goldens printed and read by a native reader who is not you, at both widths; the label printer; cold start and the sale screen on the register's own display. Then the drills only hardware can run: case 1b's cut of physical power on the reference register's own storage, the offline installer on the register (2.9.5b), and the demonstrations earlier phases ran against emulators, repeated on the devices — Phase 1's 1, 5 and 7, and Phase 2's 1, 2, 3, 7 and 12.
+**Done when:** a dated record exists in [`../drills/`](../drills/README.md) for every check and drill above, each naming the device, its firmware and the profile version it was qualified against; every one passed; and every surprise became a case in [`ref/test-catalog.md`](ref/test-catalog.md).
+
+---
+
 ## Exit gate
 
 **Technical**
@@ -302,10 +335,10 @@ One document a prospective merchant's accountant can read:
 2. **The update service is proven end to end**: a cohort receives an update, an update is deferred while a shift is open, a rollout is halted mid-flight, a pre-migration failure restores the previous bundle, and a post-migration failure restores the pre-update snapshot. The webview cannot invoke the updater at all.
 3. **Fiscal Certification (5.2) complete and signed** — all nine credentialed items dated, on top of a `2.7.0` manifest whose hashes still match.
 4. **PDPL walkthrough** recorded **and the register entry complete**; **PCI SAQ** completed with a QSA; **retention matrix** agreed with the accountant, with its legal hold.
-5. **Restore drills** performed on real hardware by someone who did not write the code, and timed: data loss, keychain loss, **and recovery-code-only on a second machine**. Plus the key-rotation drill.
+5. **Restore drills** performed on real hardware by someone who did not write the code, and timed: data loss, keychain loss, **and recovery-code-only on a second machine**. Plus the key-rotation drill. **The hardware-lab checklist has run on the matrix's own devices for the launch tag**, as it has before every release since milestone 5.8.
 6. **Year-one soak** passes every performance budget through `just bench-gate`, and the full migration chain runs inside its stated 60-second budget.
 7. **The packaged application** is exercised automatically on every supported OS, and the breach tabletop has been run against both clocks.
-8. **`ref/test-catalog.md` is complete**: every one of the 92 numbered cases is a passing test, an accepted risk with a written rationale, an open question with a stated default, or explicitly out of scope with one — checked by `scripts/check-test-catalog.py`, not by reading the table.
+8. **`ref/test-catalog.md` is complete**: every one of the 95 numbered cases is a passing test, an accepted risk with a written rationale, an open question with a stated default, or explicitly out of scope with one — checked by `scripts/check-test-catalog.py`, not by reading the table.
 
 **Commercial**
 
