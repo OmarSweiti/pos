@@ -77,7 +77,7 @@ Blueprint Part 10 and master-plan Part G, reconciled with the corrections, the g
 | Phase | Adds | A real store could… | Exit gate |
 |---|---|---|---|
 | **0** | workspace hygiene, CI on a remote, product identity, panic lints | …nothing. It compiles and ships | 7 checks, all green |
-| **1** | `Money`/`Qty`/ids/time · catalog + FTS · **tax engine** · cart machine · cash tenders · users/permissions/audit chain + `ApprovalHandle` · **Arabic receipts** · atomic finalize · **backup with a recovery code** · shift skeleton · sequences · stock ledger + `stock_adjust` · the sales-side tax report · RTL UI · seed fixture | **…sell for cash, all day, fully offline, in Arabic, with correct GST and a printed receipt** | 10 demonstrations, done with the cable unplugged |
+| **1** | `Money`/`Qty`/ids/time · catalog + FTS · **tax engine** · cart machine · cash tenders · users/permissions/audit chain + `ApprovalHandle` · **Arabic receipts** · device profiles and emulators · atomic finalize · **backup with a recovery code** · shift skeleton · sequences · stock ledger + `stock_adjust` · the sales-side tax report · RTL UI · seed fixture | **…sell for cash, all day, fully offline, in Arabic, with correct GST and a printed receipt** | 10 demonstrations, done with the cable unplugged |
 | **2** | **2.7.0: obtain and pin the official ISTD specification** · card terminal + the `Unknown` protocol · refunds/returns/exchanges + minimal store credit · shifts, cash locations, X/Z · **the fiscal pipeline** · electronic journal · diagnostics · packaged-app smoke suite | …take cards that reconcile, handle returns without being defrauded, close a shift that balances | 14 demonstrations + drills |
 | **3** | sync push/pull · **chaos convergence** · customers & loyalty under PDPL · back office with real human authentication · **multi-tenant isolation** · device provisioning · licensing · Sentry · **operating the server** | …run more than one register, administer centrally, keep customers | 15 demonstrations |
 | **4** | price lists · receiving + WAC · counts · transfers · **promotions** · supplier tax invoices and filing periods · report suite · **shelf labels** · multi-store · **the pre-pilot gate** | …run three stores with promotions and full inventory | the pre-pilot gate, then 10 demonstrations and a three-store pilot week |
@@ -93,7 +93,7 @@ concordance heading while counting its executable `1.1.2a` and `1.1.2b` children
 
 | Phase | Microsteps | Weeks | Implied rate |
 |---|---:|---|---|
-| 1 | 115 | **14–20**, split 1A 8–11 / 1B 6–9 | 5.8–8.2 / week |
+| 1 | 120 | **15–21**, split 1A 8–11 / 1B 7–10 | 5.7–8.0 / week |
 | 2 | 62 | **10–13** | 4.8–6.2 / week |
 | 3 | 45 | **11–14** | 3.2–4.1 / week |
 | 4 | 42 | **9–12** | 3.5–4.7 / week, plus the pilot week |
@@ -104,7 +104,7 @@ the set — many are a single type, a single trigger or a single test — and it
 slip visible at week 9 rather than at the final gate. Phases 3 and 5 carry the lowest rates because
 their work waits on a host, a QSA, counsel, an acquirer and a merchant.
 
-**Total: roughly 53–72 weeks solo**, a range and not a commitment. Record the actual per-microstep
+**Total: roughly 54–73 weeks solo**, a range and not a commitment. Record the actual per-microstep
 cycle time over the first two groups and correct this table from evidence; an estimate nobody
 revises against measurement is a decoration. Nothing in it prices the long-lead items in §6a — those
 are queue time, not effort, and they are why several of them are ordered phases before they are used.

@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **37 of 115 executable microsteps fully complete (~32%)**: `1.1.0`
+Phase 1 has **37 of 120 executable microsteps fully complete (~31%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -132,7 +132,7 @@ docs/implementation/
 ├── 03-github-workflow.md          branches, issues, the board, PRs, release channels
 │
 ├── phase-0-closeout.md            historical close-out record
-├── phase-1-sellable-mvp.md        cash · tax · Arabic receipts 14–20 weeks
+├── phase-1-sellable-mvp.md        cash · tax · Arabic receipts 15–21 weeks
 ├── phase-2-money-grade.md         cards · refunds · fiscal     10–13 weeks
 ├── phase-3-connected.md           sync · back office · CRM     11–14 weeks
 ├── phase-4-depth.md               promos · supply · reports     9–12 weeks
