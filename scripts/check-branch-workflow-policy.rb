@@ -1909,6 +1909,13 @@ def self_test(default_path)
     run_git.call("init", "-q")
     run_git.call("config", "user.name", "policy-test")
     run_git.call("config", "user.email", "policy-test@example.invalid")
+    # Recent Git detaches automatic maintenance after commands like `commit`. In
+    # this throwaway repository that background repack raced Dir.mktmpdir's
+    # cleanup (an unlinked .git/objects/bitmap-ref-tips_* file, git 2.54) once
+    # the commits below crossed the loose-object trigger, so the self-test
+    # failed on timing, not on policy. A fixture repository never maintains itself.
+    run_git.call("config", "maintenance.auto", "false")
+    run_git.call("config", "gc.auto", "0")
     policy_paths.each do |relative|
       destination = File.join(revision_repo, relative)
       FileUtils.mkdir_p(File.dirname(destination))
