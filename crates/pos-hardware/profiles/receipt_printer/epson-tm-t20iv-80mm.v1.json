@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "class": "receipt_printer",
+  "profile_id": "epson-tm-t20iv-80mm",
+  "version": 1,
+  "describes": "model",
+  "values": {
+    "maker": {
+      "value": "Epson",
+      "source": "docs/hardware-lab.md §4.2, citing Epson, TM-T20IV launch, https://news.epson.com/news/tm-t20iv-thermal-pos-printer"
+    },
+    "model": {
+      "value": "TM-T20IV, C31CL47002",
+      "source": "docs/hardware-lab.md §4.2, citing Epson, TM-T20IV launch, https://news.epson.com/news/tm-t20iv-thermal-pos-printer: “C31CL47002: USB, serial and Ethernet”"
+    },
+    "firmware_qualified": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no firmware range is named (docs/hardware-lab.md §4.2 and the documents it cites). The gate records the range it qualified (ref/hardware-and-receipts.md §6a, §6b.5)."
+    },
+    "transport": {
+      "value": "tcp_9100",
+      "source": "docs/hardware-lab.md §4.2, citing Epson, TM-T20IV launch, https://news.epson.com/news/tm-t20iv-thermal-pos-printer: “C31CL47002: USB, serial and Ethernet”; TCP 9100 first, per ref/hardware-and-receipts.md §6a"
+    },
+    "paper_mm": {
+      "value": 80,
+      "source": "docs/hardware-lab.md §4.2, citing Epson, TM-T20IV launch, https://news.epson.com/news/tm-t20iv-thermal-pos-printer: “prints the same 576 dots”, as the 80 mm TM-T20III"
+    },
+    "dot_width": {
+      "value": 576,
+      "source": "docs/hardware-lab.md §4.2, citing Epson, TM-T20IV launch, https://news.epson.com/news/tm-t20iv-thermal-pos-printer: “prints the same 576 dots”"
+    },
+    "raster_command": {
+      "value": "gs_v_0",
+      "source": "docs/hardware-lab.md §4.2, citing Epson, ESC/POS reference, GS v 0, https://download4.epson.biz/sec_pubs/pos/reference_en/escpos/gs_lv_0.html: “One raster command carries at most 2303 dot rows on the TM-T20III, TM-T20IV and TM-m30III”"
+    },
+    "raster_max_rows": {
+      "value": 2303,
+      "source": "docs/hardware-lab.md §4.2, citing Epson, ESC/POS reference, GS v 0, https://download4.epson.biz/sec_pubs/pos/reference_en/escpos/gs_lv_0.html: “One raster command carries at most 2303 dot rows on the TM-T20III, TM-T20IV and TM-m30III”"
+    },
+    "code_pages": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no code page is named (docs/hardware-lab.md §4.2 and the documents it cites). Receipts print as raster; code pages serve only the §2.1 text fallback (ref/hardware-and-receipts.md §6b.2)."
+    },
+    "auto_cutter": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: the TM-T20IV's cutter is not described (docs/hardware-lab.md §4.2 and the documents it cites)."
+    },
+    "cut_command": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: an auto-cutter is named at most, never which GS V cut it honours (docs/hardware-lab.md §4.2 and the documents it cites). 1.7.4's partial cut is a baseline, not this device's fact (ref/hardware-and-receipts.md §6a)."
+    },
+    "cut_feed_rows": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no feed before the cut is named (docs/hardware-lab.md §4.2 and the documents it cites). It is measured on the device: crate::escpos records why no feed is emitted yet (ref/hardware-and-receipts.md §6b.5)."
+    },
+    "status_protocol": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no source says the TM-T20IV returns status over Ethernet (docs/hardware-lab.md §4.2 and the documents it cites). ref/hardware-and-receipts.md §6b.5 has the gate confirm it rather than assume it."
+    },
+    "drawer_port_volts": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: the TM-T20IV's drawer port is not described (docs/hardware-lab.md §4.2 and the documents it cites)."
+    },
+    "drawer_pulse": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no pin or timing is named (docs/hardware-lab.md §4.2 and the documents it cites). The pin is the drawer's property and the timings its solenoid's (docs/hardware-lab.md §4.5; ref/hardware-and-receipts.md §6a)."
+    },
+    "supports_raster_arabic": {
+      "value": "unknown",
+      "source": "A qualification result rather than a datasheet fact: nobody has printed the Arabic goldens on this device (ref/hardware-and-receipts.md §6a; milestone 5.8.3)."
+    }
+  }
+}

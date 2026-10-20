@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "class": "scanner",
+  "profile_id": "honeywell-voyager-1470g",
+  "version": 1,
+  "describes": "model",
+  "values": {
+    "maker": {
+      "value": "Honeywell",
+      "source": "Honeywell, Voyager 1470g user guide, as read in docs/hardware-lab.md §4.4 (which records no address)"
+    },
+    "model": {
+      "value": "Voyager 1470g",
+      "source": "Honeywell, Voyager 1470g user guide, as read in docs/hardware-lab.md §4.4 (which records no address)"
+    },
+    "interface": {
+      "value": "usb_hid_keyboard",
+      "source": "Honeywell, Voyager 1470g user guide, as read in docs/hardware-lab.md §4.4 (which records no address): it is configured by keyboard country, a setting of its USB HID keyboard interface"
+    },
+    "prefix": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: the default prefix and suffix are not named (docs/hardware-lab.md §4.4 and the documents it cites). The lab reprograms both by configuration barcode at setup (docs/hardware-lab.md §6.4)."
+    },
+    "suffix": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: the default prefix and suffix are not named (docs/hardware-lab.md §4.4 and the documents it cites). The lab reprograms both by configuration barcode at setup (docs/hardware-lab.md §6.4)."
+    },
+    "inter_key_ms": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no inter-key timing is named (docs/hardware-lab.md §4.4 and the documents it cites). The gap a scan leaves between key presses is what tells it from typing (ref/hardware-and-receipts.md §5), so the gate measures it."
+    },
+    "arabic_keyboard_countries": {
+      "value": [],
+      "source": "Honeywell, Voyager 1470g user guide, as read in docs/hardware-lab.md §4.4 (which records no address): “Its user guide lists keyboard countries without Arabic”"
+    },
+    "alt_or_keypad_emulation": {
+      "value": false,
+      "source": "Honeywell, Voyager 1470g user guide, as read in docs/hardware-lab.md §4.4 (which records no address): it “has no ALT mode, so it cannot be configured around the layout problem”. Seeded as the profile that proves 1.11.6b alone carries an Arabic layout"
+    },
+    "reads_2d": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: whether the 1470g reads 2D codes is not stated (docs/hardware-lab.md §4.4 and the documents it cites)."
+    },
+    "symbologies": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no list of symbologies is given (docs/hardware-lab.md §4.4 and the documents it cites)."
+    }
+  }
+}

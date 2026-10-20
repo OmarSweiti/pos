@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "class": "cash_drawer",
+  "profile_id": "posiflex-cr-4000-g2",
+  "version": 1,
+  "describes": "model",
+  "values": {
+    "maker": {
+      "value": "Posiflex",
+      "source": "docs/hardware-lab.md §4.5, citing Posiflex, CR-4000-G2, https://www.posiflex.com/product-detail/cr-4000-g2-series_4100-g2-series/"
+    },
+    "model": {
+      "value": "CR-4000-G2",
+      "source": "docs/hardware-lab.md §4.5, citing Posiflex, CR-4000-G2, https://www.posiflex.com/product-detail/cr-4000-g2-series_4100-g2-series/"
+    },
+    "kick_channel": {
+      "value": "printer_port",
+      "source": "docs/hardware-lab.md §4.5, citing Posiflex, CR-4000-G2, https://www.posiflex.com/product-detail/cr-4000-g2-series_4100-g2-series/: “Printer driven, powered by printer or Posiflex system CR port, support 12V/24V voltage range”"
+    },
+    "pin": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: which pin fires it is not named (docs/hardware-lab.md §4.5 and the documents it cites). It is the drawer's property, recorded in the printer profile once measured (ref/hardware-and-receipts.md §6a)."
+    },
+    "pulse_on_ms": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no pulse timing is named (docs/hardware-lab.md §4.5 and the documents it cites). The timings are the solenoid's, measured at the gate (ref/hardware-and-receipts.md §6a)."
+    },
+    "pulse_off_ms": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no pulse timing is named (docs/hardware-lab.md §4.5 and the documents it cites). The timings are the solenoid's, measured at the gate (ref/hardware-and-receipts.md §6a)."
+    },
+    "solenoid_volts": {
+      "value": {
+        "min": 12,
+        "max": 24
+      },
+      "source": "docs/hardware-lab.md §4.5, citing Posiflex, CR-4000-G2, https://www.posiflex.com/product-detail/cr-4000-g2-series_4100-g2-series/: “Printer driven, powered by printer or Posiflex system CR port, support 12V/24V voltage range”"
+    },
+    "solenoid_ohms": {
+      "value": "unknown",
+      "source": "docs/hardware-lab.md §4.5: “no drawer maker publishes its coil resistance, so measure it”; Epson requires the solenoid to be 24 Ω or more"
+    },
+    "sensor": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no drawer sensor is described (docs/hardware-lab.md §4.5 and the documents it cites)."
+    },
+    "sensor_polarity": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no drawer sensor is described, so nor is its polarity (docs/hardware-lab.md §4.5 and the documents it cites)."
+    }
+  }
+}

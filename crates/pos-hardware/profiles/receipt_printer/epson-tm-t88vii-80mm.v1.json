@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "class": "receipt_printer",
+  "profile_id": "epson-tm-t88vii-80mm",
+  "version": 1,
+  "describes": "model",
+  "values": {
+    "maker": {
+      "value": "Epson",
+      "source": "docs/hardware-lab.md §2 and Sources, citing Epson, TM-T88VII Technical Reference Guide, https://files.support.epson.com/pdf/pos/bulk/tm-t88vii_trg_en_reva.pdf"
+    },
+    "model": {
+      "value": "TM-T88VII",
+      "source": "docs/hardware-lab.md §2 and Sources, citing Epson, TM-T88VII Technical Reference Guide, https://files.support.epson.com/pdf/pos/bulk/tm-t88vii_trg_en_reva.pdf"
+    },
+    "firmware_qualified": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no firmware range is named (docs/hardware-lab.md §2 and §4.2 and the documents it cites). The gate records the range it qualified (ref/hardware-and-receipts.md §6a, §6b.5)."
+    },
+    "transport": {
+      "value": "usb",
+      "source": "docs/hardware-lab.md §2, citing Epson, TM-T88VII Technical Reference Guide, https://files.support.epson.com/pdf/pos/bulk/tm-t88vii_trg_en_reva.pdf: “Epson's and Star's USB default to a vendor-specific class that needs one” — a driver, which the Sources list repeats as “vendor-class USB”"
+    },
+    "paper_mm": {
+      "value": 80,
+      "source": "docs/hardware-lab.md §4.2, citing Epson, TM-T88VII Technical Reference Guide, https://files.support.epson.com/pdf/pos/bulk/tm-t88vii_trg_en_reva.pdf: “it is 180 dpi, so it prints 512 dots on 80 mm paper”"
+    },
+    "dot_width": {
+      "value": 512,
+      "source": "docs/hardware-lab.md §4.2, citing Epson, TM-T88VII Technical Reference Guide, https://files.support.epson.com/pdf/pos/bulk/tm-t88vii_trg_en_reva.pdf: “it is 180 dpi, so it prints 512 dots on 80 mm paper”. Seeded because its width differs from the goldens: it exercises the new-width path"
+    },
+    "raster_command": {
+      "value": "gs_v_0",
+      "source": "docs/hardware-lab.md §4.2, citing Epson, ESC/POS reference, GS v 0, https://download4.epson.biz/sec_pubs/pos/reference_en/escpos/gs_lv_0.html: “(4095 on the TM-T88VII)”"
+    },
+    "raster_max_rows": {
+      "value": 4095,
+      "source": "docs/hardware-lab.md §4.2, citing Epson, ESC/POS reference, GS v 0, https://download4.epson.biz/sec_pubs/pos/reference_en/escpos/gs_lv_0.html: “(4095 on the TM-T88VII)”"
+    },
+    "code_pages": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no code page is named (docs/hardware-lab.md §2 and §4.2 and the documents it cites). Receipts print as raster; code pages serve only the §2.1 text fallback (ref/hardware-and-receipts.md §6b.2)."
+    },
+    "auto_cutter": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: the TM-T88VII's cutter is not described (docs/hardware-lab.md §2 and §4.2 and the documents it cites)."
+    },
+    "cut_command": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: an auto-cutter is named at most, never which GS V cut it honours (docs/hardware-lab.md §2 and §4.2 and the documents it cites). 1.7.4's partial cut is a baseline, not this device's fact (ref/hardware-and-receipts.md §6a)."
+    },
+    "cut_feed_rows": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no feed before the cut is named (docs/hardware-lab.md §2 and §4.2 and the documents it cites). It is measured on the device: crate::escpos records why no feed is emitted yet (ref/hardware-and-receipts.md §6b.5)."
+    },
+    "status_protocol": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: the TM-T88VII's status is not described (docs/hardware-lab.md §2 and §4.2 and the documents it cites)."
+    },
+    "drawer_port_volts": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: the TM-T88VII's drawer port is not described (docs/hardware-lab.md §2 and §4.2 and the documents it cites)."
+    },
+    "drawer_pulse": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no pin or timing is named (docs/hardware-lab.md §2 and §4.2 and the documents it cites). The pin is the drawer's property and the timings its solenoid's (docs/hardware-lab.md §4.5; ref/hardware-and-receipts.md §6a)."
+    },
+    "supports_raster_arabic": {
+      "value": "unknown",
+      "source": "A qualification result rather than a datasheet fact: nobody has printed the Arabic goldens on this device (ref/hardware-and-receipts.md §6a; milestone 5.8.3)."
+    }
+  }
+}

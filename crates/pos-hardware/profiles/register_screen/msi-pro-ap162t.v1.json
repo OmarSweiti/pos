@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "class": "register_screen",
+  "profile_id": "msi-pro-ap162t",
+  "version": 1,
+  "describes": "model",
+  "values": {
+    "maker": {
+      "value": "MSI",
+      "source": "docs/hardware-lab.md §4.1, citing MSI, PRO AP162T specification, https://www.msi.com/All-in-One-PC/PRO-AP162T-ADL/Specification"
+    },
+    "model": {
+      "value": "PRO AP162T",
+      "source": "docs/hardware-lab.md §4.1, citing MSI, PRO AP162T specification, https://www.msi.com/All-in-One-PC/PRO-AP162T-ADL/Specification"
+    },
+    "resolution": {
+      "value": {
+        "width": 1920,
+        "height": 1080
+      },
+      "source": "docs/hardware-lab.md §4.1, citing City Center Amman, https://citycenter.jo/electronics-point-sale/msi-pro-ap162t-2024-new-12gen-intel-celeron-n100-4-cores-w-15-6-ips-full-hd-anti-glare-touch-display-black: “a 15.6″ 1920×1080 panel”"
+    },
+    "display_scales_percent": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: the scale Windows applies is set on the installed system, not in a specification (docs/hardware-lab.md §4.1 and the documents it cites). The gate reads it from the reference register (ref/hardware-and-receipts.md §6b.5)."
+    },
+    "pointer": {
+      "value": "resistive_touch",
+      "source": "docs/hardware-lab.md §4.1, citing MSI, PRO AP162T specification, https://www.msi.com/All-in-One-PC/PRO-AP162T-ADL/Specification: “Resistive Single Touch”"
+    },
+    "panel_tenths_inch": {
+      "value": 156,
+      "source": "docs/hardware-lab.md §4.1, citing City Center Amman, https://citycenter.jo/electronics-point-sale/msi-pro-ap162t-2024-new-12gen-intel-celeron-n100-4-cores-w-15-6-ips-full-hd-anti-glare-touch-display-black: “a 15.6″ 1920×1080 panel”"
+    }
+  }
+}
