@@ -19,7 +19,7 @@ pub trait ReceiptPrinter: Send + Sync {
     /// no-sale flow — never by the print worker, and never by a retry (§4).
     fn open_drawer(&self) -> Result<(), HwError>;
 
-    fn status(&self) -> PrinterStatus;                  // paper-out, cover-open, offline
+    fn status(&self) -> PrinterStatus;                  // paper-out, cover-open, offline — or unsupported (§2)
 
     /// The profile this driver was qualified against (§6a). A driver that
     /// cannot name a qualified profile cannot be bound to a register.
@@ -78,13 +78,15 @@ pub trait Scale: Send + Sync { /* only if grocery/deli — §7 */ }
 
 **No `pos-domain` type appears in this crate.** `pos-hardware` depends on `thiserror` today and gains only `uuid`, because a queue row has to be identified. A device layer that knows about `Money` or `SaleId` becomes a place domain rules get re-implemented against a driver's convenience. It also carries **no clock**: the print worker owns the clock and stamps `started_at`, `sent_at` and `finished_at` onto the `print_attempt` row it appends. A driver that reported its own times would be a driver whose times a test cannot control.
 
-`SimulatedPrinter` implements every trait, **with fault injection at each of the four outcomes and at an arbitrary byte offset**. CI and demos run hardware-free. That is not a testing convenience — it is why a new developer is productive on day one without a printer on the desk, and why every fault path has a test rather than a hope.
+`SimulatedPrinter` implements every trait, **with fault injection at each of the four outcomes and at an arbitrary byte offset**. CI and demos run hardware-free. That is not a testing convenience — it is why a new developer is productive on day one without a printer on the desk, and why every fault path has a test rather than a hope. It is also the first rung of the ladder the whole build stands on until the hardware qualification gate (§6b): no device is bought before it.
 
 ---
 
 ## 2 · Receipt printers
 
 **Raw ESC/POS**, over TCP port 9100 for network printers, `serialport` for RS-232, `rusb`/`hidapi` for USB. **Never webview printing** — spooler latency and per-OS quirks make it slow and non-deterministic; raw bytes are identical everywhere.
+
+**The driver is [1.7.10](../phase-1-sellable-mvp.md), and it is network first.** Port 9100 needs no driver on any operating system. USB does not share that property: current Epson and Star printers default to a vendor-specific USB class, which Windows reaches only through the vendor's driver or a WinUSB binding, so serial and USB transports wait for a qualified device that needs them. A printer that never answers a real-time status request reports *status unsupported* rather than ready — some answer `DLE EOT` on serial only — and §3 rule 1 then knows it cannot warn before the money is taken.
 
 ### 2.1 The Arabic problem, and its answer
 
@@ -104,6 +106,8 @@ ReceiptModel                          (pure, from pos-domain)
 ```
 
 Widths: **576 px at 80 mm**, **384 px at 58 mm** (E.49). Two profiles, two sets of golden files.
+
+**And a height limit per command, which is a device fact.** Epson's ESC/POS reference caps one `GS v 0` at 2303 dot rows on the TM-T20III, TM-T20IV and TM-m30III, and at 4095 on the TM-T88VII, and marks the command obsolete in favour of `GS ( L`. A taller page goes out in strips at the profile's limit ([1.7.9](../phase-1-sellable-mvp.md)); the strips join to the same bitmap, so the paper cannot show the seam.
 
 Keep a plain-codepage fallback for exotic printers that reject raster, and make it a store setting — but the default is raster and the Arabic goldens are raster. A device that can only take the fallback is recorded in the matrix (§6a) as *not qualified for Arabic*, because a codepage receipt is not an Arabic receipt and calling it one is the failure this section exists to prevent.
 
@@ -130,7 +134,7 @@ Seven fixtures, byte-diffed in CI:
 **Regenerating a golden is a deliberate act with a procedure:**
 
 1. `UPDATE_GOLDEN=1 cargo test -p pos-hardware` rewrites the `.bin` and its `.png` together. Regenerating one without the other fails the check.
-2. Read the image diff in the pull request. If the change touches shaping, font metrics, or the font file itself, print it as well — paper is the only place some defects appear.
+2. Read the image diff in the pull request. If the change touches shaping, font metrics, or the font file itself, print it as well — paper is the only place some defects appear. Before milestone 5.8 no printer has been bought (§6b), so the image is the review and 5.8.4 prints every golden on paper before a customer is handed a receipt.
 3. **Any regenerated golden whose content is Arabic or bilingual carries the native reader's confirmation in that same pull request**, recorded in the drill record (§9), not deferred to the next release. The named reader for the release checklist is the named reader here; the goldens are the only continuous defence Arabic has, and a defence that is checked twice a year is not continuous.
 4. A `cosmic-text`, `rustybuzz`, `tiny-skia` or font-file bump is its own pull request under the same rule. Those four produce a byte diff indistinguishable from a shaping regression, and `UPDATE_GOLDEN=1` is otherwise the only available response to a red test.
 
@@ -295,6 +299,8 @@ A scan resolves to a `ScanLookup` ([`domain-api.md`](domain-api.md) §4.3) and n
 
 Serial and HID-POS modes come later behind `BarcodeSource`, for merchants whose environment makes wedge mode unreliable.
 
+**The layout trap.** A wedge scanner sends key presses, and the operating system's active layout turns them into characters. Under Arabic (101), a scanner on its default US layout types Arabic letters wherever its code had Latin ones — a *different* code, not an unreadable one — while digit-only EAN and UPC codes usually survive, which is why the defect hides in a demo. [1.11.6b](../phase-1-sellable-mvp.md) decodes a recognised burst by physical key (`KeyboardEvent.code`) rather than by character. A scanner's own keyboard-country or ALT/keypad setting is the device-side answer, and the matrix's scanner row records which one a device was qualified with.
+
 ---
 
 ## 6 · Payment terminals
@@ -319,11 +325,11 @@ Full treatment in [`phase-2-money-grade.md`](../phase-2-money-grade.md) §2.1 an
 |---|---|
 | `profile_id`, `maker`, `model` | what a support call is about |
 | `firmware_qualified` | a range, because behaviour changes under a firmware update |
-| `transport` | TCP 9100 · serial · USB |
+| `transport` | TCP 9100 · serial · USB — TCP first ([1.7.10](../phase-1-sellable-mvp.md)) |
 | `dot_width`, `paper_mm` | 576 px / 80 mm, 384 px / 58 mm — the layout input |
-| `raster_command` | `GS v 0` and its alternates are not interchangeable |
-| `cut_command`, `drawer_pulse` | pin, on-time and off-time; wrong timings do not open the drawer |
-| `status_protocol` | real-time status is what makes rule 1 of §3 possible; a device without it cannot warn before the money is taken |
+| `raster_command`, `raster_max_rows` | `GS v 0` and `GS ( L` are not interchangeable, and one command carries a device-specific number of dot rows — 2303 on an Epson TM-T20III, 4095 on a TM-T88VII. A taller page is sent in strips at that limit ([1.7.9](../phase-1-sellable-mvp.md)) |
+| `cut_command`, `drawer_pulse` | pin (2 or 5), on-time and off-time; wrong timings do not open the drawer, and the drawer's solenoid voltage must match the port's (usually 24 V) |
+| `status_protocol` | real-time status is what makes rule 1 of §3 possible; a device without it — or with it on serial only, when it is bound over the network — cannot warn before the money is taken |
 | `supports_raster_arabic` | `false` means the device is **not qualified for Arabic** and may not be sold to an Arabic-first store |
 | `qualified_at`, `qualified_by`, `qualifying_commit` | when this was last true, and against what |
 
@@ -337,7 +343,7 @@ Full treatment in [`phase-2-money-grade.md`](../phase-2-money-grade.md) §2.1 an
 | Register hardware | the reference register — the **lowest** row is what "the slowest supported hardware" means in every performance budget in this plan |
 | Register OS | the exact Windows, macOS and Linux versions CI builds for and the vendor supports |
 
-**The matrix ships empty except the simulator, and that is the honest state.** Filling it with model numbers nobody has held would be the same defect as a compliance claim nobody earned. Until a class has a row, this product supports no device in that class and says so.
+**The matrix ships empty except the simulator, and that is the honest state.** Filling it with model numbers nobody has held would be the same defect as a compliance claim nobody earned. Until a class has a row, this product supports no device in that class and says so. It stays empty until milestone 5.8 qualifies the first devices (§6b), and a device profile does not change that: a profile describes a candidate, a row describes a device somebody held.
 
 ### 6a.1 · The register-hardware rows, and the reference register
 
@@ -369,35 +375,178 @@ inside the value — a bare `8` could be GB or GiB.
 been bought, held or qualified, so there is nothing to write in it, and inventing a machine here
 would hand every performance budget in §7 a referent that does not exist. The consequence is
 deliberate and is the state of the repository today: `python3 scripts/bench-gate.py
---check-profile` exits non-zero and names both blank records. **Order the hardware before group 1.7
-starts**, below — the register is on the same purchase order as the printers, and filling this row
-plus the mirror file is the second half of microstep 1.2.0 in
-[`../phase-1-sellable-mvp.md`](../phase-1-sellable-mvp.md).
+--check-profile` exits non-zero and names both blank records. **They stay blank until the hardware
+qualification gate** (§6b): the register is bought there, against a frozen matrix, and filling this
+row plus the mirror file is the deferred half of microstep 1.2.0 in
+[`../phase-1-sellable-mvp.md`](../phase-1-sellable-mvp.md), executed at 5.8.2. Until then every
+budget is watched relatively and none is claimed ([`../01-conventions.md`](../01-conventions.md) §7.2).
 
-**The first printer row is written in Phase 1, not Phase 2.** Group 1.7's own acceptance is that Arabic letter joining is *"verified by eye once and by golden file forever"*, and an eye needs paper. So the 80 mm device, its profile and its qualification date exist before the first golden is frozen; the remaining classes and the full checklist arrive at microstep 2.9.4. **Order the hardware before group 1.7 starts** — a printer, a 58 mm printer and a scanner are a lead time, not a task, and the terminal in §6 has a longer one still.
+**The first printer row is written at the gate, and the eye reads an image until then.** Group 1.7's own acceptance is that Arabic letter joining is *"verified by eye once and by golden file forever"*, and it is met in two steps: the native reader confirms each golden's PNG in the pull request that changes it (§2.2), and confirms the same seven on paper at 5.8.4, before a customer is handed one. The first printer rows, their profiles and their qualification dates are 5.8.3's, and so is every other class's first row, from devices ordered when Phase 4 begins (§6b.6). The terminal is the acquirer's to supply: the conversation starts early because it is the long lead, and the device is qualified at the same gate.
 
 **The matrix is what the vendor supports; what a store owns is a different list.** The store's own devices are recorded on the questionnaire ([`merchant-decisions.md`](merchant-decisions.md) §G) — maker, model, firmware, and for a scale its serial and verification (§7). A store running a device with no matrix row is an unsupported deployment, and that is a sentence somebody has to be able to say before a pilot rather than after a support call.
 
 **Qualifying a new device** — the whole procedure, because "it worked on my desk" is how a fleet acquires a device nobody can support:
 
-1. Obtain the device and record maker, model and firmware version.
+1. Obtain the device — at milestone 5.8, or on a recorded exception (§6b) — and record maker, model and firmware version.
 2. Write or select its profile. A device that needs a code change rather than a profile row is a driver, and a driver is a microstep.
-3. Run the §9 lab checklist **against that device**, not against the class. Record the result per device.
+3. Run its class's conformance suite against it with that profile (§6b.3), then the §9 lab checklist **against that device**, not against the class. Where the device disagrees with its profile, the profile gets a new version and the device's capture becomes a fixture (§6b.6) — unless the device breaks §3's or §4's contract, in which case it does not qualify. Record the result per device.
 4. If the width is new, commit its golden pair (`.bin` + `.png`) and get the native-reader confirmation in the same pull request (§2.2).
 5. Add the row, with the qualifying commit. A profile with no qualifying commit is a claim.
 6. Record what it cost and where it was bought. §9's checks 2 and 11 each need their own device on the desk, and a device nobody ordered is a release that slips.
 
-**What protects a device whose behaviour changed between releases.** Nothing in this repository executes against hardware, so the honest controls are narrow and stated:
+**What protects a device whose behaviour changed between releases.** Nothing in this repository executes against hardware except the conformance suite's device target, and that runs only when somebody points it at one (§6b.3), so the honest controls are narrow and stated:
 
 - The profile records the firmware range it was qualified for. A device reporting a firmware outside that range raises a **device-health warning and never refuses to print** — a printer that stops working because it updated itself is worse than one that prints with an unverified profile.
-- The lab checklist runs before every release **against the matrix's own devices**, and its record is per device, per firmware. One tick for "printers" hides the printer that changed.
+- From milestone 5.8 on, the lab checklist runs before every release **against the matrix's own devices**, and its record is per device, per firmware. One tick for "printers" hides the printer that changed.
 - A firmware change discovered to break a profile is a new profile row and a new qualification, never an edit to the old one — the old row is what a merchant still running that firmware is using.
+
+---
+
+## 6b · Simulator-first, and the hardware qualification gate
+
+**No device is bought before the hardware qualification gate, milestone [5.8](../phase-5-harden-and-launch.md).** Until then every device class is developed and verified against software that stands in for it, and the gate is where physical devices are bought, held and qualified — before any register stands in front of a merchant or a customer. Decided on 20 October 2026; it replaces *"order the hardware before group 1.7 starts"*.
+
+**Why, in four costs the old order paid in advance:**
+
+- **A device bought in Phase 1 is bought against a guess.** The pilot merchants, their assortment and the devices some of them already own are Phase-3 and Phase-4 facts, and a reference register chosen now can be the wrong floor by the time a merchant names theirs. Bought at the gate, a device is bought against a frozen matrix and a known pilot.
+- **An emulator injects a fault on command.** Paper out at byte *n*, a cover opened mid-strip, a printer that answers `DLE EOT` late or never, a drawer that reports nothing, a link that drops after a partial write, a scanner on the wrong keyboard layout: each is one line of a test, repeated on every commit. On a desk device each is a person with a hand on the lid, once.
+- **One emulator stands in for many devices.** A profile is data (§6b.2), so the suites run every candidate printer, scanner and screen on every commit — a wider matrix than any lab would buy.
+- **The money stays in the bank until the product can use what it buys,** and the device generation bought is the one current at the pilot rather than at the first golden.
+
+**What it costs, stated rather than discovered.** Until the gate no absolute performance budget is proven, because none can be measured without the reference register (§6a.1, [`../01-conventions.md`](../01-conventions.md) §7.2); Arabic on paper is unproven, because a golden proves bytes and its PNG proves the rasteriser's own image; durability under a real power cut is unproven (case 1b); and no device is supported, because the matrix ships empty (§6a). Each of those is a named item of the gate (§6b.4), not a gap left open. And the gate finds late what a desk device would have found early — the risk register in [`../00-master-plan.md`](../00-master-plan.md) §6 carries that, with its triggers.
+
+**When a device may be bought earlier.** Only with a written reason, recorded beside the purchase: a risk-register trigger has fired — a provisional measurement puts the floor machine in danger — or a question only a device can answer would change a design decision now. A device an acquirer or a merchant supplies at no cost is not a purchase and is welcome; it qualifies through the same procedure, and its evidence counts once it is a dated record.
+
+### 6b.1 · The fidelity ladder
+
+Four rungs. Each proves something the rung below cannot, and none proves what the rung above it proves.
+
+| Rung | What it is | What it proves | What it cannot prove |
+|---|---|---|---|
+| **1 · In-process simulator** | `SimulatedPrinter` and the other trait implementations ([1.7.8](../phase-1-sellable-mvp.md), [2.1.4](../phase-2-money-grade.md)) | the domain's handling of every outcome, at every byte boundary, on every commit | anything about bytes on a wire |
+| **2 · Protocol emulator** | a separate process speaking the device's protocol, parameterised by a device profile: the emulated network printer on TCP 9100 ([1.7.12](../phase-1-sellable-mvp.md)), keyboard-wedge burst injection ([1.11.6c](../phase-1-sellable-mvp.md)), register-screen profiles ([1.11.14b](../phase-1-sellable-mvp.md)), virtual serial ports — `socat` pseudo-terminals on macOS and Linux, `com0com` on Windows — for serial scanners, scales and pole displays, a second application window for a customer screen, and the acquirer's own test host or terminal simulator where it offers one | the real driver against a real wire, across every profile, under every scripted fault | that the profile is true of the device |
+| **3 · Recorded captures** | bytes and status replies captured from a physical device at the gate, committed as fixtures and replayed through the emulator | that the emulator still behaves like the device it was corrected against | anything about a device nobody has captured |
+| **4 · The physical device** | the gate's devices, bought against the frozen matrix (§6b.5) | everything above, on paper, in a hand, on the floor machine | — |
+
+**The emulators are tools, not product.** They live in `pos-hardware` behind a feature no register build enables, and nothing a register ships depends on them.
+
+### 6b.2 · Device profiles — one emulator, many devices
+
+Every emulator is parameterised by a **device profile**: a versioned, data-only file, one per model or one per class, under `crates/pos-hardware/profiles/<class>/` ([1.7.11](../phase-1-sellable-mvp.md)). The same emulator therefore stands in for every device its class can describe, and adding a candidate is a file, not a driver.
+
+Three rules make a profile evidence rather than decoration:
+
+1. **Every value names its source** — a maker's document, a seller's written answer, or a capture from a device — and the source is a citation, not an adjective.
+2. **`unknown` is a value, and it is never filled by a guess.** Where the class bounds a parameter, the suite sweeps the bound; where it does not, the case reports *device only* and the parameter joins the gate's list (§6b.5). A profile with an unknown in a parameter the driver needs cannot be bound to a register — 1.7.9's rule for the raster limit, generalised.
+3. **A profile is versioned, never edited in place.** A changed value — a datasheet correction, a firmware note, the gate's evidence — is a new version, and the old one stays because a capture, a fixture or a qualification may name it. It is §6a's firmware rule, applied before the matrix has a row.
+
+**A profile is only as true as its source until a physical device has confirmed it.** And a profile is not a matrix row: §6a's matrix is what the vendor *supports*, and a row needs a qualifying commit against a device somebody held. A profile describes a candidate, and claims nothing more.
+
+What each class's profile carries:
+
+| Class | Parameters |
+|---|---|
+| Receipt printer | paper width; dots per line; raster command, and the most dot rows one command takes; code pages, for the §2.1 fallback only; cutter, and the feed it needs; real-time status — which replies, over which transport, or none |
+| Cash drawer | kick channel — a printer's port, or an interface of its own; pin and pulse timings; solenoid voltage and resistance; whether a sensor exists, and its polarity in the status reply |
+| Barcode scanner | interface — USB HID keyboard, USB-COM, serial, HID-POS; prefix and suffix; inter-key timing; keyboard country, ALT or keypad emulation; symbologies |
+| Register screen | resolution; display scale; pointer — capacitive touch, resistive touch, mouse; panel size |
+| Register machine | §6a.1's identity columns: CPU, RAM, storage, OS edition and build, power mode. Its speed cannot be emulated (§6b.4) |
+| Customer display | a pole display's lines, columns and character set — a 5 × 7 dot-matrix pole cannot show Arabic — or a second screen's resolution |
+| Scale | protocol, units and resolution, and the verification facts §7 requires |
+| Payment terminal | the acquirer's protocol and transport, last-transaction-status query, partial approval, refund by reference, timeouts, model and firmware — written from [2.1.1](../phase-2-money-grade.md)'s answers |
+| Label printer | command language, dots per line, label sizes ([4.6.1](../phase-4-depth.md)) |
+
+**The seed.** Profiles start from the candidates [`../../hardware-lab.md`](../../hardware-lab.md) researched on 3 October 2026, value by value from the sources that file cites; what no source states is `unknown`. Rows marked *(class)* are synthetic sweeps that describe a class rather than a model, and say so in their source. Once 1.7.11 lands, the files are authoritative and this table is the seed they grew from.
+
+| Profile | Known, and where from | Unknown until the gate |
+|---|---|---|
+| Epson TM-T20III, Ethernet — 80 mm | 576 dots; `GS v 0` at most 2303 rows, with `GS ( L` recommended; status over the socket; auto-cutter; drawer port at 24 V — Epson's technical reference and ESC/POS reference (hardware-lab §4.2) | the cut feed; the firmware range |
+| Epson TM-T20IV — 80 mm | 576 dots; `GS v 0` at most 2303 rows — Epson (hardware-lab §4.2) | status over Ethernet; the cut feed |
+| Epson TM-T88VII — 80 mm | **512 dots** at 180 dpi; `GS v 0` at most 4095 rows; a vendor-class USB interface — Epson's technical reference (hardware-lab §4.2) | — seeded *because* its width differs from the goldens: it exercises the new-width path |
+| Epson TM-m10 — 58 mm | **420 dots** — Epson's specifications (hardware-lab §4.3) | the raster limit; status transport |
+| Bixolon SRP-332III — 80 mm and 58 mm, two profiles | 576 and **384** dots at 203 dpi, the second through its 2-inch partition; USB, Ethernet and serial; auto-cutter; 24 V drawer port; `DLE EOT` and port 9100 documented — Bixolon's manual and specification sheet (hardware-lab §4.3) | **status over Ethernet**; the raster limit |
+| Xprinter XP-N160II — 80 mm | `DLE EOT` valid on serial only, so status over Ethernet is *none* — Xprinter's manual (hardware-lab §4.2) | dots per line; the raster limit |
+| HPRT TP585 — 58 mm | native 58 mm; cutter; 24 V drawer port; USB only — HPRT (hardware-lab §4.3) | dots per line; status |
+| Datalogic QuickScan QD2590 | wired USB HID keyboard; 2D; keyboard countries Arabic 101, 102 and 102 AZERTY; alternative key encoding; ALT output — Datalogic's reference guide (hardware-lab §4.4) | inter-key timing at its fastest setting |
+| Zebra DS2208 | keyboard country Arabic (101); keypad emulation — Zebra's reference guide (hardware-lab §4.4) | inter-key timing |
+| Honeywell Voyager 1470g | keyboard countries without Arabic, and no ALT mode — Honeywell's user guide (hardware-lab §4.4) | — seeded as the profile that proves 1.11.6b alone carries an Arabic layout |
+| Posiflex CR-4000-G2 drawer | printer-driven; 12–24 V — Posiflex (hardware-lab §4.5) | pin; solenoid resistance; sensor and polarity |
+| APG Vasario VB320 drawer | printer-driven at 24 V, RJ45 jack — POSGuys (hardware-lab §4.5) | pin; solenoid resistance; sensor |
+| Posiflex XT-3815-G2 register | Celeron J6412; up to 32 GB; M.2 SATA; TPM 2.0; 15″ **1024 × 768 capacitive** panel — Posiflex (hardware-lab §4.1) | display scale |
+| MSI PRO AP162T register | Intel N100; 8 GB; 128 GB NVMe; 15.6″ **1920 × 1080 resistive single-touch** panel — MSI (hardware-lab §4.1) | display scale |
+| The minimum window *(class)* | **1024 × 640**, the declared minimum ([1.11.14](../phase-1-sellable-mvp.md)) | — |
+| Wedge scanner *(class)* | inter-key timing swept across and beyond §5's 30 ms threshold, under the US and Arabic (101) host layouts | — synthetic by definition |
+| Pole display *(class)* | a 5 × 7 dot matrix that cannot show Arabic (hardware-lab §5) | everything model-specific |
+
+The scale, the payment terminal and the label printer have no seed: no device is named, and the terminal's profile is written from 2.1.1's written answers. Star's mC-Print models speak StarPRNT rather than ESC/POS (hardware-lab §4.2), so they would need an emulator of their own and are not seeded.
+
+### 6b.3 · One conformance suite, two targets
+
+What makes deferral safe is that **the gate runs the suite CI already runs**. Each class has one device-contract suite, written once against the trait and a profile — [1.7.13](../phase-1-sellable-mvp.md) for receipt printers and their drawers, [1.11.6c](../phase-1-sellable-mvp.md) for scanners, [1.11.14b](../phase-1-sellable-mvp.md) for register screens — and it runs against either of two targets:
+
+- **the emulator**, once per profile, on every commit;
+- **a physical device**, with the profile it is being qualified against, at the gate — and only when the device's address and the profile id are both given explicitly, so no test can reach a stranger's printer on a shared network.
+
+The suite asserts §3's and §4's contract, never a device's convenience: the four print outcomes, status read or reported unsupported, strips at the profile's limit (case 93), exactly one drawer pulse per authorised opening and none on a retry, a reprint or a queue drain, paper pulled mid-print, a printer absent at shift open (§3a), and §9's scan kinds. A device that fails it has disagreed with its profile or with the contract, and §6b.6 says how the gate tells which.
+
+**Tests:** `every_device_profile_names_a_source_for_every_value` · `the_printer_conformance_suite_passes_for_every_profile` · `the_device_target_refuses_to_run_without_an_explicit_device_and_profile` · `a_captured_device_trace_replays_through_the_emulator`
+
+### 6b.4 · What only a device can prove
+
+These belong to the gate, each owned by a microstep of milestone 5.8, and none is claimed before it.
+
+| Only a device proves | Why no emulator can | Owner |
+|---|---|---|
+| A receipt taller than 2303 dot rows prints whole on a real TM-T20III (case 93's device half) | a raster limit in a profile is a datasheet's claim, and firmware decides | 5.8.3 |
+| Arabic joins, orders and reads correctly **on paper**, at both widths, confirmed by a native reader | the PNG is the rasteriser's own image; head, density and paper are not in it | 5.8.4 |
+| The drawer opens on its solenoid, once, and its sensor reports what the profile says | pulse timing, voltage and sensor polarity are electrical facts | 5.8.3 |
+| Paper-out, cover-open and offline are read back as the profile says | sensor wiring and firmware reporting differ by model | 5.8.3 |
+| A real scanner, configured as recorded, reads under Arabic (101) and English (US) (case 94's device half) | the scanner's own firmware decides its timing and what its keyboard country sends | 5.8.3 |
+| USB enumeration and the Windows driver path, for any USB device a matrix row binds | the operating system decides which driver claims a vendor-class device | 5.8.3 |
+| The payment terminal behaves as the acquirer's protocol says, and its listing facts are true | the terminal, its firmware and its listing belong to the acquirer | 5.8.3, with [2.1.5](../phase-2-money-grade.md) |
+| Every absolute performance budget, on the reference register | a CPU, its storage and its thermal limits cannot be emulated by a faster machine | 5.8.2 |
+| A sale survives a real power cut on the register's own storage (case 1b) | a virtual machine's hard stop proves the write ordering, not that the disk honours a flush | 5.8.4 |
+| The sale screen reads correctly on the register's own display, to the native reader (§9 check 13) | glare, colour, size and touch are properties of the panel | 5.8.4 |
+| A customer display is legible at its distance | legibility is a human fact about a physical panel | 5.8.4, when a pilot store has one |
+
+### 6b.5 · Wide in simulation, narrow on device
+
+CI runs every suite across **every** profile: that is the wide matrix. The gate buys a **narrow** one — the fewest devices that confirm every parameter the pilot depends on. The selection rule, in order:
+
+1. **Every class the pilot uses has a physical device**: a receipt printer at each paper width a pilot store uses, a drawer, a scanner, the reference register, the acquirer's terminal, and a label printer, customer display or scale only if the pilot uses one.
+2. **The pilot merchants' own devices come first.** A device a pilot store already owns is the profile that matters most, and if their registers are slower than the candidate floor, the reference register is theirs or slower ([`../../hardware-lab.md`](../../hardware-lab.md) §3).
+3. **Within a class, cover the riskiest parameters rather than the most models**: every dot width that ships, both raster command paths where the pilot's devices differ, status over the network confirmed rather than assumed, **two printer makers** — ESC/POS is a family (§6a) — and one scanner run both by its own keyboard country and by 1.11.6b's decoding alone.
+4. **Every `unknown` in a profile the pilot uses is resolved by a device in the set**, or that profile is not bound to a pilot register.
+5. **A profile with no physical representative stays simulated only.** It is not a matrix row, and the product supports no device it describes.
+
+[`../../hardware-lab.md`](../../hardware-lab.md) §4's candidate order already satisfies rules 1, 3 and 4 for the classes it covers. Rule 2 can only be applied once the pilot merchants are known, which is why the set is frozen at the gate and not before.
+
+### 6b.6 · The gate
+
+**Milestone 5.8 is Phase-5 work pulled forward, as fiscal certification is:** row 11 of the pre-pilot gate ([4.9.0](../phase-4-depth.md)) cannot be signed until it has passed, so no register stands in front of a real merchant or customer before it. Its order goes out when Phase 4 begins ([`../00-master-plan.md`](../00-master-plan.md) §6a), because imported items take weeks and the qualification itself is about three weeks of work before 4.9.0.
+
+What it does, in order:
+
+1. **Freeze the narrow matrix and order it** (5.8.1).
+2. **Qualify the reference register and prove every absolute budget on it** (5.8.2) — 1.2.0's deferred half, and the live measurement job 1.12.3 defined.
+3. **Run each class's suite against each device, and correct the profiles from the evidence** (5.8.3). A disagreement resolves one of two ways: the profile was wrong, and it gets a new version; or the device breaks §3's or §4's contract, and it does not qualify, whatever its datasheet says. Either way **the device's recorded bytes and replies become golden fixtures** — rung 3 — and the emulator must replay them from then on. The emulator gets truer every time a device teaches it something, and stays true afterwards.
+4. **Run §9's checklist on paper, the physical drills, and the demonstrations earlier phases ran against emulators** (5.8.4).
+
+Its output is the first matrix rows (§6a), each with a qualifying commit; row 1 of §6a.1 and `benchmarks/reference-register.toml`, filled; the committed captures; and dated records in [`docs/drills/`](../../drills/README.md).
+
+### 6b.7 · What this does not claim
+
+- **That an emulator is a device.** Conformance against a profile proves the software against *our model* of the device. Until 5.8.3, "supports device X" is said of no device, and the matrix ships empty (§6a).
+- **That a budget is met before 5.8.2.** Until then regressions are caught relatively and nothing is accepted as a baseline ([`../01-conventions.md`](../01-conventions.md) §7.2).
+- **That Arabic is right on paper before 5.8.4.** Until then the goldens prove bytes, the PNGs prove the rasteriser's image, and the native reader confirms the image.
+- **That a datasheet is a fact.** It is a maker's claim, and the gate exists partly to catch the ones that are wrong.
+- **Anything about payment certification, PCI scope or the acquirer's listing.** Those were never device questions, and nothing here settles them.
 
 ---
 
 ## 7 · Later devices
 
-Slot in behind the same trait pattern when a merchant actually has one:
+Slot in behind the same trait pattern when a merchant actually has one — and **each arrives with its profile, its emulator and its conformance suite in the microstep that builds its trait** (§6b), so the class is developed the way the receipt printer was: against software first, on a device at the gate or at the first release that ships it.
 
 | Device | When | Note |
 |---|---|---|
@@ -433,24 +582,24 @@ Where support teams live. Every trait gets a test action, and every metric a sup
 
 ## 9 · The hardware-lab checklist
 
-**Before every release**, against the devices in the matrix (§6a) — which is at least two thermal printers (80 mm and 58 mm), one real scanner, and one real payment terminal.
+**From milestone 5.8 on, before every release**, against the devices in the matrix (§6a) — which is at least two thermal printers (80 mm and 58 mm), one real scanner, and one real payment terminal. **Before 5.8 no release reaches a merchant** (§6b): a tagged candidate runs every check the last column marks *emulated* or *simulated* against the emulators and simulators instead, and the checks marked *device only* wait for 5.8.4.
 
-| # | Check |
-|---|---|
-| 1 | All seven receipt goldens print on paper; Arabic read and confirmed **by a native reader** |
-| 2 | 58 mm profile prints on a 58 mm printer without truncation |
-| 3 | Drawer kicks once on cash completion, once on a no-sale open, and both are logged with actor and cause |
-| 4 | **The drawer does not kick on a reprint, on a retry, or on a queue drain after restart** |
-| 5 | Paper removed mid-print → sale stands, the job lands in `unknown`, nothing retries by itself, and the operator answer produces a DUPLICATE with the identical QR |
-| 6 | Printer unplugged at shift open → the shift opens, the sale completes, the artifact queues, and it prints unchanged when the printer returns (§3a) |
-| 7 | Scanner: plain EAN-13, price-embedded, weight-embedded, and a deliberately corrupted code (must reject, not guess) |
-| 8 | Scanner while the search box has focus → becomes a line |
-| 9 | Terminal: approve, decline, partial approval, timeout-then-approved, timeout-then-declined |
-| 10 | Terminal unplugged at Pay → card disabled with a reason; cash unaffected |
-| 11 | Label printer: Arabic label with price and barcode, readable on a shelf |
-| 12 | Cold start on the **reference register** (§6a), timed against the 3 s budget |
-| 13 | The sale screen read on the register's own display, in Arabic, by the same native reader who read the paper — the screen has no goldens, so this session is where a human sees it ([`ui-spec.md`](ui-spec.md) §8a) |
+| # | Check | Before 5.8 |
+|---|---|---|
+| 1 | All seven receipt goldens print on paper; Arabic read and confirmed **by a native reader** | device only — each changed golden's PNG is read in its own pull request (§2.2) |
+| 2 | 58 mm profile prints on a 58 mm printer without truncation | device only |
+| 3 | Drawer kicks once on cash completion, once on a no-sale open, and both are logged with actor and cause | emulated — the emulated printer records every pulse |
+| 4 | **The drawer does not kick on a reprint, on a retry, or on a queue drain after restart** | emulated |
+| 5 | Paper removed mid-print → sale stands, the job lands in `unknown`, nothing retries by itself, and the operator answer produces a DUPLICATE with the identical QR | emulated — a scripted fault |
+| 6 | Printer unplugged at shift open → the shift opens, the sale completes, the artifact queues, and it prints unchanged when the printer returns (§3a) | emulated — no emulator listening, then one started |
+| 7 | Scanner: plain EAN-13, price-embedded, weight-embedded, and a deliberately corrupted code (must reject, not guess) | emulated — every scanner profile |
+| 8 | Scanner while the search box has focus → becomes a line | emulated |
+| 9 | Terminal: approve, decline, partial approval, timeout-then-approved, timeout-then-declined | simulated — and against the acquirer's test host where it offers one |
+| 10 | Terminal unplugged at Pay → card disabled with a reason; cash unaffected | simulated |
+| 11 | Label printer: Arabic label with price and barcode, readable on a shelf | device only |
+| 12 | Cold start on the **reference register** (§6a), timed against the 3 s budget | device only — 5.8.2 |
+| 13 | The sale screen read on the register's own display, in Arabic, by the same native reader who read the paper — the screen has no goldens, so this session is where a human sees it ([`ui-spec.md`](ui-spec.md) §8a) | device only — before it, the reader reads each register-screen profile |
 
-**A drill produces a record or it did not happen.** Each run is a dated file naming the drill, the commit or tag it ran against, **each device and its firmware**, the operator's name, start and end time, elapsed, outcome, and any surprise plus the case number it became. A normative reference document is not a log, and one tick for a class of devices hides the device that changed.
+**A drill produces a record or it did not happen.** Each run is a dated file naming the drill, the commit or tag it ran against, **each device and its firmware** — or, for a run before 5.8, each emulator and the profile versions it ran — the operator's name, start and end time, elapsed, outcome, and any surprise plus the case number it became. A normative reference document is not a log, and one tick for a class of devices hides the device that changed.
 
 **A golden file proves bytes; only paper proves a receipt.**

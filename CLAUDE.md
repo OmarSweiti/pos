@@ -192,10 +192,12 @@ SQLite↔Postgres mapping, says it skipped the engine pass, and leaves that to C
 
 Three recipes the workflow document names do not exist yet, and each has an owning microstep:
 `just seed` (1.12.1), `just fuzz` (1.2.8) and `just test-soak` (2.9.6). `just bench-gate` landed with
-1.2.0 and **refuses every run**: no reference register has been bought, so `ref/hardware-and-receipts.md`
-§6a.1's matrix and `benchmarks/reference-register.toml` are both deliberately blank and conventions
-§7.1 accepts no baseline against a blank record. Its budgets arrive at 1.2.7, 1.4.9, 1.6.2 and
-1.11.13, its measurement job at 1.12.3. `just --list` is the only authority on what is runnable today.
+1.2.0 and **refuses every run until milestone 5.8**: no device is bought before the hardware
+qualification gate (`ref/hardware-and-receipts.md` §6b), so §6a.1's matrix and
+`benchmarks/reference-register.toml` are both deliberately blank and conventions §7.1 accepts no
+baseline against a blank record. Its benchmarks arrive at 1.2.7, 1.4.9, 1.6.2, 1.11.13 and 2.9.3,
+the relative CI comparison at 1.12.3 (conventions §7.2), and the budgets themselves are proven at
+5.8.2. Until then every device is developed against emulators driven by device profiles. `just --list` is the only authority on what is runnable today.
 
 ## Safety layers, and their limits
 

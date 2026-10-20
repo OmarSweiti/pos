@@ -178,13 +178,13 @@ Print this. Sit with the merchant. Fill it in. Date it. A decision made by a dev
 | 7.5 | Footer text and logo | — | | receipt template | 1.7.4 |
 | 7.6 | Printer width: 80 mm / 58 mm | **80 mm** | | `setting printer.width` | 1.7.3 |
 | 7.7 | **Printer dead or absent at shift open — block sales, or sell and queue the receipt?** ⚖ | **sell; queue the artifact; raise an alarm** | | `setting printer.absent_policy` | 1.7.6b |
-| 7.8 | The supported hardware list: printer models per width, scanner, drawer, terminal, label printer | — | | `docs/compliance/` per store | 2.9.4 |
+| 7.8 | The supported hardware list: printer models per width, scanner, drawer, terminal, label printer | — | | `docs/compliance/` per store | 5.8.1 |
 
 > **7.1 and 7.2 gate store provisioning and the issuing of a valid tax receipt; they do not gate migration `0003`.** Both must match the merchant's ISTD registration **exactly**. A mismatch is a fiscal rejection and, before that, an invalid tax receipt.
 >
 > **7.7 is the 9 a.m. Saturday support call, and the plan had no answer.** Paper running out mid-receipt was handled; the printer being unplugged was not. The default sells, because blocking closes the shop — but a fiscal QR is meant to appear on the document handed to the customer, so where the store is fiscally enabled the ⚖ matters: ask the advisor whether a queued artifact is acceptable, and record it beside 6.7.
 >
-> **7.8 is why the hardware lab is a lab.** The Arabic pass needs a real printer at **each** supported width, not one 80 mm unit and an assumption about the other.
+> **7.8 is why the hardware lab is a lab.** The Arabic pass needs a real printer at **each** supported width, not one 80 mm unit and an assumption about the other. Those printers are bought at milestone 5.8, not before ([`hardware-and-receipts.md`](hardware-and-receipts.md) §6b): until then each width is an emulator profile, and this row's answer, with the devices the store already owns, decides which widths and models the gate buys.
 
 ---
 
