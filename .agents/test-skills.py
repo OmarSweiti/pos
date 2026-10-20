@@ -34,7 +34,19 @@ REQUIRED_CONTRACTS = {
         "./scripts/verify-pg-migrations.py --self-test",
         "just guards",
     ),
+    "validate-pr": (
+        "Validate the exact head",
+        "synthetic data only",
+        "No real customer data, no PIN, no card number, no token or key",
+        "Never claim a check that did not run",
+        "just evidence <pr> <directory>",
+        "`Runtime change: none`",
+        "never approves or merges the pull request",
+    ),
 }
+# Skills with no client-specific section: the Claude and Codex copies must be
+# byte-identical, so any drift at all is a failure.
+CLIENT_NEUTRAL_SKILLS = frozenset({"validate-pr"})
 
 
 def frontmatter(path: Path) -> tuple[dict[str, str], str]:
@@ -91,6 +103,8 @@ def validate(path: Path) -> list[str]:
 
 def normalized_body(name: str, body: str) -> str:
     """Remove only the intentional client-specific database-target guidance."""
+    if name in CLIENT_NEUTRAL_SKILLS:
+        return body
     starts = (
         "Do not trust an inherited `$DATABASE_URL` in a Claude shell",
         "Repository policy removes inherited `$DATABASE_URL`",

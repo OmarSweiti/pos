@@ -344,6 +344,8 @@ guards:
     {{ python }} ./scripts/tests/bench_gate_test.py
     bash ./scripts/watch-pr-checks.sh --self-test
     bash ./scripts/validate-branch-flow.sh --self-test
+    bash ./scripts/approval-gate.sh --self-test
+    {{ python }} ./scripts/pr-evidence.py --self-test
     bash ./scripts/validate-change-title.sh --self-test
     {{ python }} ./scripts/check-automation-attribution.py --self-test
     bash ./scripts/scan-secrets.sh --self-test
@@ -538,19 +540,37 @@ pr $title='' $body='' $milestone='':
     [ -n "$milestone" ] && ms=(--milestone "$milestone")
 
     if [ -n "$body" ]; then
-      gh pr create --base development --title "$title" --body-file "$body" "${ms[@]+"${ms[@]}"}"
+      gh pr create --base development --assignee @me --title "$title" --body-file "$body" "${ms[@]+"${ms[@]}"}"
     elif [ -n "$title" ]; then
       base=$(git merge-base origin/development HEAD)
-      gh pr create --base development --title "$title" \
+      gh pr create --base development --assignee @me --title "$title" \
         --body "$(git log --reverse --format='- %s' "$base"..HEAD)" "${ms[@]+"${ms[@]}"}"
     else
-      gh pr create --base development --fill-first "${ms[@]+"${ms[@]}"}"
+      gh pr create --base development --assignee @me --fill-first "${ms[@]+"${ms[@]}"}"
     fi
 
     # Independent workflows register at different times. Derive and wait for
     # the exact workflow-qualified set for this PR route and changed paths.
     created_pr=$(gh pr view --json url --jq .url)
     bash ./scripts/watch-pr-checks.sh "$created_pr"
+
+# Publish a pull request's validation evidence: the screenshots, pushed to
+# refs/evidence/pr-<n> where no clone downloads them, and one comment naming the
+# exact commit that was validated. Every pull request gets one before it is
+# handed to the owner — .claude/skills/validate-pr is the procedure. It refuses
+# unless this checkout is the pull request's exact head with no tracked change,
+# and a pull request touching runtime code must carry at least one screenshot.
+#
+#   just evidence-check 261 /path/to/evidence   # validate and preview; writes nothing
+#   just evidence 261 /path/to/evidence         # push the images, post the comment
+#
+# Publish a pull request's validation evidence: screenshots plus one comment.
+evidence $pr $dir:
+    {{ python }} ./scripts/pr-evidence.py publish "$pr" "$dir"
+
+# Validate a pull request's evidence and preview its comment, writing nothing.
+evidence-check $pr $dir:
+    {{ python }} ./scripts/pr-evidence.py check "$pr" "$dir"
 
 # Squash-merge a work PR into development — but only once its required checks
 # are actually green.
@@ -574,6 +594,15 @@ pr $title='' $body='' $milestone='':
 # the diff, not something to wave through with a flag on this recipe.
 # That manual path, and the promotion/hotfix merge-commit paths, remain outside
 # the body binding below. This recipe closes the ordinary work-PR path only.
+#
+# Since 20 October 2026 every flow branch also requires the owner's approval —
+# the code-owner-review ruleset — and scripts/approval-gate.sh enforces it here.
+# A pull request the owner approved on GitHub merges. The owner's OWN pull
+# request, which GitHub never lets them approve, is verified end to end and then
+# NOT merged (exit 3): its only way through is the bypass, and that is the
+# owner's click on GitHub, never a recipe's — every agent-opened pull request is
+# the owner's own to GitHub. Anything else refuses. There is no --admin anywhere
+# in this file, deliberately.
 merge $pr='':
     #!/usr/bin/env bash
     set -euo pipefail
@@ -607,7 +636,7 @@ merge $pr='':
     # present before check evidence can be collected.
     snapshot_pr() {
       gh pr view "$1" \
-        --json state,url,baseRefName,baseRefOid,headRefName,headRefOid,headRepository,isDraft,title,body \
+        --json state,url,baseRefName,baseRefOid,headRefName,headRefOid,headRepository,isDraft,title,body,author,reviewDecision \
         | ./scripts/run-python.sh -c '
     import json
     import re
@@ -637,7 +666,16 @@ merge $pr='':
         body = ""
     if not isinstance(body, str):
         raise SystemExit("GitHub returned an invalid PR body")
-    values.extend(["true" if draft else "false", title, body])
+    author = data.get("author")
+    login = author.get("login") if isinstance(author, dict) else None
+    decision = data.get("reviewDecision")
+    if decision is None:
+        decision = ""
+    if not isinstance(login, str) or not login:
+        raise SystemExit("GitHub returned an invalid PR author")
+    if not isinstance(decision, str):
+        raise SystemExit("GitHub returned an invalid review decision")
+    values.extend(["true" if draft else "false", title, body, login, decision])
     if not re.fullmatch(r"[0-9a-f]{40}", values[3]):
         raise SystemExit("GitHub returned an invalid base OID")
     if not re.fullmatch(r"[0-9a-f]{40}", values[5]):
@@ -655,7 +693,7 @@ merge $pr='':
     fi
     before=()
     while IFS= read -r -d '' value; do before+=("$value"); done < "$snapshot_file"
-    [ "${#before[@]}" -eq 10 ] || {
+    [ "${#before[@]}" -eq 12 ] || {
       echo "merge: GitHub returned an ambiguous pull-request snapshot." >&2
       exit 1
     }
@@ -669,6 +707,8 @@ merge $pr='':
     is_draft=${before[7]}
     title=${before[8]}
     body=${before[9]}
+    author=${before[10]}
+    review_decision=${before[11]}
 
     [ "$state" = OPEN ] || {
       echo "merge: REFUSED — $pr_url is not open." >&2
@@ -718,6 +758,16 @@ merge $pr='':
     printf 'merge: verified work route %s@%s -> %s@%s\n' \
       "$head_ref" "$head_oid" "$base_ref" "$base_oid"
 
+    # code-owner-review: name the one legal way through before spending a check
+    # watch on a pull request that cannot merge. It is decided again below, from
+    # fresh data, immediately before the merge.
+    viewer=$(gh api user --jq .login) || {
+      echo "merge: unable to resolve the authenticated GitHub user." >&2
+      exit 1
+    }
+    unresolved=$(bash ./scripts/approval-gate.sh --unresolved-threads "$repository" "$pr_number") || exit 1
+    bash ./scripts/approval-gate.sh "$author" "$viewer" "$review_decision" "$unresolved" >/dev/null || exit 1
+
     if ! bash ./scripts/watch-pr-checks.sh "$pr_url"; then
       echo >&2
       echo "merge: REFUSED — required checks did not all pass for $pr_url." >&2
@@ -734,7 +784,7 @@ merge $pr='':
     after=()
     while IFS= read -r -d '' value; do after+=("$value"); done < "$snapshot_file"
     snapshot_unchanged=true
-    if [ "${#after[@]}" -ne 10 ]; then
+    if [ "${#after[@]}" -ne 12 ]; then
       snapshot_unchanged=false
     else
       for index in "${!before[@]}"; do
@@ -745,6 +795,25 @@ merge $pr='':
       echo "merge: REFUSED — PR metadata, state, or branch tips changed after check evidence was collected." >&2
       exit 1
     }
+
+    # The authoritative decision, from fresh data. `owner` means the
+    # authenticated user opened this pull request, so GitHub can never record an
+    # approval for it and the only way through is the bypass — which is the
+    # owner's own click on GitHub, never this recipe's. Every pull request an
+    # agent opens is the owner's own to GitHub, so a recipe that bypassed here
+    # would let an agent merge its own work unapproved. So: everything verified,
+    # nothing merged, and exit 3 means "ready for the owner", not success.
+    unresolved=$(bash ./scripts/approval-gate.sh --unresolved-threads "$repository" "$pr_number") || exit 1
+    mode=$(bash ./scripts/approval-gate.sh "$author" "$viewer" "$review_decision" "$unresolved") || exit 1
+    if [ "$mode" = owner ]; then
+      printf 'merge: NOT MERGED — %s is verified and waiting for the owner.\n' "$pr_url"
+      printf '  Every required check is green and every review thread resolved at %s.\n' "$head_oid"
+      printf '  It is your own pull request, and GitHub never lets an author approve their own,\n'
+      printf '  so the merge is yours to make on GitHub: read the diff and the evidence comment,\n'
+      printf '  choose Squash and merge, tick "Merge without waiting for requirements to be met\n'
+      printf '  (bypass rules)", and confirm. That click is your approval.\n'
+      exit 3
+    fi
 
     # GitHub atomically matches the reviewed head. The explicit subject and body
     # file bind the validated snapshot inputs through the mutation. GitHub does
@@ -760,13 +829,13 @@ merge $pr='':
 
 # development → staging, as a release candidate. Merge with a MERGE COMMIT.
 promote-staging:
-    gh pr create --base staging --head development \
+    gh pr create --base staging --head development --assignee @me \
       --title "promote development to staging" \
       --body-file .github/PULL_REQUEST_TEMPLATE/promotion.md
 
 # staging → main, for production. Merge with a MERGE COMMIT.
 promote-main:
-    gh pr create --base main --head staging \
+    gh pr create --base main --head staging --assignee @me \
       --title "promote staging to main" \
       --body-file .github/PULL_REQUEST_TEMPLATE/promotion.md
 
@@ -808,7 +877,7 @@ promote-merge $pr='':
     # every field plus both branch tips must be present before evidence counts.
     snapshot_pr() {
       gh pr view "$1" \
-        --json state,url,baseRefName,baseRefOid,headRefName,headRefOid,headRepository,isDraft,title,body \
+        --json state,url,baseRefName,baseRefOid,headRefName,headRefOid,headRepository,isDraft,title,body,author,reviewDecision \
         | ./scripts/run-python.sh -c '
     import json
     import re
@@ -838,7 +907,16 @@ promote-merge $pr='':
         body = ""
     if not isinstance(body, str):
         raise SystemExit("GitHub returned an invalid PR body")
-    values.extend(["true" if draft else "false", title, body])
+    author = data.get("author")
+    login = author.get("login") if isinstance(author, dict) else None
+    decision = data.get("reviewDecision")
+    if decision is None:
+        decision = ""
+    if not isinstance(login, str) or not login:
+        raise SystemExit("GitHub returned an invalid PR author")
+    if not isinstance(decision, str):
+        raise SystemExit("GitHub returned an invalid review decision")
+    values.extend(["true" if draft else "false", title, body, login, decision])
     if not re.fullmatch(r"[0-9a-f]{40}", values[3]):
         raise SystemExit("GitHub returned an invalid base OID")
     if not re.fullmatch(r"[0-9a-f]{40}", values[5]):
@@ -856,7 +934,7 @@ promote-merge $pr='':
     fi
     before=()
     while IFS= read -r -d '' value; do before+=("$value"); done < "$snapshot_file"
-    [ "${#before[@]}" -eq 10 ] || {
+    [ "${#before[@]}" -eq 12 ] || {
       echo "promote-merge: GitHub returned an ambiguous pull-request snapshot." >&2
       exit 1
     }
@@ -870,6 +948,8 @@ promote-merge $pr='':
     is_draft=${before[7]}
     title=${before[8]}
     body=${before[9]}
+    author=${before[10]}
+    review_decision=${before[11]}
 
     [ "$state" = OPEN ] || {
       echo "promote-merge: REFUSED — $pr_url is $state, not OPEN." >&2
@@ -923,6 +1003,16 @@ promote-merge $pr='':
       "$head_ref" "$head_oid" "$base_ref" "$base_oid"
     printf 'promote-merge: read the evidence checklist on %s before continuing.\n' "$pr_url"
 
+    # code-owner-review covers staging and main too. A promotion is always the
+    # owner's own pull request, so its way through is the owner's merge — but the
+    # gate still refuses an unresolved thread or a missing review requirement.
+    viewer=$(gh api user --jq .login) || {
+      echo "promote-merge: unable to resolve the authenticated GitHub user." >&2
+      exit 1
+    }
+    unresolved=$(bash ./scripts/approval-gate.sh --unresolved-threads "$repository" "$pr_number") || exit 1
+    bash ./scripts/approval-gate.sh "$author" "$viewer" "$review_decision" "$unresolved" >/dev/null || exit 1
+
     if ! bash ./scripts/watch-pr-checks.sh "$pr_url"; then
       echo >&2
       echo "promote-merge: REFUSED — required checks did not all pass for $pr_url." >&2
@@ -938,7 +1028,7 @@ promote-merge $pr='':
     after=()
     while IFS= read -r -d '' value; do after+=("$value"); done < "$snapshot_file"
     snapshot_unchanged=true
-    if [ "${#after[@]}" -ne 10 ]; then
+    if [ "${#after[@]}" -ne 12 ]; then
       snapshot_unchanged=false
     else
       for index in "${!before[@]}"; do
@@ -950,12 +1040,26 @@ promote-merge $pr='':
       exit 1
     }
 
+    # Decided again from fresh data; see `merge`. A promotion is always the
+    # owner's own pull request, so in practice this verifies and stops (exit 3):
+    # promoting is the owner's click on GitHub, never a recipe's.
+    unresolved=$(bash ./scripts/approval-gate.sh --unresolved-threads "$repository" "$pr_number") || exit 1
+    mode=$(bash ./scripts/approval-gate.sh "$author" "$viewer" "$review_decision" "$unresolved") || exit 1
+    if [ "$mode" = owner ]; then
+      printf 'promote-merge: NOT MERGED — %s is verified and waiting for the owner.\n' "$pr_url"
+      printf '  Every required check is green and every review thread resolved at %s.\n' "$head_oid"
+      printf '  A promotion is your own pull request, so the merge is yours to make on GitHub:\n'
+      printf '  read it, choose Create a merge commit — never squash a promotion — tick "Merge\n'
+      printf '  without waiting for requirements to be met (bypass rules)", and confirm.\n'
+      exit 3
+    fi
+
     # --merge, never --squash: squashing a promotion forks the branches permanently.
-    # The staging ruleset constrains allowed_merge_methods to ["merge"]. Main's
-    # ruleset does not constrain the merge method — it carries deletion and
-    # non_fast_forward only — so on the staging -> main route this flag is still
-    # the only guard. --match-head-commit binds the reviewed head through the
-    # mutation. The subject keeps the established `promote X to Y (#N)` form.
+    # The staging ruleset constrains allowed_merge_methods to ["merge"]. On main,
+    # code-owner-review allows merge or squash — the union this flow uses — so on
+    # the staging -> main route this flag is still the only guard on the method.
+    # --match-head-commit binds the reviewed head through the mutation. The
+    # subject keeps the established `promote X to Y (#N)` form.
     printf '%s' "$body" > "$snapshot_file"
     gh pr merge "$pr_url" --match-head-commit "$head_oid" --merge \
       --subject "$title (#$pr_number)" --body-file "$snapshot_file"

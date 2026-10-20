@@ -276,7 +276,9 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just bench-gate [budget]` | conventions §7's absolute limits and §7.1's regression rule. **Refuses until milestone 5.8** — no device is bought before it, so both reference-register records are blank and 1.12.3 watches budgets relatively until then (conventions §7.2); deliberately not part of `pre-push` |
 | `just branch <name>` | fresh `development`, then a branch off it — **needs a clean tree** (§4.2) |
 | `just pr [title] [body-file] [milestone]` | gates → push → PR into `development` → watch CI. Pass the title on a branch with more than one commit (§4.12); the milestone is derived from a `phase-<0-5>/` branch name |
-| `just merge [pr]` | work PR only: validate route/state, watch exact checks, re-read both tips, atomically match the reviewed head, squash and delete the branch |
+| `just evidence-check <pr> <dir>` | validate a PR's evidence directory and preview its comment — writes nothing (§4.12) |
+| `just evidence <pr> <dir>` | push the PR's screenshots to `refs/evidence/pr-<n>`, confirm GitHub serves them, and post one comment naming the validated commit (§4.12) |
+| `just merge [pr]` | work PR only: validate route/state, require the owner's approval, watch exact checks, re-read both tips, atomically match the reviewed head, squash and delete the branch. On the owner's **own** PR — which GitHub never lets them approve — it verifies all of that and stops with exit 3, **NOT MERGED**: that merge is the owner's click on GitHub |
 | `just flow` | what is on `development` but not `staging`, and on `staging` but not `main` |
 | `just promote-staging` | PR: `development` → `staging` (a release candidate) |
 | `just promote-main` | PR: `staging` → `main` (production) |
@@ -584,33 +586,45 @@ git log development..HEAD --format='%an <%ae>' | sort -u              # expect o
 git log development..HEAD --format='%B' | grep -iE '^co-authored-by|generated with'   # expect nothing
 ```
 
-### 4.12 Push, CI, review, merge
+### 4.12 Push, CI, evidence, approval, merge
+
+**The order is fixed, and the last step is never the agent's.** Open the PR, which is assigned to
+the owner automatically. Wait for every required check. **Validate it with evidence**, then hand it
+to the owner, who approves and merges:
 
 ```bash
-just pr 'feat(domain): tax engine, inclusive + exclusive extraction   [1.3.4]'
-work_pr=$(gh pr view --json url --jq .url)
-IFS=$'\t' read -r work_base work_head < <(
-  gh pr view "$work_pr" --json baseRefOid,headRefOid \
-    --jq '[.baseRefOid, .headRefOid] | @tsv'
-)
-bash ./scripts/watch-pr-checks.sh "$work_pr"
-IFS=$'\t' read -r current_base current_head < <(
-  gh pr view "$work_pr" --json baseRefOid,headRefOid \
-    --jq '[.baseRefOid, .headRefOid] | @tsv'
-)
-if [ "$current_base" != "$work_base" ] || [ "$current_head" != "$work_head" ]; then
-  echo "PR base/head changed; discard the evidence and re-run the watcher" >&2
-  exit 1
-fi
-gh pr merge "$work_pr" --match-head-commit "$work_head" --squash --delete-branch
+just pr 'feat(domain): tax engine, inclusive + exclusive extraction   [1.3.4]'   # opens, assigns, watches CI
+# the validate-pr skill: the app against the emulators, one screenshot per step, summary.md
+just evidence-check <pr> <evidence-dir>    # validate and preview — writes nothing
+just evidence <pr> <evidence-dir>          # the evidence comment, naming the validated head
+# the owner reads the diff and the evidence, then merges it on GitHub (03-github-workflow.md §6)
 ```
 
-Longhand, when you want to see it:
+**Evidence is part of the PR, not an extra.** The [`validate-pr`](../../.claude/skills/validate-pr/SKILL.md)
+skill is the procedure. Check out the PR's exact head, clean, and start from a fresh database with
+synthetic data. Start the emulators the change touches, drive the app through every `Done when`
+claim, and capture one screenshot per step. Inspect each image for anything that must not be public,
+because the repository is public. Write `summary.md` with each step's expected and observed result.
+Then publish with `just evidence`. The images go to `refs/evidence/pr-<n>`, outside the branch
+namespace, so no clone downloads them. The comment embeds them by commit SHA and names the commit
+that was validated, so a later push visibly needs new evidence. A PR that changes nothing at runtime
+still gets a comment: `Runtime change: none`, why, and which checks ran instead. The publisher
+refuses that form for a PR that touches `apps/`, `crates/` or `packages/`, or a dependency manifest,
+lockfile or toolchain pin. For a dependency bump, a smoke run of the app is the evidence.
+
+**Then the owner approves.** Every flow branch requires the owner's approval (`code-owner-review`).
+A Dependabot PR is approved with **Review changes → Approve**. The owner's own PR — every PR an agent
+opens is one — cannot be approved on GitHub, so the owner merges it there, and that click is the
+approval. `just merge` merges only an approved PR; on the owner's own it checks everything and stops
+with exit 3, **NOT MERGED**. An agent never approves and never makes that click.
+
+Longhand, for when you want to see it — what `just pr` opens with, and what `just merge` does for
+a PR the owner has approved:
 
 ```bash
 just pre-push
 git push -u origin phase-1/group-3-tax
-work_pr=$(gh pr create --base development --title '<conventions §8 subject>' --body-file notes/pr.md)
+work_pr=$(gh pr create --base development --assignee @me --title '<conventions §8 subject>' --body-file notes/pr.md)
 IFS=$'\t' read -r work_base work_head < <(
   gh pr view "$work_pr" --json baseRefOid,headRefOid \
     --jq '[.baseRefOid, .headRefOid] | @tsv'
@@ -624,7 +638,7 @@ if [ "$current_base" != "$work_base" ] || [ "$current_head" != "$work_head" ]; t
   echo "PR base/head changed; discard the evidence and re-run the watcher" >&2
   exit 1
 fi
-gh pr merge "$work_pr" --match-head-commit "$work_head" --squash --delete-branch
+gh pr merge "$work_pr" --match-head-commit "$work_head" --squash --delete-branch   # approved PRs only
 ```
 
 The before/after base and head readings are load-bearing. A mismatch invalidates the check
