@@ -53,6 +53,7 @@ STATIC_POLICY_PATHS = %w[
   js-license-policy.json
   ruff.toml
   justfile
+  scripts/approval-gate.sh
   scripts/bench-gate.py
   scripts/check-automation-attribution.py
   scripts/check-branch-workflow-policy.rb

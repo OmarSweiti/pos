@@ -67,6 +67,7 @@ def main() -> int:
         branch = recipes["branch"]
         pull_request = recipes["pr"]
         merge = recipes["merge"]
+        promote_merge = recipes["promote-merge"]
         setup = recipes["setup"]
         setup_tools = recipes["setup-tools-check"]
         db_up = recipes["db-up"]
@@ -168,6 +169,7 @@ def main() -> int:
         "scripts/check-web-build-coverage.py --self-test",
         "scripts/check-js-licenses.py --self-test",
         "scripts/check-justfile-policy.py",
+        "scripts/approval-gate.sh --self-test",
     ):
         if required not in guards_body:
             failures.append(f"guards: policy self-test coverage is missing {required!r}")
@@ -232,6 +234,37 @@ def main() -> int:
         )
     if '--body "$body"' in merge_body:
         failures.append("merge: an unbounded PR body must travel through --body-file")
+
+    # code-owner-review: both merge recipes ask scripts/approval-gate.sh for the
+    # one legal way through, refuse before spending a check watch, re-decide from
+    # fresh data, and STOP on the owner's own pull request. Every agent-opened
+    # pull request is the owner's own to GitHub, so a recipe that passed --admin
+    # would let an agent merge its own work without the owner's approval.
+    for recipe_name, recipe in (("merge", merge), ("promote-merge", promote_merge)):
+        body = recipe_text(recipe)
+        if "--admin" in body:
+            failures.append(
+                f"{recipe_name}: no recipe may bypass the owner's approval with --admin"
+            )
+        for required in (
+            "author=${before[10]}",
+            "review_decision=${before[11]}",
+            'scripts/approval-gate.sh --unresolved-threads "$repository" "$pr_number"',
+            'scripts/approval-gate.sh "$author" "$viewer" "$review_decision" "$unresolved"',
+            'if [ "$mode" = owner ]; then',
+            "exit 3",
+        ):
+            if required not in body:
+                failures.append(f"{recipe_name}: owner-approval contract is missing {required!r}")
+        gate_position = body.find('scripts/approval-gate.sh "$author"')
+        watch_position = body.find('scripts/watch-pr-checks.sh "$pr_url"')
+        last_gate_position = body.rfind('scripts/approval-gate.sh "$author"')
+        merge_position = body.find('gh pr merge "$pr_url"')
+        if not 0 <= gate_position < watch_position < last_gate_position < merge_position:
+            failures.append(
+                f"{recipe_name}: the approval gate must refuse before checks are watched "
+                "and decide again, from fresh data, before the merge"
+            )
     if 'gh pr merge "$target"' in merge_body:
         failures.append("merge: the caller-supplied target must be canonicalized before merge")
 
@@ -389,6 +422,13 @@ if [ "${1:-}" = pr ] && [ "${2:-}" = view ]; then
   pr_url=https://github.com/owner/pos/pull/42
   base_oid=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   head_oid=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  author=contributor
+  decision=APPROVED
+  case "$POLICY_SCENARIO" in
+    owner-unapproved) author=owner; decision=REVIEW_REQUIRED ;;
+    unapproved) decision=REVIEW_REQUIRED ;;
+    approval-drift) [ "$merge_view_count" -lt 2 ] || decision=REVIEW_REQUIRED ;;
+  esac
   case "$POLICY_SCENARIO" in
     promotion) base=staging; head=development ;;
     hotfix) base=main; head=hotfix/urgent-fix ;;
@@ -420,11 +460,13 @@ Co-authored-by: Claude <noreply@anthropic.com>' ;;
     *)
       "$POLICY_PYTHON" - \
         "$state" "$pr_url" "$base" "$base_oid" "$head" "$head_oid" \
-        "$draft" "$title" "$body" <<'PY'
+        "$draft" "$title" "$body" "$author" "$decision" <<'PY'
 import json
 import sys
 
-state, url, base, base_oid, head, head_oid, draft, title, body = sys.argv[1:]
+(
+    state, url, base, base_oid, head, head_oid, draft, title, body, author, decision
+) = sys.argv[1:]
 print(
     json.dumps(
         {
@@ -438,6 +480,8 @@ print(
             "isDraft": draft == "true",
             "title": title,
             "body": body,
+            "author": {"login": author},
+            "reviewDecision": decision,
         }
     )
 )
@@ -456,6 +500,17 @@ if [ "${1:-}" = pr ] && [ "${2:-}" = checks ]; then
   printf 'supply-chain\tci\tpull_request\tSUCCESS\thttps://github.com/owner/pos/actions/runs/4\n'
   printf 'protected-paths\tbranch-flow\tpull_request_target\tSUCCESS\thttps://github.com/owner/pos/actions/runs/5\n'
   printf 'topology\tbranch-flow\tpull_request_target\tSUCCESS\thttps://github.com/owner/pos/actions/runs/6\n'
+  exit 0
+fi
+if [ "${1:-}" = api ] && [ "${2:-}" = user ]; then
+  printf 'owner\n'
+  exit 0
+fi
+if [ "${1:-}" = api ] && [ "${2:-}" = graphql ]; then
+  case "$POLICY_SCENARIO" in
+    unresolved-thread) printf '1\n' ;;
+    *) printf '0\n' ;;
+  esac
   exit 0
 fi
 if [ "${1:-}" = api ]; then
@@ -592,6 +647,40 @@ exit 95
             not in result.stderr
         ):
             failures.append("merge: forbidden body attribution refusal gave no remediation")
+
+        for scenario in ("unapproved", "unresolved-thread"):
+            result = run_merge(scenario)
+            recorded = calls.read_text(encoding="utf-8")
+            if result.returncode == 0:
+                failures.append(f"merge: an {scenario} PR unexpectedly succeeded")
+            if " <checks>" in recorded or " <merge>" in recorded:
+                failures.append(
+                    f"merge: an {scenario} PR reached check collection or a merge mutation"
+                )
+
+        result = run_merge("approval-drift")
+        recorded = calls.read_text(encoding="utf-8")
+        if result.returncode == 0:
+            failures.append("merge: an approval dismissed after check collection was accepted")
+        if " <merge>" in recorded:
+            failures.append("merge: an approval dismissed after checks reached the merge mutation")
+
+        # The owner's own pull request: verified end to end, then NOT merged.
+        result = run_merge("owner-unapproved")
+        recorded = calls.read_text(encoding="utf-8")
+        if result.returncode != 3:
+            failures.append(
+                "merge: the owner's own PR did not stop with exit 3 (verified, not merged)"
+            )
+        if " <merge>" in recorded:
+            failures.append(
+                "merge: the owner's own PR reached a merge mutation — only the owner's "
+                "click on GitHub may merge it"
+            )
+        if " <checks>" not in recorded:
+            failures.append("merge: the owner's own PR stopped before its checks were verified")
+        if "NOT MERGED" not in result.stdout:
+            failures.append("merge: the owner's own PR was not reported as NOT MERGED")
 
         hostile_target = f"42; $(touch {sentinel})"
         result = run_merge("valid-body", hostile_target)
