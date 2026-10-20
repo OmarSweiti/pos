@@ -10,7 +10,7 @@
 //! 2. **Shaping.** Each directional run goes to `harfrust`, which selects the
 //!    contextual Arabic forms — initial, medial, final — and returns advances
 //!    in **font units**.
-//! 3. **Wrapping and alignment.** Greedy word wrap against the profile's
+//! 3. **Wrapping and alignment.** Greedy word wrap against the paper's
 //!    content width, then the line is placed from the logical start or end,
 //!    which is the right edge in Arabic and the left in English.
 //!
@@ -32,7 +32,7 @@ use unicode_bidi::{BidiInfo, Level};
 
 use crate::font::{self, Weight};
 
-use super::{BODY_PX_PER_EM, PrinterProfile, RenderError};
+use super::{BODY_PX_PER_EM, PaperWidth, RenderError};
 
 /// Where a line sits across the page, in logical terms.
 ///
@@ -443,7 +443,7 @@ const fn start_x_px(
 /// A page under construction.
 struct Page<'a> {
     faces: &'a Faces<'a>,
-    profile: PrinterProfile,
+    paper: PaperWidth,
     rtl: bool,
     lines: Vec<LayoutLine>,
     rules: Vec<i32>,
@@ -455,7 +455,7 @@ impl Page<'_> {
     /// Add one paragraph, wrapped, at one alignment.
     fn text(&mut self, text: &str, style: TextStyle, alignment: Alignment) {
         let max_units = px_to_units(
-            self.profile.content_width_px(),
+            self.paper.content_width_px(),
             style.px_per_em,
             self.faces.units_per_em,
         );
@@ -478,8 +478,8 @@ impl Page<'_> {
     /// over each other. Nothing in the references says so because nothing in
     /// the references imagined a label written by a merchant.
     fn row(&mut self, label: &str, amount: &str, style: TextStyle) {
-        let content = self.profile.content_width_px();
-        let margin = self.profile.margin_px();
+        let content = self.paper.content_width_px();
+        let margin = self.paper.margin_px();
 
         let amount_shaped = shape_line(self.faces, amount, style.weight, self.rtl);
         let amount_px = units_to_px(
@@ -564,8 +564,8 @@ impl Page<'_> {
             alignment,
             self.rtl,
             width_px,
-            self.profile.content_width_px(),
-            self.profile.margin_px(),
+            self.paper.content_width_px(),
+            self.paper.margin_px(),
         );
         let baseline = self.cursor_y_px + self.faces.ascent_px(style.px_per_em);
 
@@ -630,9 +630,9 @@ const fn px_to_units(px: i32, px_per_em: i32, units_per_em: i32) -> i32 {
 ///
 /// Refuses an unreadable embedded face and a page past
 /// [`super::MAX_PAGE_HEIGHT_PX`].
-pub fn lay_out(model: &ReceiptModel, profile: PrinterProfile) -> Result<Layout, RenderError> {
+pub fn lay_out(model: &ReceiptModel, paper: PaperWidth) -> Result<Layout, RenderError> {
     let faces = Faces::load()?;
-    lay_out_with(&faces, model, profile)
+    lay_out_with(&faces, model, paper)
 }
 
 /// [`lay_out`], against faces the caller already parsed.
@@ -643,7 +643,7 @@ pub fn lay_out(model: &ReceiptModel, profile: PrinterProfile) -> Result<Layout, 
 pub(crate) fn lay_out_with(
     faces: &Faces<'_>,
     model: &ReceiptModel,
-    profile: PrinterProfile,
+    paper: PaperWidth,
 ) -> Result<Layout, RenderError> {
     let direction = model.locale.direction;
     let rtl = matches!(direction, TextDirection::RightToLeft);
@@ -666,11 +666,11 @@ pub(crate) fn lay_out_with(
 
     let mut page = Page {
         faces,
-        profile,
+        paper,
         rtl,
         lines: Vec::new(),
         rules: Vec::new(),
-        cursor_y_px: profile.margin_px(),
+        cursor_y_px: paper.margin_px(),
     };
 
     // ── merchant, legally required (master plan B.6) ────────────────────
@@ -821,7 +821,7 @@ pub(crate) fn lay_out_with(
         page.text(thanks, body, Alignment::Center);
     }
 
-    let height_px = u32::try_from(page.cursor_y_px + profile.margin_px()).unwrap_or(u32::MAX);
+    let height_px = u32::try_from(page.cursor_y_px + paper.margin_px()).unwrap_or(u32::MAX);
     if height_px > super::MAX_PAGE_HEIGHT_PX {
         return Err(RenderError::PageTooTall {
             height_px,
@@ -830,7 +830,7 @@ pub(crate) fn lay_out_with(
     }
 
     Ok(Layout {
-        width_px: profile.width_px(),
+        width_px: paper.width_px(),
         height_px,
         lines: page.lines,
         rules: page.rules,
@@ -1153,13 +1153,13 @@ mod tests {
     #[test]
     fn layout_wraps_long_arabic_names() {
         let faces = faces();
-        let profile = PrinterProfile::Mm80;
+        let paper = PaperWidth::Mm80;
         let style = TextStyle {
             px_per_em: BODY_PX_PER_EM,
             weight: Weight::Regular,
         };
         let max_units = px_to_units(
-            profile.content_width_px(),
+            paper.content_width_px(),
             style.px_per_em,
             faces.units_per_em,
         );
@@ -1198,7 +1198,7 @@ mod tests {
         let faces = faces();
         let uuid = "9f1c0f7a-0000-4000-8000-000000000000";
         let max = px_to_units(
-            PrinterProfile::Mm58.content_width_px(),
+            PaperWidth::Mm58.content_width_px(),
             BODY_PX_PER_EM,
             faces.units_per_em,
         );
@@ -1240,9 +1240,9 @@ mod tests {
     /// two languages.
     #[test]
     fn layout_columns_align_in_rtl() {
-        let profile = PrinterProfile::Mm80;
-        let content = profile.content_width_px();
-        let margin = profile.margin_px();
+        let paper = PaperWidth::Mm80;
+        let content = paper.content_width_px();
+        let margin = paper.margin_px();
 
         // A 100-dot label and a 60-dot amount on a 552-dot content width.
         let label_rtl = start_x_px(Alignment::Start, true, 100, content, margin);
@@ -1291,9 +1291,9 @@ mod tests {
     /// is the second line of defence behind it.
     #[test]
     fn a_line_wider_than_the_page_still_starts_on_it() {
-        let profile = PrinterProfile::Mm58;
-        let content = profile.content_width_px();
-        let margin = profile.margin_px();
+        let paper = PaperWidth::Mm58;
+        let content = paper.content_width_px();
+        let margin = paper.margin_px();
 
         for alignment in [Alignment::Start, Alignment::End, Alignment::Center] {
             for rtl in [true, false] {
@@ -1340,7 +1340,7 @@ mod tests {
     fn a_line_prints_its_quantity_and_its_total() {
         let faces = faces();
         let m = model();
-        let layout = lay_out(&m, PrinterProfile::Mm80).expect("lays out");
+        let layout = lay_out(&m, PaperWidth::Mm80).expect("lays out");
 
         let line = m.lines.first().expect("the fixture has a line");
         assert!(page_sets(&layout, &faces, &line.name, Weight::Regular));
@@ -1382,7 +1382,7 @@ mod tests {
             m.locale = ReceiptLocale::new(language);
             assert_eq!(m.locale.direction, direction);
 
-            let layout = lay_out(&m, PrinterProfile::Mm80).expect("lays out");
+            let layout = lay_out(&m, PaperWidth::Mm80).expect("lays out");
             assert!(
                 page_sets(&layout, &faces, subtotal, Weight::Regular),
                 "{language:?} receipt has no {subtotal:?} label"
@@ -1407,7 +1407,7 @@ mod tests {
     fn the_tax_summary_prints_net_tax_and_gross_per_rate() {
         let faces = faces();
         let m = model();
-        let layout = lay_out(&m, PrinterProfile::Mm80).expect("lays out");
+        let layout = lay_out(&m, PaperWidth::Mm80).expect("lays out");
 
         let row = m
             .totals
@@ -1450,7 +1450,7 @@ mod tests {
     fn a_receipt_prints_its_date_and_its_business_date() {
         let faces = faces();
         let m = model();
-        let layout = lay_out(&m, PrinterProfile::Mm80).expect("lays out");
+        let layout = lay_out(&m, PaperWidth::Mm80).expect("lays out");
 
         assert!(
             page_sets(
@@ -1481,7 +1481,7 @@ mod tests {
     /// glyphs on a thermal receipt are a smear.
     #[test]
     fn a_long_label_never_collides_with_its_amount() {
-        let profile = PrinterProfile::Mm58;
+        let paper = PaperWidth::Mm58;
         let mut m = model();
         if let Some(discount) = m
             .lines
@@ -1491,9 +1491,9 @@ mod tests {
             discount.label = "عرض الخبز العربي الطازج لكل زبون يشتري أكثر من رغيفين".to_owned();
         }
 
-        let layout = lay_out(&m, profile).expect("lays out");
-        let content = profile.content_width_px();
-        let margin = profile.margin_px();
+        let layout = lay_out(&m, paper).expect("lays out");
+        let content = paper.content_width_px();
+        let margin = paper.margin_px();
 
         // No row places a glyph outside the content box, and no row is wider
         // than the box — which is the same statement as "nothing overlaps",
@@ -1519,7 +1519,7 @@ mod tests {
         ] {
             let mut m = model();
             m.locale.direction = direction;
-            let layout = lay_out(&m, PrinterProfile::Mm80).expect("lays out");
+            let layout = lay_out(&m, PaperWidth::Mm80).expect("lays out");
 
             assert_eq!(layout.direction, direction);
             assert!(!layout.lines.is_empty());
@@ -1534,7 +1534,7 @@ mod tests {
     /// Baselines only ever move down the page.
     #[test]
     fn lines_are_laid_out_top_to_bottom() {
-        let layout = lay_out(&model(), PrinterProfile::Mm80).expect("lays out");
+        let layout = lay_out(&model(), PaperWidth::Mm80).expect("lays out");
         let baselines: Vec<i32> = layout.lines.iter().map(|l| l.baseline_y_px).collect();
         // **Strictly** increasing, not merely sorted. `is_sorted` alone let the
         // sweep's "lines never advance" mutation through: with the text rows

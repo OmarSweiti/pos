@@ -195,7 +195,7 @@ mod tests {
 
     use super::*;
     use crate::render::tests_support::model;
-    use crate::render::{PrinterProfile, render_receipt};
+    use crate::render::{PaperWidth, render_receipt};
     use crate::{PrinterStatus, ReceiptPrinter, RenderedReceipt, SimulatedPrinter};
     use pos_test_support::io_proptest_config;
     use proptest::prelude::*;
@@ -237,7 +237,7 @@ mod tests {
     /// is where a document could otherwise smuggle one.
     #[test]
     fn receipt_retry_never_repeats_the_drawer_pulse() {
-        let bitmap = render_receipt(&model(), PrinterProfile::Mm80).expect("renders");
+        let bitmap = render_receipt(&model(), PaperWidth::Mm80).expect("renders");
         let stream = encode(&bitmap).expect("encodes");
 
         let printer = SimulatedPrinter::new();
@@ -336,7 +336,7 @@ mod tests {
 
     #[test]
     fn both_profiles_emit_their_own_row_width() {
-        for (profile, row_bytes) in [(PrinterProfile::Mm80, 72), (PrinterProfile::Mm58, 48)] {
+        for (profile, row_bytes) in [(PaperWidth::Mm80, 72), (PaperWidth::Mm58, 48)] {
             let bitmap = render_receipt(&model(), profile).expect("renders");
             assert_eq!(bitmap.row_bytes(), row_bytes, "{profile:?}");
 
