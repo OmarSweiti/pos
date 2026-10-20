@@ -3189,11 +3189,14 @@ dependencies = [
 name = "pos-hardware"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "harfrust",
  "pos-domain",
  "pos-test-support",
  "proptest",
  "rust_decimal",
+ "serde",
+ "serde_json",
  "skrifa",
  "thiserror 2.0.21",
  "tiny-skia",

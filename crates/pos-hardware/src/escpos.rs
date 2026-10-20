@@ -164,8 +164,8 @@ pub enum EscPosError {
         page_px: u32,
         profile_px: u32,
     },
-    /// The profile cannot be bound — today, because it does not know its row
-    /// limit.
+    /// The profile does not know a fact the emitter needs: its width, its
+    /// raster command, or how many rows one command carries.
     #[error(transparent)]
     Profile(#[from] ProfileError),
 }
@@ -180,6 +180,7 @@ struct Strip {
 /// Everything about a document except its bytes, decided once so the emitter
 /// and [`payload_ranges`] cannot disagree about where a strip begins.
 struct Plan {
+    command: RasterCommand,
     row_bytes: u32,
     strips: Vec<Strip>,
 }
@@ -189,16 +190,18 @@ fn plan(page: &Bitmap, profile: &PrinterProfile) -> Result<Plan, EscPosError> {
     if page.height_px == 0 || page.width_px == 0 {
         return Err(EscPosError::Empty);
     }
-    if page.width_px != profile.dot_width {
+    let profile_px = profile.dots_per_line()?.get();
+    if page.width_px != profile_px {
         return Err(EscPosError::WidthMismatch {
             profile_id: profile.profile_id.clone(),
             page_px: page.width_px,
-            profile_px: profile.dot_width,
+            profile_px,
         });
     }
 
+    let command = profile.raster_framing()?;
     let row_bytes = page.row_bytes();
-    let width_field = match profile.raster_command {
+    let width_field = match command {
         RasterCommand::GsV0 => row_bytes,
         RasterCommand::GsParenL => page.width_px,
     };
@@ -224,7 +227,7 @@ fn plan(page: &Bitmap, profile: &PrinterProfile) -> Result<Plan, EscPosError> {
     // The device's limit, and the command's own: `GS v 0` names a strip's
     // height in 16 bits, and `GS ( L` names its whole payload in 16 bits.
     let device_rows = profile.row_limit()?.get();
-    let command_rows = match profile.raster_command {
+    let command_rows = match command {
         RasterCommand::GsV0 => MAX_DIMENSION,
         RasterCommand::GsParenL => MAX_GRAPHICS_DATA / row_bytes.max(1),
     };
@@ -241,7 +244,11 @@ fn plan(page: &Bitmap, profile: &PrinterProfile) -> Result<Plan, EscPosError> {
         strips.push(Strip { first_row, rows });
         first_row += rows;
     }
-    Ok(Plan { row_bytes, strips })
+    Ok(Plan {
+        command,
+        row_bytes,
+        strips,
+    })
 }
 
 /// The bytes before a strip's payload, for the profile's raster command.
@@ -293,10 +300,11 @@ fn strip_rows(row_bytes: u32, strip: Strip) -> Range<usize> {
 /// Refuses a page with no dots, a page whose width disagrees with the
 /// profile's, a page either of whose dimensions exceeds what its command can
 /// name, a bitmap whose buffer does not hold the page it describes, and a
-/// profile that does not know how many rows one raster command carries.
+/// profile that does not know its width, its raster command, or how many rows
+/// one raster command carries.
 pub fn encode(page: &Bitmap, profile: &PrinterProfile) -> Result<Vec<u8>, EscPosError> {
     let plan = plan(page, profile)?;
-    let command = profile.raster_command;
+    let command = plan.command;
 
     let mut out = Vec::with_capacity(
         INIT.len()
@@ -348,7 +356,7 @@ pub fn payload_ranges(
     profile: &PrinterProfile,
 ) -> Result<Vec<Range<usize>>, EscPosError> {
     let plan = plan(page, profile)?;
-    let command = profile.raster_command;
+    let command = plan.command;
     let mut at = INIT.len();
     let mut ranges = Vec::with_capacity(plan.strips.len());
     for strip in &plan.strips {
@@ -367,7 +375,7 @@ mod tests {
     use core::num::NonZeroU32;
 
     use super::*;
-    use crate::profile::Fact;
+    use crate::profile::{Fact, Parameter};
     use crate::render::tests_support::model;
     use crate::render::{PaperWidth, render_receipt};
     use crate::{PrinterStatus, ReceiptPrinter, RenderedReceipt, SimulatedPrinter};
@@ -401,9 +409,9 @@ mod tests {
     /// command — what every example below binds.
     fn profile(width_px: u32, max_rows: u32, command: RasterCommand) -> PrinterProfile {
         let mut profile = PrinterProfile::simulator(PaperWidth::Mm80);
-        profile.dot_width = width_px;
+        profile.dot_width = Fact::Known(NonZeroU32::new(width_px).unwrap());
         profile.raster_max_rows = Fact::Known(NonZeroU32::new(max_rows).unwrap());
-        profile.raster_command = command;
+        profile.raster_command = Fact::Known(command);
         profile
     }
 
@@ -871,8 +879,38 @@ mod tests {
         let bitmap = render_receipt(&model(), PaperWidth::Mm80).expect("renders");
         assert_eq!(
             encode(&bitmap, &unknown),
-            Err(EscPosError::Profile(ProfileError::UnknownRowLimit {
-                profile_id: "simulator-80mm".to_owned()
+            Err(EscPosError::Profile(ProfileError::Unknown {
+                profile_id: "simulator-80mm".to_owned(),
+                parameter: Parameter::RasterMaxRows,
+            }))
+        );
+    }
+
+    /// 1.7.11 generalises the rule above: a profile read from a file may leave
+    /// any fact unknown, and the emitter refuses rather than guesses the two
+    /// others it reads — the width it checks the page against, and the command
+    /// that frames the strips.
+    #[test]
+    fn an_unknown_width_or_framing_refuses_the_document() {
+        let bitmap = render_receipt(&model(), PaperWidth::Mm80).expect("renders");
+
+        let mut no_width = PrinterProfile::simulator(PaperWidth::Mm80);
+        no_width.dot_width = Fact::Unknown;
+        assert_eq!(
+            encode(&bitmap, &no_width),
+            Err(EscPosError::Profile(ProfileError::Unknown {
+                profile_id: "simulator-80mm".to_owned(),
+                parameter: Parameter::DotWidth,
+            }))
+        );
+
+        let mut no_framing = PrinterProfile::simulator(PaperWidth::Mm80);
+        no_framing.raster_command = Fact::Unknown;
+        assert_eq!(
+            payload_ranges(&bitmap, &no_framing),
+            Err(EscPosError::Profile(ProfileError::Unknown {
+                profile_id: "simulator-80mm".to_owned(),
+                parameter: Parameter::RasterCommand,
             }))
         );
     }
