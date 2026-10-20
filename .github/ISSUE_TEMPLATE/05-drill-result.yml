@@ -30,7 +30,7 @@ body:
     id: hardware
     attributes:
       label: Hardware
-      description: The machine and OS, and for a register drill its row in ref/hardware-and-receipts.md §6a.
+      description: The machine and OS, and for a register drill its row in ref/hardware-and-receipts.md §6a — or, for a run before milestone 5.8, each emulator and the profile id and version it ran.
       placeholder: "reference register, row 1 of §6a.1, Windows 11 IoT"
     validations:
       required: true
