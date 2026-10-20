@@ -440,4 +440,6 @@ By demonstration:
 14. **Stall a fiscal queue deliberately.** An alert arrives at a named recipient, is acknowledged, and the delivery is recorded.
 15. **Automated tests exist** for E.8, E.9, E.10, E.11, E.13, E.37, E.47, E.48, E.55, E.57, E.59, E.87, E.88, E.89, E.90, and for the Phase-3 half of E.12, E.31 and E.91.
 
+**Two registers, and the new hardware of demonstration 6, are machines rather than purchases until milestone 5.8.** A virtual machine qualifies, provided each has its own credential store and, where the device key needs one, its own virtual TPM — so the restored image meets a key it cannot use, which is the point of demonstration 6. Physical registers arrive with the gate ([`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6b).
+
 → **Next:** [`phase-4-depth.md`](phase-4-depth.md)

@@ -10,8 +10,10 @@ files and exits non-zero.
 makes a budget enforceable, and it can only be recorded on the reference register — which
 [`../../docs/implementation/ref/hardware-and-receipts.md`](../../docs/implementation/ref/hardware-and-receipts.md)
 §6a.1 does not yet have a row for. Microsteps `1.2.7` (search), `1.4.9` (cart total), `1.6.2` (PIN
-verify) and `1.11.13` (scan to line) add the benchmarks and their first baselines; `1.12.3` adds the
-live measurement job. Until a slug has a file here, **it is not implemented at this gate** and
+verify), `1.11.13` (scan to line) and `2.9.3` (cold start) add the benchmarks; their first baselines
+are recorded at milestone 5.8 (`5.8.2`) on the reference register bought there, where `1.12.3`'s
+live measurement job is switched on. Before then `1.12.3` compares each pull request with its base
+on one runner and writes nothing here. Until a slug has a file here, **it is not implemented at this gate** and
 `just bench-gate <slug>` says so and exits non-zero rather than reporting a pass.
 
 ## A baseline is the record of one machine, on one build, at one commit

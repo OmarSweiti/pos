@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **37 of 112 executable microsteps fully complete (~33%)**: `1.1.0`
+Phase 1 has **37 of 120 executable microsteps fully complete (~31%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -92,9 +92,8 @@ bench-gate`, `scripts/bench-gate.py`, its refusal-path suite, and
 `benchmarks/reference-register.toml` are committed with **every identity value deliberately blank**
 beside §6a.1's empty register-hardware table. `python3 scripts/bench-gate.py --check-profile`
 therefore exits **non-zero**, which is conventions §7.1 working rather than failing; filling both
-records is `1.2.0`'s deferred half and waits on hardware nobody has bought
-([`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6a: order it before group 1.7
-starts). **`1.8.9` has landed, so the gate it held is open**: groups 1.6, 1.9 and 1.10 may now write
+records is `1.2.0`'s deferred half and waits on milestone 5.8, where the register is bought — no
+device is bought before it ([`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6b). **`1.8.9` has landed, so the gate it held is open**: groups 1.6, 1.9 and 1.10 may now write
 append-only facts, because every fact graph commits with its delivery envelope and the writer refuses
 to return success on an incomplete one. **`1.9.1` has landed too**, so the migration chain is
 contiguous to `0005` and `0006` may be written: `1.2.3`, `1.9.2`–`1.9.5`, `1.10.2`–`1.10.5` and the
@@ -132,11 +131,11 @@ docs/implementation/
 ├── 03-github-workflow.md          branches, issues, the board, PRs, release channels
 │
 ├── phase-0-closeout.md            historical close-out record
-├── phase-1-sellable-mvp.md        cash · tax · Arabic receipts 14–20 weeks
+├── phase-1-sellable-mvp.md        cash · tax · Arabic receipts 15–21 weeks
 ├── phase-2-money-grade.md         cards · refunds · fiscal     10–13 weeks
 ├── phase-3-connected.md           sync · back office · CRM     11–14 weeks
 ├── phase-4-depth.md               promos · supply · reports     9–12 weeks
-├── phase-5-harden-and-launch.md   certification · launch        9–13 weeks
+├── phase-5-harden-and-launch.md   certification · launch       11–16 weeks
 │
 └── ref/
     ├── plan-validation.md         the audit of record + every source
@@ -146,9 +145,9 @@ docs/implementation/
     ├── fiscal-jofotara.md         the highest-risk component
     ├── ipc-contract.md            every Tauri command
     ├── sync-protocol.md           ownership, chaos, accepted risks
-    ├── hardware-and-receipts.md   traits, Arabic raster, lab checklist
+    ├── hardware-and-receipts.md   traits, Arabic raster, emulators and the gate, lab checklist
     ├── ui-spec.md                 screens, RTL, keyboard map
-    ├── test-catalog.md            92 edge cases → named tests
+    ├── test-catalog.md            95 edge cases → named tests
     ├── security-compliance.md     PDPL · PCI · tenancy · keys · audit chain
     └── merchant-decisions.md      the questionnaire
 ```
@@ -245,6 +244,7 @@ If you read nothing else:
 | How does Jordanian GST actually work? | [`ref/tax-jordan.md`](ref/tax-jordan.md) |
 | How do I do e-invoicing without a sandbox? | [`ref/fiscal-jofotara.md`](ref/fiscal-jofotara.md) §6 |
 | How do I print Arabic on a thermal printer? | [`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §2.1 |
+| Which hardware do I need, and when is it bought? | [`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6b — none before milestone 5.8; emulators until then |
 | Which test covers edge case N? | [`ref/test-catalog.md`](ref/test-catalog.md) |
 | What do I need to ask the merchant? | [`ref/merchant-decisions.md`](ref/merchant-decisions.md) |
 | Am I allowed to say "PCI compliant"? | [`ref/security-compliance.md`](ref/security-compliance.md) §3 — probably not yet |
@@ -254,7 +254,7 @@ If you read nothing else:
 ## Keeping this set alive
 
 - **Re-run the validation audit quarterly**, and re-diff the pinned ISTD manifest in the same pass. Jordanian rates move by Cabinet decree, JoFotara is still adding waves and changing validation, and the PDPL register is now live. A compliance claim has a shelf life.
-- **When a merchant or a pilot surfaces something new, it becomes E.93** in the test catalog — with a test, an accepted risk, an open question with a stated default, or an explicit out-of-scope. A surprise that becomes none of those will happen again.
+- **When a merchant or a pilot surfaces something new, it becomes E.96** in the test catalog — with a test, an accepted risk, an open question with a stated default, or an explicit out-of-scope. A surprise that becomes none of those will happen again.
 - **When a correction turns out to be wrong, correct it in [`00-master-plan.md`](00-master-plan.md) §4a and mark it in place in `ref/plan-validation.md`.** Two of the original four were wrong; leaving an audit reading as still-true is how a fix becomes a defect.
 - **When a microstep turns out to be wrong at the keyboard, fix the microstep.** These files are the plan of record, not a historical artefact.
 
