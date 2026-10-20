@@ -1356,8 +1356,25 @@ def list_fuzz_targets(root: Path) -> frozenset[str]:
     return frozenset(names)
 
 
+def required_runners(catalog: CatalogData) -> frozenset[str]:
+    """The runners whose listing some row actually needs: rows that name a test.
+
+    A row with no identifier — a deferred hook that names its tests in the pull
+    request that builds it, or a drill — gives a listing nothing to reconcile.
+    Listing its runner anyway made a toolchain the precondition of a row that
+    names no test: the first `web + drill` hook (case 94) failed CI's `rust` job,
+    which has cargo but no pnpm. Every row's `runner` is still evaluated, so a
+    row that mixes runner kinds is refused whether or not it names a test.
+    """
+    return frozenset(
+        runner
+        for case in catalog.cases
+        if (runner := case.runner) is not None and case.identifiers
+    )
+
+
 def runner_inventory(root: Path, catalog: CatalogData) -> RunnerInventory:
-    runners = {case.runner for case in catalog.cases}
+    runners = required_runners(catalog)
     return RunnerInventory(
         rust=list_rust_tests(root) if "rust" in runners else frozenset(),
         web=list_web_tests(root) if "web" in runners else frozenset(),
@@ -2228,6 +2245,46 @@ def self_test() -> int:
         print(
             "  FAIL  assertion 1 exempts accepted, deferred and out-of-scope hooks "
             f"(got: {'; '.join(problem.render() for problem in exempt_problems)})"
+        )
+        failed += 1
+
+    # A runner listing is demanded only by a row that names a test. A deferred
+    # web hook naming none must not make pnpm a precondition — case 94 did, in
+    # CI's cargo-only `rust` job — while a named web test still must.
+    deferred_web = fixture_catalog().replace(
+        "| 5 | Deferred | 🧩 **Deferred.** | — | — |",
+        "| 5 | Deferred | 🧩 **Deferred.** | 1 | web + drill |",
+        1,
+    )
+    named_web = deferred_web.replace(
+        "| 1 | Runner evidence | `rust_case_one` | 1 | unit |",
+        "| 1 | Runner evidence | `rust_case_one` | 1 | web |",
+        1,
+    )
+    needs: dict[str, frozenset[str]] = {}
+    deferred_runner: str | None = None
+    for name, text in (("deferred", deferred_web), ("named", named_web)):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_fixture(root, text)
+            catalog, _ = load_inputs(root)
+        needs[name] = required_runners(catalog)
+        if name == "deferred":
+            deferred_runner = next(
+                case.runner for case in catalog.cases if case.case_id == "5"
+            )
+    if (
+        deferred_runner == "web"
+        and needs["deferred"] == frozenset({"rust"})
+        and "web" in needs["named"]
+    ):
+        print("  ok    only a row that names a test requires its runner's listing")
+        passed += 1
+    else:
+        print(
+            "  FAIL  only a row that names a test requires its runner's listing "
+            f"(got: deferred row runner={deferred_runner}, "
+            f"deferred={sorted(needs['deferred'])}, named={sorted(needs['named'])})"
         )
         failed += 1
 
