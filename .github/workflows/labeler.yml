@@ -19,6 +19,31 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # Every pull request is assigned to the repository owner, whoever opened
+      # it — Dependabot, a contributor's fork, the web UI, a plain `gh pr
+      # create`. The owner is the one person whose approval code-owner-review
+      # requires, so an unassigned pull request is one nobody is answerable for.
+      # Dependabot and `just pr` assign at creation; this is the backstop for
+      # every other route. It runs first and on every event, so a cancelled run
+      # cannot leave a pull request unassigned, and re-adding an assignee is a
+      # no-op. It reads only the trusted repository owner and the event's number,
+      # never PR content, and executes no PR code.
+      - name: Assign the pull request to the repository owner
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh pr edit "$NUMBER" --add-assignee "$OWNER"
+          assigned=$(gh pr view "$NUMBER" --json assignees --jq '.assignees[].login')
+          if ! grep -Fxq -- "$OWNER" <<< "$assigned"; then
+            printf 'assign: REFUSED — GitHub did not record %s as an assignee of #%s\n' "$OWNER" "$NUMBER" >&2
+            exit 1
+          fi
+          echo "assigned: $OWNER"
+
       # pull_request_target runs with a write token, so it must never check out
       # or execute the PR's code. actions/labeler only reads the file list.
       - uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7

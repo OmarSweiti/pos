@@ -203,6 +203,10 @@ jobs:
         run: ./scripts/validate-change-title.sh --self-test
       - name: Branch names and promotion topology still reject malformed routes
         run: ./scripts/validate-branch-flow.sh --self-test
+      - name: The approval gate still refuses every merge the owner has not approved
+        run: bash ./scripts/approval-gate.sh --self-test
+      - name: Validation evidence still refuses a runtime PR without screenshots
+        run: ./scripts/pr-evidence.py --self-test
       - name: PR readiness waits for the complete cross-workflow check set
         run: bash ./scripts/watch-pr-checks.sh --self-test
       - name: Workspace lint contract still rejects a member that opts out

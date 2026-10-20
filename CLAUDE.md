@@ -43,6 +43,30 @@ and its *title* becomes the commit, so the title obeys the commit convention. A 
 forks the branches permanently. `just branch <name>`, `just pr`, `just merge`, `just flow`,
 `just promote-staging`, `just promote-main`.
 
+**Every pull request carries validation evidence before it is handed to the owner — always, as a
+step of the work, not an extra.** Once its checks are green, run the `validate-pr` skill: check out
+the exact head, start from a fresh database with synthetic data, start the emulators the change
+touches, drive the app through every `Done when` claim, and capture one screenshot per step. Inspect
+every image (the repository is public), write `summary.md`, then `just evidence <pr> <dir>`, which
+posts one comment naming the validated commit. A PR that changes nothing at runtime posts
+`Runtime change: none` and why. A new runtime push needs new evidence. Never claim a step that did
+not run.
+
+**Every pull request needs the owner's approval, and an agent never gives it.** The
+`code-owner-review` ruleset requires one code-owner approval on all three flow branches, and every
+pull request is assigned to the owner: by Dependabot's config, by `--assignee @me` in the recipes
+(pass it yourself to a bare `gh pr create`), and by the labeler workflow's first step for any other
+route. GitHub
+never lets an author approve their own pull request, and every pull request an agent opens is the
+owner's own to GitHub. So the agent's part ends at an open, green, evidenced pull request. It never
+submits a review: `gh pr review` is denied in `.claude/settings.json` and forbidden in Codex. It
+never merges unless the owner asks for that pull request, and even then every merge command stops
+for the owner's confirmation. `just merge` merges only a pull request the owner approved on GitHub.
+On the owner's own pull request it verifies everything, then stops with exit 3 — **NOT MERGED** —
+because the only way through is the logged bypass, and that click on GitHub is the owner's approval.
+No recipe passes `--admin`, and `scripts/check-justfile-policy.py` fails if one does.
+[`03-github-workflow.md`](docs/implementation/03-github-workflow.md) §6 has the procedure.
+
 Commit and squash titles use `<type>(<scope>): <summary>  [<step>]`, where `<step>` is one
 `N.N.N`, a lettered split microstep `N.N.Nx`, an ordered `N.N.N–N.N.N` range, or `—`. Coding
 assistants are tools, not co-authors:
@@ -63,18 +87,20 @@ never be moved or deleted, by anyone, which is the one control here that binds t
 `main` is the uneven one, and deliberately so. It carries `main-append-only`: `deletion` and
 `non_fast_forward` only. Those two rules need no status checks, so they could be applied while the reason `main` has
 no *required checks* still holds — main's `ci.yml` predates four of the six required jobs, and a
-`hotfix/*` branch cut from `main` would wait forever on checks that never report. So force-pushing
-or deleting `main` is refused server-side today, while a pull request is still not required there
-and no check is a merge wall; that arrives when a promotion carries the current `ci.yml` onto it.
+`hotfix/*` branch cut from `main` would wait forever on checks that never report. Since
+20 October 2026 `code-owner-review` also requires a pull request and the owner's approval there, so
+a direct push to `main` is refused server-side too. No check is a merge wall on `main` yet; that
+arrives when a promotion carries the current `ci.yml` onto it.
 `branches/main/protection` still answers `404 Branch not protected` — that is the *legacy*
 protection API, a separate surface from rulesets, and it is not evidence that `main` is
 unprotected.
 
 Two limits remain and must not be overstated. The repository **admin keeps
-`bypass_mode: "pull_request"`** on all three branch rulesets, so a
+`bypass_mode: "pull_request"`** on all four branch rulesets, so a
 red check can still be merged — but only through a pull request, never a direct push, and GitHub
 records the bypass as an event, which is the review artifact that disabling and re-enabling a
-ruleset would not leave. And the git hooks in `.githooks/` are still the first local net, so
+ruleset would not leave. The owner's merge of their own pull request is that same bypass used for
+its ordinary purpose; `code-owner-review` is a ruleset of its own so the two stay apart in the log. And the git hooks in `.githooks/` are still the first local net, so
 `just setup` is not optional: a clone that skipped it, or an explicit `--no-verify`, still bypasses
 them locally.
 [`03-github-workflow.md`](docs/implementation/03-github-workflow.md) §3 has the full honest table.
@@ -187,7 +213,9 @@ Codex-specific execution policy and hook adapters live under `.codex/`.
 |---|---|
 | `.claude/hooks/protect-immutable.py` | writing, deleting, or moving a **committed migration** or anything in `docs/plan/` through Claude write tools, Bash, PowerShell, or Monitor; and the forward-only violation `sqlx migrate revert` in any wrapped or nested spelling, for which no Git hook and no CI job is a backstop — it produces no commit and no diff |
 | `.claude/hooks/docs-links-on-write.py` | leaving a broken cross-reference after Claude changes **any** tracked `.md` — the five root documents included — whatever the link target's extension; the `.sh` file is only an inactive POSIX compatibility wrapper |
-| `.claude/hooks/validate-settings.py` | a session-time weakening of the reviewed project or local Claude settings, or the loss of a required skill contract. The one hook here that **fails closed** |
+| `.claude/hooks/validate-settings.py` | a session-time weakening of the reviewed project or local Claude settings — including dropping the `gh pr review` deny or any merge-command `ask` — or the loss of a required skill contract. The one hook here that **fails closed** |
+| `scripts/pr-evidence.py` | publishing evidence from anything but the PR's exact, clean head; a runtime PR — code, a dependency manifest or lockfile — without screenshots; a non-runtime PR that does not say `Runtime change: none`; an image that is not what its name claims, over the 2 MB blob cap, or a symlink |
+| `scripts/approval-gate.sh` | a merge recipe merging a pull request the owner has not approved on GitHub, or merging the owner's own pull request at all — that click is the owner's. Called twice by `just merge` and `just promote-merge`; `check-justfile-policy.py` proves no recipe passes `--admin` |
 | `.codex/hooks/` | immutable-path and forward-only SQLx checks for Codex shell, immutable-path checks for `apply_patch`, and complete documentation-link checks after any Markdown `apply_patch` |
 | `.githooks/commit-msg` | a title outside `<type>(<scope>): <summary>  [N.N.N\|N.N.Nx\|N.N.N–N.N.N\|—]`, or coding-assistant attribution |
 | `.githooks/pre-commit` | protected/sensitive paths, oversized staged blobs, plan or committed-migration edits, and Gitleaks findings in staged content |

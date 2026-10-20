@@ -187,6 +187,25 @@ financial effect and audit row. `docs/implementation/01-conventions.md` sections
 - Work pull requests target `development` and are squash-merged. Promotion pull
   requests (`development` to `staging`, then `staging` to `main`) use merge
   commits; never squash a promotion.
+- Every pull request carries validation evidence before it is handed to the
+  owner. Once its checks are green, follow the `validate-pr` skill: the exact
+  head, a fresh database with synthetic data, the emulators the change touches,
+  one screenshot per `Done when` step, every image inspected because the
+  repository is public, then `just evidence <pr> <dir>`. A pull request that
+  changes nothing at runtime posts `Runtime change: none` and why. Never claim
+  a step that did not run.
+- Every pull request is assigned to the owner. `just pr` does it; when opening
+  one any other way, pass `--assignee @me` (the labeler workflow assigns the
+  owner as a backstop).
+- Every pull request needs the owner's approval: the `code-owner-review`
+  ruleset requires one code-owner approval on all three flow branches. An agent
+  never gives it. Never submit a pull-request review (`gh pr review` is
+  forbidden in `.codex/rules/safety.rules`), never merge unless the owner asks
+  for that pull request (`just merge`, `just promote-merge` and `gh pr merge`
+  prompt), and never pass `--admin`. Every pull request an agent opens is the
+  owner's own to GitHub, which never lets an author approve their own, so
+  `just merge` verifies such a pull request and stops with exit 3 (NOT MERGED).
+  The owner merges it on GitHub, and that click is the approval.
 - Commit and squash titles follow
   `<type>(<scope>): <summary>  [<step>]`, where step is `N.N.N`, a lettered
   split microstep `N.N.Nx`, an ordered `N.N.N–N.N.N` range, or `—`. Do not skip

@@ -3,6 +3,12 @@ version: 2
 # Grouped and monthly on purpose. A money system does not want a daily stream of
 # single-crate bumps: each one is a diff somebody has to actually read, and an
 # unread dependency bump is how a supply-chain problem arrives politely.
+#
+# Every update is assigned to the owner, whose approving review the
+# code-owner-review ruleset requires before any of these can merge. The review
+# itself is requested by .github/CODEOWNERS: GitHub removed this file's
+# `reviewers` key in May 2025 in favour of code owners, and `assignees` is the
+# supported way left to route the pull request to a person.
 updates:
   - package-ecosystem: cargo
     directory: "/"
@@ -13,6 +19,7 @@ updates:
     commit-message:
       prefix: "chore(repo)"
     labels: ["type: chore", "area: repo", "meta: dependencies"]
+    assignees: ["OmarSweiti"]
     groups:
       rust-patch:
         applies-to: version-updates
@@ -33,6 +40,7 @@ updates:
     commit-message:
       prefix: "chore(repo)"
     labels: ["type: chore", "area: repo", "meta: dependencies"]
+    assignees: ["OmarSweiti"]
     groups:
       js-patch:
         applies-to: version-updates
@@ -60,6 +68,7 @@ updates:
     commit-message:
       prefix: "chore(repo)"
     labels: ["type: chore", "area: repo", "meta: dependencies"]
+    assignees: ["OmarSweiti"]
     # Split by update type, like cargo and npm above, rather than one grouped PR
     # carrying every pinned action. A single group is atomic: one bump that can
     # never go green strands the other fourteen for a month, and PR #24 is the
@@ -91,6 +100,7 @@ updates:
     commit-message:
       prefix: "chore(repo)"
     labels: ["type: chore", "area: repo", "meta: dependencies"]
+    assignees: ["OmarSweiti"]
     ignore:
       # A PostgreSQL major upgrade also requires a reviewed data-upgrade plan,
       # PGDATA/mount review, and matching CI/verifier pins. Keep routine patch

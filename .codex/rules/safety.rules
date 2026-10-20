@@ -2,10 +2,12 @@
 #
 # Deliberately contains no `allow` rules: trusting this repository must never
 # grant silent unsandboxed execution. `prompt` preserves legitimate workflows
-# while keeping consequential state changes visible to a person. The sole
-# `forbidden` rule repeats the project's forward-only migration invariant at the
-# escalation boundary. The Codex PreToolUse hook enforces argv variants before
-# shell execution; exact-prefix execpolicy is not treated as a universal parser.
+# while keeping consequential state changes visible to a person. Two rules are
+# `forbidden`: one repeats the project's forward-only migration invariant at the
+# escalation boundary, and one keeps an agent from submitting a pull-request
+# review under the owner's credentials. The Codex PreToolUse hook enforces argv
+# variants before shell execution; exact-prefix execpolicy is not treated as a
+# universal parser.
 
 # Creating or rewriting Git history is durable and must be explicitly approved.
 prefix_rule(
@@ -164,6 +166,56 @@ prefix_rule(
         "just gh-actions-policy-dry",
         "just flow",
         "just lint",
+    ],
+)
+
+# Every flow branch requires the owner's approval (the code-owner-review
+# ruleset), and GitHub cannot tell an agent from the owner whose credentials it
+# holds. The merge recipes never bypass that approval, but even an approved
+# merge happens only when the owner asks for that pull request.
+prefix_rule(
+    pattern = ["just", ["merge", "promote-merge"]],
+    decision = "prompt",
+    justification = "Merging needs the owner's approval; confirm the owner asked for this exact pull request to merge.",
+    match = [
+        "just merge 259",
+        "just promote-merge 128",
+    ],
+    not_match = [
+        "just flow",
+        "just pr",
+    ],
+)
+
+# Publishing validation evidence pushes a ref and posts a comment: external
+# writes, public forever on this repository. The read-only preview is free.
+prefix_rule(
+    pattern = ["just", "evidence"],
+    decision = "prompt",
+    justification = "This publishes screenshots and a comment to GitHub; confirm the pull request and that every image was inspected.",
+    match = [
+        "just evidence 261 /tmp/evidence",
+    ],
+    not_match = [
+        "just evidence-check 261 /tmp/evidence",
+        "just flow",
+    ],
+)
+
+# A review submitted under the owner's credentials would be the owner's
+# approval, forged. Agents never approve, request changes, or comment-review;
+# the owner reviews on GitHub.
+prefix_rule(
+    pattern = ["gh", "pr", "review"],
+    decision = "forbidden",
+    justification = "Reviewing is the owner's own act; an agent holding the owner's credentials must never submit one.",
+    match = [
+        "gh pr review 259 --approve",
+        "gh pr review 259 --request-changes --body later",
+    ],
+    not_match = [
+        "gh pr view 259",
+        "gh pr checks 259",
     ],
 )
 

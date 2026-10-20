@@ -1,10 +1,15 @@
-# Every path records its intended owner. One developer today means every line
-# resolves to the same person; the mapping is ready for the day a second
-# developer arrives, but it is documentation rather than live enforcement today.
+# Every path records its owner, and since 20 October 2026 this map is a merge
+# control: the code-owner-review ruleset (.github/rulesets/code-owner-review.json)
+# requires an approving review from a code owner on every pull request into
+# development, staging and main. GitHub requests that review automatically on any
+# pull request the owner did not open — Dependabot's included — which is why
+# dependabot.yml carries no `reviewers` key (GitHub removed it in favour of this file).
 #
-# No ruleset or branch protection requires owner review, so this map is not a
-# merge control. Whether GitHub raises automatic review requests here is a
-# repository setting, not something this file asserts. See docs/implementation/03-github-workflow.md §3.
+# One developer today means every line resolves to the same person, and GitHub
+# never lets an author approve their own pull request. The owner's own pull
+# requests — every one opened under the owner's account, by hand or by an agent —
+# therefore merge through the logged administrator bypass, and that deliberate
+# merge is the owner's approval. See docs/implementation/03-github-workflow.md §3 and §6.
 
 *                                   @OmarSweiti
 

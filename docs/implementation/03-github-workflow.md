@@ -234,7 +234,8 @@ both refused. Configure and verify the signing identity before attempting the fi
 ## 3 · What GitHub and the repository enforce here
 
 This repository has been **public since 30 August 2026**. Rulesets arrived on `development`,
-`staging` and `refs/tags/v*` on **9 September 2026**, and on `main` on **10 September 2026**:
+`staging` and `refs/tags/v*` on **9 September 2026**, on `main` on **10 September 2026**, and the
+owner-approval gate across all three branches on **20 October 2026**:
 
 ```
 $ gh api repos/OmarSweiti/pos/rulesets --jq '.[]|"\(.name) \(.target) \(.enforcement)"'
@@ -242,6 +243,7 @@ development-flow     branch  active
 main-append-only     branch  active
 staging-promotion    branch  active
 tags-v-append-only   tag     active
+code-owner-review    branch  active
 
 $ gh api repos/OmarSweiti/pos/branches/main/protection
 404  Branch not protected
@@ -254,9 +256,27 @@ cannot see it. Read `rulesets`, not `branches/*/protection`, when answering what
 `development` and `staging` require a pull request and six passing checks — `rust`, `guards`,
 `web`, `supply-chain`, `protected-paths`, `topology` — block force pushes and deletions, and
 constrain the merge method: squash or merge on `development`, merge commit only into `staging`.
-`refs/tags/v*` is append-only with no bypass actor. All four definitions are checked in under
+`refs/tags/v*` is append-only with no bypass actor. All five definitions are checked in under
 [`../../.github/rulesets/`](../../.github/rulesets/), which is also where the diff and restore
 commands live.
+
+**Every pull request into `development`, `staging` or `main` needs the owner's approval.**
+`code-owner-review` requires one approving review from a code owner, dismisses it when a push
+changes the diff, and requires every review thread resolved. [`../../.github/CODEOWNERS`](../../.github/CODEOWNERS)
+maps every path to the owner, so GitHub requests that review automatically on any pull request the
+owner did not open. GitHub never lets an author approve their own pull request, so the gate binds
+two ways, both intended:
+
+- **Dependabot's pull requests, and any contributor's**, merge only after the owner approves them.
+- **The owner's own pull requests** — including every one an agent opens, since agents work under
+  the owner's account — cannot be approved at all. They merge through the administrator's logged
+  `pull_request` bypass, and that deliberate merge *is* the owner's approval (§6).
+
+The gate is a ruleset of its own rather than a parameter of the branch rulesets so that a bypass
+stays attributable: the owner's routine merge of their own green pull request bypasses
+`code-owner-review` and nothing else, while a bypass of `development-flow` or `staging-promotion`
+still means a required check was red. The parameter-by-parameter reasoning is in the
+[rulesets README](../../.github/rulesets/README.md).
 
 `development-flow` carries `strict_required_status_checks_policy: true` — GitHub's "require
 branches to be up to date before merging" — and `staging-promotion` deliberately does **not**. Both
@@ -276,42 +296,44 @@ default branch before every promotion.
 [`../../.github/rulesets/README.md`](../../.github/rulesets/README.md) carries the full reasoning
 and the honest cost, and is the place to change it rather than here.
 
-Alongside `required_approving_review_count: 0`, both branch rulesets also carry
-`require_extra_approval_for_unattributed_changes: true`. §11 records the binding constraint that
-makes the zero necessary — a sole developer cannot approve their own pull request — and this flag is
-the one way that zero can stop being zero. It is **inert today**: every commit in this repository is
-attributed, verified by resolving the last twenty commits to the GitHub account `OmarSweiti` through
-`omarswaty4@gmail.com`. It stops being inert the moment a commit arrives whose author email is not
-linked to any GitHub account — a machine with a stale `user.email`, a collaborator's first patch, a
-web edit under a different address — because that pull request would then demand an approval that a
-single maintainer cannot give, and the only way through would be the logged administrator bypass.
-That is worth one throwaway pull request to confirm, once, before either of those situations is real
-rather than hypothetical; the flag is also new enough that it should be read back from a live `GET`
-before these payloads are ever used to restore a ruleset.
+Every `pull_request` rule here also carries `require_extra_approval_for_unattributed_changes: true`,
+GitHub's default. An earlier revision of this paragraph read it as a rule about commits whose author
+email is linked to no GitHub account. That was a guess, and the wrong one: per
+[GitHub's rules reference](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets),
+it adds **one** approval to a pull request that **Copilot** opens under its own app identity with
+no person attributed, and it has no effect where zero approvals are required — so it is inert on
+the two branch rulesets, which require none. On `code-owner-review` it would make such a pull
+request need two approvals. Nothing here uses Copilot's coding agent; if one ever opens a pull
+request, a second approval is the right demand, and the logged bypass the only way through.
 
-`main` is the uneven one, and deliberately so. It carries `deletion` and `non_fast_forward` and
-nothing else: those two rules need no status checks, so they could be applied while the reason for
-having no *required checks* still holds — main's `ci.yml` predates four of the six required jobs,
-so requiring them would leave a `hotfix/*` branch cut from `main` waiting on checks that never
-report. Force-pushing or deleting `main` is therefore refused server-side today, while a pull
-request is still not required there and no check is a merge wall. Both arrive when a promotion
-carries the current `ci.yml` onto `main`.
+`main` is the uneven one, and deliberately so. `main-append-only` carries `deletion` and
+`non_fast_forward` and nothing else: those two rules need no status checks, so they could be applied
+while the reason for having no *required checks* still holds — main's `ci.yml` predates four of the
+six required jobs, so requiring them would leave a `hotfix/*` branch cut from `main` waiting on
+checks that never report. Since 20 October 2026 `code-owner-review` adds a `pull_request` rule
+there, which needs no status check either, so a direct push to `main` is now refused server-side
+too. No check is a merge wall on `main` yet; that arrives when a promotion carries the current
+`ci.yml` onto it.
 
 Two limits remain and are the reason the table below keeps its "honest limit" column. The **admin
-holds `bypass_mode: "pull_request"`** on all three branch rulesets, so a red check is still
-mergeable by the maintainer — through a pull request only, never a direct push, and the bypass is
-logged as an event. And the git hooks stay local and bypassable. So:
+holds `bypass_mode: "pull_request"`** on all four branch rulesets, so the maintainer can still merge
+a pull request with a required check red — through a pull request only, never a direct push, and
+the bypass is logged as an event. Merging the owner's own pull request is the same mechanism used
+for its ordinary purpose, and the separate `code-owner-review` ruleset keeps the two apart in the
+log. And the git hooks stay local and bypassable. So:
 
 | Rule | Control | Honest limit |
 |---|---|---|
-| No direct, force, or deletion push to `main`/`staging`/`development` | server-side on all three (`non_fast_forward` and `deletion` everywhere; a pull request is additionally required on `development` and `staging`); [`.githooks/pre-push`](../../.githooks/pre-push) for all three, using Git's supplied destination remote | a *direct* push to `main` is not refused server-side — only a force push or a deletion is, because `main` has no `pull_request` rule — so for that case the hook is still the only control, and `--no-verify` or an unconfigured clone bypasses it |
+| No direct, force, or deletion push to `main`/`staging`/`development` | server-side on all three (`non_fast_forward` and `deletion` everywhere, and a pull request required on all three — on `main` by `code-owner-review` since 20 October 2026); [`.githooks/pre-push`](../../.githooks/pre-push) for all three, using Git's supplied destination remote | the administrator's bypass is `pull_request` mode, so even it cannot push directly; the hook remains the first, local net, and `--no-verify` or an unconfigured clone skips only that net |
+| Every pull request is assigned to the owner | three routes, so none depends on how the pull request was opened: `assignees` in [`../../.github/dependabot.yml`](../../.github/dependabot.yml); `--assignee @me` in `just pr`, `just promote-staging` and `just promote-main`; and the first step of [`../../.github/workflows/labeler.yml`](../../.github/workflows/labeler.yml), which assigns the repository owner on every pull-request event — the web UI, a plain `gh pr create`, a fork — and which `check-branch-workflow-policy.rb` pins byte for byte | the backstop is a workflow: if Actions is off, only the first two routes assign. Unassigning by hand lasts until the next event re-adds the owner, which is the intent |
+| Every pull request into a flow branch is approved by the owner | `code-owner-review` (one code-owner approval, stale approvals dismissed on push, threads resolved) on all three branches; [`../../.github/CODEOWNERS`](../../.github/CODEOWNERS) requests the review automatically | GitHub forbids self-approval, so the owner's own pull requests — agents' included — merge through the logged bypass, which is the approval (§6). The rule binds identities: an agent holding the owner's credentials looks like the owner, so the agents' reviewed settings, not GitHub, stop an agent approving or merging |
 | Existing tags never move or disappear | server-side for `refs/tags/v*` (`tags-v-append-only`: `update` and `deletion` blocked, **no bypass actor**, so it binds the maintainer too); `.githooks/pre-push` allows a new tag but refuses every update/deletion; the release workflow revalidates the remote annotated-tag object around draft mutation | the ruleset covers `v*` only — any other tag name is hook-only — and draft/tag binding is not atomic until immutable publication |
 | Commit and squash title obey the exact same grammar | [`scripts/validate-change-title.sh`](../../scripts/validate-change-title.sh), called by `commit-msg` and `branch-flow` | `topology` is a required check on `development` and `staging`, so a red title check now blocks the merge button there; the admin can still bypass through a pull request, and that bypass is logged |
 | Coding assistants receive no PR or history attribution; the exact Dependabot metadata/trailer combination remains visible | [`scripts/check-automation-attribution.py`](../../scripts/check-automation-attribution.py), called by Git and trusted CI for commits plus the PR title/body | Git author metadata is spoofable and local hooks are bypassable; `protected-paths` is now a required check on `development` and `staging`, so CI is a merge wall there, subject to the logged admin bypass |
 | Protected source plans and committed migrations do not change | Claude/Codex hooks, staged-index policy, and `branch-flow` | `pull_request_target` loads the trusted default-branch definition, policy is checked out at its exact `github.workflow_sha`, and the verified PR head is materialized only as data; `protected-paths` is a required check on `development` and `staging`, so a red one blocks the merge button there, subject to the logged administrator bypass — but no rule requires it on `main` |
 | Sensitive paths, oversized blobs, and Git inspection failures are refused | [`.githooks/pre-commit`](../../.githooks/pre-commit) with NUL-safe staged-index inspection, and [`.githooks/pre-push`](../../.githooks/pre-push) again over every commit a push introduces (`check-staged-policy.py --commits-file`) | local only, and deliberately twice: Git runs `pre-commit` for an ordinary commit but not for a clean merge, a cherry-pick, a revert or `rebase --continue`. `check-protected-paths.sh` backstops the plan and migration rules server-side; it inspects no filename class and no blob size, so these two are the refusals with no server-side equivalent at all |
 | Secret-like content is detected independently of its filename | GitHub-native secret scanning and push protection are enabled; Gitleaks runs in pre-commit, pre-push, CI commit-range scanning, and the weekly security workflow | local scans can be skipped, so the native controls remain an independent backstop rather than a substitute for the repository-owned range and history gates |
-| Tests, lint, domain purity, schema parity, real PostgreSQL, web build, docs, guards and supply-chain policy run | `ci.yml` | `rust`, `guards`, `web` and `supply-chain` are required checks on `development` and `staging`, so a red one blocks the merge button there; `main` carries `main-append-only`, which requires no check and no pull request, so no check is a merge wall there, and the administrator keeps a logged pull-request bypass on the other two |
+| Tests, lint, domain purity, schema parity, real PostgreSQL, web build, docs, guards and supply-chain policy run | `ci.yml` | `rust`, `guards`, `web` and `supply-chain` are required checks on `development` and `staging`, so a red one blocks the merge button there; on `main` a pull request and the owner's approval are required but no check is, so no check is a merge wall there, and the administrator keeps a logged pull-request bypass on the other two |
 | The coverage matrix reconciles with the suite, the phase files, normative reference names, and its own arithmetic | [`scripts/check-test-catalog.py`](../../scripts/check-test-catalog.py): `just lint` runs the real reconciliation; `just guards` runs `--self-test` | the `rust` job runs the reconciliation and `guards` runs `--self-test`, so a push that skipped `just lint` is still caught. The reconciliation runs inside the `rust` job and `--self-test` inside `guards`, both of which are required checks on `development` and `staging` |
 | The release signing key is never on a step that compiles third-party code | **still nothing for the same-step problem.** `release.yml` passes `TAURI_SIGNING_PRIVATE_KEY` and its password to the same step that builds the frontend and the Rust binary. What *is* now controlled is the ref surface: the `build` job declares `environment: release`, whose one deployment policy is `tag: v*`, so the key must be an environment secret and a run on any other ref cannot obtain it — and each run leaves a deployment record. That environment has no checked-in definition and withholds nothing yet, because no secret exists to withhold; the subsection below has the three qualifications in full | this row is a **requirement, not a control**. [`ref/security-compliance.md`](ref/security-compliance.md) §6b specifies the split — an unsigned job that compiles and reaches the network, then a signing step that receives artifact digests and holds the key with no checkout, no dependency installation and no compilation. Until it lands, any build script or proc macro in the dependency graph can read the key. It is one reason the first external release is deliberately blocked |
 | Workflow syntax and Actions security are audited | `security.yml` using actionlint and zizmor | findings are annotations and check failures. `workflow-analysis` is deliberately **not** a required check: `security.yml` is path-filtered, so a PR touching nothing under `.github/**` produces no check run at all and a required-but-absent context would block it forever |
@@ -345,14 +367,14 @@ default-branch checker cannot protect the commit before that checker exists ther
 
 The practical rule remains **`just setup` on every machine, always**. It installs hooks before
 networked dependency setup and refuses early if Gitleaks is missing. Server workflows then repeat
-the policy from trusted code. This is professional defence in depth, but it is not branch
-protection: `main`'s ruleset requires no check and no pull request, and on `development`/`staging`
-the administrator keeps a bypass, or makes CODEOWNERS a review requirement. Nothing in this
-repository claims those server-side controls were completed.
+the policy from trusted code. This is professional defence in depth, and it is not the whole of branch
+protection: `main` requires a pull request and the owner's approval but no check, and on every flow
+branch the administrator keeps a logged bypass. Nothing in this repository claims more server-side
+control than the five checked-in rulesets apply.
 
 ### Live configuration that no file in this repository holds
 
-The four rulesets have checked-in definitions. Four other live controls have none, and they are the ones
+The five rulesets have checked-in definitions. Four other live controls have none, and they are the ones
 worth naming explicitly, because [`../../scripts/check-branch-workflow-policy.rb`](../../scripts/check-branch-workflow-policy.rb)
 freezes **files** — a setting changed in the web UI is not a diff, produces no red check, and is
 invisible to every gate this repository owns.
@@ -722,19 +744,44 @@ that are at risk of it.
 Rebase-merge is **disabled** at the repository level. It is the one button that quietly produces a
 history nobody chose.
 
-### Reviewing your own PR
+### The owner approves every PR — on evidence
 
-There is one developer, so the substitutes are the control, not a formality —
+Nothing merges into `development`, `staging` or `main` without the owner's approval — §3's
+`code-owner-review` ruleset enforces it, and every pull request is assigned to the owner so none
+waits unseen. The owner approves on **evidence**, not on a description: before a pull request is
+handed over, it is run against the emulators and a comment posted by `just evidence` shows each
+step working, with screenshots, and names the exact commit validated. A pull request that changes
+nothing at runtime gets the same comment saying `Runtime change: none` and why. The
+[`validate-pr`](../../.claude/skills/validate-pr/SKILL.md) skill is the procedure and
+[workflow §4.12](02-development-workflow.md) the sequence. The screenshots live on
+`refs/evidence/pr-<n>`, outside the branches, so no clone downloads them and no squash lands them
+on `development`. How the approval is given depends on who opened the pull request, because GitHub never
+lets an author approve their own:
+
+| Opened by | What the owner does | What GitHub records |
+|---|---|---|
+| **Dependabot**, or any contributor | read the diff, then **Review changes → Approve**; merge, or tell an agent to run `just merge <n>` | an approving review — the gate is satisfied, no bypass |
+| **The owner** — by hand, or by an agent working under the owner's account | read the diff and the evidence, then merge it yourself on GitHub: **Squash and merge**, tick **Merge without waiting for requirements to be met (bypass rules)** — only when every required check is green — and confirm. `just merge <n>` checks all of that first and stops with exit 3, **NOT MERGED**; it never makes the click | a bypass of `code-owner-review` alone — the deliberate merge is the approval |
+| **A promotion** (`development → staging`, `staging → main`) | the same, with **Create a merge commit** — never squash a promotion. `just promote-merge <n>` verifies first and stops the same way | the same bypass, on a merge commit |
+
+**An agent never gives that approval.** It opens pull requests, posts the evidence, and stops. It
+never submits a review — `gh pr review` is denied to Claude Code and forbidden to Codex — and it
+runs `just merge` or `just promote-merge` only when the owner asks for that pull request in the
+conversation, with both clients stopping for the owner's confirmation even then. Neither recipe
+merges the owner's own pull request, and no recipe passes `--admin`:
+[`scripts/check-justfile-policy.py`](../../scripts/check-justfile-policy.py) fails if one does,
+because every pull request an agent opens is the owner's own to GitHub, and a recipe that bypassed
+would let an agent merge its own work unapproved. GitHub cannot tell an agent from the owner whose
+credentials it holds, so this line is held by the recipes and the agents' reviewed settings, not by
+the ruleset.
+
+There is still one developer, so the substitutes are the control, not a formality —
 [workflow §7](02-development-workflow.md). In GitHub terms, two habits do most of the work:
 
 - **Open the PR, then walk away.** Read the diff in the GitHub UI the next morning. The diff
   reads differently there than in your editor, which is the entire point.
 - **Leave review comments on your own PR**, and resolve them. A comment you wrote and answered is
-  a decision with a record. A thought you had and forgot is a bug in three weeks.
-
-`CODEOWNERS` records intended ownership. The enforced review path does not depend on automatic
-assignment or a CODEOWNERS review requirement; treat it as maintained governance metadata, not
-evidence that a review occurred.
+  a decision with a record — and `code-owner-review` refuses the merge while one is unresolved.
 
 ---
 
@@ -1017,8 +1064,8 @@ Honest list, same spirit as [workflow §17](02-development-workflow.md).
 
 | Not set up | Why, and what closes it |
 |---|---|
-| Required checks or a required pull request on `main` | **The ruleset itself landed 10 September 2026** — `main-append-only` refuses deletions and force pushes, and needs no status check to do it. What is still absent is a `pull_request` rule and required contexts, because main's `ci.yml` predates four of the six, so a `hotfix/*` branch cut from it would wait forever on checks that never report. Closed by a promotion carrying the current `ci.yml`, then extending the checked-in [`main-append-only.json`](../../.github/rulesets/main-append-only.json) |
-| Required reviewers | no ruleset requires an approval, and none can: a sole developer cannot approve their own pull request, so `required_approving_review_count` is `0` everywhere. `CODEOWNERS` stays maintained metadata rather than a merge control. Six checks *are* required on `development` and `staging`, subject to a logged administrator bypass — §3 |
+| Required checks on `main` | `main-append-only` refuses deletions and force pushes (10 September 2026), and `code-owner-review` has required a pull request and the owner's approval there since 20 October 2026. Required contexts are still absent, because main's `ci.yml` predates four of the six, so a `hotfix/*` branch cut from it would wait forever on checks that never report. Closed by a promotion carrying the current `ci.yml`, then extending the checked-in [`main-append-only.json`](../../.github/rulesets/main-append-only.json) |
+| A second, independent reviewer | one approval is required on every flow branch since 20 October 2026, and it is the owner's — §3, §6. GitHub forbids self-approval, so the owner's own pull requests merge through the logged bypass and carry no review by a second person; with one developer there is no second person to give one. Closed the day a second collaborator with write access exists — `CODEOWNERS` already routes review to a code owner |
 | GitHub Discussions | off. With one developer it is a second inbox. Turn it on when there are pilot merchants with questions |
 | Wiki / Pages publication | no publication workflow is configured, and none is wanted: a wiki is editable with no pull request and `check-doc-links.py` would not gate it, which would put a hole in the discipline the rest of the doc set depends on. Engineering docs stay versioned and reviewed with the code — §10 |
 | A checked-in definition of the four rulesets | **partly closed.** [`.github/rulesets/`](../../.github/rulesets/) now carries the applicable configuration of each live ruleset, normalized to the payload the API accepts back, so the configuration can be diffed and restored by hand — the commands are in its README, and all four matched live on 10 September 2026, when the diff loop was last run. What is still missing is enforcement of that agreement: no gate runs the diff, so drift is detectable rather than prevented, and the payloads have not been round-tripped. `scripts/gh-protect.sh` still refuses and exits 3 because it predates the rulesets API; rewriting it to apply these files, with the negative tests `scripts/test-gh-setup.sh` requires, is the remaining work. Note issue #115 is **closed** — it tracked "no ruleset exists", which the rulesets settled; the diff-and-restore half it also named outlived it, which is why this row does not point at it |

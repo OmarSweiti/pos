@@ -258,6 +258,35 @@ class SettingsContract(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("protected-path and secret denies", result.stderr)
 
+    def test_missing_review_deny_is_rejected(self) -> None:
+        changed = copy.deepcopy(SETTINGS)
+        changed["permissions"]["deny"].remove("Bash(gh pr review *)")
+        temporary, root = self.fixture(changed)
+        with temporary:
+            result = validate(root)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("protected-path and secret denies", result.stderr)
+
+    def test_every_merge_confirmation_is_required(self) -> None:
+        for rule in SETTINGS["permissions"]["ask"]:
+            with self.subTest(rule=rule):
+                changed = copy.deepcopy(SETTINGS)
+                changed["permissions"]["ask"].remove(rule)
+                temporary, root = self.fixture(changed)
+                with temporary:
+                    result = validate(root)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("confirmation of every merge command", result.stderr)
+
+    def test_missing_ask_list_is_rejected(self) -> None:
+        changed = copy.deepcopy(SETTINGS)
+        del changed["permissions"]["ask"]
+        temporary, root = self.fixture(changed)
+        with temporary:
+            result = validate(root)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("confirmation of every merge command", result.stderr)
+
     def test_malformed_project_settings_are_blocked(self) -> None:
         temporary, root = self.fixture()
         with temporary:

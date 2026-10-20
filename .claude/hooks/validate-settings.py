@@ -111,6 +111,19 @@ REQUIRED_PERMISSION_DENIES = {
     "Read(~/Library/Keychains/**)",
     "Read(~/Library/Application Support/1Password/**)",
     "Read(~/Library/Application Support/Bitwarden/**)",
+    # A review submitted under the owner's credentials is the owner's approval,
+    # forged: the code-owner-review ruleset cannot tell an agent from the owner.
+    "Bash(gh pr review *)",
+}
+# Merging needs the owner's approval, and the owner's confirmation of the exact
+# command is how an agent merges at all. An explicit ask rule prompts even in
+# auto mode; dropping one would let an agent merge unasked.
+REQUIRED_PERMISSION_ASKS = {
+    "Bash(gh pr merge *)",
+    "Bash(just merge)",
+    "Bash(just merge *)",
+    "Bash(just promote-merge)",
+    "Bash(just promote-merge *)",
 }
 SKILL_CONTRACTS = {
     "add-migration": (
@@ -125,6 +138,12 @@ SKILL_CONTRACTS = {
         "documentation/runtime",
         "uniquely named scratch database",
         "just guards",
+    ),
+    "validate-pr": (
+        "Validate the exact head",
+        "No real customer data, no PIN, no card number, no token or key",
+        "Never claim a check that did not run",
+        "never approves or merges the pull request",
     ),
 }
 
@@ -213,6 +232,14 @@ def project_errors(settings: dict[str, Any]) -> list[str]:
         or not REQUIRED_PERMISSION_DENIES.issubset(set(deny))
     ):
         errors.append("the project-anchored protected-path and secret denies are required")
+
+    ask = nested(settings, "permissions", "ask")
+    if (
+        not isinstance(ask, list)
+        or not all(isinstance(rule, str) for rule in ask)
+        or not REQUIRED_PERMISSION_ASKS.issubset(set(ask))
+    ):
+        errors.append("the owner's confirmation of every merge command is required")
     if isinstance(deny, list) and any(
         isinstance(rule, str)
         and rule.startswith(("Write(", "MultiEdit(", "NotebookEdit("))

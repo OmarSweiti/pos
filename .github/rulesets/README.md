@@ -14,6 +14,7 @@ ruleset, normalized to the payload shape the API accepts back.
 | [`staging-promotion.json`](staging-promotion.json) | `refs/heads/staging` | as above, but **merge commit only** — the first server-side guard against the squashed promotion that forked the branches once |
 | [`main-append-only.json`](main-append-only.json) | `refs/heads/main` | `deletion` and `non_fast_forward` only. **No required checks and no required pull request** — those two rules need none, so they could be applied while main's `ci.yml` still predates four of the six required jobs |
 | [`tags-v-append-only.json`](tags-v-append-only.json) | `refs/tags/v*` | `update` and `deletion` blocked with **no bypass actor at all**, so it binds the maintainer too |
+| [`code-owner-review.json`](code-owner-review.json) | `development`, `staging`, `main` | every pull request needs **one approving review from a code owner**; a new push dismisses it; every review thread must be resolved. It also makes `main` pull-request-only, which `main-append-only` alone did not |
 
 `branches/main/protection` answers `404 Branch not protected`. That is the
 *legacy* protection API and it cannot see a ruleset — it is not evidence that
@@ -78,6 +79,53 @@ one promotion at a time, from a single branch. There is no race on `staging` to
 protect against, so strict there costs a mandatory back-merge and prevents
 nothing.
 
+## Why approval is its own ruleset
+
+`code-owner-review` was applied on **20 October 2026**, when the owner asked that
+no pull request merge without their approval, Dependabot's included. It is
+deliberately separate from the three branch rulesets, and the reason is the one
+fact that shapes everything else here: **GitHub never lets an author approve their
+own pull request.**
+
+So the gate binds differently by author, and both halves are intended:
+
+- **Anyone else's pull request** — Dependabot's, a contributor's — needs the owner's
+  approving review. `CODEOWNERS` maps every path to the owner, so GitHub requests
+  that review automatically, and nothing but the approval satisfies the rule.
+- **The owner's own pull request** — and that includes every one an agent opens,
+  because agents work under the owner's account — can never be approved. It
+  merges through the administrator's `pull_request` bypass, and that deliberate
+  merge **is** the owner's approval. GitHub records it as a bypass event.
+
+That second case is why the approval lives here and not in `development-flow`.
+A bypass is recorded per ruleset, so the owner's routine merge of their own green
+pull request bypasses `code-owner-review` and nothing else: `development-flow`
+evaluates as passed. A bypass of `development-flow` or `staging-promotion` still
+means what it meant before — a merge with a required check red — and stays
+distinguishable in rule insights instead of being buried under every ordinary
+merge. Folding the approval into the branch rulesets would have made every merge
+a bypass of the check wall too.
+
+The parameters, and why each is set the way it is:
+
+| Parameter | Value | Why |
+|---|---|---|
+| `required_approving_review_count` | `1` | one owner; one approval is the whole of the available review |
+| `require_code_owner_review` | `true` | the approval must come from a code owner — today the owner, and still the owner the day a second collaborator with write access arrives |
+| `dismiss_stale_reviews_on_push` | `true` | an approval covers the diff that was read. A push that changes it, including a Dependabot rebase that moves the lockfile, needs approving again |
+| `required_review_thread_resolution` | `true` | a question the owner asked in review is answered before the merge, not after it |
+| `require_last_push_approval` | `false` | with one person it only ever bites the owner: a fix-up the owner pushes onto a Dependabot branch would make that pull request unapprovable by the only approver |
+| `require_extra_approval_for_unattributed_changes` | `true` | GitHub's default. Per [GitHub's rules reference](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets), it adds one approval to a pull request **Copilot** opens under its own app identity without a person attributed, and does nothing when zero approvals are required. Nothing here uses Copilot's coding agent, so it is inert — and if one ever opens a pull request, demanding a second approval is the right answer |
+| `allowed_merge_methods` | `merge`, `squash` | the union the flow uses; GitHub applies the most restrictive layer, so `staging` stays merge-commit-only through `staging-promotion` |
+
+Two limits, stated plainly. The rule binds **identities**, not people: an agent
+holding the owner's credentials is indistinguishable from the owner to GitHub, so
+what stops an agent approving or bypass-merging is the agent's own reviewed
+settings — `.claude/settings.json` and `.codex/rules/safety.rules` — and not this
+file. And `main` gains a pull-request requirement here but still requires **no
+status check**; that wall arrives with the promotion that carries the current
+`ci.yml` onto it.
+
 ## What the tag ruleset does not do
 
 `tags-v-append-only` has exactly two rules, `deletion` and `update`, and an
@@ -119,10 +167,12 @@ To update an existing one in place, `PUT` to `repos/:owner/:repo/rulesets/<id>`.
 
 ## What is NOT claimed here
 
-- **These payloads have not been round-tripped against this repository.** They are
-  normalized *from* the live API and are the documented POST shape, but no restore
-  has been executed, so treat a first restore as a change to review rather than a
-  known-good replay.
+- **Four of these payloads have not been round-tripped against this repository.**
+  They are normalized *from* the live API and are the documented POST shape, but no
+  restore has been executed, so treat a first restore as a change to review rather
+  than a known-good replay. `code-owner-review.json` is the exception: it was
+  created on 20 October 2026 by POSTing this exact file, and the diff loop above
+  read it back identical.
 - **Nothing keeps these files and the live configuration in agreement.** No gate
   runs the diff above. Drift is detectable, not prevented — the check reaches the
   network, so it belongs in a job that already does, not in the local gate.
