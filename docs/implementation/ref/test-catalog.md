@@ -31,7 +31,7 @@ Nothing mechanically reconciled this matrix against the test suite, so the Phase
 | # | Case | Test | Ph | Kind |
 |---|---|---|---|---|
 | 1 | Power cut mid-`Finalizing` | `interrupted_finalize_resumes_without_double_stock_event`, `interrupted_finalize_resumes_without_double_outbox_row`, `finalize_is_atomic_under_injected_failure` | 1 | integration |
-| 1b | **Real** power loss after the receipt printed | **post-receipt power-cut drill**, on register hardware, with the power actually cut. Case 1's `pkill -9` cannot test this: killing the process leaves the OS page cache alive, so the writes land whether synchronous is NORMAL or FULL. Enforced by synchronous = FULL **in WAL**; `pos_db::open` asserts both and refuses otherwise (`the_register_runs_in_wal_mode`, `a_register_database_commits_durably`) | 1 | drill |
+| 1b | **Real** power loss after the receipt printed | **post-receipt power-cut drill**, on register hardware, with the power actually cut — on the reference register at milestone 5.8 (5.8.4), because no register is bought before it; until then the Phase-1 exit gate's virtual-machine hard stop proves the write ordering, not the disk. Case 1's `pkill -9` cannot test this: killing the process leaves the OS page cache alive, so the writes land whether synchronous is NORMAL or FULL. Enforced by synchronous = FULL **in WAL**; `pos_db::open` asserts both and refuses otherwise (`the_register_runs_in_wal_mode`, `a_register_database_commits_durably`) | 1 / 5 | drill |
 | 2 | Power cut during card `Tendering` | `unknown_triggers_status_query_before_any_retry`, `status_query_approved_attaches_tender` | 2 | unit |
 | 2b | Card **approved**, then power cut before the sale commits — the money moved and no document exists | `an_interrupted_tendering_is_recovered_and_status_queried`, `a_checkout_operation_row_never_outlives_its_commit`. Recovery needs durable in-flight state; the protocol unit tests in case 2 assert the state machine, not the restart | 1 / 2 | integration |
 | 3 | App killed with parked carts | `prop_park_resume_roundtrip_is_identity`, `parked_carts_survive_restart` | 1 | prop |
@@ -153,8 +153,8 @@ Nothing mechanically reconciled this matrix against the test suite, so the Phase
 | 50 | Drawer jammed/open at shift close | `jammed_drawer_does_not_block_shift_close` | 2 | unit |
 | 85 | **No printer at all** — unplugged at shift open, or dead at 09:00 on a Saturday. The set handled paper running out mid-receipt and never handled the printer being absent | `a_sale_completes_with_no_printer_and_queues_the_artifact`, `the_missing_printer_is_an_alarm_not_a_modal`, `a_queued_artifact_prints_unchanged_once_a_printer_returns` | 1 | integration |
 | | | ❓ **Open.** The tests encode the default below | | |
-| 93 | A receipt taller than the printer accepts in one raster command — 2303 dot rows on an Epson TM-T20III, about 29 cm of paper | 🧩 **Deferred with a hook — 1.7.9**, which sends a taller page in strips at its profile's limit and names its tests in the pull request that builds it, which turns this row into a tested one | 1 | unit + drill |
-| 94 | A barcode scanned while Windows is on the Arabic keyboard layout — Latin letters in the code arrive as Arabic ones, so a Code 128 or QR value becomes a *different* code | 🧩 **Deferred with a hook — 1.11.6b**, which decodes a recognised burst by physical key and names its tests in the pull request that builds it; the scanner row of the device matrix is the device half | 1 | web + drill |
+| 93 | A receipt taller than the printer accepts in one raster command — 2303 dot rows on an Epson TM-T20III, about 29 cm of paper | 🧩 **Deferred with a hook — 1.7.9**, which sends a taller page in strips at its profile's limit and names its tests in the pull request that builds it, which turns this row into a tested one; its paper half — a receipt printed whole on a TM-T20III — is milestone 5.8's (5.8.3) | 1 / 5 | unit + drill |
+| 94 | A barcode scanned while Windows is on the Arabic keyboard layout — Latin letters in the code arrive as Arabic ones, so a Code 128 or QR value becomes a *different* code | 🧩 **Deferred with a hook — 1.11.6b**, which decodes a recognised burst by physical key and names its tests in the pull request that builds it; the device half — the scanner row of the matrix — is milestone 5.8's (5.8.3) | 1 / 5 | web + drill |
 
 > ⚠️ **OPEN — blocks 2.7.0.** May a fiscally-enabled store trade when it cannot print, given that the cleared QR must appear on the document handed to the customer? Default until answered: the sale completes, the artifact is persisted and queued, and the register raises an alarm — never a refusal to sell, because a printer fault is not a reason to close a shop. Owner: 2.7.0, with the merchant-facing choice recorded in [`merchant-decisions.md`](merchant-decisions.md). Source that settles it: the official ISTD guidance on document issuance, and the merchant's tax advisor in writing.
 
@@ -352,15 +352,16 @@ The fiscal goldens cannot be frozen before microstep 2.7.0 pins the specificatio
 
 ## Drills — manual, documented, timed
 
-Not tests. Procedures, performed on real hardware, written down, and repeated by someone who did not write the code.
+Not tests. Procedures — performed on real hardware, or before milestone 5.8 on the emulators of [`hardware-and-receipts.md`](hardware-and-receipts.md) §6b, which the record then names — written down, and repeated by someone who did not write the code.
 
-**A drill produces a record or it did not happen.** Each run is a dated file — the drill, the commit or tag it ran against, the hardware, the operator's name, start and end time, elapsed, outcome, and any surprise plus the case number it became. "Signed off and dated" needs somewhere to be signed, and a normative reference document is not a log.
+**A drill produces a record or it did not happen.** Each run is a dated file — the drill, the commit or tag it ran against, the hardware or, before 5.8, the emulators and their profile versions, the operator's name, start and end time, elapsed, outcome, and any surprise plus the case number it became. "Signed off and dated" needs somewhere to be signed, and a normative reference document is not a log.
 
 | Drill | Ph | Proves |
 |---|---|---|
 | Card reconciliation | 2 | tenders match the PSP ledger by `psp_ref`, to the fil |
 | Blind-Z | 2 | a scripted day with drops, paid-outs and a safe movement balances to zero |
-| Hardware lab | 2, then every release | Arabic on paper and on screen, confirmed by a native reader |
+| Hardware lab | 2 against the emulators; 5.8, and every release after it, on the matrix's devices | Arabic on paper and on screen, confirmed by a native reader — on paper from 5.8 |
+| Hardware qualification | 5.8, before the pre-pilot gate | every class the pilot uses meets a physical device; every profile it depends on is confirmed, or corrected from a capture; the first matrix rows exist |
 | Restore — data loss | 5 | unsynced sales survive a wipe; **the time is the merchant's downtime promise** |
 | Restore — keychain loss | 5 | E.4 end to end |
 | Restore — recovery code only | 5 | E.4d: the database and the credential-store entry are both destroyed, and the off-machine backup opens with the printed recovery code alone. This is the drill the old design could not pass |

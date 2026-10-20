@@ -273,7 +273,7 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just guards` | the write guards **and** the git hooks still refuse what they must |
 | `just build-web` | require a build script in all five workspace packages, then `pnpm -r build` — **the only place `tsc` runs** |
 | `just pre-push` | `lint` + `test` + `build-web` + `guards` + `secrets`, the all-ref scan. Not the same gate as `.githooks/pre-push`, which Git runs on a push and which scans only the commits being published |
-| `just bench-gate [budget]` | conventions §7's absolute limits and §7.1's regression rule. **Refuses today** — no reference register exists, so both hardware records are blank; deliberately not part of `pre-push` |
+| `just bench-gate [budget]` | conventions §7's absolute limits and §7.1's regression rule. **Refuses until milestone 5.8** — no device is bought before it, so both reference-register records are blank and 1.12.3 watches budgets relatively until then (conventions §7.2); deliberately not part of `pre-push` |
 | `just branch <name>` | fresh `development`, then a branch off it — **needs a clean tree** (§4.2) |
 | `just pr [title] [body-file] [milestone]` | gates → push → PR into `development` → watch CI. Pass the title on a branch with more than one commit (§4.12); the milestone is derived from a `phase-<0-5>/` branch name |
 | `just merge [pr]` | work PR only: validate route/state, watch exact checks, re-read both tips, atomically match the reviewed head, squash and delete the branch |
@@ -287,8 +287,8 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 Not yet recipes, and the microstep that creates each: `just seed` (1.12.1) · `just fuzz` and its
 first target (1.2.8) · `just test-soak` and the `soak` nextest profile (2.9.6) · the TS type
 generation gate (conventions §13). `just bench-gate` arrived with 1.2.0 and enforces nothing yet:
-its budgets land at 1.2.7, 1.4.9, 1.6.2 and 1.11.13, its measurement job at 1.12.3, and it refuses
-every run until 1.2.0's deferred half fills the reference-register records.
+its benchmarks land at 1.2.7, 1.4.9, 1.6.2 and 1.11.13, its relative CI comparison at 1.12.3, and it
+refuses every run until 1.2.0's deferred half fills the reference-register records at milestone 5.8.
 
 After 2.9.6 lands, **`just test` has a runtime budget: under three minutes on the reference
 machine**, and suites that exceed it belong in the `soak` profile. Until then the default command
@@ -854,8 +854,13 @@ Three rules follow, and they are the ones that get skipped:
    update, and it carries the same confirmation.
 
 Real hardware has its own checklist — [`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md)
-§2.1 for Arabic rasterisation, and the lab checklist for paper, cutters, and drawer wiring. Arabic on
-a thermal printer is never proven by a simulator; print it on paper before believing it.
+§2.1 for Arabic rasterisation, and the lab checklist for paper, cutters, and drawer wiring. **No
+device is bought before milestone 5.8** (§6b of the same reference), so until then the manual pass
+drives the emulators — `just printer-emulator <profile>` (1.7.12) for a receipt you can read as an
+image, the wedge emulator (1.11.6c) for scans, the register-screen profiles (1.11.14b) for the
+panel — and a finding there is a finding like any other. Arabic on a thermal printer is still never
+proven by a simulator: the emulator's image is the rasteriser's own, and 5.8.4 prints every golden
+on paper before a customer sees one.
 
 ### 5.6 Drive the server by hand
 
@@ -969,7 +974,8 @@ docs/drills/
 └── YYYY-MM-DD-<drill>.md          one per run
 ```
 
-Each carries: the drill, the commit SHA or tag it ran against, the hardware, **the operator's name**
+Each carries: the drill, the commit SHA or tag it ran against, the hardware — or, before milestone 5.8, each emulator and
+the profile versions it ran — **the operator's name**
 (Phase 5 requires someone who did not write the code), start and end time, elapsed, the outcome, and
 any surprise plus the case number it became. `.github/ISSUE_TEMPLATE/05-drill-result.yml` is the same
 form, so it can be filed from a phone in the lab.
@@ -1263,24 +1269,29 @@ version you did not expect.
 ## 11 · Performance — measured, not asserted
 
 Four budgets, from conventions §7. Microstep 1.2.0 created the recipe that **fails the build on
-regression**, and 1.12.3 adds the live reference-register CI job, which does not exist yet. The
-recipe refuses every run today: no register has been bought, so §6a.1's matrix and
-`benchmarks/reference-register.toml` are both blank and §7.1 accepts no baseline against a blank
-record. A budget without that failing command is a wish, because `cargo bench` exits 0 whatever it
+regression**, and 1.12.3 defines the live reference-register CI job, which 5.8.2 switches on. The
+recipe refuses every run until then: no device is bought before milestone 5.8
+([`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6b), so §6a.1's matrix and
+`benchmarks/reference-register.toml` stay blank and §7.1 accepts no baseline against a blank
+record. **Until then budgets are watched, not met**: 1.12.3's hosted job compares each pull
+request's head with its base on one runner, fails a significant regression, and claims no number
+(conventions §7.2). A budget without a failing command is a wish, because `cargo bench` exits 0 whatever it
 measures — and a budget whose machine does not exist is not measured at all.
 
-| Budget | Limit | Tool | Measured on | Lands at |
+| Budget | Limit | Tool | Measured on | Benchmark · proven at |
 |---|---|---|---|---|
-| Scan → line on screen | < 100 ms | packaged-app WebDriver trace + hardware simulator | the reference register | 1.11.13 |
-| Cart total recompute, 200 lines | < 16 ms | `criterion` | the reference register | 1.4.9 |
-| Search-as-you-type, 50k SKUs | < 50 ms | `criterion` over the seed fixture | the reference register | 1.2.7 |
-| Cold start → sellable | < 3 s | packaged-app smoke timer (2.9.5) | the reference register | 2.9.3 |
+| Scan → line on screen | < 100 ms | packaged-app WebDriver trace + hardware simulator | the reference register | 1.11.13 · 5.8.2 |
+| Cart total recompute, 200 lines | < 16 ms | `criterion` | the reference register | 1.4.9 · 5.8.2 |
+| Search-as-you-type, 50k SKUs | < 50 ms | `criterion` over the seed fixture | the reference register | 1.2.7 · 5.8.2 |
+| Cold start → sellable | < 3 s | packaged-app smoke timer (2.9.5) | the reference register | 2.9.3 · 5.8.2 |
 
 **"The slowest supported hardware" is not a machine.** Conventions §7 names one reference register —
 the lowest-spec device on the merchant's supported hardware list (section G of the questionnaire) —
 and every number above is measured there. A hosted CI runner varies well beyond 20% on a 16 ms
 workload, so a budget gated on a runner fails randomly, and §17's own prediction comes true: an
-unstable benchmark gets disabled within a month.
+unstable benchmark gets disabled within a month. 1.12.3's relative job is not that: it compares two
+revisions inside one job on one runner, so the variance between runs never enters the comparison —
+and it still earns required status only after a month without a false alarm.
 
 **The baseline is a file, and moving it is a commit.** `benchmarks/baselines/<budget>.json` is
 committed; it changes only in a `perf(...)` commit whose body pastes the measurement. `just
@@ -1611,11 +1622,15 @@ What is **not** ready, and must be before anything reaches a machine you do not 
 
 Before publishing a draft, three things that are files rather than memories:
 
-- **The hardware-lab record for this tag exists in `docs/drills/`** — a golden file proves bytes;
-  only paper proves a receipt, and only a dated record proves the paper was looked at.
+- **The hardware-lab record for this tag exists in `docs/drills/`** — before milestone 5.8 an
+  emulator run, which no merchant release may rely on; from 5.8 on, a run on the matrix's devices. A
+  golden file proves bytes; only paper proves a receipt, and only a dated record proves the paper was
+  looked at.
 - **The migration duration against the soak dataset is recorded** for this release, so the trend is
   visible before it crosses the 60-second budget (5.5.3).
-- **`just bench-gate` passed on the reference register**, not on a hosted runner.
+- **`just bench-gate` passed on the reference register**, not on a hosted runner — from milestone
+  5.8 on. Before it, 1.12.3's relative comparison is green and the release notes say that no
+  absolute budget is claimed.
 
 Version discipline: `0.x` while pre-pilot; the minor number moves with a phase gate, the patch with
 a fix. A bad build is a new patch, never a moved tag. The workflow refuses unsigned annotated and
@@ -1637,7 +1652,7 @@ These are the smallest set that actually works.
 | **Per group** | PR into `development`, CI, squash-merge, delete the branch, close the doc loop, run the §5.9 smoke |
 | **Per candidate** | `just flow`, then promote `development → staging` with the promotion template's evidence filled in honestly, tag `-rc.<n>`, and install it somewhere real |
 | **Weekly** | re-read the phase's group graph. Is the order still right? Then the board's **Blocked** view — `gh issue list --label "needs: merchant answer"`. Anything blocked for a week is a risk, not a task. Then **confirm the three scheduled lanes actually ran** — the commands are below the table |
-| **Per phase** | the exit gate, in full, including the demonstrations. Then re-read the risk register in [`00-master-plan.md`](00-master-plan.md) §6 — every row has a **review date** for exactly this moment — the long-lead register in §6a, the open items in §4a.3, and the accepted risks in [`ref/sync-protocol.md`](ref/sync-protocol.md). Run `just bench-gate` after 1.2.0; from Phase 2 onward, run `just test-soak` only after 2.9.6 creates it |
+| **Per phase** | the exit gate, in full, including the demonstrations. Then re-read the risk register in [`00-master-plan.md`](00-master-plan.md) §6 — every row has a **review date** for exactly this moment — the long-lead register in §6a, the open items in §4a.3, and the accepted risks in [`ref/sync-protocol.md`](ref/sync-protocol.md). Run `just bench-gate` once 5.8.2 has filled the reference register, and read 1.12.3's relative results before it; from Phase 2 onward, run `just test-soak` only after 2.9.6 creates it |
 | **Quarterly** | the validation re-audit (§14), and re-diff the pinned ISTD manifest against the current official package in the same pass |
 
 ### The weekly schedule-recency check
@@ -1703,8 +1718,8 @@ it.
 | Gap | Closed by |
 |---|---|
 | `just seed` does not exist; there is no fixture, so every manual test is ad-hoc | 1.12.1 |
-| `just bench-gate` exists and refuses, but there is still no benchmark and no committed baseline, so **no budget is enforced anywhere** and `cargo bench` alone cannot enforce one | budgets 1.2.7, 1.4.9, 1.6.2, 1.11.13; measurement job 1.12.3 |
-| **No reference register has been bought**, so "the slowest supported hardware" has no machine behind it, `ref/hardware-and-receipts.md` §6a.1's table has no row, `benchmarks/reference-register.toml` is blank, and the gate refuses every baseline | the deferred half of 1.2.0, on hardware ordered before group 1.7; the remaining device classes at 2.9.4 |
+| `just bench-gate` exists and refuses, but there is still no benchmark and no committed baseline, so **no budget is enforced anywhere** and `cargo bench` alone cannot enforce one | benchmarks 1.2.7, 1.4.9, 1.6.2, 1.11.13 and the relative job 1.12.3; the absolute budgets at 5.8.2 |
+| **No reference register has been bought**, so "the slowest supported hardware" has no machine behind it, `ref/hardware-and-receipts.md` §6a.1's table has no row, `benchmarks/reference-register.toml` is blank, and the gate refuses every baseline | milestone 5.8, by design — no device is bought before it: 1.2.0's deferred half at 5.8.2, and every other device class at 5.8.3 |
 | `pos-db` is not wired into the terminal yet, so `just db-local-reset` currently has nothing to delete | 1.8.x persistence |
 | TS types are hand-written in `packages/api-types`; no `ts-rs` generation into `src/ipc/`, no CI drift gate | conventions §13, with the first real IPC surface |
 | No i18n catalog lockstep test, and no message catalog to test | 1.11.1 |
