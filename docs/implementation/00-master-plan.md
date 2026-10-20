@@ -81,7 +81,7 @@ Blueprint Part 10 and master-plan Part G, reconciled with the corrections, the g
 | **2** | **2.7.0: obtain and pin the official ISTD specification** · card terminal + the `Unknown` protocol · refunds/returns/exchanges + minimal store credit · shifts, cash locations, X/Z · **the fiscal pipeline** · electronic journal · diagnostics · packaged-app smoke suite | …take cards that reconcile, handle returns without being defrauded, close a shift that balances | 14 demonstrations + drills |
 | **3** | sync push/pull · **chaos convergence** · customers & loyalty under PDPL · back office with real human authentication · **multi-tenant isolation** · device provisioning · licensing · Sentry · **operating the server** | …run more than one register, administer centrally, keep customers | 15 demonstrations |
 | **4** | price lists · receiving + WAC · counts · transfers · **promotions** · supplier tax invoices and filing periods · report suite · **shelf labels** · multi-store · **the pre-pilot gate** | …run three stores with promotions and full inventory | the pre-pilot gate, then 10 demonstrations and a three-store pilot week |
-| **5** | soak · **Fiscal Certification** · PDPL registration walkthrough · PCI SAQ · restore drills · signing · the update service · onboarding · **commercial and legal readiness** | **…be sold to someone who is not you** | 13 items, of which the last is: someone else installs, provisions, and sells from the docs alone |
+| **5** | soak · **hardware qualification**, pulled in front of the pilot · **Fiscal Certification** · PDPL registration walkthrough · PCI SAQ · restore drills · signing · the update service · onboarding · **commercial and legal readiness** | **…be sold to someone who is not you** | 13 items, of which the last is: someone else installs, provisions, and sells from the docs alone |
 
 **Effort, and why it is falsifiable.** The old estimate — 40–52 weeks — priced Phase 1 at 8–12 weeks
 for 87 microsteps, in the only phase whose author is learning the language, and then asserted that
@@ -97,14 +97,14 @@ concordance heading while counting its executable `1.1.2a` and `1.1.2b` children
 | 2 | 62 | **10–13** | 4.8–6.2 / week |
 | 3 | 45 | **11–14** | 3.2–4.1 / week |
 | 4 | 42 | **9–12** | 3.5–4.7 / week, plus the pilot week |
-| 5 | 36 | **9–13** | 2.8–4.0 / week, and gated on other people |
+| 5 | 40 | **11–16** | 2.5–3.6 / week, and gated on other people |
 
 Phase 1's rate is the highest and that is deliberate, not optimism: its microsteps are the finest in
 the set — many are a single type, a single trigger or a single test — and its 1A/1B split makes a
 slip visible at week 9 rather than at the final gate. Phases 3 and 5 carry the lowest rates because
 their work waits on a host, a QSA, counsel, an acquirer and a merchant.
 
-**Total: roughly 54–73 weeks solo**, a range and not a commitment. Record the actual per-microstep
+**Total: roughly 56–76 weeks solo**, a range and not a commitment. Record the actual per-microstep
 cycle time over the first two groups and correct this table from evidence; an estimate nobody
 revises against measurement is a decoration. Nothing in it prices the long-lead items in §6a — those
 are queue time, not effort, and they are why several of them are ordered phases before they are used.

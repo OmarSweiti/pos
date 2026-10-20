@@ -136,7 +136,7 @@ docs/implementation/
 ├── phase-2-money-grade.md         cards · refunds · fiscal     10–13 weeks
 ├── phase-3-connected.md           sync · back office · CRM     11–14 weeks
 ├── phase-4-depth.md               promos · supply · reports     9–12 weeks
-├── phase-5-harden-and-launch.md   certification · launch        9–13 weeks
+├── phase-5-harden-and-launch.md   certification · launch       11–16 weeks
 │
 └── ref/
     ├── plan-validation.md         the audit of record + every source

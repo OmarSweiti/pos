@@ -186,6 +186,7 @@ Per promotion **version**: transactions, units moved, discount given, gross befo
 ### 4.6.1 — Label templates and printing
 **Files:** `crates/pos-hardware/src/render/label.rs` (new)
 Reuse the Phase-1 raster pipeline: Arabic name, price, barcode, unit price where applicable. Two or three sizes.
+**Its device profile and conformance run arrive with it** ([`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6b): the label printer's command language decides whether 1.7.12's emulator extends to it or a second one is written. A physical label printer is in milestone 5.8's set, because this phase's exit prints labels on one.
 **Tests:** `golden_label_ar_is_byte_stable`
 
 ### 4.6.2 — The reprint worklist
@@ -318,8 +319,9 @@ Server-side remaining-refundable enforcement whenever connected (E.31). The offl
 | 8 | **The retention matrix is agreed** with the accountant, with its legal-hold rule | 5.3.4 |
 | 9 | **Server operations are real** — a tested restore, alerts that reach a person, and a stated on-call expectation the merchant has been told | group 3.10 |
 | 10 | **The cashier guide exists in Arabic** and has been read by a cashier who is not you | 5.6.3, started at the Phase-1 gate |
+| 11 | **The hardware qualification gate has passed** — every device class the pilot uses has a matrix row with a qualifying commit, every absolute performance budget holds on the reference register, and the lab checklist and the physical drills are dated records. No device was bought before it, so nothing else stands between an emulator and a customer | milestone 5.8, pulled forward |
 
-**Done when:** `docs/compliance/pre-pilot.md` carries all ten with a date and a name against each. A breach, a subject request or a card dispute arriving before these exist is one the merchant cannot answer and the vendor caused.
+**Done when:** `docs/compliance/pre-pilot.md` carries all eleven with a date and a name against each. A breach, a subject request or a card dispute arriving before these exist is one the merchant cannot answer and the vendor caused.
 
 > **A sole-author self-review is not row 7.** For a system holding customer, fiscal, licensing and fleet-update authority, independent adversarial testing before the first real-customer pilot is the minimum, not the budget-permitting option it used to be.
 
@@ -357,7 +359,7 @@ just bench-gate                               # budgets still met with 50k SKUs 
 
 By demonstration:
 
-0. **The pre-pilot gate (4.9.0) is complete**, all ten rows dated and named, before demonstration 1 begins. It is numbered zero because it is a precondition, not an achievement.
+0. **The pre-pilot gate (4.9.0) is complete**, all eleven rows dated and named, before demonstration 1 begins. It is numbered zero because it is a precondition, not an achievement.
 1. **Three stores trade for a full week** with no intervention from you — on a server someone operates, with alerts that reach a person.
 2. **A real promotion runs**, and its cost report matches finance's arithmetic — checked by hand. Then edit the promotion and re-run the report for last week: the numbers do not move, because the attribution names a version.
 3. **Receive a delivery** with a supplier tax invoice; WAC updates on net plus non-deductible tax only; a deliberate 10× cost is caught before posting.
