@@ -1,0 +1,13 @@
+{
+  "profile_id": "epson-tm-t20iii-ethernet-80mm",
+  "profile_version": 1,
+  "synthetic": true,
+  "source": "synthetic, written by hand on 21 October 2026, not recorded from a device: ESC @ has no reply, and a ready printer's DLE EOT 1-4 replies follow Epson's bit definitions, matching emupos 0.4.0 as an Epson TM-T20III in 1.7.12's validation. It carries nothing a device would have to be observed to know, such as the drawer sensor after a kick. Milestone 5.8.3's first recording from a TM-T20III supersedes it.",
+  "exchanges": [
+    { "sent": "1B 40", "answered": "" },
+    { "sent": "10 04 01", "answered": "12" },
+    { "sent": "10 04 02", "answered": "12" },
+    { "sent": "10 04 03", "answered": "12" },
+    { "sent": "10 04 04", "answered": "12" }
+  ]
+}
