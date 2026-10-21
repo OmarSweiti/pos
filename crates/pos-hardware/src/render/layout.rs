@@ -410,6 +410,53 @@ fn split_to_fit(
     pieces
 }
 
+/// Where a row's label goes, and the logical lines it is set in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LabelPlacement {
+    /// Beside its amount: the label's lines, with the amount on the first.
+    Beside(Vec<String>),
+    /// On rows of its own at the full measure, with the amount on the row
+    /// beneath, in its usual column.
+    Above(Vec<String>),
+}
+
+/// Set a label against an amount that leaves it `room_units` of the line.
+///
+/// A label stays beside its amount only when every one of its **words** fits
+/// that room, so wrapping it there moves whole words and never breaks one.
+/// Otherwise it is set on rows of its own, at the full measure `full_units`.
+/// Breaking inside a word is what this refuses: an Arabic word cut in two
+/// takes the wrong contextual form on both halves, and the reader sees two
+/// wrong words rather than one. The fiscal block's label beside its
+/// 36-character UUID was that case on every JoFotara receipt (issue #266).
+///
+/// It also covers the case a label has no room at all: earlier, a room of zero
+/// or less set the label as an empty line, which silently dropped it.
+fn place_label(
+    faces: &Faces<'_>,
+    label: &str,
+    weight: Weight,
+    base_rtl: bool,
+    room_units: i32,
+    full_units: i32,
+) -> LabelPlacement {
+    if room_units > 0 {
+        // The common path, and one shape: almost every label fits beside its
+        // amount whole. Shaping is the whole cost of a layout.
+        if shape_line(faces, label, weight, base_rtl).width_units <= room_units {
+            return LabelPlacement::Beside(vec![label.to_owned()]);
+        }
+        let every_word_fits = label
+            .split(' ')
+            .filter(|word| !word.is_empty())
+            .all(|word| shape_line(faces, word, weight, base_rtl).width_units <= room_units);
+        if every_word_fits {
+            return LabelPlacement::Beside(wrap(faces, label, weight, base_rtl, room_units));
+        }
+    }
+    LabelPlacement::Above(wrap(faces, label, weight, base_rtl, full_units))
+}
+
 /// Where a line of `width_px` starts, given the page and its direction.
 ///
 /// `Start` and `End` are logical: on an Arabic receipt `Start` is the right
@@ -471,7 +518,9 @@ impl Page<'_> {
     /// that shifts by a character between two rows is unreadable at a glance.
     /// So the **label** is what yields — it is wrapped into the width left
     /// over, and its overflow continues on the rows beneath, with the amount
-    /// on the first of them.
+    /// on the first of them. When a word of it does not fit that width, it is
+    /// set whole on rows of its own above the amount instead, because the only
+    /// other way to fit it is to break the word ([`place_label`]).
     ///
     /// Without that, a long discount label and its amount are placed at
     /// opposite ends of a row they do not both fit on, and the two runs print
@@ -512,25 +561,28 @@ impl Page<'_> {
         // line is waiting for rather than an assertion it is missing.
         let label_room = content - amount_px - style.px_per_em;
         // The fast path is the common one and it is worth having: almost every
-        // label on a receipt fits beside its amount, and `wrap` shapes a space
-        // and each word to find that out. Shaping is the whole cost of a
-        // layout — measured at ~180 ms for a full receipt in a debug build — so
-        // one shape here rather than three is the difference between a property
-        // that runs in ten seconds and one that runs in fifty.
-        let whole = shape_line(self.faces, label, style.weight, self.rtl).width_units;
-        let whole_px = units_to_px(whole, style.px_per_em, self.faces.units_per_em);
-        let label_lines = if label_room <= 0 {
-            vec![String::new()]
-        } else if whole_px <= label_room {
-            vec![label.to_owned()]
-        } else {
-            wrap(
-                self.faces,
-                label,
-                style.weight,
-                self.rtl,
-                px_to_units(label_room, style.px_per_em, self.faces.units_per_em),
-            )
+        // label on a receipt fits beside its amount, and `place_label` returns
+        // after one shape when it does. Shaping is the whole cost of a layout —
+        // measured at ~180 ms for a full receipt in a debug build — so one
+        // shape rather than three is the difference between a property that
+        // runs in ten seconds and one that runs in fifty.
+        let label_lines = match place_label(
+            self.faces,
+            label,
+            style.weight,
+            self.rtl,
+            px_to_units(label_room, style.px_per_em, self.faces.units_per_em),
+            px_to_units(content, style.px_per_em, self.faces.units_per_em),
+        ) {
+            LabelPlacement::Beside(lines) => lines,
+            LabelPlacement::Above(lines) => {
+                for logical in &lines {
+                    let shaped = shape_line(self.faces, logical, style.weight, self.rtl);
+                    self.place(&shaped, style, Alignment::Start);
+                }
+                self.place(&amount_shaped, style, Alignment::End);
+                return;
+            }
         };
 
         for (index, logical) in label_lines.iter().enumerate() {
@@ -1506,6 +1558,141 @@ mod tests {
                     glyph.x_px,
                     margin + content
                 );
+            }
+        }
+    }
+
+    /// The named test (case 96): a label with less room beside its amount than
+    /// one of its words needs is set whole, on a row of its own, with the
+    /// amount on the row beneath in its usual column — never broken inside a
+    /// word. An Arabic word broken in two takes the wrong contextual form on
+    /// both halves, so the reader sees two wrong words, not one. Issue #266:
+    /// the fiscal block's label beside its 36-character UUID came out as
+    /// رقم / الفا / تورة / الضر / يبية down the right-hand column at 80 mm,
+    /// and the date's label beside its timestamp as ال / تار / يخ at 58 mm.
+    #[test]
+    fn a_label_narrower_than_its_longest_word_is_never_broken_inside_a_word() {
+        let faces = faces();
+        let ids = |shaped: &ShapedLine| -> Vec<u16> {
+            shaped.glyphs.iter().map(|glyph| glyph.glyph_id).collect()
+        };
+        let m = model();
+        let uuid = &m.fiscal.as_ref().expect("a fiscal block").uuid;
+        let label = ids(&shape_line(
+            &faces,
+            words::fiscal(Language::Arabic),
+            Weight::Regular,
+            true,
+        ));
+        let value = ids(&shape_line(&faces, uuid, Weight::Regular, true));
+
+        for paper in [PaperWidth::Mm80, PaperWidth::Mm58] {
+            let layout = lay_out_with(&faces, &m, paper).expect("lays out");
+            let lines: Vec<Vec<u16>> = layout
+                .lines
+                .iter()
+                .map(|line| line.glyphs.iter().map(|glyph| glyph.glyph_id).collect())
+                .collect();
+            // Every row label on this receipt starts a line whole: beside its
+            // amount, or on a row of its own. The fiscal label was not the only
+            // one broken — at 58 mm the date's label, beside its long
+            // timestamp, came out as ال / تار / يخ.
+            for word in [
+                words::buyer(Language::Arabic),
+                words::tax_number(Language::Arabic),
+                words::receipt_no(Language::Arabic),
+                words::register(Language::Arabic),
+                words::cashier(Language::Arabic),
+                words::issued_at(Language::Arabic),
+                words::subtotal(Language::Arabic),
+                words::discount(Language::Arabic),
+                words::rounding(Language::Arabic),
+                words::change(Language::Arabic),
+                words::loyalty(Language::Arabic),
+                words::fiscal(Language::Arabic),
+            ] {
+                let whole = ids(&shape_line(&faces, word, Weight::Regular, true));
+                assert!(
+                    lines.iter().any(|line| line.starts_with(&whole)),
+                    "{word} is not whole at the start of any line at {paper:?}"
+                );
+            }
+            let at = lines
+                .iter()
+                .position(|line| *line == label)
+                .unwrap_or_else(|| {
+                    panic!("the fiscal label is not whole on any line at {paper:?}")
+                });
+            // The UUID follows it, intact. At 58 mm it is wider than the paper,
+            // so `row` has always set it as its own paragraph and it continues
+            // on the next row; a hex string has no contextual forms to break.
+            let after: Vec<u16> = lines
+                .iter()
+                .skip(at + 1)
+                .flatten()
+                .copied()
+                .take(value.len())
+                .collect();
+            assert_eq!(after, value, "the UUID follows its label at {paper:?}");
+        }
+
+        // At 80 mm the UUID fits one row: there, alone, in the amount column —
+        // on an Arabic receipt, the left margin.
+        let layout = lay_out_with(&faces, &m, PaperWidth::Mm80).expect("lays out");
+        let at = layout
+            .lines
+            .iter()
+            .position(|line| {
+                line.glyphs
+                    .iter()
+                    .map(|glyph| glyph.glyph_id)
+                    .eq(label.iter().copied())
+            })
+            .expect("the label");
+        let row = layout.lines.get(at + 1).expect("a row beneath the label");
+        assert!(
+            row.glyphs
+                .iter()
+                .map(|glyph| glyph.glyph_id)
+                .eq(value.iter().copied())
+        );
+        assert_eq!(
+            row.glyphs.iter().map(|glyph| glyph.x_px).min(),
+            Some(PaperWidth::Mm80.margin_px())
+        );
+    }
+
+    /// Case 96's property: whatever room an amount leaves, a label's lines
+    /// are its words, whole and in order — none broken, none lost. Room zero
+    /// and below is the case that used to drop the label entirely.
+    #[test]
+    fn a_label_is_set_in_whole_words_whatever_room_its_amount_leaves() {
+        let faces = faces();
+        let full = px_to_units(
+            PaperWidth::Mm58.content_width_px(),
+            BODY_PX_PER_EM,
+            faces.units_per_em,
+        );
+        let labels = [
+            words::fiscal(Language::Arabic),
+            words::fiscal(Language::English),
+            words::issued_at(Language::Arabic),
+            words::subtotal(Language::Arabic),
+            words::loyalty(Language::Arabic),
+            "عرض الخبز العربي الطازج لكل زبون يشتري أكثر من رغيفين",
+        ];
+        for label in labels {
+            let expected: Vec<&str> = label.split(' ').filter(|word| !word.is_empty()).collect();
+            for room_px in (-BODY_PX_PER_EM..=PaperWidth::Mm58.content_width_px()).step_by(6) {
+                let room = px_to_units(room_px, BODY_PX_PER_EM, faces.units_per_em);
+                let (LabelPlacement::Beside(lines) | LabelPlacement::Above(lines)) =
+                    place_label(&faces, label, Weight::Regular, true, room, full);
+                let set: Vec<&str> = lines
+                    .iter()
+                    .flat_map(|line| line.split(' '))
+                    .filter(|word| !word.is_empty())
+                    .collect();
+                assert_eq!(set, expected, "{label} with {room_px} px beside its amount");
             }
         }
     }
