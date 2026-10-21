@@ -267,10 +267,12 @@ maps every path to the owner, so GitHub requests that review automatically on an
 owner did not open. GitHub never lets an author approve their own pull request, so the gate binds
 two ways, both intended:
 
-- **Dependabot's pull requests, and any contributor's**, merge only after the owner approves them.
-- **The owner's own pull requests** — including every one an agent opens, since agents work under
-  the owner's account — cannot be approved at all. They merge through the administrator's logged
-  `pull_request` bypass, and that deliberate merge *is* the owner's approval (§6).
+- **The engineering app's pull requests, Dependabot's, and any contributor's** merge only after the
+  owner approves them. The engineering app opens every pull request an agent prepares (§6), which
+  is why those are approvable at all.
+- **The owner's own pull requests** — ones the owner opens by hand — cannot be approved at all. They
+  merge through the administrator's logged `pull_request` bypass, and that deliberate merge *is* the
+  owner's approval (§6).
 
 The gate is a ruleset of its own rather than a parameter of the branch rulesets so that a bypass
 stays attributable: the owner's routine merge of their own green pull request bypasses
@@ -325,8 +327,9 @@ log. And the git hooks stay local and bypassable. So:
 | Rule | Control | Honest limit |
 |---|---|---|
 | No direct, force, or deletion push to `main`/`staging`/`development` | server-side on all three (`non_fast_forward` and `deletion` everywhere, and a pull request required on all three — on `main` by `code-owner-review` since 20 October 2026); [`.githooks/pre-push`](../../.githooks/pre-push) for all three, using Git's supplied destination remote | the administrator's bypass is `pull_request` mode, so even it cannot push directly; the hook remains the first, local net, and `--no-verify` or an unconfigured clone skips only that net |
-| Every pull request is assigned to the owner | three routes, so none depends on how the pull request was opened: `assignees` in [`../../.github/dependabot.yml`](../../.github/dependabot.yml); `--assignee @me` in `just pr`, `just promote-staging` and `just promote-main`; and the first step of [`../../.github/workflows/labeler.yml`](../../.github/workflows/labeler.yml), which assigns the repository owner on every pull-request event — the web UI, a plain `gh pr create`, a fork — and which `check-branch-workflow-policy.rb` pins byte for byte | the backstop is a workflow: if Actions is off, only the first two routes assign. Unassigning by hand lasts until the next event re-adds the owner, which is the intent |
-| Every pull request into a flow branch is approved by the owner | `code-owner-review` (one code-owner approval, stale approvals dismissed on push, threads resolved) on all three branches; [`../../.github/CODEOWNERS`](../../.github/CODEOWNERS) requests the review automatically | GitHub forbids self-approval, so the owner's own pull requests — agents' included — merge through the logged bypass, which is the approval (§6). The rule binds identities: an agent holding the owner's credentials looks like the owner, so the agents' reviewed settings, not GitHub, stop an agent approving or merging |
+| Every pull request is assigned to the owner | three routes, so none depends on how the pull request was opened: `assignees` in [`../../.github/dependabot.yml`](../../.github/dependabot.yml); `--assignee <owner> --reviewer <owner>` when the engineering app opens a pull request in `just pr`, `just promote-staging` and `just promote-main`; and the first step of [`../../.github/workflows/labeler.yml`](../../.github/workflows/labeler.yml), which assigns the repository owner on every pull-request event — the web UI, a plain `gh pr create`, a fork — and which `check-branch-workflow-policy.rb` pins byte for byte | the backstop is a workflow: if Actions is off, only the first two routes assign. Unassigning by hand lasts until the next event re-adds the owner, which is the intent |
+| Every pull request into a flow branch is approved by the owner | `code-owner-review` (one code-owner approval, stale approvals dismissed on push, threads resolved) on all three branches; [`../../.github/CODEOWNERS`](../../.github/CODEOWNERS) requests the review automatically | GitHub forbids self-approval, so the engineering app opens the pull requests agents prepare and the owner approves them; only a pull request the owner opened by hand merges through the logged bypass, which is the approval (§6). The rule binds identities: an agent holding the owner's credentials looks like the owner, so the agents' reviewed settings, not GitHub, stop an agent approving or merging |
+| Every pull request into `development` carries validation evidence for its exact head | the `validation` required check: [`../../.github/workflows/validation.yml`](../../.github/workflows/validation.yml) runs [`../../scripts/check-validation.sh`](../../scripts/check-validation.sh) from the exact trusted workflow revision (`pull_request_target`), reading the pull request and its comments as data. Only a comment from the owner or the owner's engineering app counts, and only for the pull request's current head and its own number | the admin's logged `pull_request` bypass still applies; `staging` and `main` do not require it, and a promotion passes because each change it carries was validated on its own pull request. The check proves a comment exists, not that the screenshots are true — the owner's reading is that control |
 | Existing tags never move or disappear | server-side for `refs/tags/v*` (`tags-v-append-only`: `update` and `deletion` blocked, **no bypass actor**, so it binds the maintainer too); `.githooks/pre-push` allows a new tag but refuses every update/deletion; the release workflow revalidates the remote annotated-tag object around draft mutation | the ruleset covers `v*` only — any other tag name is hook-only — and draft/tag binding is not atomic until immutable publication |
 | Commit and squash title obey the exact same grammar | [`scripts/validate-change-title.sh`](../../scripts/validate-change-title.sh), called by `commit-msg` and `branch-flow` | `topology` is a required check on `development` and `staging`, so a red title check now blocks the merge button there; the admin can still bypass through a pull request, and that bypass is logged |
 | Coding assistants receive no PR or history attribution; the exact Dependabot metadata/trailer combination remains visible | [`scripts/check-automation-attribution.py`](../../scripts/check-automation-attribution.py), called by Git and trusted CI for commits plus the PR title/body | Git author metadata is spoofable and local hooks are bypassable; `protected-paths` is now a required check on `development` and `staging`, so CI is a merge wall there, subject to the logged admin bypass |
@@ -753,27 +756,47 @@ handed over, it is run against the emulators and a comment posted by `just evide
 step working, with screenshots, and names the exact commit validated. A pull request that changes
 nothing at runtime gets the same comment saying `Runtime change: none` and why. The
 [`validate-pr`](../../.claude/skills/validate-pr/SKILL.md) skill is the procedure and
-[workflow §4.12](02-development-workflow.md) the sequence. The screenshots live on
-`refs/evidence/pr-<n>`, outside the branches, so no clone downloads them and no squash lands them
-on `development`. How the approval is given depends on who opened the pull request, because GitHub never
-lets an author approve their own:
+[workflow §4.12](02-development-workflow.md) the sequence. The screenshots live in
+[`OmarSweiti/pos-evidence`](https://github.com/OmarSweiti/pos-evidence), a public repository of their
+own: no clone of the code downloads them, the comment links each image at the evidence commit that
+stored it so a link can never be repointed, and an `evidence-append-only` ruleset with **no bypass
+actor** refuses force-pushes and deletions there, so the record only grows. It is public because
+GitHub shows an image inside a comment only when the image is publicly reachable; every image is
+synthetic data, inspected before it is published. Until 21 October 2026 the screenshots lived on
+`refs/evidence/pr-<n>` in this repository; those refs stay, so older comments keep working, and their
+sets were copied into `pos-evidence`. The `validation` check (§3) is what makes the evidence a merge
+condition rather than a habit. How the approval is given depends on who opened the pull request,
+because GitHub never lets an author approve their own:
 
 | Opened by | What the owner does | What GitHub records |
 |---|---|---|
-| **Dependabot**, or any contributor | read the diff, then **Review changes → Approve**; merge, or tell an agent to run `just merge <n>` | an approving review — the gate is satisfied, no bypass |
-| **The owner** — by hand, or by an agent working under the owner's account | read the diff and the evidence, then merge it yourself on GitHub: **Squash and merge**, tick **Merge without waiting for requirements to be met (bypass rules)** — only when every required check is green — and confirm. `just merge <n>` checks all of that first and stops with exit 3, **NOT MERGED**; it never makes the click | a bypass of `code-owner-review` alone — the deliberate merge is the approval |
-| **A promotion** (`development → staging`, `staging → main`) | the same, with **Create a merge commit** — never squash a promotion. `just promote-merge <n>` verifies first and stops the same way | the same bypass, on a merge commit |
+| **The engineering app** — every pull request an agent prepares | read the diff and the evidence, then **Review changes → Approve**; merge on GitHub, or tell an agent to run `just merge <n>` | an approving review — the gate is satisfied, no bypass |
+| **Dependabot**, or any contributor | the same | an approving review |
+| **A promotion** (`development → staging`, `staging → main`), opened by the engineering app | the same approval, then **Create a merge commit** — never squash a promotion — or `just promote-merge <n>` | an approving review, on a merge commit |
+| **The owner, by hand** | read the diff and the evidence, then merge it yourself on GitHub: **Squash and merge**, tick **Merge without waiting for requirements to be met (bypass rules)** — only when every required check is green — and confirm. `just merge <n>` checks all of that first and stops with exit 3, **NOT MERGED**; it never makes the click | a bypass of `code-owner-review` alone — the deliberate merge is the approval |
 
 **An agent never gives that approval.** It opens pull requests, posts the evidence, and stops. It
 never submits a review — `gh pr review` is denied to Claude Code and forbidden to Codex — and it
 runs `just merge` or `just promote-merge` only when the owner asks for that pull request in the
 conversation, with both clients stopping for the owner's confirmation even then. Neither recipe
-merges the owner's own pull request, and no recipe passes `--admin`:
-[`scripts/check-justfile-policy.py`](../../scripts/check-justfile-policy.py) fails if one does,
-because every pull request an agent opens is the owner's own to GitHub, and a recipe that bypassed
-would let an agent merge its own work unapproved. GitHub cannot tell an agent from the owner whose
+merges a pull request the owner has not approved on GitHub, nor the owner's own, and no recipe
+passes `--admin`: [`scripts/check-justfile-policy.py`](../../scripts/check-justfile-policy.py) fails
+if one does, because a recipe that bypassed would let an agent merge work unapproved. GitHub cannot tell an agent from the owner whose
 credentials it holds, so this line is held by the recipes and the agents' reviewed settings, not by
 the ruleset.
+
+**The engineering app.** POS Engineering is a private GitHub App the owner owns, created once with
+`just engineering-app` ([`../../scripts/engineering-app.py`](../../scripts/engineering-app.py)): a page
+served on 127.0.0.1 sends GitHub the app's definition, the owner confirms it there and installs it on
+this repository, and the script keeps the app's id and private key in `~/.config/pos/engineering-app`
+(`0600`), outside every repository. Each use asks
+[`../../scripts/engineering-token.sh`](../../scripts/engineering-token.sh) for a token scoped to this
+repository that expires within the hour. Its permissions are the job and nothing more: read code,
+metadata, checks and statuses; write pull requests and issues (open, assign, request a review,
+comment) and actions (run the `validation` check again). It has no webhook, cannot push code — commits
+and branches stay the owner's — and cannot approve, or change a setting or a ruleset.
+`just engineering-app status` says where it is installed; the owner can suspend or uninstall it from
+GitHub's settings at any time.
 
 There is still one developer, so the substitutes are the control, not a formality —
 [workflow §7](02-development-workflow.md). In GitHub terms, two habits do most of the work:

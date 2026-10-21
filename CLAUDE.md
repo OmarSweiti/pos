@@ -47,24 +47,31 @@ forks the branches permanently. `just branch <name>`, `just pr`, `just merge`, `
 step of the work, not an extra.** Once its checks are green, run the `validate-pr` skill: check out
 the exact head, start from a fresh database with synthetic data, start the emulators the change
 touches, drive the app through every `Done when` claim, and capture one screenshot per step. Inspect
-every image (the repository is public), write `summary.md`, then `just evidence <pr> <dir>`, which
-posts one comment naming the validated commit. A PR that changes nothing at runtime posts
-`Runtime change: none` and why. A new runtime push needs new evidence. Never claim a step that did
-not run.
+every image (the repository is public), write `summary.md`, then `just evidence <pr> <dir>`. It
+stores the screenshots in [`OmarSweiti/pos-evidence`](https://github.com/OmarSweiti/pos-evidence) —
+public, append-only, and outside every clone of the code — and the engineering app posts one comment
+naming the validated commit. The required `validation` check passes only when such a comment names
+the pull request's exact head. A PR that changes nothing at runtime posts `Runtime change: none` and
+why. A new runtime push needs new evidence. Never claim a step that did not run.
 
 **Every pull request needs the owner's approval, and an agent never gives it.** The
 `code-owner-review` ruleset requires one code-owner approval on all three flow branches, and every
-pull request is assigned to the owner: by Dependabot's config, by `--assignee @me` in the recipes
-(pass it yourself to a bare `gh pr create`), and by the labeler workflow's first step for any other
-route. GitHub
-never lets an author approve their own pull request, and every pull request an agent opens is the
-owner's own to GitHub. So the agent's part ends at an open, green, evidenced pull request. It never
+pull request is assigned to the owner: by Dependabot's config, by the recipes, and by the labeler
+workflow's first step for any other route. GitHub never lets an author approve their own pull
+request, so the pull requests prepared for the owner are opened by **the engineering app** — POS
+Engineering, a private GitHub App the owner owns (`just engineering-app` creates it once; its key
+stays in `~/.config/pos/engineering-app`, outside every repository, and each use is a token for one
+repository that expires within the hour). The app is the author and the owner the requested
+reviewer, so the owner's approval counts. Commits and branches stay the owner's; the app can only
+open, assign, comment and re-run the validation check — it cannot push code, approve, or change a
+setting or a ruleset. So the agent's part ends at an open, green, evidenced pull request. It never
 submits a review: `gh pr review` is denied in `.claude/settings.json` and forbidden in Codex. It
 never merges unless the owner asks for that pull request, and even then every merge command stops
 for the owner's confirmation. `just merge` merges only a pull request the owner approved on GitHub.
-On the owner's own pull request it verifies everything, then stops with exit 3 — **NOT MERGED** —
-because the only way through is the logged bypass, and that click on GitHub is the owner's approval.
-No recipe passes `--admin`, and `scripts/check-justfile-policy.py` fails if one does.
+A pull request the owner opened by hand is the owner's own to GitHub: `just merge` verifies it, then
+stops with exit 3 — **NOT MERGED** — because the only way through is the logged bypass, and that
+click on GitHub is the owner's approval. No recipe passes `--admin`, and
+`scripts/check-justfile-policy.py` fails if one does.
 [`03-github-workflow.md`](docs/implementation/03-github-workflow.md) §6 has the procedure.
 
 Commit and squash titles use `<type>(<scope>): <summary>  [<step>]`, where `<step>` is one
@@ -77,7 +84,8 @@ alone is not cryptographic proof of App identity.
 Branch protection covers **all three flow branches**, unevenly and on purpose — `development` and
 `staging` since 9 September 2026, `main` since 10 September 2026.
 `development` and `staging` each carry an active ruleset: a pull request is required, six status
-checks must pass (`rust`, `guards`, `web`, `supply-chain`, `protected-paths`, `topology`), force
+checks must pass (`rust`, `guards`, `web`, `supply-chain`, `protected-paths`, `topology`) — and on
+`development` a seventh, `validation`, which waits for the evidence comment — force
 pushes and deletions are blocked, and the merge method is constrained — squash or merge on
 `development`, **merge commit only** into `staging`, which is the first server-side guard against
 the squashed promotion that forked the branches once already. A separate tag ruleset makes
@@ -216,7 +224,8 @@ Codex-specific execution policy and hook adapters live under `.codex/`.
 | `.claude/hooks/protect-immutable.py` | writing, deleting, or moving a **committed migration** or anything in `docs/plan/` through Claude write tools, Bash, PowerShell, or Monitor; and the forward-only violation `sqlx migrate revert` in any wrapped or nested spelling, for which no Git hook and no CI job is a backstop — it produces no commit and no diff |
 | `.claude/hooks/docs-links-on-write.py` | leaving a broken cross-reference after Claude changes **any** tracked `.md` — the five root documents included — whatever the link target's extension; the `.sh` file is only an inactive POSIX compatibility wrapper |
 | `.claude/hooks/validate-settings.py` | a session-time weakening of the reviewed project or local Claude settings — including dropping the `gh pr review` deny or any merge-command `ask` — or the loss of a required skill contract. The one hook here that **fails closed** |
-| `scripts/pr-evidence.py` | publishing evidence from anything but the PR's exact, clean head; a runtime PR — code, a dependency manifest or lockfile — without screenshots; a non-runtime PR that does not say `Runtime change: none`; an image that is not what its name claims, over the 2 MB blob cap, or a symlink |
+| `scripts/pr-evidence.py` | publishing evidence from anything but the PR's exact, clean head; a runtime PR — code, a dependency manifest or lockfile — without screenshots; a non-runtime PR that does not say `Runtime change: none`; an image that is not what its name claims, over the 2 MB blob cap, or a symlink; evidence Gitleaks calls a secret or that carries assistant attribution — checked here because `pos-evidence` has no pre-push hook |
+| `scripts/check-validation.sh` | merging a pull request into `development` without a validation comment for its exact head, from the owner or the owner's engineering app: evidence for an earlier commit, for another pull request, or in a stranger's comment does not count. The `validation` workflow runs it from the trusted workflow revision, so a pull request cannot weaken it |
 | `scripts/approval-gate.sh` | a merge recipe merging a pull request the owner has not approved on GitHub, or merging the owner's own pull request at all — that click is the owner's. Called twice by `just merge` and `just promote-merge`; `check-justfile-policy.py` proves no recipe passes `--admin` |
 | `.codex/hooks/` | immutable-path and forward-only SQLx checks for Codex shell, immutable-path checks for `apply_patch`, and complete documentation-link checks after any Markdown `apply_patch` |
 | `.githooks/commit-msg` | a title outside `<type>(<scope>): <summary>  [N.N.N\|N.N.Nx\|N.N.N–N.N.N\|—]`, or coding-assistant attribution |
