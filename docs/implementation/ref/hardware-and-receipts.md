@@ -88,6 +88,8 @@ pub trait Scale: Send + Sync { /* only if grocery/deli — §7 */ }
 
 **The driver is [1.7.10](../phase-1-sellable-mvp.md), and it is network first.** Port 9100 needs no driver on any operating system. USB does not share that property: current Epson and Star printers default to a vendor-specific USB class, which Windows reaches only through the vendor's driver or a WinUSB binding, so serial and USB transports wait for a qualified device that needs them. A printer that never answers a real-time status request reports *status unsupported* rather than ready — some answer `DLE EOT` on serial only — and §3 rule 1 then knows it cannot warn before the money is taken.
 
+The driver is `pos_hardware::net::NetworkPrinter`, over `pos_hardware::transport::Transport`. It classifies every socket event as one of §3's four outcomes: no connection, or a pre-flight status of paper-out, cover-open or offline, is `Failed` and nothing was sent; every byte taken is `Printed`; bytes taken and then a reset is `Partial`; a device that stops taking bytes until the deadline passes is `Unknown`. It writes a document in pieces smaller than any socket buffer, so a reset mid-document is never mistaken for a device that took nothing, and it never asks a device for status when the profile's `status_protocol` already says there is none.
+
 ### 2.1 The Arabic problem, and its answer
 
 Thermal printers in text mode expect a codepage (Windows-1256 for Arabic). Codepage text mode does two things wrong that cannot be worked around:

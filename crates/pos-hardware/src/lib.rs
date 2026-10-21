@@ -1,10 +1,12 @@
 //! Hardware abstraction layer (blueprint §5).
-//! Traits here; drivers (ESC/POS over TCP/serial/USB) in submodules later.
+//! Traits here; the network printer driver in `net`, over `transport`.
 
 pub mod escpos;
 pub mod font;
+pub mod net;
 pub mod profile;
 pub mod render;
+pub mod transport;
 
 use std::sync::{Mutex, MutexGuard};
 
@@ -14,6 +16,20 @@ pub enum HwError {
     Offline,
     #[error("io: {0}")]
     Io(String),
+    /// A profile whose device is reached another way, handed to a driver for
+    /// this one.
+    #[error("profile {profile_id} is reached by {transport}, not by this driver")]
+    WrongTransport {
+        profile_id: String,
+        transport: String,
+    },
+    /// The profile does not know a value the command needs, so the command is
+    /// refused rather than sent with a guess.
+    #[error(transparent)]
+    Profile(#[from] profile::ProfileError),
+    /// A drawer pulse time that does not fit `ESC p`'s one byte of 2 ms units.
+    #[error("a drawer pulse of {ms} ms does not fit ESC p, whose longest is 510 ms")]
+    PulseOutOfRange { ms: u16 },
 }
 
 /// Receipt bytes already rendered to ESC/POS by the template engine.
@@ -30,6 +46,10 @@ pub enum PrinterStatus {
     PaperOut,
     CoverOpen,
     Offline,
+    /// The device answers no real-time status. Neither ready nor offline: a
+    /// fact about the device rather than about this moment, and the reason §3
+    /// rule 1 cannot warn before tender on it (1.7.10).
+    Unsupported,
 }
 
 /// Why a device refused a document before accepting a byte of it.
@@ -38,6 +58,9 @@ pub enum FailReason {
     PaperOut,
     CoverOpen,
     Offline,
+    /// No connection could be made, or the device closed it before taking a
+    /// byte (1.7.10).
+    Unreachable,
 }
 
 /// What became of one document sent to a printer — the four outcomes of
@@ -132,7 +155,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 impl ReceiptPrinter for SimulatedPrinter {
     fn print(&self, doc: &RenderedReceipt) -> PrintOutcome {
         let refused = match self.status() {
-            PrinterStatus::Ready => None,
+            PrinterStatus::Ready | PrinterStatus::Unsupported => None,
             PrinterStatus::PaperOut => Some(FailReason::PaperOut),
             PrinterStatus::CoverOpen => Some(FailReason::CoverOpen),
             PrinterStatus::Offline => Some(FailReason::Offline),
