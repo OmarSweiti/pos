@@ -18,13 +18,20 @@ bump, a smoke run of the app is the evidence that it still works. A pull request
 that changes nothing at runtime posts the summary alone, and the summary must say
 `Runtime change: none` and why.
 
-Screenshots never enter a branch. They are committed to `refs/evidence/pr-<n>`,
-outside refs/heads, so `git clone` and the default fetch never download them,
-and the comment embeds them by commit SHA, so a link can never be repointed.
-Each run is one more commit on that ref, which keeps every earlier comment's
-images intact. The script refuses unless the checkout is the pull request's
-exact head with no tracked change, because the comment names that commit as
-the one validated — and it verifies GitHub serves every image before posting.
+Screenshots never enter the code repository. They are committed to the evidence
+repository — `<owner>/<repository>-evidence`, public and append-only — under
+`pr-<n>/<UTC time>-<head>/`, in a folder of their own, so a clone of the code never
+downloads them, and the comment embeds them at the evidence commit that stored
+them, so a link can never be repointed. The script refuses unless the checkout
+is the pull request's exact head with no tracked change, because the comment
+names that commit as the one validated; it scans the evidence for secrets and
+assistant attribution before storing anything, because the code repository's
+pre-push hook never sees the evidence repository; and it verifies GitHub serves
+every image before posting.
+
+The engineering app posts the comment (`scripts/engineering-token.sh`), so the
+`validation` check counts it, and the script then runs that check again for the
+head so it reads the evidence now rather than at the next push.
 
 The repository is public, so evidence is public forever. That is why the skill
 (`.claude/skills/validate-pr`) has the operator inspect every image before
@@ -38,6 +45,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -62,6 +70,18 @@ NOT_APPLICABLE = "Runtime change: none"
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 JPEG_MAGIC = b"\xff\xd8\xff"
 MARKER = "<!-- pos-validation-evidence"
+ROOT = Path(__file__).resolve().parent.parent
+VALIDATION_WORKFLOW = "validation.yml"
+
+
+def evidence_repository(repository: str) -> str:
+    """The evidence repository beside a code repository: `<owner>/<name>-evidence`."""
+    return f"{repository}-evidence"
+
+
+def evidence_cache() -> Path:
+    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(base) / "pos" / "evidence"
 
 
 class Refusal(Exception):
@@ -159,6 +179,8 @@ def render_comment(
     run_directory: str,
     evidence: Evidence,
 ) -> str:
+    store = evidence_repository(repository)
+    folder = f"pr-{pr}/{run_directory}"
     lines = [
         f"{MARKER} pr={pr} head={head} evidence={evidence_commit} -->",
         f"## Validation evidence — `{head[:7]}`",
@@ -168,15 +190,14 @@ def render_comment(
     ]
     if evidence.images:
         lines.append(
-            f"**Archive:** `refs/evidence/pr-{pr}` @ "
-            f"[`{evidence_commit[:7]}`](https://github.com/{repository}/tree/"
-            f"{evidence_commit}/{run_directory})"
+            f"**Stored in:** [`{store}` @ `{evidence_commit[:7]}`]"
+            f"(https://github.com/{store}/tree/{evidence_commit}/{folder})"
         )
     lines += ["", evidence.summary, ""]
     if evidence.images:
         lines += ["### Screenshots", ""]
         for image in evidence.images:
-            url = raw_url(repository, evidence_commit, f"{run_directory}/{image.name}")
+            url = raw_url(store, evidence_commit, f"{folder}/{image.name}")
             lines += [f"**{image.name}**", "", f"![{image.name}]({url})", ""]
     return "\n".join(lines).rstrip() + "\n"
 
@@ -243,43 +264,113 @@ def require_checkout_at(head: str) -> None:
         )
 
 
-def build_commit(
-    pr: PullRequest, run_directory: str, evidence: Evidence
-) -> tuple[str, str | None]:
-    ref = f"refs/evidence/pr-{pr.number}"
-    remote = run("git", "ls-remote", "origin", ref)
-    parent = remote.split()[0] if remote else None
-    with tempfile.TemporaryDirectory(prefix="pos-evidence-") as temporary:
-        env = {**os.environ, "GIT_INDEX_FILE": str(Path(temporary) / "index")}
-        if parent:
-            run("git", "fetch", "-q", "origin", ref)
-            fetched = run("git", "rev-parse", "FETCH_HEAD")
-            if fetched != parent:
-                raise Refusal(f"{ref} moved while publishing; rerun")
-            run("git", "read-tree", parent, env=env)
-        else:
-            run("git", "read-tree", "--empty", env=env)
-        for path in (*evidence.images, None):
-            name = path.name if path else SUMMARY
-            data = path.read_bytes() if path else (evidence.summary + "\n").encode()
-            blob = run("git", "hash-object", "-w", "--stdin", stdin=data)
-            run(
-                "git",
-                "update-index",
-                "--add",
-                "--cacheinfo",
-                f"100644,{blob},{run_directory}/{name}",
-                env=env,
-            )
-        tree = run("git", "write-tree", env=env)
-    message = (
-        f"docs(repo): validation evidence for #{pr.number} at {pr.head[:7]}  [—]\n"
+def scan_evidence(directory: Path) -> None:
+    """Refuse a secret or assistant attribution before anything leaves the machine:
+    the evidence repository has no pre-push hook to catch either."""
+    gitleaks = shutil.which("gitleaks")
+    if gitleaks is None:
+        raise Refusal("gitleaks is not installed, so the evidence cannot be scanned: run `just setup`")
+    result = subprocess.run(
+        [gitleaks, "dir", "--config", str(ROOT / ".gitleaks.toml"), "--redact=100",
+         "--no-banner", "--log-level", "error", str(directory)],
+        capture_output=True,
+        check=False,
     )
-    parents = ["-p", parent] if parent else []
-    commit = run(
-        "git", "commit-tree", tree, *parents, "-F", "-", stdin=message.encode()
+    if result.returncode != 0:
+        raise Refusal(f"gitleaks finds a secret in {directory}; nothing was stored or posted")
+    run(sys.executable, str(ROOT / "scripts" / "check-automation-attribution.py"),
+        "--message-file", str(directory / SUMMARY))
+
+
+def app_token(repository: str) -> str:
+    """A token for the engineering app, scoped to `repository`, which posts the
+    comment so the `validation` check counts it."""
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts" / "engineering-token.sh"), repository],
+        capture_output=True,
+        check=False,
     )
-    return commit, parent
+    token = result.stdout.decode("utf-8", "replace").strip()
+    if result.returncode != 0 or not re.fullmatch(r"[A-Za-z0-9_]{20,255}", token):
+        detail = result.stderr.decode("utf-8", "replace").strip()
+        raise Refusal(
+            "the engineering app posts the evidence, and it is not available "
+            f"({detail or 'no token'}): run `just engineering-app`"
+        )
+    return token
+
+
+def evidence_clone(store: str) -> Path:
+    """This machine's clone of the evidence repository, current with GitHub."""
+    clone = evidence_cache()
+    url = f"git@github.com:{store}.git"
+    if (clone / ".git").is_dir():
+        remote = run("git", "-C", str(clone), "remote", "get-url", "origin")
+        if remote != url:
+            raise Refusal(f"{clone} is a clone of {remote}, not {url}")
+        if run("git", "-C", str(clone), "status", "--porcelain"):
+            raise Refusal(f"{clone} has local changes; the evidence store is append-only")
+        run("git", "-C", str(clone), "pull", "-q", "--ff-only")
+    else:
+        clone.parent.mkdir(parents=True, exist_ok=True)
+        run("git", "clone", "-q", url, str(clone))
+    return clone
+
+
+def store(pr: PullRequest, run_directory: str, evidence: Evidence) -> str:
+    """Commit the evidence to a new folder of the evidence repository, push it,
+    and return the commit that holds it."""
+    clone = evidence_clone(evidence_repository(pr.repository))
+    folder = f"pr-{pr.number}/{run_directory}"
+    target = clone / folder
+    if target.exists():
+        raise Refusal(f"{folder} already exists in the evidence repository; rerun")
+    target.mkdir(parents=True)
+    for image in evidence.images:
+        shutil.copyfile(image, target / image.name)
+    (target / SUMMARY).write_text(evidence.summary + "\n", encoding="utf-8")
+    name = run("git", "config", "user.name")
+    email = run("git", "config", "user.email")
+    try:
+        run("git", "-C", str(clone), "add", "--", folder)
+        run("git", "-C", str(clone), "-c", f"user.name={name}", "-c", f"user.email={email}",
+            "commit", "-q", "-m", f"evidence: {pr.repository}#{pr.number} at {pr.head[:7]}")
+        run("git", "-C", str(clone), "push", "-q", "origin", "HEAD")
+    except Refusal:
+        # Leave the clone as GitHub has it, so the next run starts clean.
+        subprocess.run(["git", "-C", str(clone), "reset", "-q", "--hard", "@{upstream}"], check=False)
+        subprocess.run(["git", "-C", str(clone), "clean", "-q", "-fd"], check=False)
+        raise
+    return run("git", "-C", str(clone), "rev-parse", "HEAD")
+
+
+def rerun_validation(repository: str, head: str, token: str) -> None:
+    """Run the `validation` check for `head` again, so it reads the evidence now."""
+    env = {**os.environ, "GH_TOKEN": token}
+    listed = subprocess.run(
+        ["gh", "run", "list", "--repo", repository, "--workflow", VALIDATION_WORKFLOW,
+         "--commit", head, "--limit", "1", "--json", "databaseId", "--jq", ".[0].databaseId // empty"],
+        capture_output=True, env=env, check=False,
+    )
+    run_id = listed.stdout.decode("utf-8", "replace").strip()
+    if listed.returncode != 0 or not run_id.isdigit():
+        print(f"validation: no run for {head[:7]} yet; it reads the evidence when it starts")
+        return
+    # Let a run in progress finish first, then run it again.
+    subprocess.run(["gh", "run", "watch", run_id, "--repo", repository],
+                   capture_output=True, env=env, check=False)
+    run("gh", "run", "rerun", run_id, "--repo", repository, env=env)
+    time.sleep(5)
+    watched = subprocess.run(
+        ["gh", "run", "watch", run_id, "--repo", repository, "--exit-status"],
+        capture_output=True, env=env, check=False,
+    )
+    if watched.returncode != 0:
+        raise Refusal(
+            f"the validation check still fails for {head[:7]} — read it: "
+            f"gh run view {run_id} --repo {repository} --log"
+        )
+    print(f"validation: passed for {head[:7]}")
 
 
 def verify_served(
@@ -307,16 +398,17 @@ def verify_served(
             )
 
 
-def check(number: int, directory: Path) -> tuple[PullRequest, Evidence]:
+def check(number: int, directory: Path) -> tuple[PullRequest, Evidence, str]:
     evidence = load_evidence(directory)
     pr = pull_request(number)
     require_coverage(evidence, pr.runtime)
     require_checkout_at(pr.head)
-    return pr, evidence
+    scan_evidence(directory)
+    return pr, evidence, app_token(pr.repository)
 
 
 def publish(number: int, directory: Path, *, dry_run: bool) -> None:
-    pr, evidence = check(number, directory)
+    pr, evidence, token = check(number, directory)
     run_directory = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + f"-{pr.head[:7]}"
     if dry_run:
         print(
@@ -334,9 +426,10 @@ def publish(number: int, directory: Path, *, dry_run: bool) -> None:
         )
         return
     if evidence.images:
-        commit, _parent = build_commit(pr, run_directory, evidence)
-        run("git", "push", "origin", f"{commit}:refs/evidence/pr-{pr.number}")
-        verify_served(pr.repository, commit, run_directory, evidence)
+        commit = store(pr, run_directory, evidence)
+        verify_served(
+            evidence_repository(pr.repository), commit, f"pr-{pr.number}/{run_directory}", evidence
+        )
     else:
         commit = pr.head
     body = render_comment(
@@ -352,12 +445,16 @@ def publish(number: int, directory: Path, *, dry_run: bool) -> None:
     ) as handle:
         handle.write(body)
     try:
-        url = run("gh", "pr", "comment", str(pr.number), "--body-file", handle.name)
+        url = run(
+            "gh", "pr", "comment", str(pr.number), "--body-file", handle.name,
+            env={**os.environ, "GH_TOKEN": token},
+        )
     finally:
         Path(handle.name).unlink(missing_ok=True)
     print(
         f"pr-evidence: posted {len(evidence.images)} screenshot(s) for {pr.head[:7]} — {url}"
     )
+    rerun_validation(pr.repository, pr.head, token)
 
 
 def self_test() -> int:
@@ -524,10 +621,20 @@ def self_test() -> int:
         )
         expect("the comment names the validated commit in full", f"`{head}`" in body)
         expect(
-            "images are embedded by commit SHA, never by ref",
-            f"https://raw.githubusercontent.com/owner/pos/{commit}/20261020T000000Z-aaaaaaa/01-sale.png"
-            in body
-            and "refs/evidence/pr-7/" not in body.split("### Screenshots")[1],
+            "images are embedded from the evidence repository, at the commit that stored them",
+            "https://raw.githubusercontent.com/owner/pos-evidence/"
+            f"{commit}/pr-7/20261020T000000Z-aaaaaaa/01-sale.png" in body
+            and "refs/evidence" not in body
+            and "/main/" not in body,
+        )
+        expect(
+            "the evidence repository sits beside the code repository",
+            evidence_repository("owner/pos") == "owner/pos-evidence",
+        )
+        expect(
+            "the comment links the stored folder at its commit",
+            f"https://github.com/owner/pos-evidence/tree/{commit}/pr-7/20261020T000000Z-aaaaaaa"
+            in body,
         )
         expect("the summary is carried verbatim", "Sale screen with two lines." in body)
 
