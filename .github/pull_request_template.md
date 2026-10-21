@@ -34,6 +34,9 @@
      fresh database, one screenshot per step, every image inspected before it goes
      public, and the comment naming the exact commit validated. A PR that changes
      nothing at runtime posts `Runtime change: none`, why, and the checks that ran.
+     The screenshots are stored in OmarSweiti/pos-evidence and the engineering app posts
+     the comment; the required `validation` check stays red until it names this PR's
+     exact head.
      The owner approves on that evidence; a new push needs new evidence. -->
 
 ## Test catalog

@@ -21,8 +21,9 @@
 #
 # It runs on schedule and workflow_dispatch only, so it never produces a check
 # run on a pull request and must NEVER be added to a ruleset's required status
-# checks. The six required contexts stay `rust`, `guards`, `web`,
-# `supply-chain`, `protected-paths` and `topology`.
+# checks. The required contexts stay `rust`, `guards`, `web`,
+# `supply-chain`, `protected-paths` and `topology`, with `validation` on
+# `development`.
 name: cross-platform-canary
 
 on:

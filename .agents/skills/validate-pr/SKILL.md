@@ -47,8 +47,11 @@ ready: a pull request handed over without an evidence comment is not finished.
    why. A step that failed is reported as failed. Never claim a check that did not run.
 9. **Preview, then publish.** `just evidence-check <pr> <directory>` validates everything
    and prints the comment without writing anything. `just evidence <pr> <directory>`
-   pushes the images to `refs/evidence/pr-<n>`, confirms GitHub serves each one, and posts
-   one comment naming the validated commit.
+   scans the evidence for secrets and assistant attribution, commits the images to a new
+   folder of the `pos-evidence` repository, confirms GitHub serves each one, has the
+   engineering app post one comment naming the validated commit, and runs the `validation`
+   check again so it reads the evidence now. That check is required on `development`: until
+   a comment names the pull request's exact head, the pull request cannot merge.
 10. **If any step failed,** fix it, push, and repeat from step 1. The owner receives a pull
     request whose evidence is all green, or one whose failure is its stated subject.
 

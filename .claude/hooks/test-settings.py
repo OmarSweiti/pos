@@ -105,11 +105,40 @@ class SettingsContract(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("intentionally disabled", result.stderr)
 
-    def test_tracked_env_examples_remain_readable_policy_inputs(self) -> None:
+    def test_agent_data_env_files_and_local_databases_are_readable(self) -> None:
+        # The owner's decision of 21 October 2026: the agents' own memory and
+        # transcripts, `.env` files and local databases are readable.
         permission_denies = SETTINGS["permissions"]["deny"]
-        self.assertNotIn("Read(//**/.env.*)", permission_denies)
-        self.assertIn("Read(//**/.env)", permission_denies)
+        for rule in (
+            "Read(~/.claude/**)",
+            "Read(~/.claude.json)",
+            "Read(~/.codex/**)",
+            "Read(//**/.env)",
+            "Read(//**/.env.*)",
+            "Read(//**/.env.production)",
+            "Read(//**/*.db)",
+            "Read(//**/*.sqlite)",
+        ):
+            self.assertNotIn(rule, permission_denies)
         self.assertTrue((ROOT / "apps" / "server" / ".env.example").is_file())
+
+    def test_key_and_credential_denies_are_still_required(self) -> None:
+        for rule in (
+            "Read(//**/*.pem)",
+            "Read(//**/*.key)",
+            "Read(//**/.npmrc)",
+            "Read(//**/.git-credentials)",
+            "Read(~/.config/gh/**)",
+            "Read(~/.aws/**)",
+            "Read(~/Library/Keychains/**)",
+        ):
+            changed = copy.deepcopy(SETTINGS)
+            changed["permissions"]["deny"].remove(rule)
+            temporary, root = self.fixture(changed)
+            with temporary:
+                result = validate(root)
+            self.assertEqual(result.returncode, 2, rule)
+            self.assertIn("protected-path and secret denies", result.stderr, rule)
 
     def test_pretool_launcher_and_read_matcher_remain_fail_closed(self) -> None:
         changed = copy.deepcopy(SETTINGS)

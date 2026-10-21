@@ -92,8 +92,11 @@ STATIC_POLICY_PATHS = %w[
   scripts/check-protected-paths.sh
   scripts/check-staged-policy.py
   scripts/check-test-catalog.py
+  scripts/check-validation.sh
   scripts/check-workspace-lints.py
   scripts/check-web-build-coverage.py
+  scripts/engineering-app.py
+  scripts/engineering-token.sh
   scripts/gh-bootstrap.sh
   scripts/gh-protect.sh
   scripts/gh-project.sh
