@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **39 of 121 executable microsteps fully complete (~32%)**: `1.1.0`
+Phase 1 has **40 of 121 executable microsteps fully complete (~33%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -82,7 +82,10 @@ inconsistent with a ten-fil step, recorded and put to the merchant rather than g
 (raster strips — the printer profile made §6a's record as a type, a page taller than its device
 takes sent as consecutive raster commands whose payloads join to the bitmap unchanged, `GS ( L`
 held to its own 16-bit count as well as the device's limit, and a page rendered for one paper
-refused by a device of another), and `1.7.11` (device profiles as data — seventeen versioned
+refused by a device of another), `1.7.10` (the network printer — ESC/POS over TCP 9100 behind a
+`Transport` trait, every socket event classified as one of the four outcomes, `DLE EOT` status
+parsed and *unsupported* when a device never answers, and the drawer pulse taken from the profile
+on a connection of its own), and `1.7.11` (device profiles as data — seventeen versioned
 files seeded from the hardware lab, every value with its source and `unknown` exactly where the
 seed has one, a printer bound to a register only when it knows every parameter its driver needs,
 and a committed hash per version so a value changes only as a new version).
