@@ -81,7 +81,7 @@ jobs:
       # GitHub already scopes a cache written on a pull-request ref so the base
       # branch can never read it, so this is a capacity control and not a security
       # one.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/development' }}
       - name: Install the pinned cargo-nextest release
@@ -558,7 +558,7 @@ jobs:
       # is already full. GitHub scopes a cache written on a pull-request ref so the
       # base branch can never read it, so this is a capacity control and not a
       # security one.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main') }}
       - name: Install the pinned cargo-nextest release
