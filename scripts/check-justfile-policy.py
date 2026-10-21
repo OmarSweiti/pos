@@ -500,6 +500,7 @@ if [ "${1:-}" = pr ] && [ "${2:-}" = checks ]; then
   printf 'supply-chain\tci\tpull_request\tSUCCESS\thttps://github.com/owner/pos/actions/runs/4\n'
   printf 'protected-paths\tbranch-flow\tpull_request_target\tSUCCESS\thttps://github.com/owner/pos/actions/runs/5\n'
   printf 'topology\tbranch-flow\tpull_request_target\tSUCCESS\thttps://github.com/owner/pos/actions/runs/6\n'
+  printf 'validation\tvalidation\tpull_request_target\tSUCCESS\thttps://github.com/owner/pos/actions/runs/7\n'
   exit 0
 fi
 if [ "${1:-}" = api ] && [ "${2:-}" = user ]; then
@@ -527,6 +528,7 @@ if [ "${1:-}" = api ]; then
       case "$run_id" in
         1|2|3|4) printf '.github/workflows/ci.yml\tpull_request\tci\n' ;;
         5|6) printf '.github/workflows/branch-flow.yml\tpull_request_target\tbranch-flow\n' ;;
+        7) printf '.github/workflows/validation.yml\tpull_request_target\tvalidation\n' ;;
         *) exit 93 ;;
       esac
       ;;

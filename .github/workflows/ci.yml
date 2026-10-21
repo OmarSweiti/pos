@@ -81,7 +81,7 @@ jobs:
       # GitHub already scopes a cache written on a pull-request ref so the base
       # branch can never read it, so this is a capacity control and not a security
       # one.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/development' }}
       - name: Install the pinned cargo-nextest release
@@ -207,6 +207,10 @@ jobs:
         run: bash ./scripts/approval-gate.sh --self-test
       - name: Validation evidence still refuses a runtime PR without screenshots
         run: ./scripts/pr-evidence.py --self-test
+      - name: The validation check still refuses missing, stale, foreign and forged evidence
+        run: bash ./scripts/check-validation.sh --self-test
+      - name: The engineering app's token is still a verifiable RS256 JWT
+        run: bash ./scripts/engineering-token.sh --self-test
       - name: PR readiness waits for the complete cross-workflow check set
         run: bash ./scripts/watch-pr-checks.sh --self-test
       - name: Workspace lint contract still rejects a member that opts out
@@ -554,7 +558,7 @@ jobs:
       # is already full. GitHub scopes a cache written on a pull-request ref so the
       # base branch can never read it, so this is a capacity control and not a
       # security one.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main') }}
       - name: Install the pinned cargo-nextest release

@@ -191,21 +191,29 @@ financial effect and audit row. `docs/implementation/01-conventions.md` sections
   owner. Once its checks are green, follow the `validate-pr` skill: the exact
   head, a fresh database with synthetic data, the emulators the change touches,
   one screenshot per `Done when` step, every image inspected because the
-  repository is public, then `just evidence <pr> <dir>`. A pull request that
-  changes nothing at runtime posts `Runtime change: none` and why. Never claim
-  a step that did not run.
-- Every pull request is assigned to the owner. `just pr` does it; when opening
-  one any other way, pass `--assignee @me` (the labeler workflow assigns the
-  owner as a backstop).
+  repository is public, then `just evidence <pr> <dir>`, which stores the
+  screenshots in the public, append-only `OmarSweiti/pos-evidence` repository
+  and has the engineering app post the comment. The required `validation`
+  check passes only when that comment names the pull request's exact head. A
+  pull request that changes nothing at runtime posts `Runtime change: none`
+  and why. Never claim a step that did not run.
+- Every pull request is opened by the engineering app — POS Engineering, a
+  private GitHub App the owner owns — and assigned to the owner with the
+  owner's review requested. `just pr` and the promotion recipes do it, and
+  refuse when the app is not configured (`just engineering-app` creates it
+  once); the labeler workflow assigns the owner as a backstop for any other
+  route.
 - Every pull request needs the owner's approval: the `code-owner-review`
   ruleset requires one code-owner approval on all three flow branches. An agent
   never gives it. Never submit a pull-request review (`gh pr review` is
   forbidden in `.codex/rules/safety.rules`), never merge unless the owner asks
   for that pull request (`just merge`, `just promote-merge` and `gh pr merge`
-  prompt), and never pass `--admin`. Every pull request an agent opens is the
-  owner's own to GitHub, which never lets an author approve their own, so
-  `just merge` verifies such a pull request and stops with exit 3 (NOT MERGED).
-  The owner merges it on GitHub, and that click is the approval.
+  prompt), and never pass `--admin`. GitHub never lets an author approve their
+  own pull request, which is why the app opens them: the owner approves on
+  GitHub, and `just merge` merges an approved one. A pull request the owner
+  opened by hand is the owner's own, so `just merge` verifies it and stops with
+  exit 3 (NOT MERGED); the owner merges it on GitHub, and that click is the
+  approval.
 - Commit and squash titles follow
   `<type>(<scope>): <summary>  [<step>]`, where step is `N.N.N`, a lettered
   split microstep `N.N.Nx`, an ordered `N.N.N–N.N.N` range, or `—`. Do not skip
