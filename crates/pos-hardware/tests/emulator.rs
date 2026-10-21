@@ -360,7 +360,29 @@ fn emulated_printer_refuses_a_raster_taller_than_its_profile_allows() {
         Some(tall)
     );
 
-    // The Bixolon's file does not know its limit: nothing prints.
+    // A limit nobody measured, and nothing else unknown before it: the
+    // TM-T20III's file knows its framing and its width, so only the limit
+    // stands between the raster and the page. Nothing prints.
+    let mut unmeasured = printer_file("epson-tm-t20iii-ethernet-80mm");
+    unmeasured.status_protocol = Fact::Known(StatusProtocol::None);
+    unmeasured.raster_max_rows = Fact::Unknown;
+    let emulator = start(unmeasured.clone(), None, None);
+    let _ = driver(emulator.address(), unmeasured).print(&RenderedReceipt {
+        bytes: raw_raster(10),
+    });
+    settle(&emulator, 1);
+    assert!(
+        emulator.jobs().is_empty(),
+        "a page against an unknown limit"
+    );
+    // Its cut command is unknown too, and the stream ends with one.
+    assert_eq!(
+        unknowns(&emulator),
+        vec!["raster_max_rows".to_owned(), "cut_command".to_owned()]
+    );
+
+    // The Bixolon's file knows neither its framing nor its limit; the framing
+    // is checked first, so that is the unknown it names. Nothing prints.
     let mut bixolon = printer_file("bixolon-srp-332iii-80mm");
     bixolon.status_protocol = Fact::Known(StatusProtocol::None);
     let emulator = start(bixolon.clone(), None, None);
