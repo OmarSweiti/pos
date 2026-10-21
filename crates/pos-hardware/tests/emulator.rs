@@ -286,6 +286,29 @@ fn emulated_printer_refuses_a_raster_taller_than_its_profile_allows() {
         vec!["raster_max_rows".to_owned(), "cut_command".to_owned()]
     );
 
+    // The same for a framing nobody stated: the file's limit and width are
+    // known, so only the unknown raster command stands between the raster and
+    // the page. No seeded file isolates this — every one that leaves its
+    // framing unknown leaves something after it unknown too — which is how
+    // a mutant that printed against an unknown framing survived 1.7.13's
+    // conformance suite.
+    let mut unframed = printer_file("epson-tm-t20iii-ethernet-80mm");
+    unframed.status_protocol = Fact::Known(StatusProtocol::None);
+    unframed.raster_command = Fact::Unknown;
+    let emulator = start(unframed.clone(), None, None);
+    let _ = driver(emulator.address(), unframed).print(&RenderedReceipt {
+        bytes: raw_raster(10),
+    });
+    settle(&emulator, 1);
+    assert!(
+        emulator.jobs().is_empty(),
+        "a page against an unknown framing"
+    );
+    assert_eq!(
+        unknowns(&emulator),
+        vec!["raster_command".to_owned(), "cut_command".to_owned()]
+    );
+
     // The Bixolon's file knows neither its framing nor its limit; the framing
     // is checked first, so that is the unknown it names. Nothing prints.
     let mut bixolon = printer_file("bixolon-srp-332iii-80mm");
