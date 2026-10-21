@@ -63,24 +63,15 @@ APPROVED_PERMISSION_ALLOWS = {
     "Bash(git branch --show-current)",
     "Bash(git rev-parse:*)",
 }
+# What Claude's own tools may never read: private keys, tokens, cloud and
+# package-manager credentials, keychains and password managers — material no
+# task here needs. Deliberately absent, by the owner's decision of 21 October
+# 2026: the agents' own data (`~/.claude`, `~/.claude.json`, `~/.codex`), which
+# holds the memory and transcripts that carry work across sessions; `.env`
+# files; and local SQLite databases, which on a development machine hold
+# synthetic data the agent debugs against.
 REQUIRED_PERMISSION_DENIES = {
     "Edit(/docs/plan/**)",
-    "Read(//**/.env)",
-    "Read(//**/.env.local)",
-    "Read(//**/.env.development)",
-    "Read(//**/.env.development.local)",
-    "Read(//**/.env.test)",
-    "Read(//**/.env.test.local)",
-    "Read(//**/.env.staging)",
-    "Read(//**/.env.production)",
-    "Read(//**/.env.production.local)",
-    "Read(//**/*.sqlite)",
-    "Read(//**/*.sqlite3)",
-    "Read(//**/*.db)",
-    "Read(//**/*.db-wal)",
-    "Read(//**/*.db-shm)",
-    "Read(//**/*.sqlite-wal)",
-    "Read(//**/*.sqlite-shm)",
     "Read(//**/*.pem)",
     "Read(//**/*.key)",
     "Read(//**/*.p12)",
@@ -105,9 +96,6 @@ REQUIRED_PERMISSION_DENIES = {
     "Read(~/.config/gcloud/**)",
     "Read(~/.config/op/**)",
     "Read(~/.local/share/keyrings/**)",
-    "Read(~/.claude/**)",
-    "Read(~/.claude.json)",
-    "Read(~/.codex/**)",
     "Read(~/Library/Keychains/**)",
     "Read(~/Library/Application Support/1Password/**)",
     "Read(~/Library/Application Support/Bitwarden/**)",
