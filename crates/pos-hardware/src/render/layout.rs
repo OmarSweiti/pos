@@ -1568,7 +1568,8 @@ mod tests {
     /// word. An Arabic word broken in two takes the wrong contextual form on
     /// both halves, so the reader sees two wrong words, not one. Issue #266:
     /// the fiscal block's label beside its 36-character UUID came out as
-    /// رقم / الفا / تورة / الضر / يبية down the right-hand column.
+    /// رقم / الفا / تورة / الضر / يبية down the right-hand column at 80 mm,
+    /// and the date's label beside its timestamp as ال / تار / يخ at 58 mm.
     #[test]
     fn a_label_narrower_than_its_longest_word_is_never_broken_inside_a_word() {
         let faces = faces();
@@ -1592,6 +1593,30 @@ mod tests {
                 .iter()
                 .map(|line| line.glyphs.iter().map(|glyph| glyph.glyph_id).collect())
                 .collect();
+            // Every row label on this receipt starts a line whole: beside its
+            // amount, or on a row of its own. The fiscal label was not the only
+            // one broken — at 58 mm the date's label, beside its long
+            // timestamp, came out as ال / تار / يخ.
+            for word in [
+                words::buyer(Language::Arabic),
+                words::tax_number(Language::Arabic),
+                words::receipt_no(Language::Arabic),
+                words::register(Language::Arabic),
+                words::cashier(Language::Arabic),
+                words::issued_at(Language::Arabic),
+                words::subtotal(Language::Arabic),
+                words::discount(Language::Arabic),
+                words::rounding(Language::Arabic),
+                words::change(Language::Arabic),
+                words::loyalty(Language::Arabic),
+                words::fiscal(Language::Arabic),
+            ] {
+                let whole = ids(&shape_line(&faces, word, Weight::Regular, true));
+                assert!(
+                    lines.iter().any(|line| line.starts_with(&whole)),
+                    "{word} is not whole at the start of any line at {paper:?}"
+                );
+            }
             let at = lines
                 .iter()
                 .position(|line| *line == label)
@@ -1651,6 +1676,7 @@ mod tests {
         let labels = [
             words::fiscal(Language::Arabic),
             words::fiscal(Language::English),
+            words::issued_at(Language::Arabic),
             words::subtotal(Language::Arabic),
             words::loyalty(Language::Arabic),
             "عرض الخبز العربي الطازج لكل زبون يشتري أكثر من رغيفين",
