@@ -141,6 +141,24 @@ dev-backoffice:
 dev-server:
     cd apps/server; cargo run -p pos-server
 
+# The emulated network printer (1.7.12), before any printer exists: it listens
+# on 127.0.0.1:9100 and behaves as one printer profile — `simulator-80mm`,
+# `simulator-58mm`, or an id under crates/pos-hardware/profiles/ — with an
+# optional drawer profile, and writes each document's PNG and raw bytes under
+# target/printer-emulator/. A developer's tool: the `emulator` feature never
+# reaches a register. Windows runs recipes under PowerShell, where an exported
+# parameter is `$env:name`, so it has a body of its own.
+#
+# Print to an emulated printer: `just printer-emulator epson-tm-t20iii-ethernet-80mm`.
+[unix]
+printer-emulator $printer $drawer='':
+    cargo run --locked -p pos-hardware --features emulator --bin escpos-emulator -- --printer "$printer" --drawer "$drawer"
+
+# Print to an emulated printer: `just printer-emulator epson-tm-t20iii-ethernet-80mm`.
+[windows]
+printer-emulator $printer $drawer='':
+    cargo run --locked -p pos-hardware --features emulator --bin escpos-emulator -- --printer "$env:printer" --drawer "$env:drawer"
+
 # --wait, because the documented next action is `just migrate`: without it the
 # recipe returns while Postgres is still starting and the migration races it.
 db-up:

@@ -3191,7 +3191,9 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "harfrust",
+ "png 0.18.1",
  "pos-domain",
+ "pos-hardware",
  "pos-test-support",
  "proptest",
  "rust_decimal",

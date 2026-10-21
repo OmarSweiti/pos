@@ -124,7 +124,10 @@ Group 1.7's `1.7.8` is **partially delivered**: `ReceiptPrinter::print` returns 
 outcomes, the simulator scripts paper-out and silence at byte *N*, cover-open, offline and a slow
 device, and a sweep injects a fault at every byte of a real receipt. The sweep moves onto a golden
 when `1.7.5` commits them, and its last clause — no second original artifact — waits for `1.7.7`'s
-queue.
+queue. `1.7.12` is **partially delivered** too: the emulated network printer behaves as each seeded
+printer and drawer profile says — refusing what a device would refuse, reporting unknown behaviour
+where a profile does not know — and `just printer-emulator <profile>` prints to it before any
+printer exists; only its golden comparison waits for `1.7.5`'s goldens.
 Repository-hardening and documentation work may land between numbered product steps, but it does
 not advance that frontier.
 
