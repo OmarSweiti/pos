@@ -282,6 +282,15 @@ def scan_evidence(directory: Path) -> None:
         "--message-file", str(directory / SUMMARY))
 
 
+# An installation token is GitHub's documented `ghs_` prefix and an opaque value.
+# That value is not a fixed length or alphabet: today's tokens run to hundreds of
+# characters and carry `.` and `-`, and a 40-character `[A-Za-z0-9_]` rule refused
+# the first real one. So this proves only that the minting script printed one
+# header-safe word of the right kind (not an error message, and not a personal
+# token), and leaves the token's validity to GitHub.
+APP_TOKEN = re.compile(r"ghs_[A-Za-z0-9._-]{16,4096}")
+
+
 def app_token(repository: str) -> str:
     """A token for the engineering app, scoped to `repository`, which posts the
     comment so the `validation` check counts it."""
@@ -291,7 +300,7 @@ def app_token(repository: str) -> str:
         check=False,
     )
     token = result.stdout.decode("utf-8", "replace").strip()
-    if result.returncode != 0 or not re.fullmatch(r"[A-Za-z0-9_]{20,255}", token):
+    if result.returncode != 0 or not APP_TOKEN.fullmatch(token):
         detail = result.stderr.decode("utf-8", "replace").strip()
         raise Refusal(
             "the engineering app posts the evidence, and it is not available "
@@ -637,6 +646,23 @@ def self_test() -> int:
             in body,
         )
         expect("the summary is carried verbatim", "Sale screen with two lines." in body)
+
+    # Built, never literal, so no token-shaped string sits in the tree for a scanner.
+    prefix = "ghs" + "_"
+    expect("a classic 40-character app token is accepted",
+           APP_TOKEN.fullmatch(prefix + "A1b2" * 9) is not None)
+    expect("today's long app token, with `.` and `-`, is accepted",
+           APP_TOKEN.fullmatch(prefix + "x" * 120 + "." + "y-z_" * 60 + "." + "Q" * 25)
+           is not None)
+    for label, output in (
+        ("an empty output", ""),
+        ("an error message", "Bad credentials"),
+        ("two words", prefix + "A" * 36 + " extra"),
+        ("two lines", prefix + "A" * 36 + "\n" + prefix + "B" * 36),
+        ("a personal token", "ghp" + "_" + "A" * 36),
+        ("a prefix with nothing after it", prefix),
+    ):
+        expect(f"{label} is not taken for an app token", APP_TOKEN.fullmatch(output) is None)
 
     print(f"\npr-evidence self-test: {passed} passed, {failed} failed")
     return 0 if failed == 0 else 1
