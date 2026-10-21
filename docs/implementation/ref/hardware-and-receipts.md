@@ -450,9 +450,9 @@ What each class's profile carries:
 
 | Class | Parameters |
 |---|---|
-| Receipt printer | paper width; dots per line; raster command, and the most dot rows one command takes; code pages, for the §2.1 fallback only; cutter, and the feed it needs; real-time status — which replies, over which transport, or none |
+| Receipt printer | paper width; dots per line; raster command, and the most dot rows one command takes; code pages, for the §2.1 fallback only; cutter, and the feed it needs; real-time status — which replies, over which transport, or none — beside §6a's record: maker, model, firmware range, transport, the drawer port's voltage and pulse, and whether it prints the Arabic goldens |
 | Cash drawer | kick channel — a printer's port, or an interface of its own; pin and pulse timings; solenoid voltage and resistance; whether a sensor exists, and its polarity in the status reply |
-| Barcode scanner | interface — USB HID keyboard, USB-COM, serial, HID-POS; prefix and suffix; inter-key timing; keyboard country, ALT or keypad emulation; symbologies |
+| Barcode scanner | interface — USB HID keyboard, USB-COM, serial, HID-POS; prefix and suffix; inter-key timing; keyboard country, ALT or keypad emulation; symbologies, and whether it reads 2D codes at all |
 | Register screen | resolution; display scale; pointer — capacitive touch, resistive touch, mouse; panel size |
 | Register machine | §6a.1's identity columns: CPU, RAM, storage, OS edition and build, power mode. Its speed cannot be emulated (§6b.4) |
 | Customer display | a pole display's lines, columns and character set — a 5 × 7 dot-matrix pole cannot show Arabic — or a second screen's resolution |
@@ -460,27 +460,29 @@ What each class's profile carries:
 | Payment terminal | the acquirer's protocol and transport, last-transaction-status query, partial approval, refund by reference, timeouts, model and firmware — written from [2.1.1](../phase-2-money-grade.md)'s answers |
 | Label printer | command language, dots per line, label sizes ([4.6.1](../phase-4-depth.md)) |
 
-**The seed.** Profiles start from the candidates [`../../hardware-lab.md`](../../hardware-lab.md) researched on 3 October 2026, value by value from the sources that file cites; what no source states is `unknown`. Rows marked *(class)* are synthetic sweeps that describe a class rather than a model, and say so in their source. Once 1.7.11 lands, the files are authoritative and this table is the seed they grew from.
+**The seed.** Profiles start from the candidates [`../../hardware-lab.md`](../../hardware-lab.md) researched on 3 October 2026, value by value from the sources that file cites; what no source states is `unknown`. Rows marked *(class)* are synthetic sweeps that describe a class rather than a model, and say so in their source. Since 1.7.11 the files under [`crates/pos-hardware/profiles/`](../../../crates/pos-hardware/profiles/README.md) are authoritative, and this table is the seed they grew from.
 
-| Profile | Known, and where from | Unknown until the gate |
+| Profile | Known, and where from | Unknown until the gate, beyond its class's |
 |---|---|---|
-| Epson TM-T20III, Ethernet — 80 mm | 576 dots; `GS v 0` at most 2303 rows, with `GS ( L` recommended; status over the socket; auto-cutter; drawer port at 24 V — Epson's technical reference and ESC/POS reference (hardware-lab §4.2) | the cut feed; the firmware range |
-| Epson TM-T20IV — 80 mm | 576 dots; `GS v 0` at most 2303 rows — Epson (hardware-lab §4.2) | status over Ethernet; the cut feed |
-| Epson TM-T88VII — 80 mm | **512 dots** at 180 dpi; `GS v 0` at most 4095 rows; a vendor-class USB interface — Epson's technical reference (hardware-lab §4.2) | — seeded *because* its width differs from the goldens: it exercises the new-width path |
-| Epson TM-m10 — 58 mm | **420 dots** — Epson's specifications (hardware-lab §4.3) | the raster limit; status transport |
-| Bixolon SRP-332III — 80 mm and 58 mm, two profiles | 576 and **384** dots at 203 dpi, the second through its 2-inch partition; USB, Ethernet and serial; auto-cutter; 24 V drawer port; `DLE EOT` and port 9100 documented — Bixolon's manual and specification sheet (hardware-lab §4.3) | **status over Ethernet**; the raster limit |
-| Xprinter XP-N160II — 80 mm | `DLE EOT` valid on serial only, so status over Ethernet is *none* — Xprinter's manual (hardware-lab §4.2) | dots per line; the raster limit |
-| HPRT TP585 — 58 mm | native 58 mm; cutter; 24 V drawer port; USB only — HPRT (hardware-lab §4.3) | dots per line; status |
+| Epson TM-T20III, Ethernet — 80 mm | 576 dots; `GS v 0` at most 2303 rows, with `GS ( L` recommended; status over the socket; auto-cutter; drawer port at 24 V — Epson's technical reference and ESC/POS reference (hardware-lab §4.2) | — |
+| Epson TM-T20IV — 80 mm | 576 dots; `GS v 0` at most 2303 rows; USB, serial and Ethernet — Epson (hardware-lab §4.2) | status over Ethernet; the cutter; the drawer port's voltage |
+| Epson TM-T88VII — 80 mm | **512 dots** at 180 dpi; `GS v 0` at most 4095 rows; a vendor-class USB interface — Epson's technical reference (hardware-lab §2, §4.2) | the cutter; status; the drawer port's voltage — seeded *because* its width differs from the goldens: it exercises the new-width path |
+| Epson TM-m10 — 58 mm | **420 dots** — Epson's specifications (hardware-lab §4.3) | the transport; the raster command and its limit; the cutter; status; the drawer port's voltage |
+| Bixolon SRP-332III — 80 mm and 58 mm, two profiles | 576 and **384** dots at 203 dpi, the second through its 2-inch partition; USB, Ethernet and serial; auto-cutter; 24 V drawer port; `DLE EOT` and port 9100 documented — Bixolon's manual and specification sheet (hardware-lab §4.3) | **status over Ethernet**; the raster command and its limit |
+| Xprinter XP-N160II, Ethernet — 80 mm | an 80-series model whose `DLE EOT` is valid on serial only, so status over Ethernet is *none* — Xprinter's manual (hardware-lab §4.2) | dots per line; the raster command and its limit; the cutter; the drawer port's voltage |
+| HPRT TP585 — 58 mm | native 58 mm; cutter; 24 V drawer port; USB only — HPRT (hardware-lab §4.3) | dots per line; the raster command and its limit; status |
 | Datalogic QuickScan QD2590 | wired USB HID keyboard; 2D; keyboard countries Arabic 101, 102 and 102 AZERTY; alternative key encoding; ALT output — Datalogic's reference guide (hardware-lab §4.4) | inter-key timing at its fastest setting |
-| Zebra DS2208 | keyboard country Arabic (101); keypad emulation — Zebra's reference guide (hardware-lab §4.4) | inter-key timing |
-| Honeywell Voyager 1470g | keyboard countries without Arabic, and no ALT mode — Honeywell's user guide (hardware-lab §4.4) | — seeded as the profile that proves 1.11.6b alone carries an Arabic layout |
+| Zebra DS2208 | keyboard country Arabic (101), a setting of its USB HID keyboard interface; keypad emulation — Zebra's reference guide (hardware-lab §4.4) | inter-key timing; whether it reads 2D codes |
+| Honeywell Voyager 1470g | keyboard countries without Arabic, and no ALT mode — Honeywell's user guide (hardware-lab §4.4) | inter-key timing; whether it reads 2D codes — seeded as the profile that proves 1.11.6b alone carries an Arabic layout |
 | Posiflex CR-4000-G2 drawer | printer-driven; 12–24 V — Posiflex (hardware-lab §4.5) | pin; solenoid resistance; sensor and polarity |
-| APG Vasario VB320 drawer | printer-driven at 24 V, RJ45 jack — POSGuys (hardware-lab §4.5) | pin; solenoid resistance; sensor |
+| APG Vasario VB320 drawer | printer-driven at 24 V, RJ45 jack — POSGuys (hardware-lab §4.5) | pin; solenoid resistance; sensor and polarity |
 | Posiflex XT-3815-G2 register | Celeron J6412; up to 32 GB; M.2 SATA; TPM 2.0; 15″ **1024 × 768 capacitive** panel — Posiflex (hardware-lab §4.1) | display scale |
 | MSI PRO AP162T register | Intel N100; 8 GB; 128 GB NVMe; 15.6″ **1920 × 1080 resistive single-touch** panel — MSI (hardware-lab §4.1) | display scale |
-| The minimum window *(class)* | **1024 × 640**, the declared minimum ([1.11.14](../phase-1-sellable-mvp.md)) | — |
-| Wedge scanner *(class)* | inter-key timing swept across and beyond §5's 30 ms threshold, under the US and Arabic (101) host layouts | — synthetic by definition |
-| Pole display *(class)* | a 5 × 7 dot matrix that cannot show Arabic (hardware-lab §5) | everything model-specific |
+| The minimum window *(class)* | **1024 × 640**, the declared minimum ([1.11.14](../phase-1-sellable-mvp.md)), at one device pixel per CSS pixel and with a mouse | the panel size: a window has none |
+| Wedge scanner *(class)* | inter-key timing swept from 0 to 60 ms, across and beyond §5's 30 ms threshold, under the US and Arabic (101) host layouts; no prefix and an Enter suffix; Code 128, EAN-13 and QR | — synthetic by definition |
+| Pole display *(class)* | a 5 × 7 dot matrix that cannot show Arabic (hardware-lab §5) | everything model-specific — and no file yet: the customer-display class starts with its trait |
+
+**Unknown in every model of its class, so the rows do not repeat it.** Every receipt printer leaves unknown its firmware range, its code pages, the cut command and the feed it needs, the drawer pulse, and whether it prints the Arabic goldens: no seed source states any of them for any candidate. Both drawers leave unknown their pulse timings, and the three scanner models the prefix and suffix they send by default and the symbologies they read. The two register rows seed the register-screen class only; their machine half — processor, memory, storage — is §6a.1's, and a speed cannot be emulated (§6b.4). Each first version under [`crates/pos-hardware/profiles/`](../../../crates/pos-hardware/profiles/README.md) is unknown exactly where this table and this paragraph say it is, and `every_seeded_profile_is_unknown_exactly_where_the_seed_table_says` holds it there; a later version answers to the three rules alone.
 
 The scale, the payment terminal and the label printer have no seed: no device is named, and the terminal's profile is written from 2.1.1's written answers. Star's mC-Print models speak StarPRNT rather than ESC/POS (hardware-lab §4.2), so they would need an emulator of their own and are not seeded.
 

@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "class": "scanner",
+  "profile_id": "zebra-ds2208",
+  "version": 1,
+  "describes": "model",
+  "values": {
+    "maker": {
+      "value": "Zebra",
+      "source": "docs/hardware-lab.md §4.4, citing Zebra, DS2208 product reference guide, https://www.zebra.com/content/dam/support-dam/en/documentation/unrestricted/guide/product/ds2208-prg-en.pdf"
+    },
+    "model": {
+      "value": "DS2208",
+      "source": "docs/hardware-lab.md §4.4, citing Zebra, DS2208 product reference guide, https://www.zebra.com/content/dam/support-dam/en/documentation/unrestricted/guide/product/ds2208-prg-en.pdf"
+    },
+    "interface": {
+      "value": "usb_hid_keyboard",
+      "source": "docs/hardware-lab.md §4.4, citing Zebra, DS2208 product reference guide, https://www.zebra.com/content/dam/support-dam/en/documentation/unrestricted/guide/product/ds2208-prg-en.pdf: “documents “Arabic (101)” as a keyboard country and keypad emulation”: both are settings of its USB HID keyboard interface"
+    },
+    "prefix": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: the default prefix and suffix are not named (docs/hardware-lab.md §4.4 and the documents it cites). The lab reprograms both by configuration barcode at setup (docs/hardware-lab.md §6.4)."
+    },
+    "suffix": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: the default prefix and suffix are not named (docs/hardware-lab.md §4.4 and the documents it cites). The lab reprograms both by configuration barcode at setup (docs/hardware-lab.md §6.4)."
+    },
+    "inter_key_ms": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no inter-key timing is named (docs/hardware-lab.md §4.4 and the documents it cites). The gap a scan leaves between key presses is what tells it from typing (ref/hardware-and-receipts.md §5), so the gate measures it."
+    },
+    "arabic_keyboard_countries": {
+      "value": [
+        "Arabic (101)"
+      ],
+      "source": "docs/hardware-lab.md §4.4, citing Zebra, DS2208 product reference guide, https://www.zebra.com/content/dam/support-dam/en/documentation/unrestricted/guide/product/ds2208-prg-en.pdf: “documents “Arabic (101)” as a keyboard country and keypad emulation”"
+    },
+    "alt_or_keypad_emulation": {
+      "value": true,
+      "source": "docs/hardware-lab.md §4.4, citing Zebra, DS2208 product reference guide, https://www.zebra.com/content/dam/support-dam/en/documentation/unrestricted/guide/product/ds2208-prg-en.pdf: “documents “Arabic (101)” as a keyboard country and keypad emulation”"
+    },
+    "reads_2d": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: whether the DS2208 reads 2D codes is not stated (docs/hardware-lab.md §4.4 and the documents it cites)."
+    },
+    "symbologies": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no list of symbologies is given (docs/hardware-lab.md §4.4 and the documents it cites)."
+    }
+  }
+}

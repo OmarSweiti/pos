@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "class": "register_screen",
+  "profile_id": "minimum-window-class",
+  "version": 1,
+  "describes": "class",
+  "values": {
+    "maker": {
+      "value": "synthetic",
+      "source": "Synthetic: a class, not a model — the seed's “The minimum window (class)” (ref/hardware-and-receipts.md §6b.2)"
+    },
+    "model": {
+      "value": "the declared minimum window (class)",
+      "source": "Synthetic: the seed's “The minimum window (class)” (ref/hardware-and-receipts.md §6b.2)"
+    },
+    "resolution": {
+      "value": {
+        "width": 1024,
+        "height": 640
+      },
+      "source": "Synthetic: the declared minimum, 1024×640, at which 1.11.14 commits its baselines (ref/hardware-and-receipts.md §6b.2)"
+    },
+    "display_scales_percent": {
+      "value": [
+        100
+      ],
+      "source": "Synthetic: 1.11.14 renders its baselines at 1024×640 CSS pixels, one device pixel each (ref/hardware-and-receipts.md §6b.2)"
+    },
+    "pointer": {
+      "value": "mouse",
+      "source": "Synthetic: 1.11.14's baselines are taken without touch emulation; 1.11.14b adds touch only where a profile's pointer is touch (ref/hardware-and-receipts.md §6b.2)"
+    },
+    "panel_tenths_inch": {
+      "value": "unknown",
+      "source": "Not applicable rather than unmeasured: a window has no panel, and nothing reads this value for one (ref/hardware-and-receipts.md §6b.2)"
+    }
+  }
+}

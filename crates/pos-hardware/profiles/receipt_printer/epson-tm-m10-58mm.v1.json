@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "class": "receipt_printer",
+  "profile_id": "epson-tm-m10-58mm",
+  "version": 1,
+  "describes": "model",
+  "values": {
+    "maker": {
+      "value": "Epson",
+      "source": "docs/hardware-lab.md §4.3, citing Epson, TM-m10 specifications, https://download4.epson.biz/sec_pubs/bs/html/m000920/en/chap10_1.html"
+    },
+    "model": {
+      "value": "TM-m10",
+      "source": "docs/hardware-lab.md §4.3, citing Epson, TM-m10 specifications, https://download4.epson.biz/sec_pubs/bs/html/m000920/en/chap10_1.html"
+    },
+    "firmware_qualified": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no firmware range is named (docs/hardware-lab.md §4.3 and the documents it cites). The gate records the range it qualified (ref/hardware-and-receipts.md §6a, §6b.5)."
+    },
+    "transport": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: the TM-m10's interfaces are not described (docs/hardware-lab.md §4.3 and the documents it cites)."
+    },
+    "paper_mm": {
+      "value": 58,
+      "source": "docs/hardware-lab.md §4.3, citing Epson, TM-m10 specifications, https://download4.epson.biz/sec_pubs/bs/html/m000920/en/chap10_1.html: “The Epson TM-m10 prints 52.5 mm = 420 dots”, in 58 mm mode"
+    },
+    "dot_width": {
+      "value": 420,
+      "source": "docs/hardware-lab.md §4.3, citing Epson, TM-m10 specifications, https://download4.epson.biz/sec_pubs/bs/html/m000920/en/chap10_1.html: “The Epson TM-m10 prints 52.5 mm = 420 dots”. A 420-dot device is a new width with its own goldens"
+    },
+    "raster_command": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no raster command is named for the TM-m10 (docs/hardware-lab.md §4.3 and the documents it cites)."
+    },
+    "raster_max_rows": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no raster limit is named for the TM-m10 (docs/hardware-lab.md §4.3 and the documents it cites)."
+    },
+    "code_pages": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no code page is named (docs/hardware-lab.md §4.3 and the documents it cites). Receipts print as raster; code pages serve only the §2.1 text fallback (ref/hardware-and-receipts.md §6b.2)."
+    },
+    "auto_cutter": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: the TM-m10's cutter is not described (docs/hardware-lab.md §4.3 and the documents it cites)."
+    },
+    "cut_command": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: an auto-cutter is named at most, never which GS V cut it honours (docs/hardware-lab.md §4.3 and the documents it cites). 1.7.4's partial cut is a baseline, not this device's fact (ref/hardware-and-receipts.md §6a)."
+    },
+    "cut_feed_rows": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no feed before the cut is named (docs/hardware-lab.md §4.3 and the documents it cites). It is measured on the device: crate::escpos records why no feed is emitted yet (ref/hardware-and-receipts.md §6b.5)."
+    },
+    "status_protocol": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: the TM-m10's status and its transport are not described (docs/hardware-lab.md §4.3 and the documents it cites)."
+    },
+    "drawer_port_volts": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: the TM-m10's drawer port is not described (docs/hardware-lab.md §4.3 and the documents it cites)."
+    },
+    "drawer_pulse": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no pin or timing is named (docs/hardware-lab.md §4.3 and the documents it cites). The pin is the drawer's property and the timings its solenoid's (docs/hardware-lab.md §4.5; ref/hardware-and-receipts.md §6a)."
+    },
+    "supports_raster_arabic": {
+      "value": "unknown",
+      "source": "A qualification result rather than a datasheet fact: nobody has printed the Arabic goldens on this device (ref/hardware-and-receipts.md §6a; milestone 5.8.3)."
+    }
+  }
+}

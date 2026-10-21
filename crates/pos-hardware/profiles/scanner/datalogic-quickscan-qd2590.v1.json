@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "class": "scanner",
+  "profile_id": "datalogic-quickscan-qd2590",
+  "version": 1,
+  "describes": "model",
+  "values": {
+    "maker": {
+      "value": "Datalogic",
+      "source": "docs/hardware-lab.md §4.4, citing Datalogic, QuickScan QD2590 reference guide, https://cdn.datalogic.com/Download?iddwnfile=36041"
+    },
+    "model": {
+      "value": "QuickScan QD2590",
+      "source": "docs/hardware-lab.md §4.4, citing Datalogic, QuickScan QD2590 reference guide, https://cdn.datalogic.com/Download?iddwnfile=36041"
+    },
+    "interface": {
+      "value": "usb_hid_keyboard",
+      "source": "docs/hardware-lab.md §4.4, citing Datalogic, QuickScan QD2590 reference guide, https://cdn.datalogic.com/Download?iddwnfile=36041: “country modes Arabic 101, Arabic 102 and Arabic 102 AZERTY, an “alternative key encoding” keyboard interface, and an ALT output type”. Wired: ref/hardware-and-receipts.md §6b.2's seed records “wired USB HID keyboard” from the same guide"
+    },
+    "prefix": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: the default prefix and suffix are not named (docs/hardware-lab.md §4.4 and the documents it cites). The lab reprograms both by configuration barcode at setup (docs/hardware-lab.md §6.4)."
+    },
+    "suffix": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: the default prefix and suffix are not named (docs/hardware-lab.md §4.4 and the documents it cites). The lab reprograms both by configuration barcode at setup (docs/hardware-lab.md §6.4)."
+    },
+    "inter_key_ms": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no inter-key timing is named, at its fastest setting or any other (docs/hardware-lab.md §4.4 and the documents it cites). The gap a scan leaves between key presses is what tells it from typing (ref/hardware-and-receipts.md §5), so the gate measures it."
+    },
+    "arabic_keyboard_countries": {
+      "value": [
+        "Arabic 101",
+        "Arabic 102",
+        "Arabic 102 AZERTY"
+      ],
+      "source": "docs/hardware-lab.md §4.4, citing Datalogic, QuickScan QD2590 reference guide, https://cdn.datalogic.com/Download?iddwnfile=36041: “country modes Arabic 101, Arabic 102 and Arabic 102 AZERTY”"
+    },
+    "alt_or_keypad_emulation": {
+      "value": true,
+      "source": "docs/hardware-lab.md §4.4, citing Datalogic, QuickScan QD2590 reference guide, https://cdn.datalogic.com/Download?iddwnfile=36041: “an “alternative key encoding” keyboard interface, and an ALT output type”"
+    },
+    "reads_2d": {
+      "value": true,
+      "source": "ref/hardware-and-receipts.md §6b.2's seed records “2D” from Datalogic's reference guide (docs/hardware-lab.md §4.4); sold in Amman as an area imager, GTS Amman, https://gts.jo/en/datalogic/datalogic-quickscan-qd2590-bk-corded-handheld-omnidirectional-area-imager-barcode-scanner-black-1d-2d-and-postal-codes"
+    },
+    "symbologies": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no list of symbologies is given (docs/hardware-lab.md §4.4 and the documents it cites)."
+    }
+  }
+}

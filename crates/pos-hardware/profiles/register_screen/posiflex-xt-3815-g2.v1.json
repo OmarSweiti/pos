@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "class": "register_screen",
+  "profile_id": "posiflex-xt-3815-g2",
+  "version": 1,
+  "describes": "model",
+  "values": {
+    "maker": {
+      "value": "Posiflex",
+      "source": "docs/hardware-lab.md §4.1, citing Posiflex, XT-3815-G2, https://www.posiflex.com/product-detail/xt-3815-g2/"
+    },
+    "model": {
+      "value": "XT-3815-G2",
+      "source": "docs/hardware-lab.md §4.1, citing Posiflex, XT-3815-G2, https://www.posiflex.com/product-detail/xt-3815-g2/"
+    },
+    "resolution": {
+      "value": {
+        "width": 1024,
+        "height": 768
+      },
+      "source": "docs/hardware-lab.md §4.1, citing Posiflex, XT-3815-G2, https://www.posiflex.com/product-detail/xt-3815-g2/: “a 15″ 1024×768 true-flat PCAP multi-touch panel”"
+    },
+    "display_scales_percent": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: the scale Windows applies is set on the installed system, not in a specification (docs/hardware-lab.md §4.1 and the documents it cites). The gate reads it from the reference register (ref/hardware-and-receipts.md §6b.5)."
+    },
+    "pointer": {
+      "value": "capacitive_touch",
+      "source": "docs/hardware-lab.md §4.1, citing Posiflex, XT-3815-G2, https://www.posiflex.com/product-detail/xt-3815-g2/: “a 15″ 1024×768 true-flat PCAP multi-touch panel”"
+    },
+    "panel_tenths_inch": {
+      "value": 150,
+      "source": "docs/hardware-lab.md §4.1, citing Posiflex, XT-3815-G2, https://www.posiflex.com/product-detail/xt-3815-g2/: “a 15″ 1024×768 true-flat PCAP multi-touch panel”"
+    }
+  }
+}

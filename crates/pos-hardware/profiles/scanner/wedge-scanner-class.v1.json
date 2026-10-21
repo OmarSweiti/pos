@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "class": "scanner",
+  "profile_id": "wedge-scanner-class",
+  "version": 1,
+  "describes": "class",
+  "values": {
+    "maker": {
+      "value": "synthetic",
+      "source": "Synthetic: a class, not a model — the seed's “Wedge scanner (class)” (ref/hardware-and-receipts.md §6b.2)"
+    },
+    "model": {
+      "value": "keyboard-wedge scanner (class)",
+      "source": "Synthetic: the seed's “Wedge scanner (class)” (ref/hardware-and-receipts.md §6b.2)"
+    },
+    "interface": {
+      "value": "usb_hid_keyboard",
+      "source": "Synthetic: the class is the keyboard wedge, whose key presses the active layout re-maps (ref/hardware-and-receipts.md §5)"
+    },
+    "prefix": {
+      "value": [],
+      "source": "Synthetic: no prefix, as the lab configures every scanner (docs/hardware-lab.md §4.4)"
+    },
+    "suffix": {
+      "value": [
+        "Enter"
+      ],
+      "source": "Synthetic: a burst “terminated by Enter” (ref/hardware-and-receipts.md §5)"
+    },
+    "inter_key_ms": {
+      "value": {
+        "min": 0,
+        "max": 60
+      },
+      "source": "Synthetic: swept from 0 ms to 60 ms, twice §5's 30 ms burst threshold, so both sides of it run under the US and Arabic (101) host layouts (ref/hardware-and-receipts.md §5, §6b.2)"
+    },
+    "arabic_keyboard_countries": {
+      "value": [],
+      "source": "Synthetic: a scanner left on its default US layout, the case 1.11.6b decodes by physical key (ref/hardware-and-receipts.md §5)"
+    },
+    "alt_or_keypad_emulation": {
+      "value": false,
+      "source": "Synthetic: no device-side answer to the layout, so the decoding alone must carry it (ref/hardware-and-receipts.md §5)"
+    },
+    "reads_2d": {
+      "value": true,
+      "source": "Synthetic: the class types the fiscal QR's value as well as linear codes (ref/hardware-and-receipts.md §5)"
+    },
+    "symbologies": {
+      "value": [
+        "Code 128",
+        "EAN-13",
+        "QR Code"
+      ],
+      "source": "Synthetic: Code 128 and QR values carry Latin letters the Arabic layout re-maps, and digit-only EAN survives it (ref/hardware-and-receipts.md §5)"
+    }
+  }
+}

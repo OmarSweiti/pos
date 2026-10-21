@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "class": "receipt_printer",
+  "profile_id": "xprinter-xp-n160ii-ethernet-80mm",
+  "version": 1,
+  "describes": "model",
+  "values": {
+    "maker": {
+      "value": "Xprinter",
+      "source": "docs/hardware-lab.md §4.2, citing Xprinter, XP-N160II, https://www.xprinter.net/product/508.html"
+    },
+    "model": {
+      "value": "XP-N160II",
+      "source": "docs/hardware-lab.md §4.2, citing Xprinter, XP-N160II, https://www.xprinter.net/product/508.html"
+    },
+    "firmware_qualified": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no firmware range is named (docs/hardware-lab.md §4.2 and the documents it cites). The gate records the range it qualified (ref/hardware-and-receipts.md §6a, §6b.5)."
+    },
+    "transport": {
+      "value": "tcp_9100",
+      "source": "docs/hardware-lab.md §4.2, citing Xprinter, XP-N160II, https://www.xprinter.net/product/508.html: “one on Ethernet cannot warn before payment”: the candidate is the Ethernet configuration; TCP 9100 first, per ref/hardware-and-receipts.md §6a"
+    },
+    "paper_mm": {
+      "value": 80,
+      "source": "docs/hardware-lab.md §4.2, citing Xprinter, XP-N160II, https://www.xprinter.net/product/508.html: “Xprinter's own 80-series programming manual”"
+    },
+    "dot_width": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: the XP-N160II's dots per line are not named (docs/hardware-lab.md §4.2 and the documents it cites)."
+    },
+    "raster_command": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no raster command is named for the XP-N160II (docs/hardware-lab.md §4.2 and the documents it cites)."
+    },
+    "raster_max_rows": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no raster limit is named for the XP-N160II (docs/hardware-lab.md §4.2 and the documents it cites)."
+    },
+    "code_pages": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no code page is named (docs/hardware-lab.md §4.2 and the documents it cites). Receipts print as raster; code pages serve only the §2.1 text fallback (ref/hardware-and-receipts.md §6b.2)."
+    },
+    "auto_cutter": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: the XP-N160II's cutter is not described (docs/hardware-lab.md §4.2 and the documents it cites)."
+    },
+    "cut_command": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: an auto-cutter is named at most, never which GS V cut it honours (docs/hardware-lab.md §4.2 and the documents it cites). 1.7.4's partial cut is a baseline, not this device's fact (ref/hardware-and-receipts.md §6a)."
+    },
+    "cut_feed_rows": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no feed before the cut is named (docs/hardware-lab.md §4.2 and the documents it cites). It is measured on the device: crate::escpos records why no feed is emitted yet (ref/hardware-and-receipts.md §6b.5)."
+    },
+    "status_protocol": {
+      "value": "none",
+      "source": "docs/hardware-lab.md §4.2, citing Xprinter, XP-N160II, https://www.xprinter.net/product/508.html: “Xprinter's own 80-series programming manual marks DLE EOT as valid only on serial printers”, so on Ethernet it has none"
+    },
+    "drawer_port_volts": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: the XP-N160II's drawer port is not described (docs/hardware-lab.md §4.2 and the documents it cites)."
+    },
+    "drawer_pulse": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no pin or timing is named (docs/hardware-lab.md §4.2 and the documents it cites). The pin is the drawer's property and the timings its solenoid's (docs/hardware-lab.md §4.5; ref/hardware-and-receipts.md §6a)."
+    },
+    "supports_raster_arabic": {
+      "value": "unknown",
+      "source": "A qualification result rather than a datasheet fact: nobody has printed the Arabic goldens on this device (ref/hardware-and-receipts.md §6a; milestone 5.8.3)."
+    }
+  }
+}

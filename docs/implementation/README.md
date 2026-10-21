@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **38 of 121 executable microsteps fully complete (~31%)**: `1.1.0`
+Phase 1 has **39 of 121 executable microsteps fully complete (~32%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -78,11 +78,14 @@ store's coin step while a card is charged the exact amount, the signed differenc
 of its own so the books reconcile to the fil, and change refused rather than rounded), and `1.5.4`
 (the dinar's denominations — the plan's eleven pieces for the quick-keys and the float and close
 grids, no table borrowed across currencies, and a coin set its own first test showed to be
-inconsistent with a ten-fil step, recorded and put to the merchant rather than guessed), and `1.7.9`
+inconsistent with a ten-fil step, recorded and put to the merchant rather than guessed), `1.7.9`
 (raster strips — the printer profile made §6a's record as a type, a page taller than its device
 takes sent as consecutive raster commands whose payloads join to the bitmap unchanged, `GS ( L`
 held to its own 16-bit count as well as the device's limit, and a page rendered for one paper
-refused by a device of another).
+refused by a device of another), and `1.7.11` (device profiles as data — seventeen versioned
+files seeded from the hardware lab, every value with its source and `unknown` exactly where the
+seed has one, a printer bound to a register only when it knows every parameter its driver needs,
+and a committed hash per version so a value changes only as a new version).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on

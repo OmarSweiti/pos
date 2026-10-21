@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "class": "cash_drawer",
+  "profile_id": "apg-vasario-vb320",
+  "version": 1,
+  "describes": "model",
+  "values": {
+    "maker": {
+      "value": "APG",
+      "source": "docs/hardware-lab.md §4.5, citing POSGuys, APG Vasario, https://posguys.com/cash-drawer_32/APG-Vasario-Series_61/"
+    },
+    "model": {
+      "value": "Vasario VB320",
+      "source": "docs/hardware-lab.md §4.5, citing POSGuys, APG Vasario, https://posguys.com/cash-drawer_32/APG-Vasario-Series_61/"
+    },
+    "kick_channel": {
+      "value": "printer_port",
+      "source": "docs/hardware-lab.md §4.5, citing POSGuys, APG Vasario, https://posguys.com/cash-drawer_32/APG-Vasario-Series_61/: “a 24 V printer-driven drawer whose RJ45 jack takes the included Epson cable”"
+    },
+    "pin": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: which pin fires it is not named (docs/hardware-lab.md §4.5 and the documents it cites). It is the drawer's property, recorded in the printer profile once measured (ref/hardware-and-receipts.md §6a)."
+    },
+    "pulse_on_ms": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no pulse timing is named (docs/hardware-lab.md §4.5 and the documents it cites). The timings are the solenoid's, measured at the gate (ref/hardware-and-receipts.md §6a)."
+    },
+    "pulse_off_ms": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no pulse timing is named (docs/hardware-lab.md §4.5 and the documents it cites). The timings are the solenoid's, measured at the gate (ref/hardware-and-receipts.md §6a)."
+    },
+    "solenoid_volts": {
+      "value": {
+        "min": 24,
+        "max": 24
+      },
+      "source": "docs/hardware-lab.md §4.5, citing POSGuys, APG Vasario, https://posguys.com/cash-drawer_32/APG-Vasario-Series_61/: “a 24 V printer-driven drawer whose RJ45 jack takes the included Epson cable”"
+    },
+    "solenoid_ohms": {
+      "value": "unknown",
+      "source": "docs/hardware-lab.md §4.5: “no drawer maker publishes its coil resistance, so measure it”; Epson requires the solenoid to be 24 Ω or more"
+    },
+    "sensor": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no drawer sensor is described (docs/hardware-lab.md §4.5 and the documents it cites)."
+    },
+    "sensor_polarity": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no drawer sensor is described, so nor is its polarity (docs/hardware-lab.md §4.5 and the documents it cites)."
+    }
+  }
+}

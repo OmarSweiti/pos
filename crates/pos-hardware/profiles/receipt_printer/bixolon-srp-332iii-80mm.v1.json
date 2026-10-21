@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "class": "receipt_printer",
+  "profile_id": "bixolon-srp-332iii-80mm",
+  "version": 1,
+  "describes": "model",
+  "values": {
+    "maker": {
+      "value": "Bixolon",
+      "source": "docs/hardware-lab.md §4.3, citing Bixolon, SRP-33xIII user manual, https://bixolon.com/_upload/manual/Manual_User_SRP-33xIII_ENG_V1.00.pdf"
+    },
+    "model": {
+      "value": "SRP-332III (203 dpi), on 3-inch paper",
+      "source": "docs/hardware-lab.md §4.3, citing Bixolon, SRP-33xIII user manual, https://bixolon.com/_upload/manual/Manual_User_SRP-33xIII_ENG_V1.00.pdf: “At 8 dots/mm its printing width is 72 mm on 3-inch paper and 48 mm on 2-inch paper = 384 dots”"
+    },
+    "firmware_qualified": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no firmware range is named (docs/hardware-lab.md §4.3 and the documents it cites). The gate records the range it qualified (ref/hardware-and-receipts.md §6a, §6b.5)."
+    },
+    "transport": {
+      "value": "tcp_9100",
+      "source": "docs/hardware-lab.md §4.3, citing Bixolon, SRP-330III specification sheet, https://bixoloneu.com/wp-content/uploads/2025/04/SS_SRP-330III_EN_JAN25_V1.pdf: “USB 2.0 FS + Ethernet + Serial”; Bixolon's command manual documents network printing on port 9100 (§4.3); TCP 9100 first, per ref/hardware-and-receipts.md §6a"
+    },
+    "paper_mm": {
+      "value": 80,
+      "source": "docs/hardware-lab.md §4.3, citing Bixolon, SRP-33xIII user manual, https://bixolon.com/_upload/manual/Manual_User_SRP-33xIII_ENG_V1.00.pdf: “72 mm on 3-inch paper”"
+    },
+    "dot_width": {
+      "value": 576,
+      "source": "docs/hardware-lab.md §4.3, citing Bixolon, SRP-33xIII user manual, https://bixolon.com/_upload/manual/Manual_User_SRP-33xIII_ENG_V1.00.pdf: “At 8 dots/mm its printing width is 72 mm on 3-inch paper and 48 mm on 2-inch paper = 384 dots”"
+    },
+    "raster_command": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no raster command is named for the SRP-332III (docs/hardware-lab.md §4.3 and the documents it cites)."
+    },
+    "raster_max_rows": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no raster limit is named for the SRP-332III (docs/hardware-lab.md §4.3 and the documents it cites)."
+    },
+    "code_pages": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no code page is named (docs/hardware-lab.md §4.3 and the documents it cites). Receipts print as raster; code pages serve only the §2.1 text fallback (ref/hardware-and-receipts.md §6b.2)."
+    },
+    "auto_cutter": {
+      "value": true,
+      "source": "docs/hardware-lab.md §4.3, citing Bixolon, SRP-330III specification sheet, https://bixoloneu.com/wp-content/uploads/2025/04/SS_SRP-330III_EN_JAN25_V1.pdf: an auto-cutter, a 24 V drawer port, and the partition"
+    },
+    "cut_command": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: an auto-cutter is named at most, never which GS V cut it honours (docs/hardware-lab.md §4.3 and the documents it cites). 1.7.4's partial cut is a baseline, not this device's fact (ref/hardware-and-receipts.md §6a)."
+    },
+    "cut_feed_rows": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no feed before the cut is named (docs/hardware-lab.md §4.3 and the documents it cites). It is measured on the device: crate::escpos records why no feed is emitted yet (ref/hardware-and-receipts.md §6b.5)."
+    },
+    "status_protocol": {
+      "value": "unknown",
+      "source": "docs/hardware-lab.md §4.3, citing Bixolon, SRP-33xIII user manual, https://bixolon.com/_upload/manual/Manual_User_SRP-33xIII_ENG_V1.00.pdf: “Bixolon's command manual documents DLE EOT and network printing on port 9100, though not, in so many words, status over Ethernet”. Unknown until the gate confirms it"
+    },
+    "drawer_port_volts": {
+      "value": 24,
+      "source": "docs/hardware-lab.md §4.3, citing Bixolon, SRP-330III specification sheet, https://bixoloneu.com/wp-content/uploads/2025/04/SS_SRP-330III_EN_JAN25_V1.pdf: an auto-cutter, a 24 V drawer port, and the partition"
+    },
+    "drawer_pulse": {
+      "value": "unknown",
+      "source": "Not stated by any seed source: no pin or timing is named (docs/hardware-lab.md §4.3 and the documents it cites). The pin is the drawer's property and the timings its solenoid's (docs/hardware-lab.md §4.5; ref/hardware-and-receipts.md §6a)."
+    },
+    "supports_raster_arabic": {
+      "value": "unknown",
+      "source": "A qualification result rather than a datasheet fact: nobody has printed the Arabic goldens on this device (ref/hardware-and-receipts.md §6a; milestone 5.8.3)."
+    }
+  }
+}
