@@ -1,6 +1,6 @@
 # Test catalog — the coverage matrix
 
-Master plan Parts E and J.4 enumerate 72 things that can happen. The plan audit, the phase work and the hardware research of 3 October 2026 added twenty-three more. This file maps **every one** to a named test, an accepted risk with a written rationale, an open question with a stated default, or an explicit out-of-scope with a reason.
+Master plan Parts E and J.4 enumerate 72 things that can happen. The plan audit, the phase work and the hardware research of 3 October 2026 added twenty-three more, and a defect found on a rendered receipt (issue #266) one more. This file maps **every one** to a named test, an accepted risk with a written rationale, an open question with a stated default, or an explicit out-of-scope with a reason.
 
 **The rule (master plan J.0, applied to itself):** an edge case with no row here is a gap, not an absence. A row with no test and no rationale is an unfinished job.
 
@@ -155,6 +155,7 @@ Nothing mechanically reconciled this matrix against the test suite, so the Phase
 | | | ❓ **Open.** The tests encode the default below | | |
 | 93 | A receipt taller than the printer accepts in one raster command — 2303 dot rows on an Epson TM-T20III, about 29 cm of paper | `a_page_one_row_taller_than_the_limit_becomes_two_commands`, `joined_strip_payloads_are_the_bitmap_unchanged`, `prop_strips_join_to_the_bitmap_and_respect_the_limit` (1.7.9) — strips at the profile's limit, and within `GS ( L`'s own 16-bit count; its paper half — a receipt printed whole on a TM-T20III — is milestone 5.8's (5.8.3) | 1 / 5 | unit + drill |
 | 94 | A barcode scanned while Windows is on the Arabic keyboard layout — Latin letters in the code arrive as Arabic ones, so a Code 128 or QR value becomes a *different* code | 🧩 **Deferred with a hook — 1.11.6b**, which decodes a recognised burst by physical key and names its tests in the pull request that builds it, and **1.11.6d**, whose HID-POS source never produces a key press for a layout to re-map; the device half — the scanner row of the matrix — is milestone 5.8's (5.8.3) | 1 / 5 | web + drill |
+| 96 | A receipt label with less room beside its value than one of its words needs — the fiscal block's «رقم الفاتورة الضريبية» beside its 36-character UUID, on every 80 mm JoFotara receipt. Broken inside a word, an Arabic word takes the wrong contextual form on both halves, and the reader sees two wrong words (issue #266); with no room at all, the label used to be dropped | `a_label_narrower_than_its_longest_word_is_never_broken_inside_a_word`, `a_label_is_set_in_whole_words_whatever_room_its_amount_leaves` | 1 | unit |
 
 > ⚠️ **OPEN — blocks 2.7.0.** May a fiscally-enabled store trade when it cannot print, given that the cleared QR must appear on the document handed to the customer? Default until answered: the sale completes, the artifact is persisted and queued, and the register raises an alarm — never a refusal to sell, because a printer fault is not a reason to close a shop. Owner: 2.7.0, with the merchant-facing choice recorded in [`merchant-decisions.md`](merchant-decisions.md). Source that settles it: the official ISTD guidance on document issuance, and the merchant's tax advisor in writing.
 
@@ -376,19 +377,19 @@ Not tests. Procedures — performed on real hardware, or before milestone 5.8 on
 
 | Status | Count | Cases |
 |---|---|---|
-| ✅ Tested — a named test with an owning microstep | 81 | all except those below |
+| ✅ Tested — a named test with an owning microstep | 82 | all except those below |
 | ⏳ Named test, no owning microstep yet | 0 | — |
 | ⚠️ Accepted risk, disclosed | 4 | 31, 55, 61 *(only when enabled)*, 63 |
 | ❓ Open — behaviour defaulted, pending an external answer | 2 | 85, 87 |
 | 🧩 Deferred with a named hook | 6 | 45, 64, 66, 68, 94, 95 |
 | 🚫 Out of v1 scope with a rationale | 2 | 67, 72 |
 
-81 + 0 + 4 + 2 + 6 + 2 = 95. Cases 1b, 2b, 4b, 4c, 4d, 19b, 39b and 41b are *variants* of cases 1, 2, 4, 19, 39 and 41, not additional numbered cases.
+82 + 0 + 4 + 2 + 6 + 2 = 96. Cases 1b, 2b, 4b, 4c, 4d, 19b, 39b and 41b are *variants* of cases 1, 2, 4, 19, 39 and 41, not additional numbered cases.
 
 An earlier revision of this table said 62 + 4 + 4 + 2 = 72 while the deferred column named four cases against a typed 3, summing to 73 — caught here rather than left for the reader. Assertion 6 of the checker above now recomputes every one of these numbers from the rows, so the next such error fails `just lint` instead of surviving a review.
 
 **Two statuses are new and both are deliberate.** ⏳ replaces a ✅ that was not true: a case whose named test nobody is scheduled to write is not covered, and saying so is the only way it gets an owner. ❓ marks a case where the *behaviour* is implemented against a stated default while an external answer is outstanding — the greppable `⚠️ OPEN` blocks above carry the question, the default, the owning microstep, and the document that settles it.
 
-**Every one of the 95 has a row.** That is what "comprehensive" means operationally: not that nothing exists beyond this list, but that everything on it has a deliberate status, and that a script rather than a reader checks it.
+**Every one of the 96 has a row.** That is what "comprehensive" means operationally: not that nothing exists beyond this list, but that everything on it has a deliberate status, and that a script rather than a reader checks it.
 
-When the three-store pilot (Phase 4) or a merchant surfaces something new, it becomes E.96 here — with a test, an accepted risk, an open question with a default, or an out-of-scope. **A surprise that becomes none of those will happen again.**
+When the three-store pilot (Phase 4) or a merchant surfaces something new, it becomes E.97 here — with a test, an accepted risk, an open question with a default, or an out-of-scope. **A surprise that becomes none of those will happen again.**
