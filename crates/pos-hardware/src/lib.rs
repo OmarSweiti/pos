@@ -1,6 +1,8 @@
 //! Hardware abstraction layer (blueprint §5).
 //! Traits here; the network printer driver in `net`, over `transport`.
 
+#[cfg(feature = "emulator")]
+pub mod emulator;
 pub mod escpos;
 pub mod font;
 pub mod net;

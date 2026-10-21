@@ -63,6 +63,10 @@ pos-test-support = { path = "crates/pos-test-support" }
 # ── core ────────────────────────────────────────────────────────────────
 serde        = { version = "1", features = ["derive"] }
 serde_json   = "1"
+# The emulated network printer's page images (1.7.12), behind `pos-hardware`'s
+# off-by-default `emulator` feature. Already in the register's graph through
+# Tauri's tray-menu crate, so this adds no supply-chain surface.
+png          = "0.18"
 thiserror    = "2"
 uuid         = { version = "1", default-features = false, features = ["serde"] }
 rust_decimal = "1"
