@@ -346,6 +346,8 @@ guards:
     bash ./scripts/validate-branch-flow.sh --self-test
     bash ./scripts/approval-gate.sh --self-test
     {{ python }} ./scripts/pr-evidence.py --self-test
+    bash ./scripts/check-validation.sh --self-test
+    bash ./scripts/engineering-token.sh --self-test
     bash ./scripts/validate-change-title.sh --self-test
     {{ python }} ./scripts/check-automation-attribution.py --self-test
     bash ./scripts/scan-secrets.sh --self-test
@@ -532,6 +534,17 @@ pr $title='' $body='' $milestone='':
     fi
     [ -n "$milestone" ] && echo "pr: milestone -> $milestone"
 
+    # The engineering app opens the PR, because every PR merges only with the
+    # owner's approval and GitHub refuses an approval from a PR's own author.
+    # Commits and branches stay the owner's. Refused here, before the gate,
+    # rather than after minutes of it; the token lasts an hour.
+    repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+    owner=${repo%%/*}
+    app_token=$(bash ./scripts/engineering-token.sh "$repo") || {
+      echo "pr: REFUSED — the engineering app opens every PR, so that the owner can approve it: run just engineering-app" >&2
+      exit 1
+    }
+
     just pre-push
     git fetch --quiet origin development
     git push -u origin HEAD
@@ -540,33 +553,49 @@ pr $title='' $body='' $milestone='':
     [ -n "$milestone" ] && ms=(--milestone "$milestone")
 
     if [ -n "$body" ]; then
-      gh pr create --base development --assignee @me --title "$title" --body-file "$body" "${ms[@]+"${ms[@]}"}"
+      GH_TOKEN="$app_token" gh pr create --base development --assignee "$owner" --reviewer "$owner" \
+        --title "$title" --body-file "$body" "${ms[@]+"${ms[@]}"}"
     elif [ -n "$title" ]; then
       base=$(git merge-base origin/development HEAD)
-      gh pr create --base development --assignee @me --title "$title" \
-        --body "$(git log --reverse --format='- %s' "$base"..HEAD)" "${ms[@]+"${ms[@]}"}"
+      GH_TOKEN="$app_token" gh pr create --base development --assignee "$owner" --reviewer "$owner" \
+        --title "$title" --body "$(git log --reverse --format='- %s' "$base"..HEAD)" "${ms[@]+"${ms[@]}"}"
     else
-      gh pr create --base development --assignee @me --fill-first "${ms[@]+"${ms[@]}"}"
+      GH_TOKEN="$app_token" gh pr create --base development --assignee "$owner" --reviewer "$owner" \
+        --fill-first "${ms[@]+"${ms[@]}"}"
     fi
 
     # Independent workflows register at different times. Derive and wait for
-    # the exact workflow-qualified set for this PR route and changed paths.
+    # the exact workflow-qualified set for this PR route and changed paths —
+    # every one green except `validation`, which waits for the evidence the
+    # validate-pr skill posts next.
     created_pr=$(gh pr view --json url --jq .url)
-    bash ./scripts/watch-pr-checks.sh "$created_pr"
+    bash ./scripts/watch-pr-checks.sh --awaiting-evidence "$created_pr"
 
-# Publish a pull request's validation evidence: the screenshots, pushed to
-# refs/evidence/pr-<n> where no clone downloads them, and one comment naming the
-# exact commit that was validated. Every pull request gets one before it is
+# Publish a pull request's validation evidence: the screenshots, committed to the
+# pos-evidence repository where no clone of the code downloads them, and one
+# comment, posted by the engineering app, naming the exact commit that was
+# validated; then the `validation` check runs again and reads it. Every pull request gets one before it is
 # handed to the owner — .claude/skills/validate-pr is the procedure. It refuses
 # unless this checkout is the pull request's exact head with no tracked change,
 # and a pull request touching runtime code must carry at least one screenshot.
 #
 #   just evidence-check 261 /path/to/evidence   # validate and preview; writes nothing
-#   just evidence 261 /path/to/evidence         # push the images, post the comment
+#   just evidence 261 /path/to/evidence         # store the images, post the comment
 #
 # Publish a pull request's validation evidence: screenshots plus one comment.
 evidence $pr $dir:
     {{ python }} ./scripts/pr-evidence.py publish "$pr" "$dir"
+
+# The engineering app opens every PR so that the owner can approve it — GitHub
+# refuses an approval from a PR's own author. `create` registers it once: a page
+# on 127.0.0.1 sends GitHub its definition, the owner confirms it there and
+# installs it on this repository, and its key is kept in
+# ~/.config/pos/engineering-app (0600), outside every repository. `status` says
+# where it is installed.
+#
+# Create the engineering app that opens every PR (once), or check it: just engineering-app [status]
+engineering-app $command='create':
+    {{ python }} ./scripts/engineering-app.py "$command"
 
 # Validate a pull request's evidence and preview its comment, writing nothing.
 evidence-check $pr $dir:
@@ -829,13 +858,23 @@ merge $pr='':
 
 # development → staging, as a release candidate. Merge with a MERGE COMMIT.
 promote-staging:
-    gh pr create --base staging --head development --assignee @me \
+    #!/usr/bin/env bash
+    set -euo pipefail
+    repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+    token=$(bash ./scripts/engineering-token.sh "$repo")
+    GH_TOKEN="$token" gh pr create --base staging --head development \
+      --assignee "${repo%%/*}" --reviewer "${repo%%/*}" \
       --title "promote development to staging" \
       --body-file .github/PULL_REQUEST_TEMPLATE/promotion.md
 
 # staging → main, for production. Merge with a MERGE COMMIT.
 promote-main:
-    gh pr create --base main --head staging --assignee @me \
+    #!/usr/bin/env bash
+    set -euo pipefail
+    repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+    token=$(bash ./scripts/engineering-token.sh "$repo")
+    GH_TOKEN="$token" gh pr create --base main --head staging \
+      --assignee "${repo%%/*}" --reviewer "${repo%%/*}" \
       --title "promote staging to main" \
       --body-file .github/PULL_REQUEST_TEMPLATE/promotion.md
 
