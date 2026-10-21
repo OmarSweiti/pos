@@ -378,7 +378,9 @@ mod tests {
     use crate::profile::{Fact, Parameter};
     use crate::render::tests_support::model;
     use crate::render::{PaperWidth, render_receipt};
-    use crate::{PrinterStatus, ReceiptPrinter, RenderedReceipt, SimulatedPrinter};
+    use crate::{
+        FailReason, PrintOutcome, PrinterStatus, ReceiptPrinter, RenderedReceipt, SimulatedPrinter,
+    };
     use pos_test_support::io_proptest_config;
     use proptest::prelude::*;
 
@@ -505,10 +507,12 @@ mod tests {
         let doc = RenderedReceipt {
             bytes: stream.clone(),
         };
-        printer.print(&doc).expect("prints");
-        printer
-            .print(&doc)
-            .expect("prints again — this is the retry");
+        assert_eq!(printer.print(&doc), PrintOutcome::Printed);
+        assert_eq!(
+            printer.print(&doc),
+            PrintOutcome::Printed,
+            "prints again — this is the retry"
+        );
 
         assert_eq!(
             printer.printed.lock().unwrap().len(),
@@ -713,7 +717,10 @@ mod tests {
 
         let stream = encode(&page(64, 2, 0xFF), &one_strip(64)).expect("encodes");
         let doc = RenderedReceipt { bytes: stream };
-        assert!(printer.print(&doc).is_err());
+        assert_eq!(
+            printer.print(&doc),
+            PrintOutcome::Failed(FailReason::PaperOut)
+        );
 
         assert_eq!(*printer.drawer_opens.lock().unwrap(), 0);
         assert!(printer.printed.lock().unwrap().is_empty());
