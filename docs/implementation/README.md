@@ -117,6 +117,11 @@ provisioning and the issuing of a valid tax receipt. `1.3.2` is the next
 code step on the phase's longest critical path, but its `ZeroRatingReason` vocabulary and evidence
 requirements remain externally blocked by the `⚠️ OPEN` item in [`ref/domain-api.md`](ref/domain-api.md)
 §5 rather than by a missing code dependency.
+Group 1.7's `1.7.8` is **partially delivered**: `ReceiptPrinter::print` returns one of the four
+outcomes, the simulator scripts paper-out and silence at byte *N*, cover-open, offline and a slow
+device, and a sweep injects a fault at every byte of a real receipt. The sweep moves onto a golden
+when `1.7.5` commits them, and its last clause — no second original artifact — waits for `1.7.7`'s
+queue.
 Repository-hardening and documentation work may land between numbered product steps, but it does
 not advance that frontier.
 
