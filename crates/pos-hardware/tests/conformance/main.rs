@@ -7,6 +7,10 @@
 //! on every commit, and against a physical device at milestone 5.8 — only one
 //! named explicitly, never one found on the network.
 //!
+//! Its byte streams are also replayed through an emulator nobody here wrote
+//! (`cross_check`, §6b.8), so the bytes are never graded only by this
+//! project's own reading of the specification.
+//!
 //! One outcome is not reached here: `Partial`, bytes taken and then a reset.
 //! The emulator has no fault that closes mid-document, so 1.7.10's
 //! in-process fake proves it (`a_device_that_closes_mid_document_is_partial`).
@@ -17,6 +21,7 @@
 mod receipt;
 
 mod capture;
+mod cross_check;
 mod suite;
 mod target;
 
