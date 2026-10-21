@@ -265,6 +265,13 @@ filesystem, network, environment, and credential access. Do not describe this po
 containment or credential scrubbing. The staged Git hook and trusted-workflow PR check remain
 separate backstops.
 
+The deny list keeps private keys, tokens, cloud and package-manager credentials, keychains and
+password managers out of Claude's tools. It deliberately leaves readable the agents' own data
+(`~/.claude`, `~/.claude.json`, `~/.codex`) — the memory and transcripts that carry work across
+sessions — along with `.env` files and local SQLite databases. That was the owner's decision on
+21 October 2026, and `validate-settings.py` records it. `AGENTS.md`'s guidance to Codex is
+unchanged.
+
 Claude invokes every active hook through the same shell-free Node launcher and includes actual
 PowerShell/Monitor payload tests. Native Windows hook dispatch was not executed here; the OS
 sandbox is deliberately disabled on every platform, so do not present the hook tests as an OS
