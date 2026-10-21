@@ -72,7 +72,8 @@ the commits a push publishes, `just secrets` and the weekly security run scan ev
 scans the proposed commit range — all with fully redacted output. The local
 checks remain bypassable with `--no-verify` or in a clone that skipped `just setup`. Since
 9 September 2026 CI is also a merge wall on `development` and `staging`, where six checks are
-required by ruleset; the administrator can still bypass, but only through a pull request and only
+required by ruleset — seven on `development` since 21 October 2026, with `validation`, which requires
+evidence for the pull request's exact head; the administrator can still bypass, but only through a pull request and only
 as a logged event. `main` carries `deletion` and `non_fast_forward` only — no required checks and
 no required pull request. A finding means rotate the credential first,
 then handle history as a separate, explicitly authorised operation.

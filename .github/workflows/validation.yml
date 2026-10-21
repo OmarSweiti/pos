@@ -1,0 +1,49 @@
+name: validation
+
+# REQUIRED CHECK on `development`: a pull request merges only with evidence that
+# its exact head commit was run and seen working — a validation comment for
+# exactly this commit, from the owner or the engineering app the owner owns
+# (scripts/check-validation.sh, docs/implementation/03-github-workflow.md §6).
+# It stays red until the evidence is posted; `just evidence` posts it and runs
+# this job again. Keep the job id: the ruleset requires it by name.
+#
+# `pull_request_target`, as branch-flow does, so a pull request cannot rewrite
+# the job that judges it: GitHub reads this definition from the base branch, and
+# the checker runs from `github.workflow_sha`, the exact trusted revision. The
+# token is read-only, no secret is referenced, and nothing from the pull request
+# is checked out or executed — its number is the only input, and the checker
+# reads the pull request and its comments through the API as data.
+
+on: # zizmor: ignore[dangerous-triggers] read-only token; the PR is read as data through the API and only the trusted revision's checker executes
+  pull_request_target:
+    branches: [development, staging, main]
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read # the evidence comments
+      pull-requests: read # the head commit
+    steps:
+      - name: Check out the checker from the exact trusted workflow revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: The head commit carries validation evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: bash ./scripts/check-validation.sh "$REPO" "$NUMBER"

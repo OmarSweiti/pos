@@ -32,7 +32,12 @@ readonly SECURITY_WORKFLOW_PATHS=(
 usage() {
   cat >&2 <<'EOF'
 usage: scripts/watch-pr-checks.sh <PR-number-or-URL>
+       scripts/watch-pr-checks.sh --awaiting-evidence <PR-number-or-URL>
        scripts/watch-pr-checks.sh --self-test
+
+--awaiting-evidence is for a PR just opened: every required check must succeed
+except `validation`, which waits for the evidence `just evidence` posts once the
+rest is green. Without it, `validation` must succeed too — what a merge needs.
 
 The script derives the required workflow/job pairs from the PR base, head, and
 complete changed-path list. It refuses a changed PR snapshot and waits for all
@@ -96,7 +101,8 @@ expected_checks() {
     $'ci\tweb' \
     $'ci\tsupply-chain' \
     $'branch-flow\tprotected-paths' \
-    $'branch-flow\ttopology'
+    $'branch-flow\ttopology' \
+    "$VALIDATION_CHECK"
 
   if security_workflow_required "$base_ref" "$@"; then
     printf '%s\n' $'security\tworkflow-analysis'
@@ -242,6 +248,11 @@ canonical_workflow_key() {
     printf '%s\n' 'security'
     return
   fi
+  if [ "$path" = '.github/workflows/validation.yml' ] && \
+     [ "$event" = 'pull_request_target' ] && [ "$workflow_name" = 'validation' ]; then
+    printf '%s\n' 'validation'
+    return
+  fi
   return 1
 }
 
@@ -323,6 +334,9 @@ branch_flow = Psych.safe_load_file(".github/workflows/branch-flow.yml", aliases:
 (branch_flow.fetch("jobs").keys - ["promotion-notice"]).each do |job|
   puts "branch-flow\t#{job}"
 end
+# The validation check runs on every PR into a flow branch.
+validation = Psych.safe_load_file(".github/workflows/validation.yml", aliases: false)
+validation.fetch("jobs").keys.each { |job| puts "validation\t#{job}" }
 RUBY
 }
 
@@ -349,6 +363,7 @@ self_test() {
   assert_has_check 'ordinary PR requires supply-chain' "$core" $'ci\tsupply-chain'
   assert_has_check 'ordinary PR requires protected paths' "$core" $'branch-flow\tprotected-paths'
   assert_has_check 'ordinary PR requires topology' "$core" $'branch-flow\ttopology'
+  assert_has_check 'ordinary PR requires the validation evidence check' "$core" "$VALIDATION_CHECK"
   assert_lacks_check 'ordinary PR does not require security workflow' "$core" $'security\tworkflow-analysis'
   assert_lacks_check 'ordinary PR does not require a matrix' "$core" $'ci\tcross-platform (windows-latest)'
   assert_lacks_check 'ordinary PR does not require promotion notice' "$core" $'branch-flow\tpromotion-notice'
@@ -367,6 +382,10 @@ self_test() {
   assert_incomplete 'a check-name suffix cannot impersonate an exact job' "$core" "$wrong_workflow"
   assert_equal_value 'the canonical CI workflow path and event are accepted' 'ci' \
     "$(canonical_workflow_key '.github/workflows/ci.yml' pull_request ci)"
+  assert_equal_value 'the validation workflow is known by its path, event and name' 'validation' \
+    "$(canonical_workflow_key '.github/workflows/validation.yml' pull_request_target validation)"
+  assert_equal_value 'a validation workflow on the untrusted event is not' '' \
+    "$(canonical_workflow_key '.github/workflows/validation.yml' pull_request validation 2>/dev/null || true)"
   assert_equal_value 'a same-name candidate workflow cannot impersonate CI' '' \
     "$(canonical_workflow_key '.github/workflows/candidate.yml' pull_request ci 2>/dev/null || true)"
   assert_equal_value 'a pull_request workflow cannot impersonate trusted branch-flow' '' \
@@ -458,6 +477,9 @@ pr_snapshot() {
   printf '%s\t%s\n' "$fields" "$metadata_fingerprint"
 }
 
+# The check that waits for validation evidence (scripts/check-validation.sh).
+VALIDATION_CHECK=$'validation\tvalidation'
+
 check_rows() {
   local pr=$1 repository=$2 mode=${3:-successful} raw status=0
   local row_name row_workflow row_event row_state link run_id run_record run_path run_event run_name canonical
@@ -470,6 +492,9 @@ check_rows() {
     --jq '.[] | [.name, .workflow, .event, .state, .link] | @tsv') || status=$?
   case "$status" in
     0|8) ;;
+    # Awaiting evidence, a failing check is expected — the validation check —
+    # and the caller judges every other row itself.
+    1) [ "${AWAITING_EVIDENCE:-0}" = 1 ] || return 1 ;;
     *) return "$status" ;;
   esac
 
@@ -517,10 +542,28 @@ assert_same_snapshot() {
   fi
 }
 
+# Every check that is neither green nor the validation check, as
+# `workflow / name: STATE` — what a PR just opened must not have.
+failures_besides_validation() {
+  local pr=$1 raw status=0
+  raw=$(gh pr checks "$pr" --json name,workflow,state \
+    --jq '.[] | select(.state != "SUCCESS" and .state != "SKIPPED" and .state != "NEUTRAL")
+          | select(.workflow != "validation") | "\(.workflow) / \(.name): \(.state)"') || status=$?
+  case "$status" in
+    0|1|8) printf '%s' "$raw" ;;
+    *) return "$status" ;;
+  esac
+}
+
 main() {
   if [ "${1:-}" = '--self-test' ] && [ "$#" -eq 1 ]; then
     self_test
     return
+  fi
+  local awaiting=0
+  if [ "${1:-}" = '--awaiting-evidence' ]; then
+    awaiting=1
+    shift
   fi
   if [ "$#" -ne 1 ]; then
     usage
@@ -652,6 +695,34 @@ main() {
   fi
 
   assert_same_snapshot "$pr" "$snapshot" 'waiting for check registration'
+  if [ "$awaiting" = 1 ]; then
+    # Every check to its end — the validation check fails quickly, by design,
+    # and --fail-fast would stop watching the rest.
+    gh pr checks "$pr" --watch >/dev/null 2>&1 || true
+    assert_same_snapshot "$pr" "$snapshot" 'watching checks'
+    local failing
+    failing=$(failures_besides_validation "$pr") || {
+      echo "unable to read the final check states for $pr_url" >&2
+      return 1
+    }
+    if [ -n "$failing" ]; then
+      echo "a check other than validation did not succeed for $pr_url@$head_sha:" >&2
+      printf '  - %s\n' "$failing" >&2
+      return 1
+    fi
+    final_rows=$(AWAITING_EVIDENCE=1 check_rows "$pr" "$repository") || {
+      echo "unable to verify the successful checks for $pr_url@$head_sha" >&2
+      return 1
+    }
+    missing=$(missing_checks "$(printf '%s\n' "$expected" | grep -vxF "$VALIDATION_CHECK")" "$final_rows")
+    [ -z "$missing" ] || {
+      echo 'the required check set changed before final verification; run this command again' >&2
+      return 1
+    }
+    assert_same_snapshot "$pr" "$snapshot" 'performing final check verification'
+    printf 'Every required check succeeded for %s at %s, except validation, which waits for its evidence: run the validate-pr skill, then just evidence.\n' "$pr_url" "$head_sha"
+    return
+  fi
   gh pr checks "$pr" --watch --fail-fast
   assert_same_snapshot "$pr" "$snapshot" 'watching checks'
 

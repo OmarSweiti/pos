@@ -277,8 +277,9 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just branch <name>` | fresh `development`, then a branch off it — **needs a clean tree** (§4.2) |
 | `just pr [title] [body-file] [milestone]` | gates → push → PR into `development` → watch CI. Pass the title on a branch with more than one commit (§4.12); the milestone is derived from a `phase-<0-5>/` branch name |
 | `just evidence-check <pr> <dir>` | validate a PR's evidence directory and preview its comment — writes nothing (§4.12) |
-| `just evidence <pr> <dir>` | push the PR's screenshots to `refs/evidence/pr-<n>`, confirm GitHub serves them, and post one comment naming the validated commit (§4.12) |
-| `just merge [pr]` | work PR only: validate route/state, require the owner's approval, watch exact checks, re-read both tips, atomically match the reviewed head, squash and delete the branch. On the owner's **own** PR — which GitHub never lets them approve — it verifies all of that and stops with exit 3, **NOT MERGED**: that merge is the owner's click on GitHub |
+| `just evidence <pr> <dir>` | scan the evidence for secrets and attribution, commit the screenshots to a new folder of `pos-evidence`, confirm GitHub serves them, post one comment as the engineering app naming the validated commit, and run the `validation` check again (§4.12) |
+| `just engineering-app [status]` | create, once, the GitHub App that opens every PR so the owner can approve it — or say where it is installed ([`03-github-workflow.md`](03-github-workflow.md) §6) |
+| `just merge [pr]` | work PR only: validate route/state, require the owner's approval, watch exact checks — `validation` included — re-read both tips, atomically match the reviewed head, squash and delete the branch. On a PR the owner opened by hand — which GitHub never lets them approve — it verifies all of that and stops with exit 3, **NOT MERGED**: that merge is the owner's click on GitHub |
 | `just flow` | what is on `development` but not `staging`, and on `staging` but not `main` |
 | `just promote-staging` | PR: `development` → `staging` (a release candidate) |
 | `just promote-main` | PR: `staging` → `main` (production) |
@@ -605,18 +606,22 @@ skill is the procedure. Check out the PR's exact head, clean, and start from a f
 synthetic data. Start the emulators the change touches, drive the app through every `Done when`
 claim, and capture one screenshot per step. Inspect each image for anything that must not be public,
 because the repository is public. Write `summary.md` with each step's expected and observed result.
-Then publish with `just evidence`. The images go to `refs/evidence/pr-<n>`, outside the branch
-namespace, so no clone downloads them. The comment embeds them by commit SHA and names the commit
-that was validated, so a later push visibly needs new evidence. A PR that changes nothing at runtime
+Then publish with `just evidence`. The images go to a new folder of the public, append-only
+[`pos-evidence`](https://github.com/OmarSweiti/pos-evidence) repository, so no clone of the code
+downloads them, and the engineering app posts the comment. It embeds each image at the evidence
+commit that stored it and names the commit that was validated, so a later push visibly needs new
+evidence — and the required `validation` check goes red again until it has it. A PR that changes nothing at runtime
 still gets a comment: `Runtime change: none`, why, and which checks ran instead. The publisher
 refuses that form for a PR that touches `apps/`, `crates/` or `packages/`, or a dependency manifest,
 lockfile or toolchain pin. For a dependency bump, a smoke run of the app is the evidence.
 
 **Then the owner approves.** Every flow branch requires the owner's approval (`code-owner-review`).
-A Dependabot PR is approved with **Review changes → Approve**. The owner's own PR — every PR an agent
-opens is one — cannot be approved on GitHub, so the owner merges it there, and that click is the
-approval. `just merge` merges only an approved PR; on the owner's own it checks everything and stops
-with exit 3, **NOT MERGED**. An agent never approves and never makes that click.
+Every PR an agent prepares is opened by the engineering app, and Dependabot's by Dependabot, so the
+owner approves either with **Review changes → Approve**, then merges on GitHub or asks for
+`just merge`. A PR the owner opened by hand cannot be approved on GitHub, so the owner merges it
+there, and that click is the approval. `just merge` merges only an approved PR; on the owner's own it
+checks everything and stops with exit 3, **NOT MERGED**. An agent never approves and never makes that
+click.
 
 Longhand, for when you want to see it — what `just pr` opens with, and what `just merge` does for
 a PR the owner has approved:
@@ -624,12 +629,16 @@ a PR the owner has approved:
 ```bash
 just pre-push
 git push -u origin phase-1/group-3-tax
-work_pr=$(gh pr create --base development --assignee @me --title '<conventions §8 subject>' --body-file notes/pr.md)
+token=$(bash ./scripts/engineering-token.sh OmarSweiti/pos)   # the app opens it, so the owner can approve it
+work_pr=$(GH_TOKEN="$token" gh pr create --base development --assignee OmarSweiti --reviewer OmarSweiti \
+  --title '<conventions §8 subject>' --body-file notes/pr.md)
 IFS=$'\t' read -r work_base work_head < <(
   gh pr view "$work_pr" --json baseRefOid,headRefOid \
     --jq '[.baseRefOid, .headRefOid] | @tsv'
 )
-bash ./scripts/watch-pr-checks.sh "$work_pr"       # exact route/path-derived workflow set
+bash ./scripts/watch-pr-checks.sh --awaiting-evidence "$work_pr"   # all green but validation
+# … the validate-pr skill, then `just evidence <n> <dir>`; the owner approves on GitHub …
+bash ./scripts/watch-pr-checks.sh "$work_pr"       # now validation too: the merge condition
 IFS=$'\t' read -r current_base current_head < <(
   gh pr view "$work_pr" --json baseRefOid,headRefOid \
     --jq '[.baseRefOid, .headRefOid] | @tsv'

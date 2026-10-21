@@ -10,8 +10,8 @@ ruleset, normalized to the payload shape the API accepts back.
 
 | File | Target | What it does |
 |---|---|---|
-| [`development-flow.json`](development-flow.json) | `refs/heads/development` | pull request required, six checks, force-push and deletion blocked, squash **or** merge |
-| [`staging-promotion.json`](staging-promotion.json) | `refs/heads/staging` | as above, but **merge commit only** — the first server-side guard against the squashed promotion that forked the branches once |
+| [`development-flow.json`](development-flow.json) | `refs/heads/development` | pull request required, seven checks — the six below and `validation`, which waits for the evidence comment — force-push and deletion blocked, squash **or** merge |
+| [`staging-promotion.json`](staging-promotion.json) | `refs/heads/staging` | as above, but six checks — `rust`, `guards`, `web`, `supply-chain`, `protected-paths`, `topology`; a promotion's changes were each validated on their own pull request — and **merge commit only** — the first server-side guard against the squashed promotion that forked the branches once |
 | [`main-append-only.json`](main-append-only.json) | `refs/heads/main` | `deletion` and `non_fast_forward` only. **No required checks and no required pull request** — those two rules need none, so they could be applied while main's `ci.yml` still predates four of the six required jobs |
 | [`tags-v-append-only.json`](tags-v-append-only.json) | `refs/tags/v*` | `update` and `deletion` blocked with **no bypass actor at all**, so it binds the maintainer too |
 | [`code-owner-review.json`](code-owner-review.json) | `development`, `staging`, `main` | every pull request needs **one approving review from a code owner**; a new push dismisses it; every review thread must be resolved. It also makes `main` pull-request-only, which `main-append-only` alone did not |
@@ -89,13 +89,13 @@ own pull request.**
 
 So the gate binds differently by author, and both halves are intended:
 
-- **Anyone else's pull request** — Dependabot's, a contributor's — needs the owner's
-  approving review. `CODEOWNERS` maps every path to the owner, so GitHub requests
-  that review automatically, and nothing but the approval satisfies the rule.
-- **The owner's own pull request** — and that includes every one an agent opens,
-  because agents work under the owner's account — can never be approved. It
-  merges through the administrator's `pull_request` bypass, and that deliberate
-  merge **is** the owner's approval. GitHub records it as a bypass event.
+- **Anyone else's pull request** — the engineering app's, which opens every one an
+  agent prepares, Dependabot's, a contributor's — needs the owner's approving
+  review. `CODEOWNERS` maps every path to the owner, so GitHub requests that review
+  automatically, and nothing but the approval satisfies the rule.
+- **The owner's own pull request** — one the owner opened by hand — can never be
+  approved. It merges through the administrator's `pull_request` bypass, and that
+  deliberate merge **is** the owner's approval. GitHub records it as a bypass event.
 
 That second case is why the approval lives here and not in `development-flow`.
 A bypass is recorded per ruleset, so the owner's routine merge of their own green
