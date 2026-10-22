@@ -3164,6 +3164,8 @@ dependencies = [
  "keyring",
  "pos-db",
  "pos-domain",
+ "pos-test-support",
+ "proptest",
  "rusqlite",
  "serde_json",
  "tempfile",

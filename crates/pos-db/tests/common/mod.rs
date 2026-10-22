@@ -32,15 +32,15 @@ pub fn declared_fact_tables() -> Vec<String> {
         .collect()
 }
 
-/// Every `” ```sql ”` block under a `## NNNN — ` heading numbered 0006 or above.
+/// Every `” ```sql ”` block under a `## NNNN — ` heading numbered 0008 or above.
 ///
-/// 0001 through 0005 are applied by `pos_db::open` from the committed migration
+/// 0001 through 0007 are applied by `pos_db::open` from the committed migration
 /// files, so replaying the reference's own copy of them would double-apply.
 /// §0004 has no `IF NOT EXISTS` anywhere, and neither does §0005, so replaying
 /// either over the shipped migration is not a harmless duplicate: the first
 /// `CREATE TABLE` aborts and every fixture built this way panics.
 pub fn reference_blocks() -> Vec<String> {
-    reference_blocks_at_or_after(7)
+    reference_blocks_at_or_after(8)
 }
 
 /// The reference schema from 0003 onward, for fixtures deliberately held at v2.
