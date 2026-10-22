@@ -65,6 +65,64 @@ pub fn fold(text: &str) -> String {
         .collect()
 }
 
+/// The FTS5 `MATCH` expression for what a cashier typed, or `None` when it
+/// holds nothing to search for (E.39b, microstep 1.2.3).
+///
+/// **The typed text never becomes FTS5 syntax.** `MATCH` parses its right-hand
+/// side as a query expression however it was bound, so `"`, `(`, `)`, `:`,
+/// `*`, `^`, `-` and the barewords `AND`, `OR`, `NOT` and `NEAR` are operators
+/// there, not letters. A cashier who types one would get a syntax error — on
+/// the only path they have when the scanner fails — or, worse, a different
+/// query. So the text is cut into tokens of letters and digits, every other
+/// character is a boundary, each token is quoted as an FTS5 string with any
+/// `"` doubled, and the tokens are joined with `AND`, the last one a prefix
+/// (`"…"*`) so results arrive as the cashier types. A quoted string is a
+/// phrase to FTS5, never an operator: `"OR"` is the word *or*.
+///
+/// A token is a run of `char::is_alphanumeric` characters. FTS5's `unicode61`
+/// draws its boundaries from Unicode categories instead, and the two differ at
+/// the edges — a rare combining mark Rust counts as alphabetic, a private-use
+/// character FTS5 counts as a letter. A difference can only cost a match,
+/// never raise an error: whatever is inside the quotes, FTS5 reads it as a
+/// phrase, and a phrase with nothing in it matches nothing.
+///
+/// **Three branches, as `0007` indexes them.** `name_ar_exact` and
+/// `name_ar_fold` both carry the Arabic name: a product spelled exactly as
+/// typed matches both and so outranks one that matches only through the fold
+/// (`exact_spelling_outranks_a_folded_variant`). The third branch covers the
+/// English name, the SKU and the barcode digits, which a cashier types when a
+/// label will not scan.
+#[must_use]
+pub fn match_expression(typed: &str) -> Option<String> {
+    // Strip first, then cut: removing a mark can join two runs of letters, and
+    // the fold maps letters to letters, so every branch cuts in the same places.
+    let stripped = exact(typed);
+    let tokens: Vec<&str> = stripped
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .collect();
+    let (last, rest) = tokens.split_last()?;
+    let branch = |spell: fn(&str) -> String| {
+        rest.iter()
+            .map(|token| quoted(&spell(token)))
+            .chain(core::iter::once(format!("{}*", quoted(&spell(last)))))
+            .collect::<Vec<_>>()
+            .join(" AND ")
+    };
+    Some(format!(
+        "{{name_ar_exact}} : ({}) OR {{name_ar_fold}} : ({}) OR {{name_en sku barcodes}} : ({})",
+        branch(str::to_owned),
+        branch(fold),
+        branch(str::to_owned),
+    ))
+}
+
+/// One token as an FTS5 string. The split above never leaves a `"` in a
+/// token, so the doubling is a second line rather than the only one.
+fn quoted(token: &str) -> String {
+    format!("\"{}\"", token.replace('"', "\"\""))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,5 +140,36 @@ mod tests {
         );
         // Latin and digits pass through both untouched.
         assert_eq!(fold("Cola 330ml"), "Cola 330ml");
+    }
+
+    #[test]
+    fn a_match_expression_quotes_every_token_and_prefixes_the_last() {
+        // One Arabic word, typed with tashkeel: the exact branch keeps its
+        // spelling, the fold branch collapses it, and the third branch carries
+        // it unchanged for the English, SKU and barcode columns.
+        assert_eq!(
+            match_expression("\u{0642}\u{064E}\u{0647}\u{0652}\u{0648}\u{064E}\u{0629}").as_deref(),
+            Some(concat!(
+                "{name_ar_exact} : (\"\u{0642}\u{0647}\u{0648}\u{0629}\"*) OR ",
+                "{name_ar_fold} : (\"\u{0642}\u{0647}\u{0648}\u{0647}\"*) OR ",
+                "{name_en sku barcodes} : (\"\u{0642}\u{0647}\u{0648}\u{0629}\"*)"
+            ))
+        );
+        // Operators become words, punctuation becomes a boundary, and only the
+        // last token is a prefix.
+        assert_eq!(
+            match_expression("cola OR (330:*)").as_deref(),
+            Some(concat!(
+                "{name_ar_exact} : (\"cola\" AND \"OR\" AND \"330\"*) OR ",
+                "{name_ar_fold} : (\"cola\" AND \"OR\" AND \"330\"*) OR ",
+                "{name_en sku barcodes} : (\"cola\" AND \"OR\" AND \"330\"*)"
+            ))
+        );
+        // Nothing to search for is not a query.
+        for nothing in ["", "   ", "\t\n", "\"", "()", "-*^:", "\u{064E}\u{0640}"] {
+            assert_eq!(match_expression(nothing), None, "{nothing:?}");
+        }
+        // The doubling, exercised directly: the split never hands it a quote.
+        assert_eq!(quoted("a\"b"), "\"a\"\"b\"");
     }
 }

@@ -124,6 +124,23 @@ pub enum DbError {
         column: &'static str,
         found: usize,
     },
+    #[error("catalogue save refused: {0}")]
+    CatalogSaveRefused(#[from] pos_domain::CatalogError),
+    #[error(
+        "barcode {code} is already claimed by a live code of product {holder} (E.36); \
+         retire that claim before giving the code to another product"
+    )]
+    BarcodeAlreadyClaimed {
+        code: String,
+        holder: pos_domain::ProductId,
+    },
+    #[error(
+        "product {0} has been retired; saving it again does not bring it back, \
+         because reviving a retired product is a decision of its own"
+    )]
+    ProductRetired(pos_domain::ProductId),
+    #[error("stored product is malformed: {reason}")]
+    StoredProductInvalid { reason: String },
 }
 
 /// `PRAGMA synchronous = FULL`, as SQLite reports it back. The pragma accepts a
