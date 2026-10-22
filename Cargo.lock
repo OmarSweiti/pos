@@ -4865,13 +4865,19 @@ dependencies = [
 name = "terminal"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "jiff",
+ "pos-db",
  "pos-domain",
+ "pos-hardware",
+ "rusqlite",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
+ "tempfile",
  "thiserror 2.0.21",
+ "uuid",
 ]
 
 [[package]]

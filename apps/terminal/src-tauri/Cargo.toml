@@ -24,7 +24,28 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 jiff.workspace = true
 pos-domain.workspace = true
+# The print worker (1.7.7) is where the register's store and its printer first
+# meet: it leases jobs from `pos-db`'s receipt queue and sends their bytes
+# through `pos-hardware`'s printer trait. Neither crate is new to the workspace,
+# and the terminal enables no feature of either — `emulator` and `fixtures` are
+# developers' tools, and two tests hold the shipped graph to that.
+pos-db.workspace = true
+pos-hardware.workspace = true
+# The worker owns its transactions, so it names the connection type.
+rusqlite.workspace = true
+# A queued artifact's bytes are checked against their stored digest before they
+# leave for a printer (`ref/hardware-and-receipts.md` §1).
+blake3.workspace = true
+# Ids arrive as `Uuid` from an `IdSource` and are written as their bytes.
+uuid.workspace = true
 thiserror.workspace = true
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+[dev-dependencies]
+# The registered chain a sale completes against, shared with `pos-db`'s own
+# suites. A dev-dependency's features never reach a build that ships.
+pos-db = { workspace = true, features = ["fixtures"] }
+# The queue must survive a restart, so one test reopens a database file.
+tempfile.workspace = true
