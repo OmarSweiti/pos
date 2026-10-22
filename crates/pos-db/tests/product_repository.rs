@@ -446,6 +446,13 @@ fn search_survives_every_fts5_metacharacter() {
     }
     // The words are words: AND finds *and* in "Salt and pepper", as a term.
     assert_eq!(search(&s, "salt AND pepper"), ["SALT-PEPPER"]);
+    // A stray mark typed as a word of its own, after a space, is a boundary
+    // and nothing more. Quoted as a token it would be a phrase with no terms,
+    // and one empty phrase in an AND finds nothing at all.
+    for mark in ["\"", "(", ")", ":", "*", "^", "-"] {
+        assert_eq!(search(&s, &format!("قهوة {mark}")), COFFEES, "قهوة {mark}");
+        assert_eq!(search(&s, &format!("{mark} قهوة")), COFFEES, "{mark} قهوة");
+    }
 }
 
 #[test]
