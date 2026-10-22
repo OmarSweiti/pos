@@ -128,6 +128,7 @@ queue. `1.7.12` is **partially delivered** too: the emulated network printer beh
 printer and drawer profile says — refusing what a device would refuse, reporting unknown behaviour
 where a profile does not know — and `just printer-emulator <profile>` prints to it before any
 printer exists; only its golden comparison waits for `1.7.5`'s goldens.
+`1.7.13` is **partially delivered** as well: one conformance suite runs against the emulated printer for every receipt-printer profile, refuses to reach a device that is not named, replays a synthetic capture, and is replayed through a pinned independent emulator in CI; only its golden replay waits for `1.7.5`.
 Repository-hardening and documentation work may land between numbered product steps, but it does
 not advance that frontier.
 

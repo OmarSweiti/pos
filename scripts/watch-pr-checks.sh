@@ -97,6 +97,7 @@ expected_checks() {
 
   printf '%s\n' \
     "ci"$'\t'"rust" \
+    $'ci\tprinter-conformance' \
     $'ci\tguards' \
     $'ci\tweb' \
     $'ci\tsupply-chain' \
@@ -281,7 +282,7 @@ end
 ci = load_workflow(".github/workflows/ci.yml")
 abort "ci.yml workflow name changed" unless ci["name"] == "ci"
 ci_jobs = ci.fetch("jobs")
-required_ci_jobs = %w[rust guards web supply-chain promotion-shape cross-platform]
+required_ci_jobs = %w[rust printer-conformance guards web supply-chain promotion-shape cross-platform]
 abort "ci.yml readiness job set changed" unless ci_jobs.keys == required_ci_jobs
 matrix = ci_jobs.fetch("cross-platform").dig("strategy", "matrix", "platform")
 expected_matrix = %w[ubuntu-22.04 macos-latest windows-latest]
@@ -358,6 +359,7 @@ self_test() {
 
   core=$(expected_checks development feature/tax 'crates/pos-domain/src/lib.rs')
   assert_has_check 'ordinary PR requires rust' "$core" "ci${tab}rust"
+  assert_has_check 'ordinary PR requires the printer conformance suite' "$core" $'ci\tprinter-conformance'
   assert_has_check 'ordinary PR requires guards' "$core" $'ci\tguards'
   assert_has_check 'ordinary PR requires web' "$core" $'ci\tweb'
   assert_has_check 'ordinary PR requires supply-chain' "$core" $'ci\tsupply-chain'

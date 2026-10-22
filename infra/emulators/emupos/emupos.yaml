@@ -1,0 +1,13 @@
+# One emulated Epson TM-T20III, the device emupos models closest to our
+# epson-tm-t20iii-ethernet-80mm profile. Inside the container it listens on
+# every interface; the job publishes both ports on the runner's loopback only.
+schema: 1
+api:
+  host: 0.0.0.0
+devices:
+  - id: front
+    type: printer
+    profile: epson-tm-t20iii
+    connections:
+      - tcp: { host: 0.0.0.0, port: 9100 }
+    receipts_dir: /var/lib/emupos/receipts

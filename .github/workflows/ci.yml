@@ -135,6 +135,75 @@ jobs:
       - name: Postgres mirror is declared and applies to real PostgreSQL
         run: ./scripts/verify-pg-migrations.py --verbose
 
+  # One conformance suite, two targets, and a second opinion
+  # (docs/implementation/ref/hardware-and-receipts.md §6b.3 and §6b.8). The suite
+  # already runs on `rust` as part of the workspace; here it prints its report,
+  # one block per receipt-printer profile, and its byte streams are replayed
+  # through emupos, an emulator nobody here wrote, pinned in
+  # infra/emulators/emupos/ and built here, never published. A render that is not
+  # dot-identical, or a status byte that disagrees, fails the job: investigate it,
+  # never suppress it.
+  printer-conformance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read the pinned toolchain
+        id: pin
+        run: |
+          set -uo pipefail
+          channel=$(sed -n 's/^channel *= *"\(.*\)".*/\1/p' rust-toolchain.toml | head -1)
+          [ -n "$channel" ] || { echo "::error::no channel in rust-toolchain.toml"; exit 1; }
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "pinned toolchain: $channel"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.pin.outputs.channel }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/development' }}
+      - name: Install the pinned cargo-nextest release
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: nextest@0.9.143
+          fallback: none
+
+      - name: The suite, once per receipt-printer profile
+        run: >-
+          cargo nextest run --locked -p pos-hardware --features emulator --test conformance
+          --no-capture -E 'test(the_printer_conformance_suite_passes_for_every_profile)'
+
+      - name: Build the pinned emupos
+        run: docker build --tag pos-emupos:pinned infra/emulators/emupos
+
+      - name: Start it, on the runner's loopback only
+        run: |
+          set -euo pipefail
+          docker run --detach --name emupos \
+            --publish 127.0.0.1:19100:9100 --publish 127.0.0.1:18765:8765 \
+            pos-emupos:pinned
+          for _ in $(seq 1 60); do
+            curl --fail --silent http://127.0.0.1:18765/api/v1/health && exit 0
+            sleep 1
+          done
+          echo "::error::emupos did not become healthy"
+          docker logs emupos
+          exit 1
+
+      - name: Every conformance stream through the independent emulator
+        env:
+          EMUPOS_PRINTER: 127.0.0.1:19100
+          EMUPOS_API: 127.0.0.1:18765
+        run: >-
+          cargo nextest run --locked -p pos-hardware --features emulator --test conformance
+          --run-ignored only --no-capture -E 'test(/independent_emulator/)'
+
+      - name: emupos's log, when a step above failed
+        if: failure()
+        run: docker logs emupos || true
+
   # Without branch protection, these server-side guard results are a visible,
   # logged backstop rather than a merge control. CLAUDE.md: "a guard nobody has
   # seen fail is a guard nobody should trust" — so CI watches them fail on every
