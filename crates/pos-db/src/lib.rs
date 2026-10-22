@@ -86,6 +86,10 @@ pub enum DbError {
     InvalidStoredApproval { reason: String },
     #[error("stored clock state is malformed: {reason}")]
     ClockStateInvalid { reason: String },
+    #[error("a print lease must expire after the moment it is taken")]
+    PrintLeaseInvalid,
+    #[error("stored receipt or print record is malformed: {reason}")]
+    StoredPrintRecordInvalid { reason: String },
     #[error("audit payload cannot be chained as written: {reason}")]
     AuditPayloadRefused { reason: String },
     #[error(
