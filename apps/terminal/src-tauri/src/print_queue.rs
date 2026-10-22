@@ -888,7 +888,8 @@ mod tests {
     }
 
     /// One sale's receipt: a line, its tax, a cash tender and a cleared fiscal
-    /// QR, so a duplicate has a QR to carry.
+    /// block, so a duplicate carries the original's fiscal identity. The
+    /// block prints its UUID today; the QR raster arrives at 2.7.9.
     fn model() -> ReceiptModel {
         ReceiptModel {
             doc_kind: DocKind::Sale,
