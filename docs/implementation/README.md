@@ -129,6 +129,7 @@ printer and drawer profile says — refusing what a device would refuse, reporti
 where a profile does not know — and `just printer-emulator <profile>` prints to it before any
 printer exists; only its golden comparison waits for `1.7.5`'s goldens.
 `1.7.13` is **partially delivered** as well: one conformance suite runs against the emulated printer for every receipt-printer profile, refuses to reach a device that is not named, replays a synthetic capture, and is replayed through a pinned independent emulator in CI; only its golden replay waits for `1.7.5`.
+`1.7.7` is **partially delivered**: `ReceiptRepository` writes the receipt artifact and its initial print job in the sale's transaction, leases due jobs, retries only a failure, and never re-offers an outcome that may have printed; the terminal's print worker, which drives a printer from that queue, is the step's remaining half.
 Repository-hardening and documentation work may land between numbered product steps, but it does
 not advance that frontier.
 
