@@ -148,8 +148,7 @@ fn parked_sale(register: &Register, slot: u8, base: u128, receipt: &str) -> Chec
         )
         .unwrap();
     tx.commit().unwrap();
-    checkout.write_audit(conn, &register.chain);
-    checkout.write_tender_events(conn);
+    checkout.write_facts_after_envelope(conn, &register.chain);
     checkout
 }
 
@@ -477,7 +476,28 @@ fn a_duplicate_cites_this_sales_original_and_gets_its_own_job() {
         Some(JobState::Queued)
     );
 
+    // Both refusals below come from the citation rule. Each row gets an
+    // envelope first, because since 0006 an artifact without one is refused by
+    // `receipt_artifact_has_ready_commit` before the citation is ever read.
     let tx = r.conn.unchecked_transaction().unwrap();
+    let members = [
+        Member::new(&id(0xC4), "receipt_artifact", &id(0xD2)),
+        Member::new(&id(0xC5), "receipt_artifact", &id(0xD3)),
+    ];
+    let facts: Vec<_> = members.iter().map(Member::as_fact).collect();
+    OutboxRepository::new(&r.conn)
+        .write_commit(
+            &tx,
+            &CommitEnvelope {
+                commit_id: &id16(&id(0xC3)),
+                protocol_version: 1,
+                schema_version: pos_db::SCHEMA_VERSION,
+                producer_version: "pos-db-receipt-test",
+                created_at: registered_chain::AT,
+            },
+            &facts,
+        )
+        .unwrap();
     let foreign = receipts.append_artifact(&tx, &duplicate(&first, &second, 0xD2));
     assert_eq!(
         message(foreign.unwrap_err()),

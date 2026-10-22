@@ -358,6 +358,9 @@ pub struct Checkout {
     pub shift: Vec<u8>,
     pub line_taxes: Vec<Vec<u8>>,
     pub tender_events: Vec<Vec<u8>>,
+    /// One `sale` stock event per line: `0006` refuses to complete a sale
+    /// whose stock-bearing lines lack their exact stock fact in its commit.
+    pub stock_events: Vec<Vec<u8>>,
     pub artifact: Vec<u8>,
     pub print_job: Vec<u8>,
     pub audit: Vec<u8>,
@@ -386,6 +389,7 @@ impl Checkout {
             shift: fixture_id(slot, 0x05),
             line_taxes: (0..lines.len()).map(|i| tag(0x10, i)).collect(),
             tender_events: (0..tenders.len()).map(|i| tag(0x30, i)).collect(),
+            stock_events: (0..lines.len()).map(|i| tag(0x50, i)).collect(),
             artifact: fixture_id(slot, 0x01),
             print_job: fixture_id(slot, 0x02),
             audit: fixture_id(slot, 0x03),
@@ -409,11 +413,16 @@ impl Checkout {
     }
 
     /// The facts this fixture writes, in parent-before-child order: a tax
-    /// component per line, a status event per tender, the original receipt
-    /// artifact, and the audit row.
+    /// component per line, a stock event per line, a status event per tender,
+    /// the original receipt artifact, and the audit row.
     fn auxiliary_facts(&self) -> Vec<(&'static str, Vec<u8>)> {
         let mut facts: Vec<(&'static str, Vec<u8>)> = Vec::new();
         facts.extend(self.line_taxes.iter().map(|t| ("sale_line_tax", t.clone())));
+        facts.extend(
+            self.stock_events
+                .iter()
+                .map(|e| ("stock_ledger", e.clone())),
+        );
         facts.extend(
             self.tender_events
                 .iter()
@@ -542,14 +551,18 @@ impl Checkout {
     /// Everything after the envelope, in dependency order.
     pub fn write_facts(&self, conn: &Connection, chain: &RegisteredChain) {
         self.write_facts_before_envelope(conn);
+        self.write_receipt(conn);
         self.write_facts_after_envelope(conn, chain);
     }
 
-    /// The auxiliary facts that need no delivery envelope: the tax components
-    /// and the original receipt with its queued print job.
+    /// The auxiliary facts that need no delivery envelope: the tax components.
+    ///
+    /// The receipt used to be here too. `0006` gave `receipt_artifact` the
+    /// envelope gate its synced siblings carry (#197), so [`Self::write_receipt`]
+    /// now runs after the envelope, on its own because some suites write the
+    /// receipt through `ReceiptRepository` instead.
     pub fn write_facts_before_envelope(&self, conn: &Connection) {
         self.write_line_taxes(conn);
-        self.write_receipt(conn);
     }
 
     /// One tax component per line, as the fixture's single GST rate applies.
@@ -598,11 +611,55 @@ impl Checkout {
         .expect("the durable-outputs gate wants the job queued and never attempted");
     }
 
-    /// The auxiliary facts that refuse to exist without one: `audit_log` and
-    /// `tender_status_event` each check `sync_commit_ready` on insert.
+    /// The auxiliary facts that refuse to exist without one: `audit_log`,
+    /// `tender_status_event` and `stock_ledger` each check `sync_commit_ready`
+    /// on insert. The receipt does too since `0006`, and is written separately
+    /// — see [`Self::write_facts_before_envelope`].
     pub fn write_facts_after_envelope(&self, conn: &Connection, chain: &RegisteredChain) {
         self.write_audit(conn, chain);
         self.write_tender_events(conn);
+        self.write_stock_events(conn);
+    }
+
+    /// One `sale` stock event per line, which is what `0006`'s
+    /// `completed_sale_requires_stock_fact_*` looks for. Every value the
+    /// ledger's projection trigger checks is read back from the line, its sale
+    /// and the store's current cache rather than taken as an argument, so the
+    /// event is the one the chain accepts: the next `event_seq` for the
+    /// register, the line's quantity out at the product's step, and the cache's
+    /// cost basis — zero and estimated when the store has never stocked the
+    /// product, as no fixture store has.
+    pub fn write_stock_events(&self, conn: &Connection) {
+        for (line, event) in self.lines.iter().zip(self.stock_events.iter()) {
+            conn.execute(
+                "INSERT INTO stock_ledger
+                   (id, register_id, event_seq, product_id, store_id, qty_delta_milli,
+                    qty_step_milli, kind, ref_kind, ref_id, source_sale_line_id,
+                    unit_cost_minor, is_cost_estimated, is_weight_derived,
+                    on_hand_after_milli, wac_after_minor, is_wac_estimated,
+                    occurred_at, business_date)
+                 SELECT ?1, s.register_id,
+                        COALESCE((SELECT MAX(e.event_seq) FROM stock_ledger e
+                                   WHERE e.register_id = s.register_id), 0) + 1,
+                        l.product_id, s.store_id, -l.qty_milli, p.qty_step_milli,
+                        'sale', 'sale', s.id, l.id,
+                        COALESCE(c.wac_minor, 0), COALESCE(c.is_wac_estimated, 1), 0,
+                        COALESCE(c.on_hand_milli, 0) - l.qty_milli,
+                        COALESCE(c.wac_minor, 0), COALESCE(c.is_wac_estimated, 1),
+                        ?2, s.business_date
+                   FROM sale_line l
+                   JOIN sale s ON s.id = l.sale_id
+                   JOIN product p ON p.id = l.product_id
+                   LEFT JOIN stock_cache c
+                     ON c.product_id = l.product_id AND c.store_id = s.store_id
+                  WHERE l.id = ?3",
+                params![event, AT, line],
+            )
+            .expect(
+                "a sale stock event extends the register's ledger chain at the cache's cost \
+                 basis, inside the sale's envelope",
+            );
+        }
     }
 
     /// The audit row for the completion. Split out so a test can leave one half

@@ -32,16 +32,18 @@ mod outbox {
     const BUSINESS_DATE: &str = "2026-08-27";
     const PRODUCER_VERSION: &str = "pos-db-1.8.9-test";
     const PROTOCOL_VERSION: i64 = 1;
-    /// A sale, its line, its tender, the line's tax component, the tender's
-    /// initial status event, the original receipt artifact and the audit row:
-    /// the smallest fact graph a checkout can produce, and the one the server
-    /// must accept or reject whole.
+    /// A sale, its line, its tender, the line's tax component, the line's
+    /// stock event, the tender's initial status event, the original receipt
+    /// artifact and the audit row: the smallest fact graph a checkout can
+    /// produce, and the one the server must accept or reject whole.
     ///
     /// It was three until migration 0005. `sale_commit_base_complete` now
     /// refuses to let a sale complete unless its commit names every one of
     /// these, so "the smallest graph" grew by four — the envelope did not
-    /// change, the definition of a whole sale did.
-    const COMMIT_SIZE: i64 = 7;
+    /// change, the definition of a whole sale did. Migration 0006 added the
+    /// eighth: a line that moves stock completes only with its exact stock
+    /// event in the same commit (I-6).
+    const COMMIT_SIZE: i64 = 8;
     /// How many of those the checkout itself writes and hand-authors payloads
     /// for; the rest come from the shared registered-chain fixture.
     const OWN_MEMBERS: usize = 3;
@@ -207,6 +209,7 @@ mod outbox {
             ("sale_line", "SELECT id FROM sale_line"),
             ("sale_tender", "SELECT id FROM sale_tender"),
             ("sale_line_tax", "SELECT id FROM sale_line_tax"),
+            ("stock_ledger", "SELECT id FROM stock_ledger"),
             ("tender_status_event", "SELECT id FROM tender_status_event"),
             ("receipt_artifact", "SELECT id FROM receipt_artifact"),
             // Only this sale's audit row: the shift the fixture opened before
@@ -339,6 +342,7 @@ mod outbox {
         let receipt = OutboxRepository::new(&register.conn)
             .write_commit(&tx, &sale.envelope(), &sale.members())
             .expect("the envelope is written beside the facts, not after them");
+        sale.checkout.write_receipt(&tx);
         sale.checkout.write_facts_after_envelope(&tx, chain);
         sale.checkout.complete(&tx);
         tx.commit().unwrap();

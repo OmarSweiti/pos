@@ -1245,11 +1245,15 @@ Opening records the actor and opening float and refuses a second open shift on t
 ## Group 1.10 — Stock ledger
 
 ### 1.10.1 — Migration `0006`
-**Files:** `crates/pos-db/migrations/0006_stock_ledger.sql`, `crates/pos-db/tests/migration_0006_stock_ledger.rs` (new)
+**Files:** `crates/pos-db/migrations/0006_stock_ledger.sql` (new), `crates/pos-db/src/lib.rs` (`MIGRATIONS`), `crates/pos-db/tests/migration_0006_stock_ledger.rs` (new), `apps/server/migrations/20261022120000_stock_ledger.sql` (new — the mirror, which creates nothing and records why), `crates/pos-db/src/fixtures/registered_chain.rs` (a stock event per line, and the receipt written after the envelope), `crates/pos-db/tests/common/mod.rs` (`reference_blocks_at_or_after(7)`), the `pos-db` suites whose sale graph grew by its stock event (`outbox.rs`, `receipt.rs`, `migration_0005_sale_columns_and_sequences.rs`), `apps/terminal/src-tauri/src/print_queue.rs` (a duplicate's envelope written before the duplicate) · [`ref/schema.md`](ref/schema.md) (§0006 marked SHIPPED, with #197's guards and the derived-weight correction) · `scripts/check-test-catalog.py` (one name: `PLANNED` → `PLANNED_RETIRED`) · [`README.md`](README.md) (implementation frontier) · this file (this microstep's `Files:` line and the #197 note below)
 Create append-only `stock_ledger` with `qty_delta_milli`, the captured `qty_step_milli`, nullable `unit_cost_minor INTEGER`, `is_cost_estimated INTEGER NOT NULL DEFAULT 0`, `is_weight_derived INTEGER NOT NULL DEFAULT 0` and the post-event projection watermark, plus rebuildable `stock_cache` and the register-local working table `stock_adjustment_request`. Every sale event captures the cost basis in force; a later WAC change must not rewrite historical margin, and a price-embedded label must preserve that its stock weight was derived rather than measured. The request table freezes the product, quantity, reason and note before manager approval; it is not a stock fact and is removed only by the transaction that posts the ledger event.
 **Tests:** `stock_ledger_is_append_only` · `a_sale_event_records_the_cost_basis_at_capture_time` · `missing_cost_is_null_and_reported_as_estimated` · `price_embedded_stock_event_carries_the_derived_weight_flagged_estimated` · `migration_0006_preserves_quantity_steps`
 **Done when:** `just verify-schema` applies `0001`–`0006` and `cargo nextest run -p pos-db --test migration_0006_stock_ledger` proves a later cost change leaves the original sale event's `unit_cost_minor` unchanged.
 
+> **Delivered with `0006`: the three guards `0005` did not ship** (#197, inherited from #179). The
+> second took the trigger route for `receipt_artifact` and the recorded-reason route for
+> `print_attempt`, which is register-local and never syncs; `0006`'s header records why.
+>
 > **`0006` also carries three guards `0005` did not ship, and it is the only migration that can.**
 > Tracked as **#197**, inherited from #179. They are absent guards rather than live defects, and the
 > reason they ride here is arithmetic: `0007` is named by `1.2.5`, and `verify-schema.py` requires
