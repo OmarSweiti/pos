@@ -85,16 +85,6 @@ PLANNED: dict[str, tuple[str, ...]] = {
         "prop_no_query_string_produces_a_database_error",
         "search_survives_every_fts5_metacharacter",
     ),
-    "1.2.5": (
-        "a_single_letter_query_does_not_match_a_vocalised_name",
-        "exact_spelling_outranks_a_folded_variant",
-        "fts_ignores_tatweel",
-        "fts_matches_alef_and_yaa_spelling_variants",
-        "fts_matches_arabic_with_and_without_diacritics",
-        "fts_matches_taa_marbuta_spelled_as_haa",
-        "fts_prefix_search_works_at_two_characters",
-        "unicode_names_roundtrip_through_db_and_fts",
-    ),
     "1.4.3": (
         "age_restricted_line_requires_confirmation",
         "inactive_product_cannot_be_added_but_can_be_refunded",
@@ -542,11 +532,18 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "a_different_sale_is_refused",
         "a_handle_used_twice_is_refused",
         "a_pack_quantity_of_zero_is_refused_at_save",
+        "a_single_letter_query_does_not_match_a_vocalised_name",
         "an_altered_amount_is_refused",
         "an_expired_handle_is_refused",
         "an_unknown_print_outcome_never_auto_retries_the_drawer_pulse",
         "card_charged_exact_unrounded_total",
         "clock_jump_back_reports_anomaly",
+        "exact_spelling_outranks_a_folded_variant",
+        "fts_ignores_tatweel",
+        "fts_matches_alef_and_yaa_spelling_variants",
+        "fts_matches_arabic_with_and_without_diacritics",
+        "fts_matches_taa_marbuta_spelled_as_haa",
+        "fts_prefix_search_works_at_two_characters",
         "manager_self_approval_denied_when_policy_bans_it",
         "mutating_an_identity_column_breaks_the_chain",
         "narrow_profile_reflows_rather_than_truncates",
@@ -558,6 +555,7 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "prop_monotonic_clock_never_decreases",
         "tail_deletion_is_detected_against_the_last_anchor",
         "the_effect_and_the_consumption_commit_together_or_not_at_all",
+        "unicode_names_roundtrip_through_db_and_fts",
     }
 )
 
