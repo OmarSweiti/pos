@@ -143,9 +143,6 @@ PLANNED: dict[str, tuple[str, ...]] = {
         "sale_at_0100_belongs_to_previous_business_date",
     ),
     "1.9.5": ("training_auto_off_at_shift_close",),
-    "1.10.1": (
-        "price_embedded_stock_event_carries_the_derived_weight_flagged_estimated",
-    ),
     "1.10.4": ("two_offline_registers_selling_the_last_unit_both_succeed",),
     "1.11.10b": (
         "a_cashier_has_a_path_forward_without_product_edit",
@@ -554,6 +551,7 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "mutating_an_identity_column_breaks_the_chain",
         "narrow_profile_reflows_rather_than_truncates",
         "price_embedded_line_total_equals_the_label",
+        "price_embedded_stock_event_carries_the_derived_weight_flagged_estimated",
         "print_failure_after_finalize_leaves_sale_complete",
         "prop_cash_rounding_only_on_final_cash_tender",
         "prop_corrupt_digit_never_parses_clean",

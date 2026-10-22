@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **41 of 121 executable microsteps fully complete (~34%)**: `1.1.0`
+Phase 1 has **42 of 121 executable microsteps fully complete (~35%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -92,7 +92,11 @@ and a committed hash per version so a value changes only as a new version), and 
 retry queue — a sale's original and its one job written in the sale's own transaction, a worker
 that sends nothing it cannot vouch for and retries only a refusal, a lapsed lease resolved as
 unknown rather than sent twice, and a person's answer that turns an ambiguous print into a
-watermarked duplicate of the original, audited, with no drawer ever pulsed by a retry).
+watermarked duplicate of the original, audited, with no drawer ever pulsed by a retry), and
+`1.10.1` (migration `0006`, the stock ledger — an event that is never edited, carries the cost
+basis it was captured at and projects into its cache in the same statement; a sale that moves
+stock completes only with each line's exact stock fact in its commit; a price label's stock moves
+by the weight it implies, flagged as derived; and the three guards #197 tracked since #179).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
@@ -109,9 +113,9 @@ therefore exits **non-zero**, which is conventions §7.1 working rather than fai
 records is `1.2.0`'s deferred half and waits on milestone 5.8, where the register is bought — no
 device is bought before it ([`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6b). **`1.8.9` has landed, so the gate it held is open**: groups 1.6, 1.9 and 1.10 may now write
 append-only facts, because every fact graph commits with its delivery envelope and the writer refuses
-to return success on an incomplete one. **`1.9.1` has landed too**, so the migration chain is
-contiguous to `0005` and `0006` may be written: `1.2.3`, `1.9.2`–`1.9.5`, `1.10.2`–`1.10.5` and the
-`1.2.4` database half all stood behind it. `1.2.4` is **partially delivered**: its pure half
+to return success on an incomplete one. **`1.9.1` and `1.10.1` have landed too**, so the migration
+chain is contiguous to `0006` and `0007` may be written: `1.2.5` writes it, and `1.2.3`, the
+`1.2.4` database half and `1.10.2`–`1.10.5` stand behind it. `1.2.4` is **partially delivered**: its pure half
 — the scan parser, `PriceSource`, `ScanLookup`, `resolve_scan` and the trade-scale gate — is in
 `pos-domain`, with the compile-fail proof that only the scan handler can make a price-embedded
 lookup. Its database half waits for `1.2.5`'s trade-scale tables, its shell half for `1.2.3`'s
