@@ -550,6 +550,14 @@ impl Checkout {
     /// The auxiliary facts that need no delivery envelope: the tax components
     /// and the original receipt with its queued print job.
     pub fn write_facts_before_envelope(&self, conn: &Connection) {
+        self.write_line_taxes(conn);
+        self.write_receipt(conn);
+    }
+
+    /// One tax component per line, as the fixture's single GST rate applies.
+    /// Split from the receipt so a test can write the receipt and its job
+    /// through `ReceiptRepository` instead.
+    pub fn write_line_taxes(&self, conn: &Connection) {
         for (line, line_tax) in self.lines.iter().zip(self.line_taxes.iter()) {
             conn.execute(
                 "INSERT INTO sale_line_tax
@@ -565,7 +573,11 @@ impl Checkout {
                  applies — one here, matching the fixture's single GST rate",
             );
         }
+    }
 
+    /// The original receipt artifact and its queued, never-attempted print
+    /// job, by SQL — the shape `0005`'s durable-outputs gate requires.
+    pub fn write_receipt(&self, conn: &Connection) {
         conn.execute(
             "INSERT INTO receipt_artifact
                (id, sale_id, artifact_kind, format, template_version, printer_profile,
