@@ -1884,7 +1884,9 @@ mod tests {
             "reprint".to_owned(),
             at(0),
             60_000,
-            [7; 16],
+            // Any fixed value serves; the job's own id keeps the nonce a
+            // test fact rather than a literal a scanner reads as a key.
+            sale.job,
         )
         .unwrap();
         let escalated = authorize::<cap::SaleReprint>(
