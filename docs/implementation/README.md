@@ -111,9 +111,12 @@ device is bought before it ([`ref/hardware-and-receipts.md`](ref/hardware-and-re
 append-only facts, because every fact graph commits with its delivery envelope and the writer refuses
 to return success on an incomplete one. **`1.9.1` has landed too**, so the migration chain is
 contiguous to `0005` and `0006` may be written: `1.2.3`, `1.9.2`–`1.9.5`, `1.10.2`–`1.10.5` and the
-`1.2.4` database half all stood behind it. `1.2.4` (the scan parser's pure half, next in
-§1.2's build order) has every dependency met, and `1.6.3` is closed: its seed comparison landed
-against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
+`1.2.4` database half all stood behind it. `1.2.4` is **partially delivered**: its pure half
+— the scan parser, `PriceSource`, `ScanLookup`, `resolve_scan` and the trade-scale gate — is in
+`pos-domain`, with the compile-fail proof that only the scan handler can make a price-embedded
+lookup. Its database half waits for `1.2.5`'s trade-scale tables, its shell half for `1.2.3`'s
+`ProductRepository`, and one named test for the cart's `AddLine::from_scan`; `1.2.5` is next in
+§1.2's build order. `1.6.3` is closed: its seed comparison landed against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
 `authorize`, `ApprovalHandle` and `EscalationPolicy` are complete in `pos-domain`, with the two
 compile-fail proofs that a token cannot be forged or substituted across capabilities. Its
 persistence half now stores, validates, reloads and one-use consumes a handle through a

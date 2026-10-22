@@ -47,7 +47,9 @@ crates/pos-domain/src/
 ├── money.rs         Money, Currency, Qty, Percent      [exists, extended 1.1.x]
 ├── ids.rs           typed ids, the IdSource port       [1.1.8]
 ├── time.rs          BusinessDate, day cutover, ClockState, the Clock port [1.1.9]
-├── catalog.rs       Product, Barcode, PriceSource, ScanLookup [1.2.x]
+├── catalog.rs       Product, Barcode                   [1.2.x]
+│   └── scan.rs      parse_scan, PriceSource, ScanLookup [1.2.4]
+├── trade_scale.rs   the scale behind a price label     [1.2.4]
 ├── tax.rs           categories, rates, extraction      [1.3.x]
 ├── cart.rs          the state machine, in-flight state [1.4.x]
 ├── pricing.rs       discounts, overrides, proration    [1.4.x]
@@ -946,8 +948,8 @@ Deli scales print EAN-13 codes whose prefix means "the digits that follow are a 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EmbeddedBarcodeRule {
     pub prefix: String,
-    pub item_code_span: (usize, usize),
-    pub value_span: (usize, usize),
+    pub item_code_span: (usize, usize),  // (start, len), zero-based — 0007's
+    pub value_span: (usize, usize),      //   *_start/*_len columns, copied as stored
     pub value_kind: EmbeddedValue,
     pub value_scale: u32,          // divisor applied to the raw digits
     pub verify_checksum: bool,
@@ -986,10 +988,24 @@ pub fn ean13_checksum_ok(code: &str) -> bool;
 pub enum ScanError {
     #[error("checksum failed")]                ChecksumFailed,   // E.40: reject, never guess
     #[error("length {0} invalid for {1:?}")]   BadLength(usize, BarcodeKind),
-    #[error("embedded value out of range")]    ValueOutOfRange,
+    #[error("embedded value out of range")]    ValueOutOfRange,  // zero, or not divisible by value_scale
     #[error("non-numeric in numeric span")]    NonNumeric,
+    #[error("the scan is not UTF-8 text")]     NotUtf8,
+    #[error("the scan is empty")]              Empty,
+    #[error("the rule for prefix {0:?} does not fit an EAN-13")] RuleMalformed(String),
+    #[error("a candidate does not match the scanned code")]      CandidateForAnotherCode,
+    #[error("this scan carries no label price")]                 NotAPriceLabel,
 }
 ```
+
+**Delivered at 1.2.4, as `catalog::scan`.** A code no rule claims is an ordinary barcode, returned whole
+as its item code. A claimed code must be an EAN-13 of digits; when two prefixes claim it the longer
+wins, and an empty prefix claims nothing, because it would make every barcode a scale label. The
+error list grew by five, because **a damaged label and a broken rule are different failures** and the
+operator has to see which stopped the scan: `NotUtf8` and `Empty` are what the reader sent,
+`RuleMalformed` is the store's configuration, and `CandidateForAnotherCode` and `NotAPriceLabel` are
+`resolve_scan`'s and the label constructor's refusals below. Scale evidence is a third kind again,
+and has its own type (§4.4).
 
 Properties: `prop_ean13_checksum_matches_reference`, `prop_embedded_parse_roundtrip`, `prop_corrupt_digit_never_parses_clean` (**E.40 — a checksum error is a rejected scan and an honest error, never a guess**).
 
@@ -1010,7 +1026,7 @@ number the caller chose.**
 /// require an artefact the webview cannot fabricate, a catalogue `Product` or an
 /// `EmbeddedBarcodeRule` plus the raw code that matched it. The third is the
 /// department sale, and it is the one `add_line` refuses.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]   // NOT Deserialize — see below
 pub struct PriceSource { amount: Money, origin: PriceOrigin }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1040,6 +1056,12 @@ impl PriceSource {
 }
 ```
 
+**Neither `PriceSource` nor `ScanLookup` implements `Deserialize`** — a change at delivery (1.2.4). A
+JSON document is a number the caller chose, so deserializing one into a price-bearing value would
+reopen exactly the path the private amount closes; `ApprovalHandle` is closed against serde for the
+same reason. `PriceOrigin` carries no amount and still deserializes, which is what a parked line needs.
+`tests/scan_lookup_ui.rs` proves both refusals at compile time.
+
 Tests: `add_line_refuses_a_department_price_source` · `from_label_refuses_a_weight_rule` ·
 `client_supplied_price_cannot_bypass_override` — the last one is an IPC-layer test
 ([`ipc-contract.md`](ipc-contract.md) §5) and belongs to the boundary, because the boundary is what
@@ -1054,7 +1076,7 @@ is a decision the UI must render differently, which is why it is an enum and not
 `Option<Product>`.
 
 ```rust
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]   // NOT Deserialize — §4.2
 pub enum ScanLookup {
     /// One live product. `pack_qty` is the BARCODE's multiplier, not the
     /// product's: the same product's single-unit and six-pack codes differ.
@@ -1079,7 +1101,13 @@ pub enum ScanLookup {
 pub struct ProductHit { pub product: Product, pub matched_on: MatchedOn }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum MatchedOn { Barcode { code: String, kind: BarcodeKind }, Plu(String), Name, Tile }
+pub enum MatchedOn {
+    /// `pack_qty` is the code's own multiplier (E.78), which `ScanLookup::Product` reports.
+    Barcode { code: String, kind: BarcodeKind, pack_qty: Qty },
+    Plu(String),
+    Name,
+    Tile,
+}
 
 /// The weight a label's price implies at TODAY's catalogue price per unit.
 /// ADVISORY, and never money: a label printed at 09:00 for 0.416 JOD says
@@ -1091,6 +1119,13 @@ pub struct DerivedWeight { pub qty: Qty, pub catalog_unit_price: Money }
 pub fn resolve_scan(parsed: ParsedScan, candidates: Vec<ProductHit>, c: Currency)
     -> Result<ScanLookup, ScanError>;
 ```
+
+**`resolve_scan` refuses any candidate not found by the scan's own item code** — a `Barcode` or `Plu`
+match on exactly that code. A `Name` or `Tile` match is never a scan's. So a shell whose lookup and
+scan disagree cannot attach a label's price to a product the label did not name. `MatchedOn::Barcode`
+carries the code's pack quantity because nothing else could supply `ScanLookup::Product`'s, and the
+derived weight is `label ÷ catalogue unit price`, rounded once half away from zero, and absent for a
+product that is not weighed, is priced at nothing, or is priced in another currency.
 
 There is no public `ScanResult`, `EmbeddedAmount` or label-price constructor. The repository never
 returns a resolved price-bearing value: it returns product hits for the opaque parse's item code.
@@ -1112,6 +1147,47 @@ Tests: `price_embedded_line_total_equals_the_label` · `price_embedded_line_is_o
 `price_embedded_stock_event_carries_the_derived_weight_flagged_estimated` ·
 `price_embedded_after_a_price_per_kilo_change_still_charges_the_label` (E.80) ·
 `a_multipack_barcode_adds_its_pack_quantity` (E.78).
+
+
+### 4.4 `trade_scale.rs` — the scale behind a label — [1.2.4]
+
+A price-embedded barcode does not remove the scale from the transaction
+([`hardware-and-receipts.md`](hardware-and-receipts.md) §7). A label may price a line only while the scale
+that printed it holds current verification evidence, so this is pure, and a refusal is its own type:
+the operator must see that the scale's evidence stopped the scan, not a misread.
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VerificationState { Verified, Revoked, MaintenancePending }
+
+/// The scale's NEWEST event, as `trade_scale_current_verification` selects it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScaleVerification {
+    pub state: VerificationState,
+    pub effective_at: Timestamp,
+    pub valid_until: Option<Timestamp>,
+}
+
+#[derive(Debug, Clone, Copy, thiserror::Error, PartialEq, Eq)]
+pub enum ScalePricingRefusal {
+    NoEvidence, Revoked, MaintenancePending,
+    NotYetEffective(Timestamp), Expired(Timestamp), ClockNotTrusted,
+}
+
+/// May a rule bound to this scale be switched on? 0007's activation triggers, in the domain:
+/// the current state is `Verified`. Activation is configuration and asks nothing about time.
+pub fn rule_may_activate(current: Option<&ScaleVerification>) -> Result<(), ScalePricingRefusal>;
+
+/// May a label from this scale price a line now? Verified, effective, not expired, and judged on a
+/// `ClockConfidence::Trusted` clock — 0007: an untrusted clock never keeps an expired certificate
+/// active, so anything short of trusted fails closed.
+pub fn scale_pricing_allowed(current: Option<&ScaleVerification>, now: Timestamp,
+                             clock: ClockConfidence) -> Result<(), ScalePricingRefusal>;
+```
+
+The legal content of the evidence is the `⚠️ OPEN` item in [`schema.md`](schema.md) §0007; until it
+is answered every rule stays inactive. Tests: `unverified_trade_scale_cannot_activate_an_embedded_rule`
+· `maintenance_pending_disables_scale_pricing`.
 
 ---
 

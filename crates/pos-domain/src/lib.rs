@@ -10,6 +10,7 @@ pub mod receipt;
 pub mod tax;
 pub mod tender;
 pub mod time;
+pub mod trade_scale;
 
 // The module graph points one way (ref/domain-api.md §15): `ids`, `money` and
 // `time` have no cross-module edges. `catalog` reads `money` and `ids`; `tax`
@@ -18,7 +19,8 @@ pub mod time;
 // edges at microstep 1.6.4, when `Authorized<C>` and `ApprovalHandle` started
 // carrying a `UserId` and a `Timestamp`: the checker reports `ids` and `time`,
 // not the `ids` and `audit` §15 predicted — the handle names an approver and an
-// expiry, and reaches for no audit type to do it. `money`'s external arithmetic dependency is
+// expiry, and reaches for no audit type to do it. `trade_scale` (1.2.4) reads only the
+// pure `Timestamp` and `ClockConfidence` values from `time`. `money`'s external arithmetic dependency is
 // `rust_decimal`; `time` performs only integer calendar arithmetic. `just
 // acyclic` is what establishes the graph, not this comment.
 pub use audit::{
@@ -26,8 +28,10 @@ pub use audit::{
     chain_hash, check_payload, verify_chain,
 };
 pub use catalog::{
-    Barcode, BarcodeKind, CatalogError, Product, RegulatedKind, RegulatedSaleForm, SaleForm,
-    UnitOfMeasure,
+    Barcode, BarcodeKind, CatalogError, DerivedWeight, EmbeddedBarcodeRule, EmbeddedValue,
+    MatchedOn, ParsedScan, PriceOrigin, PriceSource, Product, ProductHit, RegulatedKind,
+    RegulatedSaleForm, SaleForm, ScanError, ScanLookup, UnitOfMeasure, ean13_checksum_ok,
+    parse_scan, parse_scan_bytes, resolve_scan,
 };
 pub use ids::{
     ApprovalId, CategoryId, CustomerId, IdSource, OrgId, ProductId, PromotionId, RegisterId,
@@ -58,4 +62,8 @@ pub use time::{
     BusinessDate, Clock, ClockAnomaly, ClockConfidence, ClockPolicy, ClockState, DayBoundary,
     FixedClock, MonotonicClock, TimeError, Timestamp, business_date_of, clock_confidence,
     effective_now,
+};
+pub use trade_scale::{
+    ScalePricingRefusal, ScaleVerification, VerificationState, rule_may_activate,
+    scale_pricing_allowed,
 };

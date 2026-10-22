@@ -85,10 +85,6 @@ PLANNED: dict[str, tuple[str, ...]] = {
         "prop_no_query_string_produces_a_database_error",
         "search_survives_every_fts5_metacharacter",
     ),
-    "1.2.4": (
-        "price_embedded_line_total_equals_the_label",
-        "prop_corrupt_digit_never_parses_clean",
-    ),
     "1.2.5": (
         "a_single_letter_query_does_not_match_a_vocalised_name",
         "exact_spelling_outranks_a_folded_variant",
@@ -557,8 +553,10 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "manager_self_approval_denied_when_policy_bans_it",
         "mutating_an_identity_column_breaks_the_chain",
         "narrow_profile_reflows_rather_than_truncates",
+        "price_embedded_line_total_equals_the_label",
         "print_failure_after_finalize_leaves_sale_complete",
         "prop_cash_rounding_only_on_final_cash_tender",
+        "prop_corrupt_digit_never_parses_clean",
         "prop_monotonic_clock_never_decreases",
         "tail_deletion_is_detected_against_the_last_anchor",
         "the_effect_and_the_consumption_commit_together_or_not_at_all",
