@@ -1005,11 +1005,20 @@ mod tests {
         /// for any price and any ceiling in the same currency, the save is
         /// allowed exactly when the price is at or below the ceiling, and a
         /// product with no ceiling is never refused for its price.
+        ///
+        /// The ceiling is drawn near the price as often as anywhere else. Two
+        /// independent `i64`s are almost never equal, so a generator that drew
+        /// them apart would never visit the boundary this claim is about — and
+        /// a check that refused a price equal to its ceiling passed it.
         #[test]
         fn prop_a_saveable_price_never_exceeds_its_ceiling(
             price in any::<i64>(),
-            ceiling in proptest::option::of(any::<i64>()),
+            offset in proptest::option::of(prop_oneof![
+                -2_i64..=2,
+                any::<i64>(),
+            ]),
         ) {
+            let ceiling = offset.map(|offset| price.saturating_add(offset));
             let product = Product {
                 unit_price: Money::from_minor(price, Currency::JOD),
                 max_price: ceiling.map(|minor| Money::from_minor(minor, Currency::JOD)),
