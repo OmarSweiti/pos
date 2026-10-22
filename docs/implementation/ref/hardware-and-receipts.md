@@ -207,7 +207,7 @@ These are the rules that decide whether a paper jam costs a receipt, a sale, or 
 
    `cancelled` reads oddly for the first branch and is the right state: it means *no further attempt will be made*, which is exactly what the answer established. The schema deliberately offers no path from `unknown` back to `printed`, because nothing inside the machine can assert that paper exists — only the person looking at it can, and their assertion is the audit entry, not a state change.
 
-   Closing an unknown job is an operator action with money-safety consequences, so it needs its own audited command in [`ipc-contract.md`](ipc-contract.md) §3 — `print_resolve_unknown` — and never a side effect of navigating away from a screen.
+   Closing an unknown job is an operator action with money-safety consequences, so it needs its own audited command in [`ipc-contract.md`](ipc-contract.md) §3 — `print_resolve_unknown` — and never a side effect of navigating away from a screen. Any cashier holding `sale.reprint` gives the answer, with no manager approval (the owner's decision, 22 October 2026).
 
 6. **A print retry never emits a drawer pulse, because no persisted artifact contains one.** See §4; this is the rule the rest of §4 exists to keep.
 

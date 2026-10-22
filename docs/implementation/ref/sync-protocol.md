@@ -255,6 +255,29 @@ GET /sync/document/{sale_id}   →  reprint_bundle
 
 `receipt_artifact` is owned by [`schema.md`](schema.md) and [`hardware-and-receipts.md`](hardware-and-receipts.md); this file owns only the direction it travels and who may ask for it.
 
+**The payload a `receipt_artifact` travels as** — the owner's decision of 22 October 2026, taken before
+the first duplicate needed one: a receipt is defined now and versioned, rather than waiting for the sync
+engine, so a duplicate can be printed from day one and the outbox it waits in holds a shape a later
+engine can read. The payload is the artifact's own columns, in the canonical form every fact uses —
+sorted keys, no whitespace, UTF-8; ids as lower-case hyphenated UUID text, instants as ISO-8601 UTC
+with milliseconds, binary values as lower-case hex:
+
+```json
+{"artifact_kind":"original","content_bytes":"<hex>","content_hash":"<hex of BLAKE3(content_bytes)>",
+ "fiscal_version":null,"format":"escpos","generated_at":"2026-10-22T09:15:04.120Z",
+ "id":"<uuid>","printer_profile":"epson-tm-t20iii-ethernet-80mm","sale_id":"<uuid>",
+ "source_artifact_id":null,"template_version":"receipt-v1"}
+```
+
+- **The bytes travel with it.** The `reprint_bundle` above is served from them, and the convergence dump
+  compares the hash rather than the bytes, so both are present.
+- **It is the largest payload the outbox carries.** A receipt is a raster, typically 90 KB of bytes and
+  so about 180 KB as hex — mostly blank paper, which compresses to a small fraction of that on the wire.
+  §5's pruning order ("Outbox retention and the long-offline register") already takes receipt payloads first.
+- **Its shape is versioned by the envelope's `schema_version`**, like every payload (§2, "Envelope
+  versioning and compatibility"). A Phase-3 engine that sends the bytes another way — base64, or a blob fetched by hash —
+  is a new version, and the payloads already queued stay readable as what they were.
+
 ---
 
 ## 4 · Clocks

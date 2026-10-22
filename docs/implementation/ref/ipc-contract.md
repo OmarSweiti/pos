@@ -240,6 +240,7 @@ capture and the return-box mapping would let a cashier zero-rate a sale that is 
 | `tender_remove` | `{ tender_id }` → `TenderState` | 1 | `sale.create` | ✓ | |
 | `sale_finalize` | `()` → `CompletedSaleRef` | 1 | `sale.create` | ✓ | |
 | `sale_reprint` | `{ sale_id }` → `()` | 1 | `sale.reprint` | ✓ | |
+| `print_resolve_unknown` | `{ job_id, receipt_came_out }` → `()` | 1 | `sale.reprint` | ✓ | |
 | `sale_in_flight_state` | `()` → `Option<InFlightSummary>` | 1 | `sale.create` | | |
 
 `tender_start_card` returns a handle and drives the flow through events (§4). The `Unknown`/timeout protocol — status-query before any retry (Phase 2, 2.1.3) — lives entirely on the Rust side. The UI **cannot** issue a second authorisation because no command exists that would let it.
@@ -248,6 +249,23 @@ capture and the return-box mapping would let a cashier zero-rate a sale that is 
 any document they could name, which is a customer-data and evidence question rather than a selling
 one; the default grant is still the cashier ([`domain-api.md`](domain-api.md) §8.2), so nothing a shop
 does today stops working, but the capability now exists to withhold.
+
+`print_resolve_unknown` is the cashier's answer to the one question an ambiguous print leaves
+([`hardware-and-receipts.md`](hardware-and-receipts.md) §3 rule 5): *did a readable receipt come out?*
+It closes a print job that is `unknown` — the device fell silent mid-document, or a worker died holding
+it — and only such a job.
+
+- **`receipt_came_out = true`** appends a `cancelled` attempt. No new artifact: the paper in the
+  customer's hand is the document.
+- **`receipt_came_out = false`** appends a `cancelled` attempt to the original job and, in the same
+  transaction, creates a **duplicate** artifact — rendered with the DUPLICATE watermark, citing the
+  original, in a commit envelope of its own (I-9) — with its own queued print job.
+- **Every answer is an audit entry**: the actor, the job, the answer and the time. The answer is the
+  evidence; nothing inside the machine can assert that paper exists.
+
+It takes **`sale.reprint` and no manager approval** — the owner's decision of 22 October 2026. A
+duplicate cannot pass as a second original, because it is watermarked and linked to the original, so a
+manager PIN would protect nothing and would stall every paper jam at the counter.
 
 `sale_in_flight_state` is what the recovery path reads after a restart. It reports the durable
 `InFlightSale` row (`domain-api.md` §6.6) — including whether a card operation was outstanding, which
