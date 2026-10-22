@@ -1,0 +1,11 @@
+error: cannot construct `ParsedScan` with struct literal syntax due to private fields
+ --> tests/ui/parsed_scan_cannot_be_forged.rs:7:13
+  |
+7 |     let _ = ParsedScan {
+  |             ^^^^^^^^^^
+8 |         item_code: String::from("12345"),
+  |         -------------------------------- private field
+9 |         raw_code: String::from("2123457004163"),
+  |         --------------------------------------- private field
+  |
+  = note: ...and other private field `kind` that was not provided

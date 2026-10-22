@@ -29,10 +29,19 @@
 //! express both, which is how a case of cola comes to charge for one can.
 //!
 //! Scan parsing, `PriceSource` and `ScanLookup` (`ref/domain-api.md` §4.1–§4.3)
-//! arrive with microstep 1.2.4 and are deliberately absent here: nothing in this
-//! file decides a price.
+//! arrived with microstep 1.2.4 and live in [`scan`]: nothing in this file
+//! decides a price, and the one place a scanned label does is kept apart from
+//! the catalogue types it reads.
 
 use serde::{Deserialize, Serialize};
+
+mod scan;
+
+pub use scan::{
+    DerivedWeight, EAN13_LEN, EmbeddedBarcodeRule, EmbeddedValue, MatchedOn, ParsedScan,
+    PriceOrigin, PriceSource, ProductHit, ScanError, ScanLookup, ean13_checksum_ok, parse_scan,
+    parse_scan_bytes, resolve_scan,
+};
 
 use crate::ids::{CategoryId, ProductId, TaxCategoryId};
 use crate::money::{Money, Qty};
