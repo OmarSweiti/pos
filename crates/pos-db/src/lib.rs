@@ -9,6 +9,7 @@ use std::time::Duration;
 pub mod fixtures;
 pub mod key;
 pub mod repo;
+pub mod search;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
@@ -138,6 +139,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0004_people_and_audit.sql"),
     include_str!("../migrations/0005_sale_columns_and_sequences.sql"),
     include_str!("../migrations/0006_stock_ledger.sql"),
+    include_str!("../migrations/0007_search_and_seed.sql"),
 ];
 
 /// The schema version this build understands: the number of migrations it

@@ -448,7 +448,11 @@ fn migration_0006_preserves_quantity_steps() {
     let version: i64 = conn
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 6, "0006 ran on open");
+    assert_eq!(
+        version,
+        pos_db::SCHEMA_VERSION,
+        "every migration after v5 ran on open, 0006 among them"
+    );
     let steps: Vec<(String, i64)> = conn
         .prepare("SELECT sku, qty_step_milli FROM product ORDER BY sku")
         .unwrap()

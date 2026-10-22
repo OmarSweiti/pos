@@ -3188,7 +3188,7 @@ END;
 
 ---
 
-## 0007 — search and scan rules  ·  Phase 1, microsteps 1.2.5–1.2.7
+## 0007 — search and scan rules  ·  Phase 1, microsteps 1.2.5–1.2.7  ·  SHIPPED
 
 ```sql
 -- FTS5 over Arabic AND English names plus SKU. Budget: <50 ms over 50k SKUs.

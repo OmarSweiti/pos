@@ -1,0 +1,24 @@
+-- Mirrors SQLite 0007_search_and_seed.sql (conventions §9 rule 4).
+--
+-- This migration creates nothing. As with the 0005 and 0006 mirrors, that is
+-- the finding, recorded here because a committed migration cannot be reopened
+-- to explain itself later.
+--
+-- 0007 ships an FTS5 index and its rowid map, seven tables, a view, and the
+-- triggers that keep the index in step and keep scale pricing fail-closed.
+--
+-- Engine-specific, and the register's alone: product_fts and product_fts_map.
+-- They are SQLite FTS5 search projections over the register's own catalogue
+-- copy. The 0003 mirror already deferred "the Arabic search projections" for
+-- this server; a server search, when one exists, is built on PostgreSQL's own
+-- text search and is not a mirror of this one.
+--
+-- Tenant-owned, and blocked on the shared multi-tenant decision that
+-- ref/schema.md §"Shared multi-tenant decision for sign-off" records as still
+-- awaiting owner sign-off "before the first Phase-3 server migration":
+-- plu_code, tile_grid, tile, trade_scale and embedded_barcode_rule — reference
+-- data the server will own and sync down — and trade_scale_verification, the
+-- fact a register syncs up. Every one names a store or a product of one
+-- merchant, and the server has no org, store or barcode table to give them
+-- tenant keys yet; the 0003 mirror deferred barcode, the closest sibling, for
+-- this same reason. Their append-only and fail-closed guards land with them.
