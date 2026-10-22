@@ -9,8 +9,7 @@
 //! (phase-1 §1.2.1, "Delivery-history correction").
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-#[path = "common/registered_chain.rs"]
-mod registered_chain;
+use pos_db::fixtures::registered_chain;
 
 /// The module name is load-bearing. Microstep 1.8.9's Done-when command is
 /// `cargo nextest run -p pos-db outbox::`, and nextest matches that filter

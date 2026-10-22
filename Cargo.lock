@@ -3162,6 +3162,7 @@ dependencies = [
  "blake3",
  "getrandom 0.4.3",
  "keyring",
+ "pos-db",
  "pos-domain",
  "rusqlite",
  "serde_json",

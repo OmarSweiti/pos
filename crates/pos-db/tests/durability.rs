@@ -10,8 +10,7 @@
 //! for throughput turns them red.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-#[path = "common/registered_chain.rs"]
-mod registered_chain;
+use pos_db::fixtures::registered_chain;
 
 use registered_chain::{Checkout, RegisteredChain};
 

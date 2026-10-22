@@ -5,6 +5,8 @@ use rusqlite::Connection;
 use std::path::Path;
 use std::time::Duration;
 
+#[cfg(feature = "fixtures")]
+pub mod fixtures;
 pub mod key;
 pub mod repo;
 
