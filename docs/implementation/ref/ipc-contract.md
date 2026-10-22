@@ -267,6 +267,14 @@ It takes **`sale.reprint` and no manager approval** — the owner's decision of 
 duplicate cannot pass as a second original, because it is watermarked and linked to the original, so a
 manager PIN would protect nothing and would stall every paper jam at the counter.
 
+Its logic is `print_queue::Resolver::resolve_unknown` in the terminal (1.7.7). It takes
+`Authorized<cap::SaleReprint>`, so the permission check is a type, and it refuses a proof carrying an
+approval rather than leave a handle unconsumed. **A duplicate is the original plus its watermark, and
+nothing else.** The handler supplies the original's `ReceiptModel`, which must re-render the original
+byte for byte without the watermark before the duplicate is rendered from it with one. Building that
+model from a completed sale is `build_receipt_model` ([`domain-api.md`](domain-api.md) §13), which no
+microstep owns yet (`phase-1-sellable-mvp.md` 1.7.1). The command handler waits on it.
+
 `sale_in_flight_state` is what the recovery path reads after a restart. It reports the durable
 `InFlightSale` row (`domain-api.md` §6.6) — including whether a card operation was outstanding, which
 is the input E.2's status-query needs and which nothing previously persisted.
