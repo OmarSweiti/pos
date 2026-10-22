@@ -557,7 +557,10 @@ impl<'r> Resolver<'r> {
         let commit_id = next_id(self.ids);
         let audit_id = self.ids.next();
         let mut members: Vec<(&'static str, Id, String)> = Vec::new();
-        let duplicate = match duplicate_bytes {
+        // The duplicate is described before anything is written: its envelope
+        // must exist before the artifact may (0006's
+        // `receipt_artifact_has_ready_commit`), and the envelope names it.
+        let duplicate_artifact = match duplicate_bytes {
             None => None,
             Some((original, content_bytes)) => {
                 let artifact = ReceiptArtifact {
@@ -572,20 +575,21 @@ impl<'r> Resolver<'r> {
                     content_bytes,
                     generated_at: now,
                 };
-                let content_hash = receipts.append_artifact(&tx, &artifact)?;
-                let duplicate_job = next_id(self.ids);
-                receipts.queue_initial(&tx, &duplicate_job, &artifact.id, now)?;
+                let content_hash = *blake3::hash(&artifact.content_bytes).as_bytes();
                 members.push((
                     "receipt_artifact",
                     artifact.id,
                     artifact_payload(&artifact, &content_hash)?,
                 ));
-                Some(Duplicate {
-                    artifact_id: artifact.id,
-                    job_id: duplicate_job,
-                })
+                Some((artifact, content_hash, next_id(self.ids)))
             }
         };
+        let duplicate = duplicate_artifact
+            .as_ref()
+            .map(|(artifact, _, job_id)| Duplicate {
+                artifact_id: artifact.id,
+                job_id: *job_id,
+            });
 
         let intent = AuditIntent {
             actor: authorized.actor(),
@@ -629,6 +633,16 @@ impl<'r> Resolver<'r> {
             },
             &facts,
         )?;
+        if let Some((artifact, content_hash, job_id)) = &duplicate_artifact {
+            let stored = receipts.append_artifact(&tx, artifact)?;
+            if stored != *content_hash {
+                return Err(PrintQueueError::Db(DbError::StoredPrintRecordInvalid {
+                    reason: "the stored duplicate's digest is not the one its envelope names"
+                        .to_owned(),
+                }));
+            }
+            receipts.queue_initial(&tx, job_id, &artifact.id, now)?;
+        }
         AuditRepository::new(&tx).append(&tx, self.register, audit_id, &intent)?;
         receipts.append_attempt(
             &tx,
