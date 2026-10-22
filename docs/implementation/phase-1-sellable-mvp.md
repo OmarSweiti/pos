@@ -847,7 +847,7 @@ At Pay, warn before tender when the printer is unavailable. The shell owns the t
 
 ### 1.7.7 — Print retry queue and unprinted flag
 **Scheduled in:** Phase 1B, after 1.9.1 creates migration `0005` and before 1.8.3 consumes the repository
-**Files:** `apps/terminal/src-tauri/src/print_queue.rs` (new), `crates/pos-db/src/repo/receipt.rs` (new), `crates/pos-db/src/repo/mod.rs`, `crates/pos-db/src/lib.rs` (`DbError::PrintLeaseInvalid` and `StoredPrintRecordInvalid`), `crates/pos-db/tests/receipt.rs` (new), `crates/pos-db/tests/common/registered_chain.rs` (the receipt write split from the line taxes, so a test can write it through the repository) · [`README.md`](README.md) (implementation frontier) · this file (this microstep's `Files:` line, its signatures, and its `Full-step status:` marker)
+**Files:** `apps/terminal/src-tauri/src/print_queue.rs` (new), `apps/terminal/src-tauri/src/lib.rs` (`pub mod print_queue;`), `apps/terminal/src-tauri/Cargo.toml` (`pos-db`, `pos-hardware`, `rusqlite`, `blake3` and `uuid`, all already in the workspace, and `pos-db`'s `fixtures` for the tests), `Cargo.lock` (edges only, no new package), `crates/pos-db/src/repo/receipt.rs` (new), `crates/pos-db/src/repo/mod.rs`, `crates/pos-db/src/lib.rs` (`DbError::PrintLeaseInvalid` and `StoredPrintRecordInvalid`, and the `fixtures` module behind its feature), `crates/pos-db/Cargo.toml` (the `fixtures` feature), `crates/pos-db/src/fixtures/` (the registered chain, moved from `tests/common/registered_chain.rs` so the terminal's tests can complete a sale too, with its receipt write split from the line taxes), the eleven `pos-db` suites that import it, `crates/pos-db/tests/receipt.rs` (new), `crates/pos-db/tests/fixtures_feature.rs` (new) · `scripts/check-test-catalog.py` (two names: `PLANNED` → `PLANNED_RETIRED`) · [`ref/sync-protocol.md`](ref/sync-protocol.md) (the payload an `audit_log` row travels as) · [`ref/ipc-contract.md`](ref/ipc-contract.md) (where `print_resolve_unknown`'s logic lives) · [`README.md`](README.md) (implementation frontier) · this file (this microstep's `Files:` line and its signatures)
 
 ```rust
 pub fn append_artifact(&self, tx: &Transaction,
@@ -858,14 +858,29 @@ pub fn lease_next_job(&self, tx: &Transaction,
                       lease: Lease<'_>) -> Result<Option<PrintJob>, DbError>;
 pub fn append_attempt(&self, tx: &Transaction,
                       attempt: &PrintAttempt) -> Result<(), DbError>;
+
+// apps/terminal/src-tauri/src/print_queue.rs
+pub fn queue_original(tx: &Transaction, artifact: &ReceiptArtifact, job_id: &Id,
+                      created_at: Timestamp) -> Result<[u8; 32], PrintQueueError>;
+impl PrintWorker<'_> {
+    pub fn recover(&self, conn: &Connection) -> Result<Vec<Id>, PrintQueueError>;
+    pub fn run_once(&self, conn: &Connection) -> Result<Option<Attempted>, PrintQueueError>;
+    pub fn drain(&self, conn: &Connection) -> Result<Drained, PrintQueueError>;
+}
+impl Resolver<'_> {
+    pub fn resolve_unknown(&self, conn: &Connection,
+                           authorized: &Authorized<cap::SaleReprint>, job_id: &Id,
+                           answer: Answer<'_>) -> Result<Resolution, PrintQueueError>;
+}
 ```
 
 **Ids and instants are arguments** (conventions §5): the first sketch of these signatures had `queue_initial` return an id it had no way to mint and `lease_next_job` take only a worker id, with no clock to tell which failed job is due or when a lease lapses. `append_artifact` returns the BLAKE3 digest it stores, taken from the bytes themselves, so a caller can name it in the commit envelope; due jobs are leased in the order they were queued, by `rowid`, never by a device clock (I-7); and an expired lease is read back by `expired_leases` for the worker to resolve as `unknown`, never re-queued, as `0005` documents.
 
+**The worker holds no transaction while the device is talking.** It commits the lease, sends the bytes, then appends the outcome in a second transaction. It refuses to send what it cannot vouch for. An artifact whose bytes no longer match their digest, or one rendered for another printer than the register's (`ref/hardware-and-receipts.md` §3 rule 7), is recorded as a failure with no retry, never sent. It never calls `open_drawer`, so no retry and no restart can pulse a drawer. A person's answer is `Resolver::resolve_unknown`, the logic behind `print_resolve_unknown` (`ref/ipc-contract.md` §3). It takes `Authorized<cap::SaleReprint>` and refuses a proof that carries an approval, because the command is not escalatable. **A duplicate is the original plus its watermark, and nothing else.** The caller hands in the original's `ReceiptModel`. The model must re-render the original byte for byte without the watermark before the duplicate is rendered from it with one, so a model for another sale, template or printer is refused rather than printed as a copy. The answer, its audit fact, the duplicate and its queued job commit in one transaction under one envelope (I-9). No Tauri command calls it yet.
+
 A normal finalize always appends one initial print job before the post-commit hardware attempt; printer health changes only the warning/alarm path. A print failure after finalize never mutates the completed sale. Migration `0005` stores immutable `receipt_artifact.content_bytes`, a leased mutable `print_job`, and append-only `print_attempt` outcomes. An `unknown` or partial hardware outcome never retries automatically, because replaying ambiguous bytes may print a second customer document or pulse a drawer twice. A requested duplicate is a new artifact linked to the original and visibly watermarked.
 **Tests:** `every_finalized_sale_has_one_initial_print_job` · `print_failure_after_finalize_leaves_sale_complete` · `duplicate_artifact_links_the_original_and_adds_the_duplicate_watermark` · `an_unknown_print_outcome_never_auto_retries_the_drawer_pulse` · `queue_survives_restart` · `successful_print_appends_an_attempt_without_updating_sale`
 **Done when:** `cargo nextest run -p terminal print_queue::` passes after a restart with the original bytes, job state and attempt history unchanged.
-**Full-step status:** 1.7.7 is not complete until `apps/terminal/src-tauri/src/print_queue.rs` exists and its six named tests pass under `cargo nextest run -p terminal print_queue::`: the worker that leases a job, prints it, and appends what the device did. The repository half is complete and enforced now, by `crates/pos-db/tests/receipt.rs`: an original and its initial job written through `ReceiptRepository` satisfy `0005`'s durable-outputs gate; due jobs lease in queued order; only a failed job is retried, and only when due; an `unknown` or `partial` outcome is never leased again and waits for a person; an expired lease resolves as `unknown`; no outcome touches the completed sale; the bytes, job and history survive reopening the database; and a duplicate cites its sale's original from an envelope of its own.
 
 ### 1.7.8 — Simulator fault injection
 **Files:** `crates/pos-hardware/src/lib.rs` (`PrintOutcome`, `FailReason`, `Fault`, and `ReceiptPrinter::print` returning an outcome) · `crates/pos-hardware/src/escpos.rs` (its tests read the outcome) · [`README.md`](README.md) (implementation frontier) · this file (this microstep's `Files:` and `Tests:` lines, and its `Full-step status:` marker)

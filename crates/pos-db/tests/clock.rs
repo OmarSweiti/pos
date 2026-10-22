@@ -6,8 +6,7 @@
 //! reference document would not be evidence that a register carries it.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-#[path = "common/registered_chain.rs"]
-mod registered_chain;
+use pos_db::fixtures::registered_chain;
 
 /// The module name is load-bearing, as it was for `1.8.9`. This microstep's
 /// `Done when` command is `cargo nextest run -p pos-db clock::`, and nextest

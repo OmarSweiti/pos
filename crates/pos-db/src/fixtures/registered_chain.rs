@@ -1,8 +1,8 @@
 //! A registered chain seeded to the point where a sale may complete.
 //!
-//! Every row here is an `INSERT` on the schema [`pos_db::open`] builds. Nothing
+//! Every row here is an `INSERT` on the schema [`crate::open`] builds. Nothing
 //! in this file reads `ref/schema.md`, which is the whole difference from
-//! `common/mod.rs`: `approval.rs`, `outbox.rs` and `sale_immutability.rs` prove
+//! `tests/common/mod.rs`: `approval.rs`, `outbox.rs` and `sale_immutability.rs` prove
 //! guarantees a register actually ships, and an overlay of reference SQL would
 //! make a green run stop being evidence of that.
 //!
@@ -23,9 +23,7 @@
 //! rows to be in the manifest *if they exist*, never that they exist. A fixture
 //! that seeded optional facts would silently widen what every test using it is
 //! asserting. `1.9.1`'s own suite exercises them explicitly instead.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]
-
-use pos_db::repo::outbox::{CommitEnvelope, FactMember, OutboxRepository};
+use crate::repo::outbox::{CommitEnvelope, FactMember, OutboxRepository};
 use rusqlite::{Connection, params};
 
 /// Ids this fixture owns start with this byte.
@@ -281,7 +279,7 @@ impl RegisteredChain {
                 &CommitEnvelope {
                     commit_id: &commit_id,
                     protocol_version: PROTOCOL_VERSION,
-                    schema_version: pos_db::SCHEMA_VERSION,
+                    schema_version: crate::SCHEMA_VERSION,
                     producer_version: PRODUCER_VERSION,
                     created_at: AT,
                 },

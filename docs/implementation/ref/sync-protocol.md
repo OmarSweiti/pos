@@ -278,6 +278,27 @@ with milliseconds, binary values as lower-case hex:
   versioning and compatibility"). A Phase-3 engine that sends the bytes another way — base64, or a blob fetched by hash —
   is a new version, and the payloads already queued stay readable as what they were.
 
+**The payload an `audit_log` row travels as** — defined on the same terms, when `print_resolve_unknown`
+(1.7.7) became the first code outside a test to write an audit fact. Every audit row before it was a
+fixture's, with a stand-in payload. The payload is every column known before the row is chained, in the
+same canonical form, with `payload` canonical at every depth:
+
+```json
+{"action":"print.resolve_unknown","actor_id":"<uuid>","approval_handle_id":null,"approver_id":null,
+ "at":"2026-10-22T09:15:04.120Z","canonical_version":1,"entity":"print_job","entity_id":"<uuid>",
+ "id":"<uuid>","payload":{"duplicate_artifact_id":"<uuid>","receipt_came_out":false},
+ "reason":null,"register_id":"<uuid>"}
+```
+
+- **`seq`, `prev_hash` and `hash` are not in it, and cannot be.** `0004`'s `audit_log_has_ready_commit`
+  refuses the row until its envelope exists, and the envelope hashes this payload, so the payload is
+  fixed before the row has a place in the chain. The chain is verified on the register (`verify-audit`,
+  1.6.6b). How the server checks it is the sync engine's decision, and if it needs those columns that is
+  a new version.
+- **`payload` is the action's own facts and never personal data** (conventions §12): `check_payload`
+  refuses a malformed one before anything is written, because an audit row has no `UPDATE`.
+- **Versioned like every payload**, by the envelope's `schema_version`.
+
 ---
 
 ## 4 · Clocks

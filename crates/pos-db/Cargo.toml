@@ -37,5 +37,15 @@ serde_json.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 
+[features]
+# Test fixtures another crate's tests need — the registered chain a sale
+# completes against (`src/fixtures/`). Never product: nothing a register ships
+# enables it, and `the_register_never_ships_the_sale_fixture` holds the
+# terminal to that.
+fixtures = []
+
 [dev-dependencies]
 tempfile.workspace = true
+# This crate's own tests use the shared fixtures. A dev-dependency's features
+# never reach a build that ships (resolver 3), which the test above checks.
+pos-db = { path = ".", features = ["fixtures"] }

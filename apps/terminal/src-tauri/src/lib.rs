@@ -1,6 +1,7 @@
 //! Tauri shell: the UI → IPC → pure-domain boundary.
 //! Business rules live in `pos-domain`; this crate only marshals.
 
+pub mod print_queue;
 pub mod time;
 
 /// First proof of the blueprint's core boundary: UI → Tauri IPC → pure Rust domain.

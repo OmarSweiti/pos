@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **40 of 121 executable microsteps fully complete (~33%)**: `1.1.0`
+Phase 1 has **41 of 121 executable microsteps fully complete (~34%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -88,7 +88,11 @@ parsed and *unsupported* when a device never answers, and the drawer pulse taken
 on a connection of its own), and `1.7.11` (device profiles as data — seventeen versioned
 files seeded from the hardware lab, every value with its source and `unknown` exactly where the
 seed has one, a printer bound to a register only when it knows every parameter its driver needs,
-and a committed hash per version so a value changes only as a new version).
+and a committed hash per version so a value changes only as a new version), and `1.7.7` (the print
+retry queue — a sale's original and its one job written in the sale's own transaction, a worker
+that sends nothing it cannot vouch for and retries only a refusal, a lapsed lease resolved as
+unknown rather than sent twice, and a person's answer that turns an ambiguous print into a
+watermarked duplicate of the original, audited, with no drawer ever pulsed by a retry).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
@@ -123,13 +127,12 @@ requirements remain externally blocked by the `⚠️ OPEN` item in [`ref/domain
 Group 1.7's `1.7.8` is **partially delivered**: `ReceiptPrinter::print` returns one of the four
 outcomes, the simulator scripts paper-out and silence at byte *N*, cover-open, offline and a slow
 device, and a sweep injects a fault at every byte of a real receipt. The sweep moves onto a golden
-when `1.7.5` commits them, and its last clause — no second original artifact — waits for `1.7.7`'s
-queue. `1.7.12` is **partially delivered** too: the emulated network printer behaves as each seeded
+when `1.7.5` commits them, and its last clause — no second original artifact — can now run against
+`1.7.7`'s queue. `1.7.12` is **partially delivered** too: the emulated network printer behaves as each seeded
 printer and drawer profile says — refusing what a device would refuse, reporting unknown behaviour
 where a profile does not know — and `just printer-emulator <profile>` prints to it before any
 printer exists; only its golden comparison waits for `1.7.5`'s goldens.
 `1.7.13` is **partially delivered** as well: one conformance suite runs against the emulated printer for every receipt-printer profile, refuses to reach a device that is not named, replays a synthetic capture, and is replayed through a pinned independent emulator in CI; only its golden replay waits for `1.7.5`.
-`1.7.7` is **partially delivered**: `ReceiptRepository` writes the receipt artifact and its initial print job in the sale's transaction, leases due jobs, retries only a failure, and never re-offers an outcome that may have printed; the terminal's print worker, which drives a printer from that queue, is the step's remaining half.
 Repository-hardening and documentation work may land between numbered product steps, but it does
 not advance that frontier.
 
