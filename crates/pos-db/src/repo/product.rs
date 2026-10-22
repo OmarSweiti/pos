@@ -309,7 +309,7 @@ impl<'c> ProductRepository<'c> {
         if let Some(holder) = holder {
             return Err(DbError::BarcodeAlreadyClaimed {
                 code: barcode.code.clone(),
-                holder: ProductId::from_uuid(uuid("barcode", "product_id", holder)?),
+                holder: ProductId::from_uuid(decode_id("barcode", "product_id", holder)?),
             });
         }
         tx.execute(
@@ -377,7 +377,7 @@ impl StoredProduct {
     }
 
     fn into_product(self) -> Result<Product, DbError> {
-        let id = ProductId::from_uuid(uuid("product", "id", self.id)?);
+        let id = ProductId::from_uuid(decode_id("product", "id", self.id)?);
         let Some(tax_category_id) = self.tax_category_id else {
             return Err(invalid(format!(
                 "product {id} has no tax category, so it cannot be priced into a line"
@@ -412,9 +412,9 @@ impl StoredProduct {
             name_en: self.name_en,
             category_id: self
                 .category_id
-                .map(|bytes| uuid("product", "category_id", bytes).map(CategoryId::from_uuid))
+                .map(|bytes| decode_id("product", "category_id", bytes).map(CategoryId::from_uuid))
                 .transpose()?,
-            tax_category_id: TaxCategoryId::from_uuid(uuid(
+            tax_category_id: TaxCategoryId::from_uuid(decode_id(
                 "product",
                 "tax_category_id",
                 tax_category_id,
@@ -508,7 +508,8 @@ fn barcode_kind_from_token(token: &str) -> Result<BarcodeKind, DbError> {
     .ok_or_else(|| invalid(format!("barcode kind {token:?}")))
 }
 
-fn uuid(table: &'static str, column: &'static str, bytes: Vec<u8>) -> Result<Uuid, DbError> {
+/// A stored `BLOB(16)` id, or a named error for any other width.
+fn decode_id(table: &'static str, column: &'static str, bytes: Vec<u8>) -> Result<Uuid, DbError> {
     Uuid::from_slice(&bytes).map_err(|_| DbError::IdWidthInvalid {
         table,
         column,
