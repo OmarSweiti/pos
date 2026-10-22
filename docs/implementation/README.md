@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **43 of 121 executable microsteps fully complete (~36%)**: `1.1.0`
+Phase 1 has **44 of 121 executable microsteps fully complete (~36%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -100,7 +100,13 @@ by the weight it implies, flagged as derived; and the three guards #197 tracked 
 `1.2.5` (migration `0007` — Arabic catalogue search over the two projections `0003` generates, so a
 name stored with tashkeel is found by the plain spelling a cashier types and that spelling ranks
 first, with the query-side fold held to the SQL by a property; and scale pricing that cannot be
-switched on without current verified evidence and switches off the moment it is lost).
+switched on without current verified evidence and switches off the moment it is lost), and `1.2.3`
+(the product repository — every way a cashier reaches a product, by id, barcode, PLU or typed
+search, and one save gated by the domain's own check, so a price above the ministry ceiling never
+reaches the catalogue; a search no keystroke can turn into FTS5 syntax, proven over the whole
+metacharacter corpus and by a property that sends arbitrary text through it; a barcode with one
+live owner, a second claim refused by name; and `UnitOfMeasure` cut to one unit per stored
+dimension, so a product survives the database exactly).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
@@ -118,13 +124,13 @@ records is `1.2.0`'s deferred half and waits on milestone 5.8, where the registe
 device is bought before it ([`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §6b). **`1.8.9` has landed, so the gate it held is open**: groups 1.6, 1.9 and 1.10 may now write
 append-only facts, because every fact graph commits with its delivery envelope and the writer refuses
 to return success on an incomplete one. **`1.9.1`, `1.10.1` and `1.2.5` have landed too**, so the
-migration chain is contiguous to `0007`: `1.2.3` (the product repository and its search), the
-`1.2.4` database half and `1.10.2`–`1.10.5` may now be built. `1.2.4` is **partially delivered**: its pure half
+migration chain is contiguous to `0007`, and `1.2.3`, the product repository and its search, is
+built on it; the `1.2.4` database half and `1.10.2`–`1.10.5` may be built next. `1.2.4` is **partially delivered**: its pure half
 — the scan parser, `PriceSource`, `ScanLookup`, `resolve_scan` and the trade-scale gate — is in
 `pos-domain`, with the compile-fail proof that only the scan handler can make a price-embedded
-lookup. Its database half waits for `1.2.5`'s trade-scale tables, its shell half for `1.2.3`'s
-`ProductRepository`, and one named test for the cart's `AddLine::from_scan`; `1.2.5` is next in
-§1.2's build order. `1.6.3` is closed: its seed comparison landed against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
+lookup. Its database half and its shell half are unblocked — `1.2.5`'s trade-scale tables and
+`1.2.3`'s `ProductRepository` have both landed — and one named test still waits for the cart's
+`AddLine::from_scan`; the database half is next in §1.2's build order. `1.6.3` is closed: its seed comparison landed against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
 `authorize`, `ApprovalHandle` and `EscalationPolicy` are complete in `pos-domain`, with the two
 compile-fail proofs that a token cannot be forged or substituted across capabilities. Its
 persistence half now stores, validates, reloads and one-use consumes a handle through a

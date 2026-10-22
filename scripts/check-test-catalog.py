@@ -79,12 +79,6 @@ KNOWN_KINDS = RUST_KINDS | {"web", "fuzz", "drill"}
 # As tests land, delete their entries; never add one merely to silence an
 # absent-test failure.
 PLANNED: dict[str, tuple[str, ...]] = {
-    "1.2.3": (
-        "a_multipack_barcode_adds_its_pack_quantity",
-        "a_second_live_barcode_claim_is_refused",
-        "prop_no_query_string_produces_a_database_error",
-        "search_survives_every_fts5_metacharacter",
-    ),
     "1.4.3": (
         "age_restricted_line_requires_confirmation",
         "inactive_product_cannot_be_added_but_can_be_refunded",
@@ -313,10 +307,7 @@ PLANNED: dict[str, tuple[str, ...]] = {
     "4.3.3": ("short_receipt_creates_destination_adjustment_and_notifies",),
     "4.3.5": ("waste_adjustment_by_reason_code",),
     "4.4.6": ("single_use_code_marked_used_on_redemption_sync",),
-    "4.6.3": (
-        "catalog_save_above_ceiling_is_rejected",
-        "sale_above_ceiling_is_hard_blocked",
-    ),
+    "4.6.3": ("sale_above_ceiling_is_hard_blocked",),
     "4.7.4": ("override_report_groups_by_user_with_reasons",),
     "4.7.10": ("barcode_conflict_report_lists_both",),
     "4.8.3": ("second_store_refund_of_the_same_receipt_is_refused_when_connected",),
@@ -531,12 +522,15 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "a_different_actor_is_refused",
         "a_different_sale_is_refused",
         "a_handle_used_twice_is_refused",
+        "a_multipack_barcode_adds_its_pack_quantity",
         "a_pack_quantity_of_zero_is_refused_at_save",
+        "a_second_live_barcode_claim_is_refused",
         "a_single_letter_query_does_not_match_a_vocalised_name",
         "an_altered_amount_is_refused",
         "an_expired_handle_is_refused",
         "an_unknown_print_outcome_never_auto_retries_the_drawer_pulse",
         "card_charged_exact_unrounded_total",
+        "catalog_save_above_ceiling_is_rejected",
         "clock_jump_back_reports_anomaly",
         "exact_spelling_outranks_a_folded_variant",
         "fts_ignores_tatweel",
@@ -553,6 +547,8 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "prop_cash_rounding_only_on_final_cash_tender",
         "prop_corrupt_digit_never_parses_clean",
         "prop_monotonic_clock_never_decreases",
+        "prop_no_query_string_produces_a_database_error",
+        "search_survives_every_fts5_metacharacter",
         "tail_deletion_is_detected_against_the_last_anchor",
         "the_effect_and_the_consumption_commit_together_or_not_at_all",
         "unicode_names_roundtrip_through_db_and_fts",
