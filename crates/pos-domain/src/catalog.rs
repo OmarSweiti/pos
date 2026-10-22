@@ -44,7 +44,7 @@ pub use scan::{
 };
 
 use crate::ids::{CategoryId, ProductId, TaxCategoryId};
-use crate::money::{Money, Qty};
+use crate::money::{Money, MoneyError, Qty};
 
 /// The unit a product is priced and sold in.
 ///
@@ -53,21 +53,29 @@ use crate::money::{Money, Qty};
 /// before it accepts a keyed quantity — see [`UnitOfMeasure::is_divisible`] —
 /// and to label a quantity on a receipt.
 ///
-/// **The stored `product.unit` column is coarser than this enum on purpose.**
-/// Migration `0003` records `'each'`, `'package'`, `'weight'`, `'volume'` or
-/// `'length'` beside `qty_step_milli`, so `Kilogram` and `Gram` both store as
-/// `'weight'` and a round trip through the database cannot tell them apart. That
-/// gap is real and is not this type's to close: microstep 1.2.3 owns the
-/// repository mapping, and closing it needs either a finer column or a coarser
-/// enum, which is a reviewed decision rather than a cast.
+/// **One unit per dimension the database stores, and no more.** Migration
+/// `0003` records `product.unit` as `'each'`, `'package'`, `'weight'`,
+/// `'volume'` or `'length'`, and this enum had seven variants, so `Kilogram`
+/// and `Gram` both stored as `'weight'` and a round trip could not tell them
+/// apart. Microstep 1.2.3, whose repository is the first code to map the
+/// column, closed the gap with a coarser enum rather than a finer column:
+/// `Gram` and `Millilitre` are gone, and each measure is its base unit — a
+/// kilogram, a litre, a metre — whose milli-unit is a gram, a millilitre, a
+/// millimetre. Nothing was lost. A price per gram is a price per kilogram read
+/// differently, and per kilogram is the more precise of the two: one fils per
+/// kilogram is a thousandth of a fils per gram, which no gram price can state.
+/// It is also the unit every scale label already speaks (`EmbeddedValue::WeightMilli`:
+/// "grams of a kilogram").
+///
+/// The variants name the unit and the column names the dimension, so the two
+/// spellings differ; the mapping, in both directions, is the repository's
+/// (`pos_db::repo::product`), as it is for [`RegulatedKind`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UnitOfMeasure {
     Each,
     Kilogram,
-    Gram,
     Litre,
-    Millilitre,
     Metre,
     Package,
 }
@@ -82,17 +90,13 @@ impl UnitOfMeasure {
     /// a measure a scale reports a fraction of.
     ///
     /// `const` because a quantity guard has nothing to allocate and nothing to
-    /// fail at, and the whole implementation is a `match` over seven variants.
-    /// The `match` is exhaustive with no wildcard arm, so an eighth unit does
+    /// fail at, and the whole implementation is a `match` over five variants.
+    /// The `match` is exhaustive with no wildcard arm, so a sixth unit does
     /// not compile until somebody decides which side it falls on.
     pub const fn is_divisible(self) -> bool {
         match self {
             UnitOfMeasure::Each | UnitOfMeasure::Package => false,
-            UnitOfMeasure::Kilogram
-            | UnitOfMeasure::Gram
-            | UnitOfMeasure::Litre
-            | UnitOfMeasure::Millilitre
-            | UnitOfMeasure::Metre => true,
+            UnitOfMeasure::Kilogram | UnitOfMeasure::Litre | UnitOfMeasure::Metre => true,
         }
     }
 }
@@ -205,6 +209,24 @@ pub enum CatalogError {
     /// a merchant fixing a bad import needs to know which class and which form.
     #[error("a {} product cannot be sold as {}", .0.as_str(), .1.as_str())]
     UnlawfulSaleForm(RegulatedKind, SaleForm),
+    /// E.71: a catalogue price above the ministry ceiling. The fine is real, so
+    /// the save is refused rather than the sale alone (the cart's
+    /// `AboveMaxPrice` is the other half). It carries both amounts, as the
+    /// cart's does, because the person fixing it needs both.
+    #[error(
+        "price {} exceeds the regulated ceiling {}",
+        .price.format_exact(),
+        .ceiling.format_exact()
+    )]
+    AboveMaxPrice { price: Money, ceiling: Money },
+    /// `is_weighed` says the opposite of the unit. `0003`'s
+    /// `product_quantity_kind_*` triggers refuse the same pair; this names it.
+    #[error("a product sold by {0:?} cannot have is_weighed = {1}")]
+    WeighedFlagDisagreesWithUnit(UnitOfMeasure, bool),
+    /// A ceiling in a currency other than the price's. Not orderable, so not a
+    /// ceiling anything could enforce, and refused for that reason.
+    #[error(transparent)]
+    Money(#[from] MoneyError),
 }
 
 impl RegulatedSaleForm {
@@ -321,9 +343,9 @@ pub struct Product {
     /// `product_quantity_kind_*` triggers tie `'each'`/`'package'` to
     /// `is_weighed = 0` and `'weight'`/`'volume'`/`'length'` to `is_weighed = 1`
     /// — and it exists because a sale line snapshots it (I-5) and because
-    /// [`Qty::format`] takes it as a display hint. This type does not police the
-    /// agreement between the two fields; the storage engine does, and microstep
-    /// 1.2.3 owns which of the two wins when it maps the columns.
+    /// [`Qty::format`] takes it as a display hint. Neither field wins over the
+    /// other: [`Product::check_saveable`] refuses a product whose two answers
+    /// disagree, before the storage engine's triggers would.
     pub is_weighed: bool,
     /// True for a product that moves no stock at all: an e-recharge, a fee (J.1).
     /// It is narrower than [`SaleForm::Service`], which describes the form the
@@ -341,10 +363,12 @@ pub struct Product {
     ///
     /// `Money`, not `i64`: the column is `max_price_minor` because SQLite has
     /// nowhere else to say what the integer counts, and this field has. Nothing
-    /// checks here that the ceiling is in the same currency as
+    /// checks at construction that the ceiling is in the same currency as
     /// [`Product::unit_price`], because nothing has to — `Money::checked_cmp`
     /// refuses to order two currencies, so a mismatched ceiling becomes a typed
-    /// error at the comparison rather than a silently passed ceiling.
+    /// error at the comparison rather than a silently passed ceiling. The
+    /// comparison is [`Product::check_saveable`], which every catalogue save
+    /// makes.
     pub max_price: Option<Money>,
     /// The on-hand level at which this product should be reordered, in units.
     pub reorder_point: Option<Qty>,
@@ -364,6 +388,42 @@ impl Product {
     /// this is [`SaleForm::SealedPack`] and no other answer is representable.
     pub const fn sale_form(&self) -> SaleForm {
         self.regulated_sale_form.sale_form()
+    }
+
+    /// What a catalogue save refuses, decided here so that no save path — the
+    /// register's repository today, a back-office form and a sync apply later —
+    /// carries its own copy of the rule.
+    ///
+    /// * **A price above the ministry ceiling (E.71).** Equal is lawful; one
+    ///   fils over is not. The cart refuses the same line at sale time; this is
+    ///   the other half, so a product that could only ever be refused at the
+    ///   till never reaches the catalogue.
+    /// * **A ceiling that cannot be compared with the price**, because it is in
+    ///   another currency. A ceiling nothing can enforce is refused rather than
+    ///   kept.
+    /// * **`is_weighed` disagreeing with the unit.** The storage engine refuses
+    ///   that too; this names it first.
+    ///
+    /// # Errors
+    ///
+    /// [`CatalogError::AboveMaxPrice`], [`CatalogError::Money`] or
+    /// [`CatalogError::WeighedFlagDisagreesWithUnit`].
+    pub fn check_saveable(&self) -> Result<(), CatalogError> {
+        if self.is_weighed != self.unit.is_divisible() {
+            return Err(CatalogError::WeighedFlagDisagreesWithUnit(
+                self.unit,
+                self.is_weighed,
+            ));
+        }
+        if let Some(ceiling) = self.max_price
+            && self.unit_price.checked_cmp(ceiling)? == core::cmp::Ordering::Greater
+        {
+            return Err(CatalogError::AboveMaxPrice {
+                price: self.unit_price,
+                ceiling,
+            });
+        }
+        Ok(())
     }
 }
 
@@ -427,6 +487,8 @@ mod tests {
 
     use super::*;
     use crate::money::Currency;
+    use pos_test_support::domain_proptest_config;
+    use proptest::prelude::*;
     use uuid::Uuid;
 
     // These exact wire fixtures are review tripwires, in the shape `money.rs`
@@ -451,14 +513,12 @@ mod tests {
         r#"{"regulated_kind":"tobacco","sale_form":"sealed_pack"}"#;
 
     // Every unit, listed once. It drives the divisibility sweep below, so
-    // `the_unit_table_lists_every_variant_exactly_once` is what stops an eighth
+    // `the_unit_table_lists_every_variant_exactly_once` is what stops a sixth
     // unit from slipping past the sweep and the token check at the same time.
-    const ALL_UNITS: [UnitOfMeasure; 7] = [
+    const ALL_UNITS: [UnitOfMeasure; 5] = [
         UnitOfMeasure::Each,
         UnitOfMeasure::Kilogram,
-        UnitOfMeasure::Gram,
         UnitOfMeasure::Litre,
-        UnitOfMeasure::Millilitre,
         UnitOfMeasure::Metre,
         UnitOfMeasure::Package,
     ];
@@ -726,12 +786,10 @@ mod tests {
         assert!(!UnitOfMeasure::Each.is_divisible());
         assert!(!UnitOfMeasure::Package.is_divisible());
         assert!(UnitOfMeasure::Kilogram.is_divisible());
-        assert!(UnitOfMeasure::Gram.is_divisible());
         assert!(UnitOfMeasure::Litre.is_divisible());
-        assert!(UnitOfMeasure::Millilitre.is_divisible());
         assert!(UnitOfMeasure::Metre.is_divisible());
 
-        // Exactly two of the seven are counted, so a new unit that silently
+        // Exactly two of the five are counted, so a new unit that silently
         // joined the counted arm — or an existing one that left it — is visible
         // here as well as in its own assertion above.
         let counted = ALL_UNITS.iter().filter(|u| !u.is_divisible()).count();
@@ -742,9 +800,10 @@ mod tests {
     fn the_unit_table_lists_every_variant_exactly_once() {
         // The table drives the sweep above, so a duplicate or a missing entry
         // would weaken it invisibly. `UnitOfMeasure` has no way to enumerate
-        // itself, and a `match` on a fixed array cannot notice an eighth
-        // variant, so this pins the count the table claims.
-        assert_eq!(ALL_UNITS.len(), 7);
+        // itself, and a `match` on a fixed array cannot notice a sixth
+        // variant, so this pins the count the table claims: one unit for each
+        // of the five dimensions `product.unit` stores.
+        assert_eq!(ALL_UNITS.len(), 5);
         for (index, unit) in ALL_UNITS.iter().enumerate() {
             assert!(
                 !ALL_UNITS.iter().take(index).any(|earlier| earlier == unit),
@@ -774,9 +833,11 @@ mod tests {
 
         // And the tokens are `0003`'s CHECK lists, restated here so that a
         // rename in either enum fails rather than desynchronising the schema
-        // from the domain. `UnitOfMeasure` is deliberately absent: the `unit`
-        // column's five values are coarser than its seven, and pretending
-        // otherwise here would hide that.
+        // from the domain. `UnitOfMeasure` is deliberately absent: its
+        // variants name a unit and the `unit` column names a dimension, so its
+        // serde tokens are not column tokens. The repository owns that mapping
+        // and `pos-db`'s `every_unit_round_trips_through_the_unit_column`
+        // proves it a bijection.
         assert_eq!(RegulatedKind::Tobacco.as_str(), "tobacco");
         assert_eq!(
             ALL_SALE_FORMS.map(SaleForm::as_str),
@@ -859,5 +920,111 @@ mod tests {
                 .checked_cmp(mismatched.max_price.unwrap())
                 .is_err()
         );
+    }
+
+    #[test]
+    fn check_saveable_refuses_what_a_catalogue_save_must_not_store() {
+        // E.71, at the boundary: the ceiling itself is lawful, one fils over is
+        // not, and the refusal carries both amounts.
+        let at_ceiling = Product {
+            max_price: Some(Money::from_minor(450, Currency::JOD)),
+            ..cola()
+        };
+        assert_eq!(at_ceiling.check_saveable(), Ok(()));
+        let over = Product {
+            unit_price: Money::from_minor(451, Currency::JOD),
+            ..at_ceiling.clone()
+        };
+        assert_eq!(
+            over.check_saveable(),
+            Err(CatalogError::AboveMaxPrice {
+                price: Money::from_minor(451, Currency::JOD),
+                ceiling: Money::from_minor(450, Currency::JOD),
+            })
+        );
+        assert_eq!(
+            over.check_saveable().unwrap_err().to_string(),
+            "price 0.451 exceeds the regulated ceiling 0.450"
+        );
+
+        // No ceiling, no limit.
+        let uncapped = Product {
+            unit_price: Money::from_minor(i64::MAX, Currency::JOD),
+            ..cola()
+        };
+        assert_eq!(uncapped.check_saveable(), Ok(()));
+
+        // A ceiling in another currency is not a ceiling anything can enforce.
+        let mismatched = Product {
+            max_price: Some(Money::from_minor(500, Currency::USD)),
+            ..cola()
+        };
+        assert!(matches!(
+            mismatched.check_saveable(),
+            Err(CatalogError::Money(MoneyError::CurrencyMismatch(..)))
+        ));
+
+        // `is_weighed` must say what the unit says, in both directions.
+        let weighed_can = Product {
+            is_weighed: true,
+            ..cola()
+        };
+        assert_eq!(
+            weighed_can.check_saveable(),
+            Err(CatalogError::WeighedFlagDisagreesWithUnit(
+                UnitOfMeasure::Each,
+                true
+            ))
+        );
+        let unweighed_cheese = Product {
+            unit: UnitOfMeasure::Kilogram,
+            is_weighed: false,
+            ..cola()
+        };
+        assert_eq!(
+            unweighed_cheese.check_saveable(),
+            Err(CatalogError::WeighedFlagDisagreesWithUnit(
+                UnitOfMeasure::Kilogram,
+                false
+            ))
+        );
+        for unit in ALL_UNITS {
+            let agreeing = Product {
+                unit,
+                is_weighed: unit.is_divisible(),
+                ..cola()
+            };
+            assert_eq!(agreeing.check_saveable(), Ok(()), "{unit:?}");
+        }
+    }
+
+    proptest! {
+        #![proptest_config(domain_proptest_config())]
+
+        /// A catalogue never stores a price above its ministry ceiling (E.71):
+        /// for any price and any ceiling in the same currency, the save is
+        /// allowed exactly when the price is at or below the ceiling, and a
+        /// product with no ceiling is never refused for its price.
+        #[test]
+        fn prop_a_saveable_price_never_exceeds_its_ceiling(
+            price in any::<i64>(),
+            ceiling in proptest::option::of(any::<i64>()),
+        ) {
+            let product = Product {
+                unit_price: Money::from_minor(price, Currency::JOD),
+                max_price: ceiling.map(|minor| Money::from_minor(minor, Currency::JOD)),
+                ..cola()
+            };
+            match (product.check_saveable(), ceiling) {
+                (Ok(()), Some(ceiling)) => prop_assert!(price <= ceiling),
+                (Ok(()), None) => {}
+                (Err(CatalogError::AboveMaxPrice { price: refused, ceiling: limit }), Some(ceiling)) => {
+                    prop_assert!(price > ceiling);
+                    prop_assert_eq!(refused.minor(), price);
+                    prop_assert_eq!(limit.minor(), ceiling);
+                }
+                (other, ceiling) => prop_assert!(false, "{:?} for ceiling {:?}", other, ceiling),
+            }
+        }
     }
 }
