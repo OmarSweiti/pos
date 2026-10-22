@@ -158,8 +158,10 @@ fn parked_sale_omitting(
         .chain
         .write_envelope(&register.conn, &checkout.commit, &members);
     checkout.write_facts_before_envelope(&register.conn);
+    checkout.write_receipt(&register.conn);
     checkout.write_audit(&register.conn, &register.chain);
     checkout.write_tender_events(&register.conn);
+    checkout.write_stock_events(&register.conn);
     checkout
 }
 
@@ -319,7 +321,9 @@ fn every_completed_tender_has_an_initial_status_event() {
     r.chain
         .write_envelope(&r.conn, &checkout.commit, &checkout.members());
     checkout.write_facts_before_envelope(&r.conn);
+    checkout.write_receipt(&r.conn);
     checkout.write_audit(&r.conn, &r.chain);
+    checkout.write_stock_events(&r.conn);
 
     let refused = checkout
         .try_complete(&r.conn)
@@ -674,7 +678,11 @@ fn sale_completion_requires_a_manifest_naming_every_fact() {
         (2, 0xA0, "000202", "sale_line"),
         (3, 0xB0, "000203", "sale_tender"),
         (4, 0xC0, "000204", "sale_line_tax"),
-        (5, 0xD0, "000205", "receipt_artifact"),
+        // `receipt_artifact` was the fifth case until 0006. It now carries the
+        // envelope gate its synced siblings do (#197), so an artifact the
+        // manifest does not name is refused when it is written, before any
+        // completion is attempted — `migration_0006_stock_ledger.rs` proves
+        // that refusal. The four cases above still prove this gate.
     ] {
         let checkout = parked_sale_omitting(&r, slot, base, receipt, Some(omitted));
 
@@ -690,7 +698,7 @@ fn sale_completion_requires_a_manifest_naming_every_fact() {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(size, 6, "the envelope is one member short, and consistent");
+        assert_eq!(size, 7, "the envelope is one member short, and consistent");
 
         let refused = checkout
             .try_complete(&r.conn)
@@ -702,7 +710,7 @@ fn sale_completion_requires_a_manifest_naming_every_fact() {
         );
     }
 
-    // The seven-member manifest completes. Delete a member from `outbox.rs` and
+    // The eight-member manifest completes. Delete a member from `outbox.rs` and
     // every assertion above stops being a tautology and starts being red.
     let whole = parked_sale_in_slot(&r, 6, 0xE0, "000206");
     let size: i64 = r
@@ -713,7 +721,10 @@ fn sale_completion_requires_a_manifest_naming_every_fact() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(size, 7, "sale, line, tender, tax, event, receipt, audit");
+    assert_eq!(
+        size, 8,
+        "sale, line, tender, tax, stock, event, receipt, audit"
+    );
     whole.complete(&r.conn);
 }
 
@@ -854,11 +865,13 @@ fn every_completion_gate_is_load_bearing() {
     // construction rather than afterwards: a member cannot be taken out of a
     // sealed envelope without breaking `sync_commit_ready` for every fact that
     // checked it on the way in. So the manifest half gets its own round of the
-    // same proof, against the same trigger.
+    // same proof, against the same trigger. It omits the line's tax component:
+    // until 0006 it omitted the receipt, which now cannot be written at all
+    // without its envelope (#197).
     let r = register("load-bearing-manifest.db");
-    let checkout = parked_sale_omitting(&r, 1, 0x10, "000123", Some("receipt_artifact"));
+    let checkout = parked_sale_omitting(&r, 1, 0x10, "000123", Some("sale_line_tax"));
     let Err(refused) = checkout.try_complete(&r.conn) else {
-        panic!("a manifest that omits the receipt must be refused while the gate stands")
+        panic!("a manifest that omits a tax component must be refused while the gate stands")
     };
     assert_eq!(
         message(refused),
@@ -1105,7 +1118,7 @@ fn two_sales_on_one_register_share_its_shift_and_not_their_commits() {
         .unwrap();
     assert_eq!(shared, 1, "both completed sales name the same shift");
 
-    // Two commits, fourteen members, fourteen delivery rows — and no id reused
+    // Two commits, sixteen members, sixteen delivery rows — and no id reused
     // between them. `fact_commit_member` has a primary key on `change_id` and a
     // UNIQUE on `(entity, entity_id)`, so a collision would have refused the
     // write above; this states the property the refusal would have been about.
@@ -1119,13 +1132,13 @@ fn two_sales_on_one_register_share_its_shift_and_not_their_commits() {
             "members",
             "SELECT count(DISTINCT change_id) FROM fact_commit_member
               WHERE commit_id IN (?1, ?2)",
-            14,
+            16,
         ),
         (
             "facts",
             "SELECT count(*) FROM (SELECT DISTINCT entity, entity_id FROM fact_commit_member
                                     WHERE commit_id IN (?1, ?2))",
-            14,
+            16,
         ),
     ] {
         let counted: i64 = r

@@ -1787,7 +1787,7 @@ ALTER TABLE sale ADD COLUMN doc_type            TEXT NOT NULL DEFAULT 'sale'
 ALTER TABLE sale ADD COLUMN buyer_id_scheme     TEXT;
 ALTER TABLE sale ADD COLUMN buyer_id_value      TEXT;
 ALTER TABLE sale ADD COLUMN buyer_name          TEXT;
-ALTER TABLE sale ADD COLUMN is_training         INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sale ADD COLUMN is_training         INTEGER NOT NULL DEFAULT 0;  -- 0 or 1: 0006's triggers (#197)
 ALTER TABLE sale ADD COLUMN discount_minor      INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE sale ADD COLUMN rounding_adj_minor  INTEGER NOT NULL DEFAULT 0;  -- B.5
 ALTER TABLE sale ADD COLUMN tax_computation_policy_id BLOB
@@ -2841,7 +2841,15 @@ END;
 
 ---
 
-## 0006 — stock ledger  ·  Phase 1, microstep 1.10.1
+## 0006 — stock ledger  ·  Phase 1, microstep 1.10.1  ·  SHIPPED
+
+**Corrected at delivery (1.10.1): a price-embedded label's stock event.** As first written, the
+projection and completion triggers below required every `sale` stock event to remove exactly its
+line's quantity. [`domain-api.md`](domain-api.md) §4.3 makes a label line *one package at the label's
+price* and sends the weight that price implies to this ledger with `is_weight_derived` set — so the
+first draft would have taken a kilogram of stock for a 49-gram package of cheese. Both triggers now
+also accept a derived weight: flagged, on a weighed line, and still outgoing. Every measured event
+must equal its line exactly, as before.
 
 ```sql
 -- Stock is a LEDGER, not a column (I-6). On-hand = Σ qty_delta_milli.
@@ -3029,7 +3037,13 @@ WHEN NEW.event_seq <> COALESCE((
           AND s.id = NEW.ref_id
           AND s.store_id = NEW.store_id
           AND l.product_id = NEW.product_id
-          AND NEW.qty_delta_milli = -l.qty_milli))
+          AND (NEW.qty_delta_milli = -l.qty_milli
+            -- A price-embedded label is one package at the label's price, so
+            -- its line quantity is not its weight. The weight it implies at
+            -- today's price per unit is the stock basis instead, flagged as
+            -- derived rather than measured (ref/domain-api.md §4.3, E.80).
+            OR (NEW.is_weight_derived = 1 AND l.is_weighed = 1
+                AND NEW.qty_delta_milli < 0))))
 BEGIN
   SELECT RAISE(ABORT, 'stock event must extend the ledger/cache chain with the captured WAC');
 END;
@@ -3085,7 +3099,9 @@ WHEN NEW.status = 'completed' AND (
           AND m.commit_id = NEW.sync_commit_id
           WHERE e.kind = 'sale' AND e.source_sale_line_id = l.id
             AND e.product_id = l.product_id AND e.store_id = NEW.store_id
-            AND e.qty_delta_milli = -l.qty_milli))
+            AND (e.qty_delta_milli = -l.qty_milli
+              OR (e.is_weight_derived = 1 AND l.is_weighed = 1
+                  AND e.qty_delta_milli < 0))))
   OR EXISTS (
     SELECT 1 FROM stock_ledger e
      WHERE e.kind = 'sale' AND e.ref_id = NEW.id
@@ -3109,7 +3125,9 @@ WHEN NEW.status = 'completed' AND (
           AND m.commit_id = NEW.sync_commit_id
           WHERE e.kind = 'sale' AND e.source_sale_line_id = l.id
             AND e.product_id = l.product_id AND e.store_id = NEW.store_id
-            AND e.qty_delta_milli = -l.qty_milli))
+            AND (e.qty_delta_milli = -l.qty_milli
+              OR (e.is_weight_derived = 1 AND l.is_weighed = 1
+                  AND e.qty_delta_milli < 0))))
   OR EXISTS (
     SELECT 1 FROM stock_ledger e
      WHERE e.kind = 'sale' AND e.ref_id = NEW.id
@@ -3133,6 +3151,39 @@ BEGIN
   SELECT RAISE(ABORT, 'I-6: stock_ledger is append-only — post a correcting event');
 END;
 
+-- ── #197: three guards 0005 did not ship ───────────────────────────────────
+
+-- 1. The fiscal-decision gate keys on `is_training = 0`, so any other non-zero
+--    value would be a completed, non-training sale with no fiscal decision
+--    behind it.
+CREATE TRIGGER sale_is_training_is_a_flag_insert
+BEFORE INSERT ON sale
+WHEN NEW.is_training NOT IN (0, 1)
+BEGIN
+  SELECT RAISE(ABORT, 'sale.is_training is a flag: 0 or 1');
+END;
+
+CREATE TRIGGER sale_is_training_is_a_flag_update
+BEFORE UPDATE OF is_training ON sale
+WHEN NEW.is_training NOT IN (0, 1)
+BEGIN
+  SELECT RAISE(ABORT, 'sale.is_training is a flag: 0 or 1');
+END;
+
+-- 2. A receipt artifact is a synced fact: no row without its envelope. See
+--    shape decision 2 for why `print_attempt` gets no such gate.
+CREATE TRIGGER receipt_artifact_has_ready_commit
+BEFORE INSERT ON receipt_artifact
+WHEN NOT EXISTS (
+  SELECT 1 FROM fact_commit_member m JOIN sync_commit_ready ready ON ready.id = m.commit_id
+   WHERE m.entity = 'receipt_artifact' AND m.entity_id = NEW.id)
+BEGIN SELECT RAISE(ABORT, 'receipt artifact requires its complete delivery envelope'); END;
+
+-- 3. A gapless counter is advanced, never removed.
+CREATE TRIGGER doc_sequence_no_delete
+BEFORE DELETE ON doc_sequence BEGIN
+  SELECT RAISE(ABORT, 'a document sequence is never deleted: its next value would restart at 1');
+END;
 ```
 
 ---

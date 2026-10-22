@@ -40,7 +40,7 @@ pub fn declared_fact_tables() -> Vec<String> {
 /// either over the shipped migration is not a harmless duplicate: the first
 /// `CREATE TABLE` aborts and every fixture built this way panics.
 pub fn reference_blocks() -> Vec<String> {
-    reference_blocks_at_or_after(6)
+    reference_blocks_at_or_after(7)
 }
 
 /// The reference schema from 0003 onward, for fixtures deliberately held at v2.

@@ -1,0 +1,33 @@
+-- Mirrors SQLite 0006_stock_ledger.sql (conventions §9 rule 4).
+--
+-- This migration creates nothing. As with the 0005 mirror, that is the finding,
+-- recorded here because a committed migration cannot be reopened to explain
+-- itself later.
+--
+-- 0006 ships three tables, eleven triggers, four indexes and four guards on
+-- older tables. Every one of them is either tenant-owned and blocked, or
+-- register-local and never synced.
+--
+-- Tenant-owned, and blocked on the shared multi-tenant decision that
+-- ref/schema.md §"Shared multi-tenant decision for sign-off" records as still
+-- awaiting owner sign-off "before the first Phase-3 server migration":
+-- stock_ledger, the one fact table 0006 adds. It names a store, a register, a
+-- product, a sale line and an actor, and the server has a product but none of
+-- the rest. Creating it now would omit the org_id UUID NOT NULL column, the
+-- composite tenant foreign keys, forced row-level security and the
+-- owner/application role split — exactly what the 0003, 0004 and 0005 mirrors
+-- deferred for the same reason. Its append-only half lands with it, as REVOKE
+-- UPDATE on the fact table rather than a BEFORE UPDATE trigger.
+--
+-- Register-local, and excluded from the reference dump by name in
+-- ref/schema.md §"Convergence": stock_cache, a rebuildable projection of the
+-- ledger, and stock_adjustment_request, a manager's prepared intent that exists
+-- only until the approved event consumes it. A server copy of either would be a
+-- second answer to a question only the register can answer.
+--
+-- The four guards on older tables have no server counterpart yet: the
+-- `is_training` flag triggers and `receipt_artifact_has_ready_commit` guard
+-- tenant-owned tables the server does not have (sale, receipt_artifact), and
+-- `doc_sequence_no_delete` guards a register-local counter. The envelope gate is
+-- the register's half of a contract whose server half is the push protocol's
+-- own refusal of an incomplete commit group (ref/sync-protocol.md §2).
