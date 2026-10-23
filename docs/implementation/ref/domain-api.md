@@ -805,11 +805,19 @@ impl Product {
     /// What `product.sale_form` holds. `SealedPack` for a regulated product,
     /// and no other answer is representable.
     pub const fn sale_form(&self) -> SaleForm;
+    /// What every catalogue save refuses [1.2.3]: a price above the ministry
+    /// ceiling (E.71), a ceiling in another currency, and an `is_weighed` that
+    /// disagrees with the unit. One rule, so no save path carries its own copy.
+    pub fn check_saveable(&self) -> Result<(), CatalogError>;
 }
 
+/// One unit per dimension `product.unit` stores [1.2.3]: each ↔ 'each',
+/// Kilogram ↔ 'weight', Litre ↔ 'volume', Metre ↔ 'length', Package ↔
+/// 'package'. A measure is its base unit, and its milli-unit is a gram, a
+/// millilitre, a millimetre.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum UnitOfMeasure { Each, Kilogram, Gram, Litre, Millilitre, Metre, Package }
+pub enum UnitOfMeasure { Each, Kilogram, Litre, Metre, Package }
 
 impl UnitOfMeasure {
     /// `Each` and `Package` are counted, not measured. Selling 0.001 of a can
@@ -903,6 +911,12 @@ struct SaleFormColumns { regulated_kind: Option<RegulatedKind>, sale_form: SaleF
 pub enum CatalogError {
     #[error("a {} product cannot be sold as {}", .0.as_str(), .1.as_str())]
     UnlawfulSaleForm(RegulatedKind, SaleForm),
+    // [1.2.3] — what `Product::check_saveable` refuses.
+    #[error("price {} exceeds the regulated ceiling {}", .price.format_exact(), .ceiling.format_exact())]
+    AboveMaxPrice { price: Money, ceiling: Money },                   // E.71
+    #[error("a product sold by {0:?} cannot have is_weighed = {1}")]
+    WeighedFlagDisagreesWithUnit(UnitOfMeasure, bool),
+    #[error(transparent)] Money(#[from] MoneyError),                  // a ceiling in another currency
 }
 ```
 
@@ -915,28 +929,41 @@ sixteen-field draft struct. The enum costs one type and leaves nothing to rememb
 `product_regulated_sale_form_insert`/`_update` triggers refuse the same combination in the storage
 engine; that is defence in depth against a hand-typed `sqlite3` session, not the control.
 
-**The `unit` column and `UnitOfMeasure` do not correspond one for one, and 1.2.2 does not close
-that.** `0003` stores `product.unit` as `'each'`, `'package'`, `'weight'`, `'volume'` or `'length'`
-beside `qty_step_milli`, so `Kilogram` and `Gram` both store as `'weight'` and a round trip through
-the database cannot tell them apart. `product.is_weighed` is likewise derivable from the unit — the
-`product_quantity_kind_*` triggers tie `'each'`/`'package'` to `is_weighed = 0` and the three
-measures to `is_weighed = 1` — yet this struct and the sale-line snapshot both carry it. This is an
-engineering gap, not one of the `⚠️ OPEN` questions ([`00-master-plan.md`](../00-master-plan.md)
-§4a.3) that only an outside authority can answer: closing it needs a finer column or a coarser enum,
-and **microstep
-1.2.3 owns the choice** because its repository is the first code that has to map the column. Until
-then the enum above is normative for Rust and the column is normative for storage, and neither
-pretends the other does not exist.
+**The `unit` column and `UnitOfMeasure` now correspond one for one — 1.2.3 closed the gap with a
+coarser enum.** `0003` stores `product.unit` as `'each'`, `'package'`, `'weight'`, `'volume'` or
+`'length'`, and the enum had seven variants, so `Kilogram` and `Gram` both stored as `'weight'` and a
+round trip through the database could not tell them apart. That was an engineering gap, not one of
+the `⚠️ OPEN` questions ([`00-master-plan.md`](../00-master-plan.md) §4a.3), and closing it needed a
+finer column or a coarser enum. 1.2.3, whose repository is the first code that maps the column, chose
+the enum: `Gram` and `Millilitre` are gone, and each measure is its base unit. Nothing was lost. A
+price per gram is a price per kilogram read differently, and per kilogram is the more precise of the
+two — one fils per kilogram is a thousandth of a fils per gram, which no gram price can state — and
+it is the unit every scale label already speaks (`EmbeddedValue::WeightMilli`, "grams of a
+kilogram"). A finer column would have kept a variant nothing can price more exactly, at the cost of a
+migration. The variants name the unit and the column names the dimension, so the mapping lives in
+the repository in both directions, and `every_unit_round_trips_through_the_unit_column` proves it a
+bijection.
+
+`product.is_weighed` is still derivable from the unit — the `product_quantity_kind_*` triggers tie
+`'each'`/`'package'` to `is_weighed = 0` and the three measures to `is_weighed = 1` — and this struct
+and the sale-line snapshot both still carry it. Neither wins: `check_saveable` refuses a product
+whose two answers disagree, and the triggers refuse it again in storage. `product.qty_step_milli`
+has no field here at all; the repository writes it from the unit — 1000 for counted goods, as the
+triggers require, and 1 for measures, the step the cart's own rule (§6.3: whole units for counted
+goods, any milli-unit otherwise) already implies.
 
 Tests: `tobacco_product_requires_a_sealed_pack_sale_form` ·
 `the_regulated_pair_round_trips_through_its_two_columns` ·
-`an_unlawful_regulated_pair_is_refused_on_the_wire` · `each_stored_token_is_spelled_once`.
+`an_unlawful_regulated_pair_is_refused_on_the_wire` · `each_stored_token_is_spelled_once` ·
+`check_saveable_refuses_what_a_catalogue_save_must_not_store` ·
+`prop_a_saveable_price_never_exceeds_its_ceiling`.
 
 The round-trip is exhaustive over all six column pairs rather than generated: a bounded universal
 claim is checked by exhaustion when the loop is feasible (conventions §5.1), and six cases is
-feasible. There is no `prop_` property in this module for the same reason — every claim it makes is
-over a finite set of values the types can hold, so a generator would be weaker evidence with more
-machinery.
+feasible. The pair and the units have no `prop_` property for the same reason — every claim made
+about them is over a finite set of values the types can hold, so a generator would be weaker evidence
+with more machinery. The price ceiling is the exception, and has one: its claim ranges over every
+pair of `i64` amounts.
 
 ### 4.1 Price-embedded barcode parsing — [1.2.4]
 

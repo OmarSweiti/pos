@@ -175,9 +175,13 @@ approval exists, because approving a product id does not approve later substitut
 side as a query expression whatever it was bound as, so `"`, `(`, `)`, `:`, `*` and a bareword `OR`
 or `NEAR` are operators, not letters. A cashier typing one gets a syntax error surfaced as a
 `DbError`, or silently a different query — on the only path they have when the scanner fails. The
-handler tokenises the input on the same boundaries the index uses, quotes each token with internal
-quotes doubled, joins with `AND`, and appends `*` to the last token for prefix search. Tests:
-`search_survives_every_fts5_metacharacter` · `prop_no_query_string_produces_a_database_error`.
+handler passes the text to `ProductRepository::search` unchanged, and the repository never sends it
+to FTS5 as written: `pos_db::search::match_expression` (1.2.3) cuts it into runs of letters and
+digits — the index's own boundaries, to within a rare combining mark, a difference that can cost a
+match but never raise an error — quotes each token with internal quotes doubled, joins with `AND`,
+and appends `*` to the last token for prefix search. Text with nothing to search for is an empty
+result, not a query. Tests: `search_survives_every_fts5_metacharacter` ·
+`prop_no_query_string_produces_a_database_error`.
 
 ### Cart
 
