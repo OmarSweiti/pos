@@ -24,11 +24,12 @@
 //! so I-9 applies: the event and its delivery envelope commit in one
 //! transaction. `0007` gave the table no `_has_ready_commit` trigger — unlike
 //! `stock_ledger` and, since `0006`, `receipt_artifact` — so the storage engine
-//! would accept a row that never travels. This repository refuses it instead:
-//! the envelope must already be written in the caller's transaction, ready,
-//! naming this event, and carrying exactly [`VerificationEvent::payload`]. A
-//! migration that adds the trigger would make this the second line rather
-//! than the only one.
+//! would accept a row that never travels. This repository refuses it instead,
+//! asking what those triggers ask: a ready envelope must already name this
+//! event — and here, carry exactly [`VerificationEvent::payload`]. Writing it
+//! first, in the same transaction, is the caller's half, as it is for every
+//! `_has_ready_commit` table. A migration that adds the trigger would make this
+//! the second line rather than the only one.
 //!
 //! Scale identity (`trade_scale`) and the label layouts
 //! (`embedded_barcode_rule`) are reference data the server owns and sends
@@ -214,8 +215,8 @@ impl<'c> TradeScaleRepository<'c> {
     ///
     /// # Errors
     ///
-    /// [`DbError::ScaleEvidenceEnvelopeMissing`] when no ready envelope in this
-    /// transaction names the event, [`DbError::ScaleEvidenceEnvelopeMismatch`]
+    /// [`DbError::ScaleEvidenceEnvelopeMissing`] when no ready envelope names
+    /// the event, [`DbError::ScaleEvidenceEnvelopeMismatch`]
     /// when the one that does carries a different payload, and
     /// [`DbError::Sqlite`] for what the schema refuses.
     pub fn record_verification(
