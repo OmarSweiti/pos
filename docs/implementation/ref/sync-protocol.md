@@ -299,6 +299,22 @@ same canonical form, with `payload` canonical at every depth:
   refuses a malformed one before anything is written, because an audit row has no `UPDATE`.
 - **Versioned like every payload**, by the envelope's `schema_version`.
 
+**The payload a `trade_scale_verification` row travels as** — defined on the same terms, when
+`TradeScaleRepository::record_verification` (1.2.4) became the first code to write scale evidence. It is
+the row's own columns in the same canonical form, `evidence_hash` as lower-case hex:
+
+```json
+{"effective_at":"2026-01-01T00:00:00.000Z","event_no":1,"evidence_hash":"<hex of BLAKE3(document)>",
+ "evidence_ref":"<certificate reference>","id":"<uuid>","seal_or_mark_ref":null,"state":"verified",
+ "trade_scale_id":"<uuid>","valid_until":"2027-01-01T00:00:00.000Z"}
+```
+
+- **The repository writes no row its envelope does not describe.** `0007` gave the table no
+  `_has_ready_commit` trigger, so the storage engine would accept evidence that never travels;
+  `record_verification` refuses an event unless a ready envelope in the same transaction names it and
+  carries exactly this payload. A migration that adds the trigger makes that the second line.
+- **Versioned like every payload**, by the envelope's `schema_version`.
+
 ---
 
 ## 4 · Clocks

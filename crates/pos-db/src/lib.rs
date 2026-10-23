@@ -141,6 +141,19 @@ pub enum DbError {
     ProductRetired(pos_domain::ProductId),
     #[error("stored product is malformed: {reason}")]
     StoredProductInvalid { reason: String },
+    #[error(
+        "refusing to record scale verification evidence with no delivery \
+         envelope naming it: write the commit and its manifest first, in the \
+         same transaction (I-9)"
+    )]
+    ScaleEvidenceEnvelopeMissing,
+    #[error(
+        "the delivery envelope naming this scale verification event carries a \
+         different payload, so what travels would not be what was recorded"
+    )]
+    ScaleEvidenceEnvelopeMismatch,
+    #[error("stored trade-scale record is malformed: {reason}")]
+    StoredScaleRecordInvalid { reason: String },
 }
 
 /// `PRAGMA synchronous = FULL`, as SQLite reports it back. The pragma accepts a
