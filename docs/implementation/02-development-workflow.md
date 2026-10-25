@@ -1745,7 +1745,7 @@ it.
 | Gap | Closed by |
 |---|---|
 | `just seed` does not exist; there is no fixture, so every manual test is ad-hoc | 1.12.1 |
-| `just bench-gate` exists and refuses, but there is still no benchmark and no committed baseline, so **no budget is enforced anywhere** and `cargo bench` alone cannot enforce one | benchmarks 1.2.7, 1.4.9, 1.6.2, 1.11.13 and the relative job 1.12.3; the absolute budgets at 5.8.2 |
+| `just bench-gate` exists and refuses, its first benchmark has landed (search, 1.2.7) and no baseline is committed, so **no budget is enforced anywhere** and `cargo bench` alone cannot enforce one | benchmarks 1.4.9, 1.6.2, 1.11.13 and the relative job 1.12.3; the absolute budgets at 5.8.2 |
 | **No reference register has been bought**, so "the slowest supported hardware" has no machine behind it, `ref/hardware-and-receipts.md` §6a.1's table has no row, `benchmarks/reference-register.toml` is blank, and the gate refuses every baseline | milestone 5.8, by design — no device is bought before it: 1.2.0's deferred half at 5.8.2, and every other device class at 5.8.3 |
 | `pos-db` is not wired into the terminal yet, so `just db-local-reset` currently has nothing to delete | 1.8.x persistence |
 | TS types are hand-written in `packages/api-types`; no `ts-rs` generation into `src/ipc/`, no CI drift gate | conventions §13, with the first real IPC surface |
