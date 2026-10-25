@@ -293,6 +293,36 @@ bench-gate $budget='':
     [ -z "$budget" ] || selection=("--budget=$budget")
     {{ python }} ./scripts/bench-gate.py ${selection[@]+"${selection[@]}"}
 
+# libFuzzer searches for an input that panics a parser or breaks what its target
+# asserts, for `runs` inputs (ref/test-catalog.md, "Fuzz targets"; 1.2.8 is the
+# first). Each fuzz crate pins a dated nightly in its own rust-toolchain.toml,
+# because `cargo fuzz` needs one and the repository pins stable, so this recipe
+# runs in the fuzz crate's directory, where that pin applies, and nowhere else.
+#
+# The committed corpus is read and never written. libFuzzer saves every input it
+# finds interesting into the first corpus directory it is given, so that one is a
+# scratch directory deleted on exit. A crash lands in fuzz/artifacts/<target>/:
+# minimize it with `cargo fuzz tmin <target> <file>`, then commit it to the corpus,
+# where pos-domain's corpus test replays it on every pull request. Fuzzing itself
+# never runs per pull request: a time-boxed search is not a merge check.
+#
+#   cargo install cargo-fuzz@0.13.2 --locked
+
+# Fuzz one target: `just fuzz parse_scan`, or `just fuzz parse_scan 1000000`
+fuzz $target='parse_scan' $runs='100000':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [[ "$target" =~ ^[a-z][a-z0-9_]*$ ]] || { echo "fuzz: '$target' is not a target name" >&2; exit 2; }
+    [[ "$runs" =~ ^[1-9][0-9]*$ ]] || { echo "fuzz: runs must be a positive count, not '$runs'" >&2; exit 2; }
+    shopt -s nullglob
+    found=(crates/*/fuzz/fuzz_targets/"$target".rs)
+    [ "${#found[@]}" -eq 1 ] || { echo "fuzz: no fuzz target named '$target'" >&2; exit 2; }
+    scratch="$(mktemp -d)"
+    trap 'rm -rf "${scratch:?}"' EXIT
+    cd "${found[0]%/fuzz_targets/*}"
+    # -timeout: an input that runs for ten seconds is a loop, and a finding.
+    cargo fuzz run "$target" "$scratch" "corpus/$target" -- -runs="$runs" -timeout=10
+
 # Advisories, licences and banned/duplicate crates. Same gate CI runs.
 #   cargo install cargo-deny --locked
 #

@@ -1,0 +1,5 @@
+# cargo fuzz's build and its findings. The corpus is committed: a finding joins
+# it by hand, once minimized, and `just fuzz` never writes to it.
+target/
+artifacts/
+coverage/
