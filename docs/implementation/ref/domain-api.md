@@ -1009,6 +1009,9 @@ pub fn parse_scan(raw_code: &str, rules: &[EmbeddedBarcodeRule])
 impl ParsedScan {
     pub fn item_code(&self) -> &str;
 }
+/// Which rule claims the code as a label — its index — or None for an ordinary
+/// barcode. parse_scan's own choice, and its only implementation [1.2.4 shell half].
+pub fn claiming_rule(raw_code: &str, rules: &[EmbeddedBarcodeRule]) -> Option<usize>;
 pub fn ean13_checksum_ok(code: &str) -> bool;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -1034,7 +1037,15 @@ operator has to see which stopped the scan: `NotUtf8` and `Empty` are what the r
 `resolve_scan`'s and the label constructor's refusals below. Scale evidence is a third kind again,
 and has its own type (§4.4).
 
-Properties: `prop_ean13_checksum_matches_reference`, `prop_embedded_parse_roundtrip`, `prop_corrupt_digit_never_parses_clean` (**E.40 — a checksum error is a rejected scan and an honest error, never a guess**).
+**`claiming_rule` is public because the scan handler needs the claim before the price.** A label may
+price a line only while the scale that printed it holds current evidence (§4.4), and the scale is
+named by the store layout that read the label. The handler therefore has to know which layout claimed
+the code, and the parse hides its rule; a second copy of the longest-prefix choice in the shell is how
+the scale that is checked and the layout that is read come to differ. `parse_scan` calls
+`claiming_rule`, so there is one choice. `prop_a_claimed_code_is_never_read_as_plain` holds the two
+together: a claimed code is never an ordinary barcode, and an unclaimed one always is.
+
+Properties: `prop_ean13_checksum_matches_reference`, `prop_embedded_parse_roundtrip`, `prop_corrupt_digit_never_parses_clean` (**E.40 — a checksum error is a rejected scan and an honest error, never a guess**), `prop_a_claimed_code_is_never_read_as_plain`. Example: `the_claiming_rule_is_the_rule_the_parse_reads_with`.
 
 ### 4.2 `PriceSource` — where a price is allowed to come from — [1.2.4]
 
