@@ -1280,16 +1280,19 @@ Create append-only `stock_ledger` with `qty_delta_milli`, the captured `qty_step
 > `(7)` in `crates/pos-db/tests/common/mod.rs`, or every `full_schema()` test double-applies §0006.
 
 ### 1.10.2 — `StockRepository`
-**Files:** `crates/pos-db/src/repo/stock.rs` (new)
+**Files:** `crates/pos-db/src/repo/stock.rs` (new), `crates/pos-db/src/repo/mod.rs`, `crates/pos-db/src/lib.rs` (eight `DbError` variants) · `crates/pos-domain/src/stock.rs` (new — the event types and the cost-capture rule `append` needs, which no earlier microstep delivered), `crates/pos-domain/src/lib.rs` · [`ref/domain-api.md`](ref/domain-api.md) §12 (as delivered) · [`ref/sync-protocol.md`](ref/sync-protocol.md) §3 (the payload a stock event travels as) · [`phase-2-money-grade.md`](phase-2-money-grade.md) 2.3.4 and [`phase-4-depth.md`](phase-4-depth.md) 4.2.2 (the WAC blend each meets) · [`README.md`](README.md) (implementation frontier) · this file (this microstep's `Files:` and `Tests:` lines, its signatures and its note)
 ```rust
-pub fn append(&self, tx: &Transaction, e: &StockEvent) -> Result<(), DbError>;
+pub fn prepare(&self, tx: &Transaction, register: RegisterId, movements: &[NewStockEvent])
+    -> Result<Vec<PreparedStockEvent>, DbError>;                                // reads, writes nothing
+pub fn append(&self, tx: &Transaction, events: &[PreparedStockEvent]) -> Result<(), DbError>;
 pub fn on_hand(&self, p: ProductId, s: StoreId) -> Result<Qty, DbError>;      // from cache
 pub fn rebuild_cache(&self, tx: &Transaction, s: StoreId) -> Result<u64, DbError>;
 pub fn negative_stock(&self, s: StoreId) -> Result<Vec<NegativeStockRow>, DbError>;
 ```
 `append` writes the ledger event, cache projection, audit row and fact-commit membership in one transaction. A partial cache update is not a performance problem; it is a false on-hand figure shown to the cashier.
-**Tests:** `stock_append_projects_cache_and_manifest_atomically` · `stock_event_captures_unit_cost_and_estimate_flag`
+**Tests:** `stock_append_projects_cache_and_manifest_atomically` · `stock_event_captures_unit_cost_and_estimate_flag` · `prop_an_outgoing_event_carries_the_basis_in_force` · `prop_the_wac_after_an_event_is_a_recorded_cost`
 **Done when:** `cargo nextest run -p pos-db repo::stock::tests::` rolls back every companion row under injected failure at each write boundary.
+> **As delivered, 25 October 2026.** `append` became two steps, because `0006` refuses a stock event whose ready envelope is not already written, and the envelope carries the event's payload. `prepare` reads each product's position and the register's ledger head through the caller's transaction and asks the domain's `StockEvent::capture` for the event and the position it leaves; the caller writes the envelope with each `PreparedStockEvent::payload`, then any audit row; `append` inserts the events and refuses one its envelope does not describe exactly. A batch prepares in order, each movement from the position the one before it left, so a sale with two lines of one product records two consecutive events. The domain types the signature assumed did not exist, so `pos-domain/src/stock.rs` arrives here with the cost-capture rule: an outgoing event carries the basis in force and leaves it; an incoming event into stock that is not positive sets the WAC to its own cost, at the WAC in force keeps it, and with no cost keeps it and marks it estimated. **A different cost into positive stock is refused by name rather than blended**: the blend is `recompute_wac`, whose properties are 4.2.2's, and 2.3.4's restock is the first step that will meet it. `rebuild_cache` replays a store's ledger — on-hand as the sum, the WAC and the watermark from each product's highest `event_seq` — and refuses a ledger that holds two registers' events, which no owned sequence orders; `stock_ledger` travels up only, so a register's database holds its own. The write boundaries are injected by a temporary trigger in front of each of the seven writes — the commit, its members, their delivery rows, the audit row, the event, and the cache row inserted or updated — rather than by a seam in the code: the storage engine is the boundary, and the repository does not know it is under test.
 
 ### 1.10.3 — Cache rebuild equivalence
 **Files:** `crates/pos-db/tests/stock.rs`

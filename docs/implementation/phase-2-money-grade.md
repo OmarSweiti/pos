@@ -205,6 +205,7 @@ Cards refund **to the original card** via `refund(psp_ref, amount)`. Cash sales 
 **Files:** `crates/pos-domain/src/refund.rs`
 Back to stock → `refund_restock`; damaged → `refund_damage`. Two different stock events because they mean two different things to the buyer.
 **Tests:** `restock_choice_writes_the_matching_stock_event` · `a_refund_preserves_an_unknown_cost_basis`
+> **A restock meets the WAC blend.** 1.10.2's `StockEvent::capture` refuses a different cost into positive stock (`StockError::WacBlendNotSupported`) until 4.2.2's `recompute_wac` lands. Restocking at the sale's captured cost is exactly that case, so this microstep either brings `recompute_wac` and its properties forward or restocks at the WAC in force. Recorded here so the choice is made deliberately rather than discovered at the keyboard.
 
 ### 2.3.5 — Receiptless returns
 **Depends on:** 2.3.11 — the store-credit instrument, which is the configured **default** outcome here.

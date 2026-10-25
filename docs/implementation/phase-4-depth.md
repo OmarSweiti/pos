@@ -73,6 +73,7 @@ new_wac = (on_hand × wac + qty_in × unit_cost) / (on_hand + qty_in)
 ```
 **When `on_hand ≤ 0`, the new WAC is the receipt's `unit_cost`.** "Handled, not panicked" is a licence to choose, and the choices give materially different numbers: blending a phantom negative inventory into the average can land the WAC far from any real cost, and inventory valuation is an audited balance-sheet figure. A negative on-hand carries no cost basis to average, so there is nothing to blend. A receipt into negative stock is also reported on the variance report, because it means the ledger was wrong before the delivery arrived.
 **Tests:** `prop_wac_never_negative` · `prop_wac_stable_under_zero_qty_receipt` · `prop_wac_is_between_the_min_and_max_cost_ever_received` — the constraint that actually catches a blended phantom cost, where "never negative" passes for any nonsense above zero · `wac_on_zero_on_hand_takes_the_receipt_cost` · `wac_with_negative_on_hand_takes_the_receipt_cost` · `receiving_posts_one_stock_event_per_line`
+> **It lifts a refusal 1.10.2 left in place.** Until this formula exists, `StockEvent::capture` refuses a different cost into positive stock with `StockError::WacBlendNotSupported` rather than approximating the average; `recompute_wac` replaces that arm.
 > Purchase orders proper can wait for Phase 5. **Receiving stands alone** and is what the merchant actually needs first — they already know what arrived.
 
 ### 4.2.3 — Cost deviation guard
