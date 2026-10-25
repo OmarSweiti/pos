@@ -54,3 +54,11 @@ pos-test-support.workspace = true
 # This crate's own tests use the shared fixtures. A dev-dependency's features
 # never reach a build that ships (resolver 3), which the test above checks.
 pos-db = { path = ".", features = ["fixtures"] }
+# The search benchmark (1.2.7): `cargo bench -p pos-db --bench search` times
+# it, and `cargo test -p pos-db --bench search` runs each query once.
+criterion.workspace = true
+
+# criterion supplies its own `main`, so the bench opts out of libtest's.
+[[bench]]
+name = "search"
+harness = false

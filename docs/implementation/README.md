@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **44 of 121 executable microsteps fully complete (~36%)**: `1.1.0`
+Phase 1 has **45 of 121 executable microsteps fully complete (~37%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -106,7 +106,11 @@ search, and one save gated by the domain's own check, so a price above the minis
 reaches the catalogue; a search no keystroke can turn into FTS5 syntax, proven over the whole
 metacharacter corpus and by a property that sends arbitrary text through it; a barcode with one
 live owner, a second claim refused by name; and `UnitOfMeasure` cut to one unit per stored
-dimension, so a product survives the database exactly).
+dimension, so a product survives the database exactly), and `1.2.7` (the search benchmark —
+50 000 Arabic products saved through the repository, typed into at 1, 2, 3 and 5 characters with
+the first keystroke matching every one of them, and the two tests that hold the benchmark to that
+catalogue and those queries; it claims no budget, which is 5.8.2's, and its first indicative run
+fired a risk-register trigger, recorded at the microstep).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
@@ -133,7 +137,11 @@ a store's active label layouts, and records evidence only with the delivery enve
 Its shell half has landed as well: the scan handler reads a code with every layout the store has,
 makes a label answer for the scale that printed it before anything is looked up, and hands the hits to
 `resolve_scan`. One named test still waits for the cart's `AddLine::from_scan`, which is where a label
-becomes one unit, so 1.2.4 stays partially delivered until group 1.4. `1.6.3` is closed: its seed comparison landed against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
+becomes one unit, so 1.2.4 stays partially delivered until group 1.4. `1.2.7`'s search benchmark
+has landed, and its first indicative run on a development laptop put the first two keystrokes over
+the 50 ms limit, which fires the risk-register trigger in [`00-master-plan.md`](00-master-plan.md)
+§6; what to do about it is the owner's decision, and the microstep's note records the measurement.
+`1.2.8`, the scan-parser fuzz target, is the one microstep of group 1.2 not yet begun. `1.6.3` is closed: its seed comparison landed against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
 `authorize`, `ApprovalHandle` and `EscalationPolicy` are complete in `pos-domain`, with the two
 compile-fail proofs that a token cannot be forged or substituted across capabilities. Its
 persistence half now stores, validates, reloads and one-use consumes a handle through a

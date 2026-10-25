@@ -14,7 +14,10 @@
 //! (1.7.7) is the first code outside `pos-db` that has to complete a sale
 //! before it can test anything, and a second copy of a fixture that satisfies
 //! `0005`'s seven completion gates would drift from this one the first time a
-//! gate changed.
+//! gate changed. The search catalogue (1.2.7) is here for the same reason
+//! inside this crate: `benches/search.rs` and the test that checks what it
+//! measures are separate targets, and neither can see the other's files.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 pub mod registered_chain;
+pub mod search_catalogue;
