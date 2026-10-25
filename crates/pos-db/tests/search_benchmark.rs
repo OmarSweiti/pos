@@ -108,8 +108,8 @@ fn search_benchmark_exercises_every_query_length() {
     };
 
     // How much each length asks of the index. The first keystroke matches
-    // every product, so no first letter costs more; the fifth narrows to one
-    // brand's 2 000.
+    // every product, so no first letter matches more; the fifth narrows to
+    // one brand's 2 000.
     let expected = [PRODUCTS, PRODUCTS, 4_000, 2_000];
     for (typed, expected) in QUERIES.iter().zip(expected) {
         assert_eq!(matches(typed), expected, "{typed:?} matches");
