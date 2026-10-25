@@ -7,6 +7,7 @@ pub mod ids;
 pub mod money;
 pub mod permissions;
 pub mod receipt;
+pub mod stock;
 pub mod tax;
 pub mod tender;
 pub mod time;
@@ -20,7 +21,8 @@ pub mod trade_scale;
 // carrying a `UserId` and a `Timestamp`: the checker reports `ids` and `time`,
 // not the `ids` and `audit` §15 predicted — the handle names an approver and an
 // expiry, and reaches for no audit type to do it. `trade_scale` (1.2.4) reads only the
-// pure `Timestamp` and `ClockConfidence` values from `time`. `money`'s external arithmetic dependency is
+// pure `Timestamp` and `ClockConfidence` values from `time`. `stock` (1.10.2) reads `money` and
+// `ids`, and the pure `Timestamp` and `BusinessDate` values from `time`. `money`'s external arithmetic dependency is
 // `rust_decimal`; `time` performs only integer calendar arithmetic. `just
 // acyclic` is what establishes the graph, not this comment.
 pub use audit::{
@@ -48,6 +50,9 @@ pub use receipt::{
     BuyerBlock, DocKind, FiscalBlock, FooterBlock, Language, LoyaltyBlock, MerchantBlock,
     ReceiptDiscount, ReceiptError, ReceiptHeader, ReceiptLine, ReceiptLocale, ReceiptModel,
     ReceiptTender, ReceiptTotals, TextDirection, Watermark,
+};
+pub use stock::{
+    IncomingCost, NewStockEvent, StockError, StockEvent, StockEventKind, StockPosition, StockSource,
 };
 pub use tax::{
     ComponentTax, LineTax, PriceMode, StoreTaxProfile, SupplyDestination, SupplyTaxContext,
