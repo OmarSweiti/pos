@@ -2924,18 +2924,57 @@ which is the same guarantee the old "every kind has a term" would have given had
 
 ## 12 · `stock.rs` — ledger and WAC — [1.10.x, 4.2.x]
 
+As delivered at 1.10.2: the event types and the cost-capture rule. `on_hand`, `recompute_wac` and
+`cost_deviation_exceeds` below are still to come — `on_hand` with the cache-rebuild property (1.10.3),
+the other two with receiving (4.2.2, 4.2.3).
+
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StockEventKind {
     Sale, RefundRestock, RefundDamage, Receive, Adjust, CountCorrection,
     TransferOut, TransferIn, Waste, Rtv, KitExplode,
 }
+impl StockEventKind {
+    pub const ALL: [StockEventKind; 11];
+    pub const fn as_str(self) -> &'static str;   // the `stock_ledger.kind` token
+}
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// The document that moved stock. One variant today; refund, goods-receipt and
+/// stock-count sources arrive with the microsteps that write those documents.
+pub enum StockSource { SaleLine { sale_id: SaleId, line_id: SaleLineId } }
+
+/// What an incoming event's stock cost, per unit. `Unknown` is stored as NULL,
+/// never zero: a real zero is `Observed(zero)`, and collapsing the two would
+/// make an unknown margin look exact.
+pub enum IncomingCost { Observed(Money), Projected(Money), Unknown }
+
+/// A product's stock in one store, as `stock_cache` holds it.
+pub struct StockPosition { pub on_hand: Qty, pub wac: Money, pub is_wac_estimated: bool }
+impl StockPosition {
+    /// Nothing on hand, no cost basis — estimated by definition. The defaults
+    /// `0006`'s projection trigger reads for a product with no cache row.
+    pub fn unstocked(currency: Currency) -> StockPosition;
+}
+
+/// A movement a caller asks the ledger to record. A cost is required on an
+/// incoming event and refused on any other: what outgoing stock cost is the
+/// ledger's answer, not the caller's.
+pub struct NewStockEvent {
+    pub id: StockEventId, pub product_id: ProductId, pub store_id: StoreId,
+    pub kind: StockEventKind,
+    pub qty_delta: Qty,                          // signed: negative leaves the shelf
+    pub incoming_cost: Option<IncomingCost>,
+    pub is_weight_derived: bool,                 // a price-embedded label (§4.3); sale only
+    pub source: Option<StockSource>,             // a sale names its line, and only a sale does
+    pub actor_id: Option<UserId>,
+    pub occurred_at: Timestamp,
+    pub business_date: BusinessDate,
+}
+
+/// A stock event as the ledger stores it.
 pub struct StockEvent {
-    pub id: StockEventId,
-    pub product_id: ProductId,
-    pub store_id: StoreId,
+    pub id: StockEventId, pub product_id: ProductId, pub store_id: StoreId,
     pub kind: StockEventKind,
     pub qty_delta: Qty,
     /// The cost basis in force AT THIS EVENT, on EVERY kind including `Sale`.
@@ -2943,22 +2982,39 @@ pub struct StockEvent {
     /// changes every time a delivery arrives, so January's reported profit moves
     /// in June and the merchant cannot reconcile their own gross margin. This is
     /// I-5 applied to cost, and the ledger is append-only, so there is no second
-    /// chance to add it.
-    /// `None` means no cost basis existed. A real zero is `Some(Money::zero(c))`;
-    /// collapsing the two would make an unknown margin look exact.
+    /// chance to add it. `None` means no cost basis existed.
     pub unit_cost: Option<Money>,
     /// The cost was projected rather than observed, or no basis existed. It is
-    /// true whenever `unit_cost` is `None`, and may also accompany a projected
-    /// non-zero value. Reported with a count, never silently zero.
+    /// true whenever `unit_cost` is `None`. Reported with a count, never silently zero.
     pub is_cost_estimated: bool,
-    /// The stock weight was derived, not measured — a price-embedded label (§4.3).
     pub is_weight_derived: bool,
-    pub ref_doc: Option<Uuid>,
+    pub source: Option<StockSource>,
     pub actor_id: Option<UserId>,
     pub occurred_at: Timestamp,
+    pub business_date: BusinessDate,
+    /// The position this event leaves: `on_hand_after_milli`, `wac_after_minor`
+    /// and `is_wac_estimated`, which `0006` stores on the event itself.
+    pub after: StockPosition,
 }
 
-pub fn on_hand(events: &[StockEvent]) -> Qty;   // = Σ qty_delta
+impl StockEvent {
+    /// The event that records `new` against `before`. Outgoing (and zero)
+    /// events carry the basis in force and leave it. An incoming event into
+    /// stock that is not positive sets the WAC to its own cost; into positive
+    /// stock at the WAC in force, keeps it; with no cost, keeps it and marks it
+    /// estimated. A different cost into positive stock is
+    /// `StockError::WacBlendNotSupported` until `recompute_wac` (4.2.2) lands.
+    pub fn capture(new: &NewStockEvent, before: &StockPosition) -> Result<StockEvent, StockError>;
+}
+
+pub enum StockError {
+    SaleSourceMismatch, SaleNotOutgoing, WeightDerivedOutsideSale,
+    IncomingCostMissing, CostOnOutgoingEvent, NegativeCost,
+    WacBlendNotSupported { wac: Money, incoming: Money },
+    Money(MoneyError),
+}
+
+pub fn on_hand(events: &[StockEvent]) -> Qty;   // = Σ qty_delta — not yet delivered
 
 /// new_wac = (on_hand×wac + qty_in×unit_cost) / (on_hand + qty_in)
 ///
@@ -2974,6 +3030,9 @@ pub fn recompute_wac(on_hand: Qty, wac: Money, qty_in: Qty, unit_cost: Money,
 /// Cost deviation guard — a 10× fat-fingered cost must ask (E.43).
 pub fn cost_deviation_exceeds(new: Money, last: Money, tolerance: Percent) -> bool;
 ```
+
+Properties — [1.10.2]: `prop_an_outgoing_event_carries_the_basis_in_force` ·
+`prop_the_wac_after_an_event_is_a_recorded_cost`.
 
 Properties: `prop_cache_rebuild_matches_ledger` · `prop_wac_never_negative` ·
 `prop_wac_stable_under_zero_qty_receipt` ·

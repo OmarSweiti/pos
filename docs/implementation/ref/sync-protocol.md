@@ -315,6 +315,28 @@ the row's own columns in the same canonical form, `evidence_hash` as lower-case 
   carries exactly this payload. A migration that adds the trigger makes that the second line.
 - **Versioned like every payload**, by the envelope's `schema_version`.
 
+**The payload a `stock_ledger` row travels as** — defined on the same terms, when
+`StockRepository` (1.10.2) became the first code outside a fixture to write a stock event. It is the
+row's own columns in the same canonical form, flags as `0`/`1`:
+
+```json
+{"actor_id":null,"business_date":"2026-10-25","event_seq":2,"id":"<uuid>","is_cost_estimated":0,
+ "is_wac_estimated":0,"is_weight_derived":0,"kind":"sale","note":null,
+ "occurred_at":"2026-10-25T09:00:00.000Z","on_hand_after_milli":8000,"product_id":"<uuid>",
+ "qty_delta_milli":-2000,"qty_step_milli":1000,"reason_code":null,"ref_id":"<uuid of the sale>",
+ "ref_kind":"sale","register_id":"<uuid>","source_sale_line_id":"<uuid>","store_id":"<uuid>",
+ "unit_cost_minor":380,"wac_after_minor":380}
+```
+
+- **The cost basis and the position travel with the event.** A server that replays a register's
+  events reads the margin the register recorded, never one recomputed from a later WAC.
+- **The repository writes no event its envelope does not describe.** `StockRepository::append` refuses
+  unless a ready envelope names the event with exactly this payload; `0006`'s
+  `stock_ledger_has_ready_commit` already refuses one with no envelope at all.
+- **`note` and `reason_code` are `null` until 1.10.5's adjustments fill them.** The keys are present
+  from the first event, so filling them changes no payload's shape.
+- **Versioned like every payload**, by the envelope's `schema_version`.
+
 ---
 
 ## 4 · Clocks

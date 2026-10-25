@@ -154,6 +154,35 @@ pub enum DbError {
     ScaleEvidenceEnvelopeMismatch,
     #[error("stored trade-scale record is malformed: {reason}")]
     StoredScaleRecordInvalid { reason: String },
+    #[error("stock movement refused: {0}")]
+    StockRefused(#[from] pos_domain::StockError),
+    #[error("no store {0} to move stock in")]
+    StockStoreUnknown(pos_domain::StoreId),
+    #[error("no product {0} to move stock of")]
+    StockProductUnknown(pos_domain::ProductId),
+    #[error(
+        "a stock movement of {qty_milli} milli-units is not a whole number of the \
+         product's {step_milli}-milli-unit steps"
+    )]
+    StockQtyOffStep { qty_milli: i64, step_milli: i64 },
+    #[error(
+        "refusing to append a stock event with no delivery envelope naming it: \
+         write the commit and its manifest first, in the same transaction (I-9)"
+    )]
+    StockEnvelopeMissing,
+    #[error(
+        "the delivery envelope naming this stock event carries a different \
+         payload, so what travels would not be what was recorded"
+    )]
+    StockEnvelopeMismatch,
+    #[error(
+        "this store's stock ledger holds more than one register's events, and no \
+         owned sequence orders them against each other (I-7), so the cache is not \
+         rebuilt from them"
+    )]
+    StockReplayAcrossRegisters,
+    #[error("stored stock record is malformed: {reason}")]
+    StoredStockRecordInvalid { reason: String },
 }
 
 /// `PRAGMA synchronous = FULL`, as SQLite reports it back. The pragma accepts a
