@@ -1,0 +1,29 @@
+# pos-domain's fuzz targets (microstep 1.2.8). `cargo fuzz` builds them with
+# libFuzzer and a sanitizer, which only a nightly compiler can do, so this crate
+# is a workspace of its own with its own dated nightly (rust-toolchain.toml,
+# beside this file) and is never part of the register's build. `just fuzz` runs
+# a target, and its comment says how a finding joins the corpus.
+[package]
+name = "pos-domain-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "LicenseRef-Proprietary"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+# Its own workspace: the root one builds every member on the pinned stable
+# compiler, and a member here would put libFuzzer into `cargo build --workspace`.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+pos-domain = { path = ".." }
+
+[[bin]]
+name = "parse_scan"
+path = "fuzz_targets/parse_scan.rs"
+test = false
+doc = false
+bench = false

@@ -1,0 +1,11 @@
+# `cargo fuzz` needs a nightly compiler (it passes -Zsanitizer), and the
+# repository pins a stable one. rustup reads the nearest toolchain file to the
+# directory a command runs in, so this pin applies here and below only — `just
+# fuzz` runs here — and the register's build never sees it.
+#
+# A dated nightly, never `nightly`: a fuzzer whose compiler moves under its
+# corpus changes what a run means. Bump it on purpose, to a nightly at least
+# seven days old, as any other dependency.
+[toolchain]
+channel = "nightly-2026-10-15"
+profile = "minimal"
