@@ -30,8 +30,8 @@ pub use audit::{
 pub use catalog::{
     Barcode, BarcodeKind, CatalogError, DerivedWeight, EmbeddedBarcodeRule, EmbeddedValue,
     MatchedOn, ParsedScan, PriceOrigin, PriceSource, Product, ProductHit, RegulatedKind,
-    RegulatedSaleForm, SaleForm, ScanError, ScanLookup, UnitOfMeasure, ean13_checksum_ok,
-    parse_scan, parse_scan_bytes, resolve_scan,
+    RegulatedSaleForm, SaleForm, ScanError, ScanLookup, UnitOfMeasure, claiming_rule,
+    ean13_checksum_ok, parse_scan, parse_scan_bytes, resolve_scan,
 };
 pub use ids::{
     ApprovalId, CategoryId, CustomerId, IdSource, OrgId, ProductId, PromotionId, RegisterId,

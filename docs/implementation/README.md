@@ -130,8 +130,10 @@ built on it; the `1.2.4` database half and `1.10.2`–`1.10.5` may be built next
 `pos-domain`, with the compile-fail proof that only the scan handler can make a price-embedded
 lookup. Its database half has landed too: `TradeScaleRepository` reads a scale's current evidence and
 a store's active label layouts, and records evidence only with the delivery envelope it travels in.
-Its shell half, the scan handler over both repositories, is next in §1.2's build order, and one named
-test still waits for the cart's `AddLine::from_scan`. `1.6.3` is closed: its seed comparison landed against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
+Its shell half has landed as well: the scan handler reads a code with every layout the store has,
+makes a label answer for the scale that printed it before anything is looked up, and hands the hits to
+`resolve_scan`. One named test still waits for the cart's `AddLine::from_scan`, which is where a label
+becomes one unit, so 1.2.4 stays partially delivered until group 1.4. `1.6.3` is closed: its seed comparison landed against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
 `authorize`, `ApprovalHandle` and `EscalationPolicy` are complete in `pos-domain`, with the two
 compile-fail proofs that a token cannot be forged or substituted across capabilities. Its
 persistence half now stores, validates, reloads and one-use consumes a handle through a

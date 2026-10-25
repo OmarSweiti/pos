@@ -159,6 +159,16 @@ opaque `ParsedScan`, look up `ParsedScan::item_code()` as `Vec<ProductHit>`, the
 a plain product, a price-embedded item carrying a weight or price, an ambiguous collision (E.36), a
 checksum failure (E.40), or nothing at all (E.39). The UI branches on the variant.
 
+**Two refusals come before the lookup, and are not `ScanLookup`s** (`apps/terminal/src-tauri/src/scan.rs`,
+1.2.4). The handler reads with every label layout the store has, switched on or not, and a label then
+answers for its scale: the layout that claimed it (`claiming_rule`) names the scale, and its current
+evidence must allow pricing now on a trusted clock, or the scan ends in the domain's
+`ScalePricingRefusal` with the layout's prefix. A label whose scale is in order but whose layout is
+switched off ends as such. Both are commissioning matters, not damaged labels and not unknown codes —
+an unknown code offers a quick-add, and a deli label must never become one. The command maps them to
+typed errors when it is wired; a label that cannot be read at all (`ScanError` other than a
+checksum) is the third.
+
 `ScanLookup::PriceEmbedded` carries a `PriceSource` that neither the webview nor dependent Rust code
 can construct from an integer
 ([`domain-api.md`](domain-api.md) §4.2–4.3). That is what lets a deli label's price reach a line

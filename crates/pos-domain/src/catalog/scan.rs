@@ -175,11 +175,7 @@ pub fn parse_scan(raw_code: &str, rules: &[EmbeddedBarcodeRule]) -> Result<Parse
     if raw_code.is_empty() {
         return Err(ScanError::Empty);
     }
-    let claimed = rules
-        .iter()
-        .filter(|rule| !rule.prefix.is_empty() && raw_code.starts_with(rule.prefix.as_str()))
-        .max_by_key(|rule| rule.prefix.len());
-    let Some(rule) = claimed else {
+    let Some(rule) = claiming_rule(raw_code, rules).and_then(|index| rules.get(index)) else {
         return Ok(ParsedScan {
             item_code: raw_code.to_owned(),
             raw_code: raw_code.to_owned(),
@@ -223,6 +219,24 @@ pub fn parse_scan(raw_code: &str, rules: &[EmbeddedBarcodeRule]) -> Result<Parse
         raw_code: raw_code.to_owned(),
         kind,
     })
+}
+
+/// Which of `rules` claims `raw_code` as a scale label — its index — or `None`
+/// for an ordinary barcode.
+///
+/// The choice [`parse_scan`] makes, and the only implementation of it: among
+/// the rules whose non-empty prefix the code starts with, the longest prefix
+/// wins. It is public because the shell must know *which* store layout read a
+/// label — and so which scale printed it — before a label may price a line,
+/// and a second copy of this choice in the shell is how the scale that is
+/// checked and the layout that is read come to differ.
+pub fn claiming_rule(raw_code: &str, rules: &[EmbeddedBarcodeRule]) -> Option<usize> {
+    rules
+        .iter()
+        .enumerate()
+        .filter(|(_, rule)| !rule.prefix.is_empty() && raw_code.starts_with(rule.prefix.as_str()))
+        .max_by_key(|(_, rule)| rule.prefix.len())
+        .map(|(index, _)| index)
 }
 
 /// The digits a rule's `(start, len)` names, or a refusal of the rule.
@@ -935,6 +949,66 @@ mod tests {
                     prop_assert_eq!(parsed.kind, ParsedScanKind::Plain);
                 }
                 Err(other) => prop_assert!(false, "unexpected {:?}", other),
+            }
+        }
+    }
+
+    #[test]
+    fn the_claiming_rule_is_the_rule_the_parse_reads_with() {
+        // The longest matching prefix wins, an empty prefix claims nothing,
+        // and a code no rule claims is an ordinary barcode.
+        let short = price_rule();
+        let long = EmbeddedBarcodeRule {
+            prefix: "23".to_owned(),
+            ..weight_rule()
+        };
+        let empty = EmbeddedBarcodeRule {
+            prefix: String::new(),
+            ..price_rule()
+        };
+        let rules = [short, long.clone(), empty];
+        assert_eq!(claiming_rule("2345670004162", &rules), Some(1));
+        assert_eq!(claiming_rule("2045670004162", &rules), Some(0));
+        assert_eq!(claiming_rule("6291041500213", &rules), None);
+        assert_eq!(claiming_rule("6291041500213", &[]), None);
+
+        // And it is the rule the parse reads with: the "23" layout reads a
+        // weight, the "2" layout would have read a price.
+        let label = weight_label("34567", 1250);
+        assert!(label.starts_with("23"));
+        let parsed = parse_scan(&label, &rules).unwrap();
+        assert!(matches!(parsed.kind, ParsedScanKind::Weight { ref rule, .. } if *rule == long));
+    }
+
+    proptest! {
+        #![proptest_config(domain_proptest_config())]
+
+        /// A code a store layout claims is never read as an ordinary barcode,
+        /// and a code none claims always is: whatever the shell decides about
+        /// the claiming layout's scale, the parse agrees with it about which
+        /// codes are labels.
+        #[test]
+        fn prop_a_claimed_code_is_never_read_as_plain(
+            code in "[0-9]{1,14}",
+            prefixes in proptest::collection::vec("[0-9]{0,3}", 0..4),
+        ) {
+            let rules: Vec<EmbeddedBarcodeRule> = prefixes
+                .into_iter()
+                .map(|prefix| EmbeddedBarcodeRule { prefix, ..price_rule() })
+                .collect();
+            let read_as_plain = matches!(
+                parse_scan(&code, &rules),
+                Ok(ParsedScan { kind: ParsedScanKind::Plain, .. })
+            );
+            match claiming_rule(&code, &rules) {
+                None => prop_assert!(read_as_plain, "{} is claimed by no rule yet was not read as plain", code),
+                Some(index) => {
+                    let prefix_matches = rules
+                        .get(index)
+                        .is_some_and(|rule| !rule.prefix.is_empty() && code.starts_with(rule.prefix.as_str()));
+                    prop_assert!(prefix_matches, "rule {} does not claim {}", index, code);
+                    prop_assert!(!read_as_plain, "{} is claimed by rule {} yet was read as plain", code, index);
+                }
             }
         }
     }

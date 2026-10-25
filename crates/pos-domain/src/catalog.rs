@@ -39,8 +39,8 @@ mod scan;
 
 pub use scan::{
     DerivedWeight, EAN13_LEN, EmbeddedBarcodeRule, EmbeddedValue, MatchedOn, ParsedScan,
-    PriceOrigin, PriceSource, ProductHit, ScanError, ScanLookup, ean13_checksum_ok, parse_scan,
-    parse_scan_bytes, resolve_scan,
+    PriceOrigin, PriceSource, ProductHit, ScanError, ScanLookup, claiming_rule, ean13_checksum_ok,
+    parse_scan, parse_scan_bytes, resolve_scan,
 };
 
 use crate::ids::{CategoryId, ProductId, TaxCategoryId};
