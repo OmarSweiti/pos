@@ -229,6 +229,12 @@ impl<'c> ProductRepository<'c> {
     /// retired one is refused, because the conflict clause only updates where
     /// `deleted_at IS NULL` and a write that changed nothing is reported.
     ///
+    /// The statement is prepared once per connection and reused. Preparing it
+    /// compiles every trigger on `product` and both of `0007`'s index triggers
+    /// into it, and a catalogue load — 1.2.7's 50 000-product fixture, or a
+    /// full catalogue sync — spent most of its time doing that again for
+    /// every save.
+    ///
     /// # Errors
     ///
     /// [`DbError::CatalogSaveRefused`] for what [`Product::check_saveable`]
@@ -237,7 +243,7 @@ impl<'c> ProductRepository<'c> {
     /// holds, an unknown category or tax category.
     pub fn upsert(&self, tx: &Transaction<'_>, product: &Product) -> Result<(), DbError> {
         product.check_saveable()?;
-        let changed = tx.execute(
+        let changed = tx.prepare_cached(
             "INSERT INTO product (id, sku, name, name_ar, name_en, category_id, tax_category_id,
                                   unit, qty_step_milli, is_weighed, is_service, is_active,
                                   price_minor, currency, min_age, max_price_minor,
@@ -254,7 +260,8 @@ impl<'c> ProductRepository<'c> {
                  reorder_point_milli = excluded.reorder_point_milli,
                  regulated_kind = excluded.regulated_kind, sale_form = excluded.sale_form
              WHERE product.deleted_at IS NULL",
-            params![
+        )?
+        .execute(params![
                 product.id.as_uuid().as_bytes(),
                 product.sku,
                 product.name_ar,
@@ -273,8 +280,7 @@ impl<'c> ProductRepository<'c> {
                 product.reorder_point.map(Qty::milli),
                 product.regulated_kind().map(RegulatedKind::as_str),
                 product.sale_form().as_str(),
-            ],
-        )?;
+            ])?;
         if changed == 0 {
             return Err(DbError::ProductRetired(product.id));
         }
