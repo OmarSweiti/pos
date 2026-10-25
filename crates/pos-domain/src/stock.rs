@@ -202,8 +202,11 @@ pub enum StockError {
     /// Positive stock at one cost, arriving stock at another: the weighted
     /// average, which is 4.2.2's.
     #[error(
-        "blending a cost of {incoming:?} into positive stock valued at {wac:?} needs the weighted \
-         average, which this build does not compute"
+        "blending a unit cost of {} into positive stock valued at {} ({}, in minor units) needs \
+         the weighted average, which this build does not compute",
+        .incoming.minor(),
+        .wac.minor(),
+        .wac.currency().code()
     )]
     WacBlendNotSupported { wac: Money, incoming: Money },
     #[error(transparent)]
@@ -430,6 +433,14 @@ mod tests {
                 wac: jod(450),
                 incoming: jod(500)
             })
+        );
+        // Read by an operator, so it names the amounts, not the types.
+        assert_eq!(
+            StockEvent::capture(&receipt, &position(2_000, 450, false))
+                .unwrap_err()
+                .to_string(),
+            "blending a unit cost of 500 into positive stock valued at 450 (JOD, in minor units) \
+             needs the weighted average, which this build does not compute"
         );
     }
 
