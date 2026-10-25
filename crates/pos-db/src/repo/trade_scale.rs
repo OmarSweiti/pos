@@ -126,6 +126,10 @@ pub struct ScaleRule {
     pub id: Id,
     pub trade_scale_id: Id,
     pub rule: EmbeddedBarcodeRule,
+    /// Switched on. `0007` refuses to switch a layout on without verified
+    /// evidence and switches it off when that evidence is lost; switching it
+    /// back on is a person's act.
+    pub is_active: bool,
 }
 
 /// Reads scale evidence and label layouts, and records evidence.
@@ -274,11 +278,31 @@ impl<'c> TradeScaleRepository<'c> {
     /// [`DbError::StoredScaleRecordInvalid`] for a layout this build cannot
     /// read back — a negative span, an unknown value kind.
     pub fn active_rules(&self, store: &Id) -> Result<Vec<ScaleRule>, DbError> {
+        Ok(self
+            .rules(store)?
+            .into_iter()
+            .filter(|rule| rule.is_active)
+            .collect())
+    }
+
+    /// Every label layout the store has, switched on or not, in the same
+    /// order as [`Self::active_rules`].
+    ///
+    /// The scan handler reads labels with all of them. A label whose layout is
+    /// switched off is still a label: parsed with the active layouts alone it
+    /// would be looked up as an ordinary barcode, found by nothing, and offered
+    /// to the cashier as an unknown code to quick-add — when what stopped it
+    /// was the scale.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::active_rules`].
+    pub fn rules(&self, store: &Id) -> Result<Vec<ScaleRule>, DbError> {
         let mut statement = self.conn.prepare(
             "SELECT id, trade_scale_id, prefix, item_code_start, item_code_len,
-                    value_start, value_len, value_kind, value_scale, verify_checksum
+                    value_start, value_len, value_kind, value_scale, verify_checksum, is_active
                FROM embedded_barcode_rule
-              WHERE store_id = ?1 AND is_active = 1
+              WHERE store_id = ?1
               ORDER BY length(prefix) DESC, id",
         )?;
         let rows = statement.query_map([store.as_slice()], StoredRule::from_row)?;
@@ -352,6 +376,7 @@ struct StoredRule {
     value_kind: String,
     value_scale: i64,
     verify_checksum: bool,
+    is_active: bool,
 }
 
 impl StoredRule {
@@ -367,6 +392,7 @@ impl StoredRule {
             value_kind: row.get(7)?,
             value_scale: row.get(8)?,
             verify_checksum: row.get(9)?,
+            is_active: row.get(10)?,
         })
     }
 
@@ -411,6 +437,7 @@ impl StoredRule {
                 self.trade_scale_id,
             )?,
             rule,
+            is_active: self.is_active,
         })
     }
 }

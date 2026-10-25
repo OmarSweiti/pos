@@ -259,7 +259,7 @@ fn trade_scale_rules_read_back_as_the_parser_reads_them() {
     let rules = TradeScaleRepository::new(&s.conn)
         .active_rules(&s.chain.store.as_slice().try_into().unwrap())
         .unwrap();
-    let expected = |n: u128, prefix: &str, value_kind| ScaleRule {
+    let expected = |n: u128, prefix: &str, value_kind, is_active| ScaleRule {
         id: id(n),
         trade_scale_id: id(SCALE),
         rule: EmbeddedBarcodeRule {
@@ -270,12 +270,24 @@ fn trade_scale_rules_read_back_as_the_parser_reads_them() {
             value_scale: 1,
             verify_checksum: true,
         },
+        is_active,
     };
     assert_eq!(
         rules,
         [
-            expected(0x51, "21", EmbeddedValue::WeightMilli),
-            expected(0x50, "2", EmbeddedValue::PriceMinor),
+            expected(0x51, "21", EmbeddedValue::WeightMilli, true),
+            expected(0x50, "2", EmbeddedValue::PriceMinor, true),
+        ]
+    );
+    // Every layout, when asked for all of them: the switched-off one is listed
+    // and flagged, so a label it claims is still known to be a label.
+    let store_id: Id = s.chain.store.as_slice().try_into().unwrap();
+    assert_eq!(
+        TradeScaleRepository::new(&s.conn).rules(&store_id).unwrap(),
+        [
+            expected(0x51, "21", EmbeddedValue::WeightMilli, true),
+            expected(0x52, "29", EmbeddedValue::PriceMinor, false),
+            expected(0x50, "2", EmbeddedValue::PriceMinor, true),
         ]
     );
 
