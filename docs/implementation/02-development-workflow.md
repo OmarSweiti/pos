@@ -274,6 +274,7 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just build-web` | require a build script in all five workspace packages, then `pnpm -r build` — **the only place `tsc` runs** |
 | `just pre-push` | `lint` + `test` + `build-web` + `guards` + `secrets`, the all-ref scan. Not the same gate as `.githooks/pre-push`, which Git runs on a push and which scans only the commits being published |
 | `just bench-gate [budget]` | conventions §7's absolute limits and §7.1's regression rule. **Refuses until milestone 5.8** — no device is bought before it, so both reference-register records are blank and 1.12.3 watches budgets relatively until then (conventions §7.2); deliberately not part of `pre-push` |
+| `just fuzz [target] [runs]` | one fuzz target for `runs` inputs — `parse_scan` and 100 000 unless named — on the dated nightly its fuzz crate pins, reading the committed corpus and never writing it; a finding lands in `fuzz/artifacts/` to be minimized and committed. Needs `cargo install cargo-fuzz@0.13.2 --locked`. Deliberately never per pull request: a time-boxed search is not a merge check, so the corpus is replayed by a test instead (1.2.8) |
 | `just branch <name>` | fresh `development`, then a branch off it — **needs a clean tree** (§4.2) |
 | `just pr [title] [body-file] [milestone]` | gates → push → PR into `development` → watch CI. Pass the title on a branch with more than one commit (§4.12); the milestone is derived from a `phase-<0-5>/` branch name |
 | `just evidence-check <pr> <dir>` | validate a PR's evidence directory and preview its comment — writes nothing (§4.12) |
@@ -287,8 +288,7 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just gh-protect` | **refuses, deliberately.** Written against a 403 that a public repository no longer returns, so its `PUT` would now actually apply — with an incomplete required-check list. A reviewed ruleset is the intended replacement; none is configured yet |
 | `just gh-project` | the delivery board and its fields |
 
-Not yet recipes, and the microstep that creates each: `just seed` (1.12.1) · `just fuzz` and its
-first target (1.2.8) · `just test-soak` and the `soak` nextest profile (2.9.6) · the TS type
+Not yet recipes, and the microstep that creates each: `just seed` (1.12.1) · `just test-soak` and the `soak` nextest profile (2.9.6) · the TS type
 generation gate (conventions §13). `just bench-gate` arrived with 1.2.0 and enforces nothing yet:
 its benchmarks land at 1.2.7, 1.4.9, 1.6.2 and 1.11.13, its relative CI comparison at 1.12.3, and it
 refuses every run until 1.2.0's deferred half fills the reference-register records at milestone 5.8.
@@ -1753,7 +1753,7 @@ it.
 | No PII-scrubber test on the logger (G-8) | 1.6.x |
 | The DOM component harness landed at 1.11.0, so `apps/terminal` has a `jsdom` environment, `renderWithProviders`, explicit cleanup and a fake-timer bridge — and three of the four component tests it unblocks have landed — `scan_routes_while_search_focused` and `scan_burst_detected_over_typing` with 1.11.6, `every_action_reachable_without_a_mouse` with 1.11.11. Still owed: `latin_runs_inside_arabic_text_are_bidi_isolated` (1.11.12) | 1.11.12 |
 | **Nothing automated launches the packaged application, on any OS.** CI builds the Tauri bundle and never starts it; `.spec.ts` naming implies Playwright, which drives browser engines and cannot attach to a Tauri webview | 2.9.5 (WebdriverIO + `tauri-driver`). Any platform `tauri-driver` does not support is named there, not left implicit |
-| No fuzzing, for four parsers that consume input this product does not control — the scan parser, the receipt raster path, the UBL builder, and the sync decoder — under a `unwrap`/`expect` ban that makes panic-freedom on hostile input an invariant | 1.2.8, then per parser |
+| Fuzzing covers one of the four parsers that consume input this product does not control — the scan parser, the receipt raster path, the UBL builder, and the sync decoder — under a `unwrap`/`expect` ban that makes panic-freedom on hostile input an invariant. The scan parser's target landed at 1.2.8 and runs by hand with `just fuzz`, its corpus replayed on every pull request; nothing runs the search on a schedule yet | 1.7.8b (the receipt target, and the weekly job for both), then per parser |
 | The soak and long-chaos suites live in the default `cargo nextest --workspace` run, with no selection policy and no runtime budget | 2.9.6, and the `soak` nextest profile |
 | Test coverage is not measured. Deliberate — property tests over invariants are the coverage story here — but `cargo llvm-cov` is worth running once per phase to find modules with **no** test at all. **Mutation testing on `pos-domain` is the better instrument** for the same reason: line coverage says a line ran, and `cargo-mutants` says whether the properties bite when `>=` becomes `>` or `HalfAwayFromZero` becomes `HalfEven` | per-phase, by hand |
 | No installer signing of any kind | 0.3.2 (updater), 5.5.1 (OS) |
