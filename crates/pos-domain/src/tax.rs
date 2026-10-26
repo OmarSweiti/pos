@@ -1458,6 +1458,9 @@ mod tests {
         let cases = [
             (1_250, 1_078, 172),
             (1_160, 1_000, 160),
+            // 3.448 rounds to 3, so the tax is 1. Rounded on its own it would be
+            // 0.48 → 0, and the line would sum to 3 fils, not the 4 charged.
+            (4, 3, 1),
             (1, 1, 0), // 0.862 rounds up, and leaves no tax
             (0, 0, 0),
             (-1_250, -1_078, -172), // a negative gross mirrors a positive one
