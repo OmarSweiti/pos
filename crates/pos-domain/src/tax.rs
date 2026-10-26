@@ -3,17 +3,19 @@
 //! The value types came first (1.3.1): fixed and ad-valorem bases, persisted
 //! component order and named dependencies, and the evidence explaining why one
 //! particular supply received its treatment. [`resolve_components`] (1.3.2)
-//! chooses which rules apply to a line. The arithmetic arrives from 1.3.3 on.
+//! chooses which rules apply to a line, and [`compute_line_tax`] (1.3.3 on)
+//! charges them.
 //! No value here is a jurisdiction rate, rounding rule, tolerance or default:
 //! rates are data, and a rate compiled into code is a release every time the
 //! official schedule changes.
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
 use crate::ids::TaxCategoryId;
-use crate::money::{Money, MoneyError, Percent};
+use crate::money::{Money, MoneyError, Percent, Qty, RoundingRule};
 use crate::time::Timestamp;
 
 /// How a component is classified for charging and reporting.
@@ -143,8 +145,8 @@ pub enum ZeroRatingReason {
 /// return distinguishes, and what evidence each needs, is still an open
 /// question (`ref/domain-api.md` §5). Until the merchant's accountant answers
 /// it, the owner's decision of 26 October 2026 (`ref/merchant-decisions.md`
-/// 6.14) is that only `Domestic` supplies are sold; the calculation that
-/// consumes this context refuses every other destination from 1.3.3 on.
+/// 6.14) is that only `Domestic` supplies are sold: [`compute_line_tax`]
+/// refuses every other destination, and any zero-rating reason.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SupplyTaxContext {
     pub destination: SupplyDestination,
@@ -220,6 +222,39 @@ pub struct TaxRateRule {
     pub profile_scope: Option<StoreTaxProfile>,
 }
 
+/// A line whose arithmetic a later microstep of group 1.3 delivers.
+///
+/// [`compute_line_tax`] refuses such a line by name until that step lands,
+/// rather than approximating it. Each variant leaves with the step that
+/// computes it, and the type leaves with the last of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingTaxShape {
+    /// A tax-inclusive price, which 1.3.4 extracts the tax from.
+    InclusivePrice,
+    /// Anything but one component on the line; 1.3.5 orders several.
+    ComponentCount(usize),
+    /// A fixed amount per unit, alone or beside a rate (1.3.5).
+    FixedAmount,
+    /// A tax charged on another tax (1.3.5).
+    TaxOnTax,
+    /// A store not registered for GST, which 1.3.8 short-circuits.
+    UnregisteredStore,
+}
+
+impl fmt::Display for PendingTaxShape {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PendingTaxShape::InclusivePrice => f.write_str("a tax-inclusive price"),
+            PendingTaxShape::ComponentCount(count) => {
+                write!(f, "a line with {count} tax components")
+            }
+            PendingTaxShape::FixedAmount => f.write_str("a fixed tax amount per unit"),
+            PendingTaxShape::TaxOnTax => f.write_str("a tax charged on another tax"),
+            PendingTaxShape::UnregisteredStore => f.write_str("a store not registered for GST"),
+        }
+    }
+}
+
 /// Every typed refusal the tax engine can return as groups 1.3.2–1.3.6 land.
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum TaxError {
@@ -237,6 +272,20 @@ pub enum TaxError {
     ProfilePackIncomplete(StoreTaxProfile),
     #[error("supply destination {0:?} has no reason code")]
     SupplyReasonMissing(SupplyDestination),
+    #[error(
+        "supply destination {0:?} is refused: only domestic supplies are sold until the \
+         accountant names the zero-rated lines"
+    )]
+    SupplyDestinationRefused(SupplyDestination),
+    #[error(
+        "zero-rating reason {0:?} is refused: no supply is zero-rated until the accountant \
+         names the zero-rated lines"
+    )]
+    ZeroRatingReasonRefused(ZeroRatingReason),
+    #[error("component {0} has a negative rate; a tax rate is never below zero")]
+    NegativeRate(String),
+    #[error("{0} is not computed yet; the line is refused rather than approximated")]
+    NotComputedYet(PendingTaxShape),
     #[error(transparent)]
     Money(#[from] MoneyError),
 }
@@ -330,16 +379,105 @@ fn in_effect(rule: &TaxRateRule, at: Timestamp) -> bool {
     rule.valid_from <= at && rule.valid_to.is_none_or(|to| at < to)
 }
 
+/// The tax on one line (`ref/tax-jordan.md` §4).
+///
+/// Exclusive mode, from 1.3.3: `taxable` is the line's net after discount. The
+/// tax is `net × r`, computed exactly in `rust_decimal` and rounded once by
+/// `rule`, and the gross is `net + tax` with no second rounding. The result
+/// carries the net as the component's base, so a report never re-derives it.
+///
+/// This is the first code to read a [`SupplyTaxContext`], and it enforces the
+/// owner's decision of 26 October 2026 (`ref/merchant-decisions.md` 6.14):
+/// until the accountant names the return's zero-rated lines, only an ordinary
+/// domestic supply is sold. Any other destination is refused, whatever reason
+/// or evidence it carries. A domestic supply that claims a zero-rating reason
+/// is refused too, so no reason reaches a line yet.
+///
+/// The signature is the whole engine's, and the rest of group 1.3 fills it in.
+/// Until each step lands, the lines it computes are refused by name
+/// ([`TaxError::NotComputedYet`]) rather than approximated: a tax-inclusive
+/// price (1.3.4), anything but one percentage of the line net (1.3.5), and a
+/// store not registered for GST (1.3.8). Only a fixed amount per unit reads
+/// `qty`, so it is unused until 1.3.5.
+///
+/// # Errors
+///
+/// In the order they are checked:
+/// [`TaxError::SupplyDestinationRefused`] and
+/// [`TaxError::ZeroRatingReasonRefused`] for a supply that is not ordinary
+/// domestic retail, [`TaxError::NotComputedYet`] for a line a later step
+/// computes, [`TaxError::NegativeRate`] for a rate below zero, and
+/// [`TaxError::Money`] if the tax or the gross leaves the `i64` range.
+pub fn compute_line_tax(
+    taxable: Money,
+    qty: Qty,
+    mode: PriceMode,
+    components: &[TaxComponent],
+    profile: StoreTaxProfile,
+    supply: &SupplyTaxContext,
+    rule: RoundingRule,
+) -> Result<LineTax, TaxError> {
+    if supply.destination != SupplyDestination::Domestic {
+        return Err(TaxError::SupplyDestinationRefused(supply.destination));
+    }
+    if let Some(reason) = supply.reason {
+        return Err(TaxError::ZeroRatingReasonRefused(reason));
+    }
+    if profile == StoreTaxProfile::Unregistered {
+        return Err(TaxError::NotComputedYet(PendingTaxShape::UnregisteredStore));
+    }
+    if mode == PriceMode::Inclusive {
+        return Err(TaxError::NotComputedYet(PendingTaxShape::InclusivePrice));
+    }
+    let [component] = components else {
+        return Err(TaxError::NotComputedYet(PendingTaxShape::ComponentCount(
+            components.len(),
+        )));
+    };
+    let rate = match component.basis {
+        TaxBasis::Percentage { rate } => rate,
+        TaxBasis::PerUnit { .. } | TaxBasis::Compound { .. } => {
+            return Err(TaxError::NotComputedYet(PendingTaxShape::FixedAmount));
+        }
+    };
+    if component.base != TaxBase::LineNet {
+        return Err(TaxError::NotComputedYet(PendingTaxShape::TaxOnTax));
+    }
+    if rate < Percent::ZERO {
+        return Err(TaxError::NegativeRate(component.code.clone()));
+    }
+    // Read by a fixed amount per unit, from 1.3.5.
+    let _ = qty;
+
+    let tax = taxable.mul_percent(rate, rule)?;
+    let gross = taxable.checked_add(tax)?;
+    Ok(LineTax {
+        net: taxable,
+        components: vec![ComponentTax {
+            code: component.code.clone(),
+            treatment: component.treatment,
+            basis: component.basis.clone(),
+            base_amount: taxable,
+            amount: tax,
+        }],
+        tax_total: tax,
+        gross,
+        // A reason was refused above.
+        supply_reason: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
     use crate::ids::TaxCategoryId;
-    use crate::money::{Currency, Money, Percent};
+    use crate::money::{Currency, Money, MoneyError, Percent, Qty, RoundingRule};
     use crate::time::Timestamp;
     use pos_test_support::domain_proptest_config;
     use proptest::prelude::*;
+    use rust_decimal::Decimal;
     use uuid::Uuid;
 
     // These are wire-format review tripwires, not tax arithmetic vectors. Every
@@ -839,6 +977,353 @@ mod tests {
                 prop_assert_eq!(resolve(&rules, end - 1), charges("SYNTH_A", last));
                 prop_assert_eq!(resolve(&rules, end), Err(TaxError::NoRuleInEffect(at(end))));
             }
+        }
+    }
+
+    // ── compute_line_tax (1.3.3) ────────────────────────────────────────
+    // 16% below is an arithmetic vector, the rate of `ref/tax-jordan.md` §4's
+    // worked example, and not a seeded rate: the real pack is 1.3.7's, and
+    // the component codes stay synthetic.
+
+    fn jod(minor: i64) -> Money {
+        Money::from_minor(minor, Currency::JOD)
+    }
+
+    fn percentage(code: &str, ppm: i64) -> TaxComponent {
+        TaxComponent {
+            code: code.to_owned(),
+            treatment: TaxTreatment::Standard,
+            basis: TaxBasis::Percentage {
+                rate: Percent::from_ppm(ppm),
+            },
+            sequence: 0,
+            base: TaxBase::LineNet,
+            is_inclusive_capable: true,
+        }
+    }
+
+    fn domestic() -> SupplyTaxContext {
+        SupplyTaxContext {
+            destination: SupplyDestination::Domestic,
+            reason: None,
+            evidence_ref: None,
+        }
+    }
+
+    /// An exclusive line of one unit, in a standard store, sold domestically.
+    fn exclusive(
+        net: i64,
+        components: &[TaxComponent],
+        rule: RoundingRule,
+    ) -> Result<LineTax, TaxError> {
+        compute_line_tax(
+            jod(net),
+            Qty::ONE,
+            PriceMode::Exclusive,
+            components,
+            StoreTaxProfile::Standard,
+            &domestic(),
+            rule,
+        )
+    }
+
+    #[test]
+    fn exclusive_16pct_adds_exactly() {
+        let sixteen = [percentage("SYNTH_A", 160_000)];
+        // (net, tax, gross) in fils. 1078 is §4's worked example run forwards:
+        // 1078 × 0.16 = 172.48 rounds to 172, and 1078 + 172 is the 1250 the
+        // inclusive extraction starts from.
+        let cases = [
+            (1_000, 160, 1_160),
+            (1_078, 172, 1_250),
+            (3, 0, 3), // 0.48 rounds down
+            (4, 1, 5), // 0.64 rounds up
+            (0, 0, 0),
+            (-1_078, -172, -1_250), // a negative net mirrors a positive one
+        ];
+        for (net, tax, gross) in cases {
+            let line = exclusive(net, &sixteen, RoundingRule::HalfAwayFromZero).unwrap();
+            assert_eq!(
+                line,
+                LineTax {
+                    net: jod(net),
+                    components: vec![ComponentTax {
+                        code: "SYNTH_A".to_owned(),
+                        treatment: TaxTreatment::Standard,
+                        basis: TaxBasis::Percentage {
+                            rate: Percent::from_ppm(160_000),
+                        },
+                        base_amount: jod(net),
+                        amount: jod(tax),
+                    }],
+                    tax_total: jod(tax),
+                    gross: jod(gross),
+                    supply_reason: None,
+                },
+                "net {net}"
+            );
+        }
+
+        // The caller's rule is the one rounding: 172.48 floors and ceils apart.
+        let rounded = |rule| exclusive(1_078, &sixteen, rule).map(|line| line.tax_total);
+        assert_eq!(rounded(RoundingRule::Floor), Ok(jod(172)));
+        assert_eq!(rounded(RoundingRule::Ceil), Ok(jod(173)));
+    }
+
+    #[test]
+    fn a_non_domestic_supply_is_refused() {
+        let sixteen = [percentage("SYNTH_A", 160_000)];
+        let reasons = [
+            None,
+            Some(ZeroRatingReason::Export),
+            Some(ZeroRatingReason::FreeZoneSupply),
+            Some(ZeroRatingReason::EligibleEntity),
+            Some(ZeroRatingReason::ProductCategory),
+        ];
+        let profiles = [
+            StoreTaxProfile::Standard,
+            StoreTaxProfile::Asez,
+            StoreTaxProfile::DevelopmentArea,
+            StoreTaxProfile::Unregistered,
+        ];
+        // Whatever reason or evidence it carries, in any store and either mode:
+        // the refusal comes before anything else is read.
+        for destination in [
+            SupplyDestination::Export,
+            SupplyDestination::FreeZone,
+            SupplyDestination::DevelopmentArea,
+            SupplyDestination::EligibleBody,
+        ] {
+            for reason in reasons {
+                for evidence_ref in [None, Some("SYNTH-DECLARATION-1".to_owned())] {
+                    let supply = SupplyTaxContext {
+                        destination,
+                        reason,
+                        evidence_ref,
+                    };
+                    for profile in profiles {
+                        for mode in [PriceMode::Exclusive, PriceMode::Inclusive] {
+                            assert_eq!(
+                                compute_line_tax(
+                                    jod(1_000),
+                                    Qty::ONE,
+                                    mode,
+                                    &sixteen,
+                                    profile,
+                                    &supply,
+                                    RoundingRule::HalfAwayFromZero,
+                                ),
+                                Err(TaxError::SupplyDestinationRefused(destination)),
+                                "{supply:?} in a {profile:?} store, {mode:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            TaxError::SupplyDestinationRefused(SupplyDestination::Export).to_string(),
+            "supply destination Export is refused: only domestic supplies are sold until the \
+             accountant names the zero-rated lines"
+        );
+    }
+
+    #[test]
+    fn a_domestic_supply_claiming_zero_rating_is_refused() {
+        let sixteen = [percentage("SYNTH_A", 160_000)];
+        for reason in [
+            ZeroRatingReason::Export,
+            ZeroRatingReason::FreeZoneSupply,
+            ZeroRatingReason::EligibleEntity,
+            ZeroRatingReason::ProductCategory,
+        ] {
+            let supply = SupplyTaxContext {
+                destination: SupplyDestination::Domestic,
+                reason: Some(reason),
+                evidence_ref: None,
+            };
+            assert_eq!(
+                compute_line_tax(
+                    jod(1_000),
+                    Qty::ONE,
+                    PriceMode::Exclusive,
+                    &sixteen,
+                    StoreTaxProfile::Standard,
+                    &supply,
+                    RoundingRule::HalfAwayFromZero,
+                ),
+                Err(TaxError::ZeroRatingReasonRefused(reason))
+            );
+        }
+        assert_eq!(
+            TaxError::ZeroRatingReasonRefused(ZeroRatingReason::ProductCategory).to_string(),
+            "zero-rating reason ProductCategory is refused: no supply is zero-rated until the \
+             accountant names the zero-rated lines"
+        );
+    }
+
+    #[test]
+    fn a_line_the_engine_does_not_compute_yet_is_refused() {
+        let sixteen = percentage("SYNTH_A", 160_000);
+        let alone = std::slice::from_ref(&sixteen);
+        let compute = |mode, components: &[TaxComponent], profile| {
+            compute_line_tax(
+                jod(1_000),
+                Qty::ONE,
+                mode,
+                components,
+                profile,
+                &domestic(),
+                RoundingRule::HalfAwayFromZero,
+            )
+            .map(|line| line.tax_total)
+        };
+        let pending = |shape| Err(TaxError::NotComputedYet(shape));
+        let (exclusive, standard) = (PriceMode::Exclusive, StoreTaxProfile::Standard);
+
+        assert_eq!(
+            compute(PriceMode::Inclusive, alone, standard),
+            pending(PendingTaxShape::InclusivePrice)
+        );
+        assert_eq!(
+            compute(exclusive, alone, StoreTaxProfile::Unregistered),
+            pending(PendingTaxShape::UnregisteredStore)
+        );
+        assert_eq!(
+            compute(exclusive, &[], standard),
+            pending(PendingTaxShape::ComponentCount(0))
+        );
+        let two = [sixteen.clone(), percentage("SYNTH_B", 10_000)];
+        assert_eq!(
+            compute(exclusive, &two, standard),
+            pending(PendingTaxShape::ComponentCount(2))
+        );
+        let per_unit = TaxComponent {
+            basis: TaxBasis::PerUnit { amount: jod(50) },
+            is_inclusive_capable: false,
+            ..sixteen.clone()
+        };
+        assert_eq!(
+            compute(exclusive, &[per_unit], standard),
+            pending(PendingTaxShape::FixedAmount)
+        );
+        let compound = TaxComponent {
+            basis: TaxBasis::Compound {
+                rate: Percent::from_ppm(160_000),
+                per_unit: jod(50),
+            },
+            is_inclusive_capable: false,
+            ..sixteen.clone()
+        };
+        assert_eq!(
+            compute(exclusive, &[compound], standard),
+            pending(PendingTaxShape::FixedAmount)
+        );
+        let on_top = TaxComponent {
+            base: TaxBase::NetPlusComponents {
+                codes: vec!["SYNTH_B".to_owned()],
+            },
+            is_inclusive_capable: false,
+            ..sixteen.clone()
+        };
+        assert_eq!(
+            compute(exclusive, &[on_top], standard),
+            pending(PendingTaxShape::TaxOnTax)
+        );
+
+        // A zone store charges its own pack's rule with the same arithmetic.
+        for zone in [StoreTaxProfile::Asez, StoreTaxProfile::DevelopmentArea] {
+            assert_eq!(compute(exclusive, alone, zone), Ok(jod(160)));
+        }
+
+        assert_eq!(
+            TaxError::NotComputedYet(PendingTaxShape::InclusivePrice).to_string(),
+            "a tax-inclusive price is not computed yet; the line is refused rather than \
+             approximated"
+        );
+        assert_eq!(
+            TaxError::NotComputedYet(PendingTaxShape::ComponentCount(2)).to_string(),
+            "a line with 2 tax components is not computed yet; the line is refused rather than \
+             approximated"
+        );
+    }
+
+    #[test]
+    fn a_negative_rate_is_refused() {
+        let rule = RoundingRule::HalfAwayFromZero;
+        assert_eq!(
+            exclusive(1_000, &[percentage("SYNTH_A", -1)], rule),
+            Err(TaxError::NegativeRate("SYNTH_A".to_owned()))
+        );
+        // Zero is a rate, and charges nothing.
+        assert_eq!(
+            exclusive(1_000, &[percentage("SYNTH_A", 0)], rule).map(|line| line.gross),
+            Ok(jod(1_000))
+        );
+        assert_eq!(
+            TaxError::NegativeRate("SYNTH_A".to_owned()).to_string(),
+            "component SYNTH_A has a negative rate; a tax rate is never below zero"
+        );
+    }
+
+    #[test]
+    fn an_overflowing_line_is_refused_not_wrapped() {
+        let rule = RoundingRule::HalfAwayFromZero;
+        // The tax fits; net plus tax does not.
+        assert_eq!(
+            exclusive(i64::MAX, &[percentage("SYNTH_A", 160_000)], rule),
+            Err(TaxError::Money(MoneyError::Overflow))
+        );
+        // The tax itself does not fit.
+        assert_eq!(
+            exclusive(i64::MAX, &[percentage("SYNTH_A", 2_000_000)], rule),
+            Err(TaxError::Money(MoneyError::Overflow))
+        );
+    }
+
+    fn any_rounding_rule() -> impl Strategy<Value = RoundingRule> {
+        prop_oneof![
+            Just(RoundingRule::HalfAwayFromZero),
+            Just(RoundingRule::HalfEven),
+            Just(RoundingRule::Floor),
+            Just(RoundingRule::Ceil),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(domain_proptest_config())]
+
+        /// An exclusive line's tax is its net times the rate, rounded once by
+        /// the caller's rule: never a whole fil from the exact product, and no
+        /// more than half a fil under a half-way rule. Its gross is exactly net
+        /// plus tax. Between 0% and 100% the tax never has the opposite sign to
+        /// the net and is never larger than it.
+        #[test]
+        fn prop_exclusive_tax_rounds_once_and_adds_exactly(
+            net in -1_000_000_000_000i64..=1_000_000_000_000,
+            ppm in 0i64..=1_000_000,
+            rule in any_rounding_rule(),
+        ) {
+            let line = exclusive(net, &[percentage("SYNTH_A", ppm)], rule).unwrap();
+            let tax = line.tax_total.minor();
+            let exact = Decimal::from(net) * Percent::from_ppm(ppm).to_decimal();
+            let error = Decimal::from(tax) - exact;
+            let within = match rule {
+                RoundingRule::Floor => error <= Decimal::ZERO && error > -Decimal::ONE,
+                RoundingRule::Ceil => error >= Decimal::ZERO && error < Decimal::ONE,
+                RoundingRule::HalfAwayFromZero | RoundingRule::HalfEven => {
+                    error.abs() <= Decimal::new(5, 1)
+                }
+            };
+            prop_assert!(within, "{rule:?}: tax {tax} against exact {exact}");
+            prop_assert_eq!(line.net, jod(net));
+            prop_assert_eq!(line.gross, jod(net + tax));
+            let component = line.components.first().unwrap();
+            prop_assert_eq!(line.components.len(), 1);
+            prop_assert_eq!(component.amount, line.tax_total);
+            prop_assert_eq!(component.base_amount, line.net);
+            prop_assert!(tax.signum() * net.signum() >= 0);
+            prop_assert!(tax.abs() <= net.abs());
         }
     }
 }

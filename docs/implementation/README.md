@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **48 of 121 executable microsteps fully complete (~40%)**: `1.1.0`
+Phase 1 has **49 of 121 executable microsteps fully complete (~40%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -118,9 +118,12 @@ stock repository — an event prepared from the position it leaves and appended 
 that carries exactly its payload, the cost basis in force captured on every outgoing event, a
 different cost into positive stock refused rather than blended until 4.2.2, the cache rebuilt from the
 ledger, and every companion row rolled back by a fault in front of each of the transaction's seven
-writes), and `1.3.2` (rate resolution — the components a line's category carries in a store's profile
+writes), `1.3.2` (rate resolution — the components a line's category carries in a store's profile
 at an instant, from-inclusive and to-exclusive, a scoped rule overriding an unscoped one, and an
-overlap or an absence refused rather than a rate guessed).
+overlap or an absence refused rather than a rate guessed), and `1.3.3` (exclusive line tax — the
+net times the rate, rounded once by the caller's rule and added exactly, every supply but an
+ordinary domestic one refused, and every line a later step computes refused by name rather than
+approximated).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
@@ -164,8 +167,8 @@ longest critical path, has landed. It was waiting on which zero-rating reasons t
 distinguishes; the owner decided on 26 October that, while it is unknown whether the merchant makes
 such supplies at all, every supply other than domestic is refused
 ([`ref/merchant-decisions.md`](ref/merchant-decisions.md) 6.14), and the `⚠️ OPEN` item in
-[`ref/domain-api.md`](ref/domain-api.md) §5 now belongs to 2.7.0. `1.3.3` is next on that path, and
-is where that refusal is enforced.
+[`ref/domain-api.md`](ref/domain-api.md) §5 now belongs to 2.7.0. `1.3.3`, the next step on that
+path, has landed and enforces the refusal; `1.3.4`, inclusive pricing, is next.
 Group 1.7's `1.7.8` is **partially delivered**: `ReceiptPrinter::print` returns one of the four
 outcomes, the simulator scripts paper-out and silence at byte *N*, cover-open, offline and a slow
 device, and a sweep injects a fault at every byte of a real receipt. The sweep moves onto a golden

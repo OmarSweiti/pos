@@ -1336,6 +1336,15 @@ pub struct ComponentTax {
 /// the base its `TaxBase` names, and the whole line still rounds once. `qty` is
 /// an argument because a `PerUnit` component is charged per unit and there is
 /// no way back from a line total to a quantity.
+///
+/// As delivered at 1.3.3: exclusive mode, for one `Percentage` on `LineNet`.
+/// The supply is read first. Any destination but `Domestic` is
+/// `SupplyDestinationRefused`, and a domestic supply claiming a reason is
+/// `ZeroRatingReasonRefused` (the zero-rating `⚠️ OPEN` item below). A rate
+/// below zero is `NegativeRate`. Every line a later step computes is
+/// `NotComputedYet`, naming its `PendingTaxShape`: an inclusive price (1.3.4),
+/// any other component count, a fixed amount or a tax on a tax (1.3.5), and an
+/// `Unregistered` store (1.3.8). Each step removes its variant.
 pub fn compute_line_tax(
     taxable: Money,          // line gross (inclusive) or net (exclusive), post-discount
     qty: Qty,
@@ -1406,7 +1415,26 @@ pub enum TaxError {
     #[error("components {0} and {1} depend on each other")] CircularComponentBase(String, String),
     #[error("profile {0:?} has no complete rate pack; refusing to fall back")] ProfilePackIncomplete(StoreTaxProfile),
     #[error("supply destination {0:?} has no reason code")] SupplyReasonMissing(SupplyDestination),
+    #[error("supply destination {0:?} is refused: only domestic supplies are sold until the accountant names the zero-rated lines")]
+                                                    SupplyDestinationRefused(SupplyDestination),
+    #[error("zero-rating reason {0:?} is refused: no supply is zero-rated until the accountant names the zero-rated lines")]
+                                                    ZeroRatingReasonRefused(ZeroRatingReason),
+    #[error("component {0} has a negative rate; a tax rate is never below zero")] NegativeRate(String),
+    #[error("{0} is not computed yet; the line is refused rather than approximated")]
+                                                    NotComputedYet(PendingTaxShape),
     #[error(transparent)]                           Money(#[from] MoneyError),
+}
+
+/// A line a later 1.3 step computes (1.3.3). `Display` reads "a tax-inclusive
+/// price", "a line with 2 tax components", and so on. Each variant leaves with
+/// the step that computes it, and the type with the last.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingTaxShape {
+    InclusivePrice,         // 1.3.4
+    ComponentCount(usize),  // 1.3.5: anything but one
+    FixedAmount,            // 1.3.5: PerUnit or Compound
+    TaxOnTax,               // 1.3.5: NetPlusComponents
+    UnregisteredStore,      // 1.3.8
 }
 ```
 
@@ -1423,9 +1451,10 @@ pub enum TaxError {
 > what evidence must `evidence_ref` point at for each? **Decided for now, by the owner on 26 October
 > 2026** ([`merchant-decisions.md`](merchant-decisions.md) 6.14): whether the merchant makes such
 > supplies at all is not yet known, so until the accountant answers, every `SupplyDestination` other
-> than `Domestic` is refused, whatever reason or evidence accompanies it. The calculation refuses it
-> from 1.3.3 on, and the cashier sells the item as an ordinary domestic sale. The four reasons above
-> stay the vocabulary; none is reachable yet. This no longer blocks 1.3.2, whose rate resolution
+> than `Domestic` is refused, whatever reason or evidence accompanies it. `compute_line_tax` refuses
+> it from 1.3.3 on (`SupplyDestinationRefused`), and the cashier sells the item as an ordinary
+> domestic sale. The four reasons above stay the vocabulary; none is reachable yet, because a
+> domestic supply that claims one is refused too (`ZeroRatingReasonRefused`). This no longer blocks 1.3.2, whose rate resolution
 > never reads the supply. Owner: 2.7.0, which confirms the fiscal code list, or the first
 > non-domestic sale, whichever comes first. Source that settles it: the official ISTD declaration
 > form and its filing instructions, plus the merchant's tax advisor.
@@ -1435,6 +1464,7 @@ Properties — the ones that matter most in the whole crate:
 | Test | Invariant |
 |---|---|
 | `prop_inclusive_net_plus_tax_equals_gross` | Exactly, at fils, for every rate and amount |
+| `prop_exclusive_tax_rounds_once_and_adds_exactly` | One rounding, by the caller's rule, and gross == net + tax exactly |
 | `prop_line_tax_sum_equals_receipt_tax` | Σ line taxes == summary total, **exactly** |
 | `prop_exempt_and_zero_produce_zero_tax_but_differ_in_reporting` | Exempt ≠ zero-rated — they must not collapse (master plan B.1) |
 | `prop_tax_never_exceeds_gross` | |

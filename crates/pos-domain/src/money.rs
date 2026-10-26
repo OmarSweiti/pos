@@ -654,9 +654,10 @@ impl Qty {
 /// `from_ppm` is `const` and infallible by specification, so a refusal written
 /// here would be a comment rather than a rule. The sign restriction on a *tax*
 /// rate belongs where one is built and stored — `CHECK (rate_ppm >= 0)` in
-/// `ref/schema.md` and group 1.3's rate resolution — and a discount stays a
-/// positive rate with the direction living at the call site, which is how
-/// `Money::mul_percent` (1.1.2b) reads.
+/// `ref/schema.md` — and where one is charged, by `tax::compute_line_tax`
+/// (`TaxError::NegativeRate`, 1.3.3). A discount stays a positive rate with
+/// the direction living at the call site, which is how `Money::mul_percent`
+/// (1.1.2b) reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Percent(i64);
 

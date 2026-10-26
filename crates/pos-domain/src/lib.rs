@@ -55,9 +55,9 @@ pub use stock::{
     IncomingCost, NewStockEvent, StockError, StockEvent, StockEventKind, StockPosition, StockSource,
 };
 pub use tax::{
-    ComponentTax, LineTax, PriceMode, StoreTaxProfile, SupplyDestination, SupplyTaxContext,
-    TaxBase, TaxBasis, TaxComponent, TaxError, TaxRateRule, TaxSummaryRow, TaxTreatment,
-    ZeroRatingReason,
+    ComponentTax, LineTax, PendingTaxShape, PriceMode, StoreTaxProfile, SupplyDestination,
+    SupplyTaxContext, TaxBase, TaxBasis, TaxComponent, TaxError, TaxRateRule, TaxSummaryRow,
+    TaxTreatment, ZeroRatingReason, compute_line_tax, resolve_components,
 };
 pub use tender::{
     CashRounding, RefundRouting, Tender, TenderState, TenderType, compute_cash_rounding,
