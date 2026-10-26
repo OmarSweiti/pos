@@ -1364,6 +1364,15 @@ pub struct TaxSummaryRow {
 
 /// Rate resolution is time-effective DATA. Rates change by Cabinet decree;
 /// a rate in code is a re-release (master plan B.1).
+///
+/// As delivered at 1.3.2: `tax-jordan.md` §3 rules 1–4. A rule scoped to the
+/// store's profile overrides an unscoped one for the same component; two left in
+/// effect at the same tier are `OverlappingRules`; none in effect is
+/// `NoRuleInEffect`. Components come back by `sequence`, then code.
+/// `is_inclusive_capable` is derived, since a rule carries no such field: true
+/// only for a `Percentage` on `LineNet`, the one shape 1.3.4's extraction
+/// inverts, until 1.3.5 extends it. An `Unregistered` store resolves only rules
+/// scoped to it; 1.3.8 short-circuits before resolution.
 pub fn resolve_components(
     category: TaxCategoryId,
     rules: &[TaxRateRule],
