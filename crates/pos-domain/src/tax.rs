@@ -12,6 +12,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use crate::ids::TaxCategoryId;
@@ -229,8 +230,6 @@ pub struct TaxRateRule {
 /// computes it, and the type leaves with the last of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PendingTaxShape {
-    /// A tax-inclusive price, which 1.3.4 extracts the tax from.
-    InclusivePrice,
     /// Anything but one component on the line; 1.3.5 orders several.
     ComponentCount(usize),
     /// A fixed amount per unit, alone or beside a rate (1.3.5).
@@ -244,7 +243,6 @@ pub enum PendingTaxShape {
 impl fmt::Display for PendingTaxShape {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PendingTaxShape::InclusivePrice => f.write_str("a tax-inclusive price"),
             PendingTaxShape::ComponentCount(count) => {
                 write!(f, "a line with {count} tax components")
             }
@@ -381,10 +379,19 @@ fn in_effect(rule: &TaxRateRule, at: Timestamp) -> bool {
 
 /// The tax on one line (`ref/tax-jordan.md` §4).
 ///
-/// Exclusive mode, from 1.3.3: `taxable` is the line's net after discount. The
-/// tax is `net × r`, computed exactly in `rust_decimal` and rounded once by
-/// `rule`, and the gross is `net + tax` with no second rounding. The result
-/// carries the net as the component's base, so a report never re-derives it.
+/// `taxable` is the line's amount after discount: its net when `mode` is
+/// exclusive, its gross when inclusive. Either way the arithmetic is exact in
+/// `rust_decimal` and rounds once, by `rule`:
+///
+/// * **Exclusive** (1.3.3): the tax is `net × r`, rounded, and the gross is
+///   `net + tax`.
+/// * **Inclusive** (1.3.4): the net is `gross / (1 + r)`, rounded, and the tax
+///   is `gross − net`, a residual that is never rounded on its own, so net and
+///   tax always add back to the price the customer saw. Only a component that
+///   is inclusive-capable can be extracted this way.
+///
+/// The result carries the net as the component's base, so a report never
+/// re-derives it.
 ///
 /// This is the first code to read a [`SupplyTaxContext`], and it enforces the
 /// owner's decision of 26 October 2026 (`ref/merchant-decisions.md` 6.14):
@@ -395,10 +402,10 @@ fn in_effect(rule: &TaxRateRule, at: Timestamp) -> bool {
 ///
 /// The signature is the whole engine's, and the rest of group 1.3 fills it in.
 /// Until each step lands, the lines it computes are refused by name
-/// ([`TaxError::NotComputedYet`]) rather than approximated: a tax-inclusive
-/// price (1.3.4), anything but one percentage of the line net (1.3.5), and a
-/// store not registered for GST (1.3.8). Only a fixed amount per unit reads
-/// `qty`, so it is unused until 1.3.5.
+/// ([`TaxError::NotComputedYet`]) rather than approximated: anything but one
+/// percentage of the line net (1.3.5), and a store not registered for GST
+/// (1.3.8). Only a fixed amount per unit reads `qty`, so it is unused until
+/// 1.3.5.
 ///
 /// # Errors
 ///
@@ -406,8 +413,9 @@ fn in_effect(rule: &TaxRateRule, at: Timestamp) -> bool {
 /// [`TaxError::SupplyDestinationRefused`] and
 /// [`TaxError::ZeroRatingReasonRefused`] for a supply that is not ordinary
 /// domestic retail, [`TaxError::NotComputedYet`] for a line a later step
-/// computes, [`TaxError::NegativeRate`] for a rate below zero, and
-/// [`TaxError::Money`] if the tax or the gross leaves the `i64` range.
+/// computes, [`TaxError::NotInclusiveCapable`] for an inclusive price on a
+/// component that cannot be extracted, [`TaxError::NegativeRate`] for a rate
+/// below zero, and [`TaxError::Money`] if an amount leaves the `i64` range.
 pub fn compute_line_tax(
     taxable: Money,
     qty: Qty,
@@ -426,9 +434,6 @@ pub fn compute_line_tax(
     if profile == StoreTaxProfile::Unregistered {
         return Err(TaxError::NotComputedYet(PendingTaxShape::UnregisteredStore));
     }
-    if mode == PriceMode::Inclusive {
-        return Err(TaxError::NotComputedYet(PendingTaxShape::InclusivePrice));
-    }
     let [component] = components else {
         return Err(TaxError::NotComputedYet(PendingTaxShape::ComponentCount(
             components.len(),
@@ -443,21 +448,32 @@ pub fn compute_line_tax(
     if component.base != TaxBase::LineNet {
         return Err(TaxError::NotComputedYet(PendingTaxShape::TaxOnTax));
     }
+    if mode == PriceMode::Inclusive && !component.is_inclusive_capable {
+        return Err(TaxError::NotInclusiveCapable);
+    }
     if rate < Percent::ZERO {
         return Err(TaxError::NegativeRate(component.code.clone()));
     }
     // Read by a fixed amount per unit, from 1.3.5.
     let _ = qty;
 
-    let tax = taxable.mul_percent(rate, rule)?;
-    let gross = taxable.checked_add(tax)?;
+    let (net, tax, gross) = match mode {
+        PriceMode::Exclusive => {
+            let tax = taxable.mul_percent(rate, rule)?;
+            (taxable, tax, taxable.checked_add(tax)?)
+        }
+        PriceMode::Inclusive => {
+            let net = extract_net(taxable, rate, rule)?;
+            (net, taxable.checked_sub(net)?, taxable)
+        }
+    };
     Ok(LineTax {
-        net: taxable,
+        net,
         components: vec![ComponentTax {
             code: component.code.clone(),
             treatment: component.treatment,
             basis: component.basis.clone(),
-            base_amount: taxable,
+            base_amount: net,
             amount: tax,
         }],
         tax_total: tax,
@@ -465,6 +481,31 @@ pub fn compute_line_tax(
         // A reason was refused above.
         supply_reason: None,
     })
+}
+
+/// `gross / (1 + rate)`, rounded once by `rule`: the net inside an inclusive
+/// price.
+///
+/// The exact quotient is `gross × 10⁶ / (10⁶ + ppm)`. When it lies on a
+/// rounding boundary it terminates, and `rust_decimal` computes it exactly.
+/// When it does not, its distance from a boundary is a whole number of
+/// `1 / (2 × (10⁶ + ppm))` fils, and the 28 significant digits leave an error
+/// of the order of `10⁻⁹ / (1 + rate)` fils at any `i64` gross, hundreds of
+/// times smaller. So the one rounding lands where exact rational arithmetic
+/// puts it, which the test
+/// `inclusive_extraction_is_exact_over_the_whole_fils_range` checks against
+/// integer division.
+fn extract_net(gross: Money, rate: Percent, rule: RoundingRule) -> Result<Money, TaxError> {
+    let divisor = Decimal::ONE
+        .checked_add(rate.to_decimal())
+        .ok_or(MoneyError::Overflow)?;
+    let exact_net = Decimal::from(gross.minor())
+        .checked_div(divisor)
+        .ok_or(MoneyError::Overflow)?;
+    Ok(Money::from_minor(
+        rule.round_to_i64(exact_net)?,
+        gross.currency(),
+    ))
 }
 
 #[cfg(test)]
@@ -1179,34 +1220,13 @@ mod tests {
             .map(|line| line.tax_total)
         };
         let pending = |shape| Err(TaxError::NotComputedYet(shape));
-        let (exclusive, standard) = (PriceMode::Exclusive, StoreTaxProfile::Standard);
-
-        assert_eq!(
-            compute(PriceMode::Inclusive, alone, standard),
-            pending(PendingTaxShape::InclusivePrice)
-        );
-        assert_eq!(
-            compute(exclusive, alone, StoreTaxProfile::Unregistered),
-            pending(PendingTaxShape::UnregisteredStore)
-        );
-        assert_eq!(
-            compute(exclusive, &[], standard),
-            pending(PendingTaxShape::ComponentCount(0))
-        );
+        let standard = StoreTaxProfile::Standard;
         let two = [sixteen.clone(), percentage("SYNTH_B", 10_000)];
-        assert_eq!(
-            compute(exclusive, &two, standard),
-            pending(PendingTaxShape::ComponentCount(2))
-        );
         let per_unit = TaxComponent {
             basis: TaxBasis::PerUnit { amount: jod(50) },
             is_inclusive_capable: false,
             ..sixteen.clone()
         };
-        assert_eq!(
-            compute(exclusive, &[per_unit], standard),
-            pending(PendingTaxShape::FixedAmount)
-        );
         let compound = TaxComponent {
             basis: TaxBasis::Compound {
                 rate: Percent::from_ppm(160_000),
@@ -1215,10 +1235,6 @@ mod tests {
             is_inclusive_capable: false,
             ..sixteen.clone()
         };
-        assert_eq!(
-            compute(exclusive, &[compound], standard),
-            pending(PendingTaxShape::FixedAmount)
-        );
         let on_top = TaxComponent {
             base: TaxBase::NetPlusComponents {
                 codes: vec!["SYNTH_B".to_owned()],
@@ -1226,21 +1242,41 @@ mod tests {
             is_inclusive_capable: false,
             ..sixteen.clone()
         };
-        assert_eq!(
-            compute(exclusive, &[on_top], standard),
-            pending(PendingTaxShape::TaxOnTax)
-        );
+
+        // Refused whichever way the price is written: the shape is the reason.
+        for mode in [PriceMode::Exclusive, PriceMode::Inclusive] {
+            assert_eq!(
+                compute(mode, alone, StoreTaxProfile::Unregistered),
+                pending(PendingTaxShape::UnregisteredStore)
+            );
+            assert_eq!(
+                compute(mode, &[], standard),
+                pending(PendingTaxShape::ComponentCount(0))
+            );
+            assert_eq!(
+                compute(mode, &two, standard),
+                pending(PendingTaxShape::ComponentCount(2))
+            );
+            assert_eq!(
+                compute(mode, std::slice::from_ref(&per_unit), standard),
+                pending(PendingTaxShape::FixedAmount)
+            );
+            assert_eq!(
+                compute(mode, std::slice::from_ref(&compound), standard),
+                pending(PendingTaxShape::FixedAmount)
+            );
+            assert_eq!(
+                compute(mode, std::slice::from_ref(&on_top), standard),
+                pending(PendingTaxShape::TaxOnTax)
+            );
+        }
 
         // A zone store charges its own pack's rule with the same arithmetic.
         for zone in [StoreTaxProfile::Asez, StoreTaxProfile::DevelopmentArea] {
-            assert_eq!(compute(exclusive, alone, zone), Ok(jod(160)));
+            assert_eq!(compute(PriceMode::Exclusive, alone, zone), Ok(jod(160)));
+            assert_eq!(compute(PriceMode::Inclusive, alone, zone), Ok(jod(138)));
         }
 
-        assert_eq!(
-            TaxError::NotComputedYet(PendingTaxShape::InclusivePrice).to_string(),
-            "a tax-inclusive price is not computed yet; the line is refused rather than \
-             approximated"
-        );
         assert_eq!(
             TaxError::NotComputedYet(PendingTaxShape::ComponentCount(2)).to_string(),
             "a line with 2 tax components is not computed yet; the line is refused rather than \
@@ -1281,6 +1317,7 @@ mod tests {
         );
     }
 
+    /// Every rounding rule a computation policy can name. It excludes none.
     fn any_rounding_rule() -> impl Strategy<Value = RoundingRule> {
         prop_oneof![
             Just(RoundingRule::HalfAwayFromZero),
@@ -1288,6 +1325,31 @@ mod tests {
             Just(RoundingRule::Floor),
             Just(RoundingRule::Ceil),
         ]
+    }
+
+    /// A line amount in fils, up to a trillion dinars either way, zero and
+    /// negatives included. It excludes the far ends of `i64`, where an
+    /// exclusive line's gross overflows; that refusal is
+    /// `an_overflowing_line_is_refused_not_wrapped`.
+    fn line_amounts() -> impl Strategy<Value = i64> {
+        -1_000_000_000_000_000i64..=1_000_000_000_000_000
+    }
+
+    /// Every amount `i64` can hold. Extraction never overflows, because the net
+    /// inside a price is never larger than the price.
+    fn any_gross() -> impl Strategy<Value = i64> {
+        any::<i64>()
+    }
+
+    /// A rate from 0% to 1000% in ppm, past any general sales tax and into an
+    /// excise's range. It excludes negative rates, which are refused.
+    fn rates_to_a_thousand_percent() -> impl Strategy<Value = i64> {
+        0i64..=10_000_000
+    }
+
+    /// Either way a price can be written.
+    fn either_price_mode() -> impl Strategy<Value = PriceMode> {
+        prop_oneof![Just(PriceMode::Exclusive), Just(PriceMode::Inclusive)]
     }
 
     proptest! {
@@ -1324,6 +1386,191 @@ mod tests {
             prop_assert_eq!(component.base_amount, line.net);
             prop_assert!(tax.signum() * net.signum() >= 0);
             prop_assert!(tax.abs() <= net.abs());
+        }
+    }
+
+    // ── compute_line_tax, inclusive (1.3.4) ─────────────────────────────
+
+    /// An inclusive line of one unit, in a standard store, sold domestically.
+    fn inclusive(
+        gross: i64,
+        components: &[TaxComponent],
+        rule: RoundingRule,
+    ) -> Result<LineTax, TaxError> {
+        compute_line_tax(
+            jod(gross),
+            Qty::ONE,
+            PriceMode::Inclusive,
+            components,
+            StoreTaxProfile::Standard,
+            &domestic(),
+            rule,
+        )
+    }
+
+    /// The net inside `gross` at `ppm`, by integer division alone: the exact
+    /// quotient `gross × 10⁶ / (10⁶ + ppm)`, rounded by `rule`. No decimal type
+    /// is involved, so it checks the engine rather than restating it.
+    fn exact_net(gross: i64, ppm: i64, rule: RoundingRule) -> i64 {
+        let numerator = i128::from(gross) * 1_000_000;
+        let denominator = 1_000_000 + i128::from(ppm);
+        // The quotient is whole + fraction / denominator, the fraction in [0, 1).
+        let whole = numerator.div_euclid(denominator);
+        let fraction = numerator.rem_euclid(denominator);
+        let tie = 2 * fraction == denominator;
+        let up = match rule {
+            RoundingRule::Floor => false,
+            RoundingRule::Ceil => fraction > 0,
+            RoundingRule::HalfAwayFromZero if tie => whole >= 0,
+            RoundingRule::HalfEven if tie => whole.rem_euclid(2) == 1,
+            RoundingRule::HalfAwayFromZero | RoundingRule::HalfEven => 2 * fraction > denominator,
+        };
+        i64::try_from(whole + i128::from(up)).unwrap()
+    }
+
+    #[test]
+    fn inclusive_16pct_extracts_exactly() {
+        let sixteen = [percentage("SYNTH_A", 160_000)];
+        // (gross, net, tax) in fils. 1250 is `ref/tax-jordan.md` §4's worked
+        // example: 1250 / 1.16 = 1077.586… rounds to 1078, the tax is the
+        // residual 172, and 1078 + 172 is the 1250 on the shelf.
+        let cases = [
+            (1_250, 1_078, 172),
+            (1_160, 1_000, 160),
+            (1, 1, 0), // 0.862 rounds up, and leaves no tax
+            (0, 0, 0),
+            (-1_250, -1_078, -172), // a negative gross mirrors a positive one
+        ];
+        for (gross, net, tax) in cases {
+            let line = inclusive(gross, &sixteen, RoundingRule::HalfAwayFromZero).unwrap();
+            assert_eq!(
+                line,
+                LineTax {
+                    net: jod(net),
+                    components: vec![ComponentTax {
+                        code: "SYNTH_A".to_owned(),
+                        treatment: TaxTreatment::Standard,
+                        basis: TaxBasis::Percentage {
+                            rate: Percent::from_ppm(160_000),
+                        },
+                        base_amount: jod(net),
+                        amount: jod(tax),
+                    }],
+                    tax_total: jod(tax),
+                    gross: jod(gross),
+                    supply_reason: None,
+                },
+                "gross {gross}"
+            );
+        }
+    }
+
+    #[test]
+    fn inclusive_half_fil_tie_follows_the_rule() {
+        // `ref/domain-api.md` §1.2's boundary: 13 fils at 4% inclusive has an
+        // exact net of 12.5 fils, and the tie rule decides the tax fact.
+        let four = [percentage("SYNTH_A", 40_000)];
+        let split = |rule| {
+            inclusive(13, &four, rule).map(|line| (line.net.minor(), line.tax_total.minor()))
+        };
+        assert_eq!(split(RoundingRule::HalfAwayFromZero), Ok((13, 0)));
+        assert_eq!(split(RoundingRule::HalfEven), Ok((12, 1)));
+        assert_eq!(split(RoundingRule::Floor), Ok((12, 1)));
+        assert_eq!(split(RoundingRule::Ceil), Ok((13, 0)));
+    }
+
+    #[test]
+    fn inclusive_extraction_is_exact_over_the_whole_fils_range() {
+        // Arithmetic vectors, not a claim that any band is enabled for a
+        // merchant: every gross from one fil to a thousand dinars, at each
+        // rate, against integer division. The quotient is the same whatever the
+        // rule; what a rule changes is which boundary it must land the right
+        // side of. Half-away-from-zero meets every half-fil boundary and floor
+        // every whole one (half-even and ceil share them), and the property
+        // below runs all four.
+        for ppm in [0, 10_000, 20_000, 40_000, 50_000, 100_000, 160_000] {
+            let component = [percentage("SYNTH_A", ppm)];
+            for rule in [RoundingRule::HalfAwayFromZero, RoundingRule::Floor] {
+                for gross in 1..=1_000_000 {
+                    let line = inclusive(gross, &component, rule).unwrap();
+                    let (net, tax) = (line.net.minor(), line.tax_total.minor());
+                    assert!(
+                        net == exact_net(gross, ppm, rule) && net + tax == gross,
+                        "{ppm} ppm, {rule:?}, gross {gross}: net {net}, tax {tax}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_inclusive_price_needs_an_inclusive_capable_component() {
+        let held_back = [TaxComponent {
+            is_inclusive_capable: false,
+            ..percentage("SYNTH_A", 160_000)
+        }];
+        let rule = RoundingRule::HalfAwayFromZero;
+        assert_eq!(
+            inclusive(1_250, &held_back, rule),
+            Err(TaxError::NotInclusiveCapable)
+        );
+        // The same component charges an exclusive price.
+        assert_eq!(
+            exclusive(1_000, &held_back, rule).map(|line| line.tax_total),
+            Ok(jod(160))
+        );
+    }
+
+    proptest! {
+        #![proptest_config(domain_proptest_config())]
+
+        /// An inclusive line's net is the price divided by one plus the rate,
+        /// rounded once by the caller's rule, and its tax is what is left: net
+        /// plus tax is the price, to the fil, for any price and any rate.
+        #[test]
+        fn prop_inclusive_net_plus_tax_equals_gross(
+            gross in any_gross(),
+            ppm in rates_to_a_thousand_percent(),
+            rule in any_rounding_rule(),
+        ) {
+            let line = inclusive(gross, &[percentage("SYNTH_A", ppm)], rule).unwrap();
+            prop_assert_eq!(line.net.minor(), exact_net(gross, ppm, rule));
+            prop_assert_eq!(
+                i128::from(line.net.minor()) + i128::from(line.tax_total.minor()),
+                i128::from(gross)
+            );
+            prop_assert_eq!(line.gross, jod(gross));
+            let component = line.components.first().unwrap();
+            prop_assert_eq!(component.base_amount, line.net);
+            prop_assert_eq!(component.amount, line.tax_total);
+        }
+
+        /// Whichever way a price is written, the tax on it is never larger than
+        /// the gross and never of the opposite sign, and neither is the net:
+        /// a line cannot carry more tax than the customer pays.
+        #[test]
+        fn prop_tax_never_exceeds_gross(
+            taxable in line_amounts(),
+            ppm in rates_to_a_thousand_percent(),
+            rule in any_rounding_rule(),
+            mode in either_price_mode(),
+        ) {
+            let line = compute_line_tax(
+                jod(taxable),
+                Qty::ONE,
+                mode,
+                &[percentage("SYNTH_A", ppm)],
+                StoreTaxProfile::Standard,
+                &domestic(),
+                rule,
+            )
+            .unwrap();
+            let (net, tax, gross) =
+                (line.net.minor(), line.tax_total.minor(), line.gross.minor());
+            prop_assert!(tax.abs() <= gross.abs(), "tax {tax} against gross {gross}");
+            prop_assert!(net.abs() <= gross.abs(), "net {net} against gross {gross}");
+            prop_assert!(tax.signum() * gross.signum() >= 0);
+            prop_assert!(net.signum() * gross.signum() >= 0);
         }
     }
 }

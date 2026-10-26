@@ -1337,14 +1337,20 @@ pub struct ComponentTax {
 /// an argument because a `PerUnit` component is charged per unit and there is
 /// no way back from a line total to a quantity.
 ///
-/// As delivered at 1.3.3: exclusive mode, for one `Percentage` on `LineNet`.
-/// The supply is read first. Any destination but `Domestic` is
+/// As delivered at 1.3.3 and 1.3.4: both modes, for one `Percentage` on
+/// `LineNet`. The supply is read first. Any destination but `Domestic` is
 /// `SupplyDestinationRefused`, and a domestic supply claiming a reason is
-/// `ZeroRatingReasonRefused` (the zero-rating `⚠️ OPEN` item below). A rate
-/// below zero is `NegativeRate`. Every line a later step computes is
-/// `NotComputedYet`, naming its `PendingTaxShape`: an inclusive price (1.3.4),
-/// any other component count, a fixed amount or a tax on a tax (1.3.5), and an
-/// `Unregistered` store (1.3.8). Each step removes its variant.
+/// `ZeroRatingReasonRefused` (the zero-rating `⚠️ OPEN` item below). Every line
+/// a later step computes is `NotComputedYet`, naming its `PendingTaxShape`: any
+/// other component count, a fixed amount or a tax on a tax (1.3.5), and an
+/// `Unregistered` store (1.3.8); each step removes its variant. An inclusive
+/// price on a component that is not inclusive-capable is `NotInclusiveCapable`,
+/// and a rate below zero is `NegativeRate`. The inclusive net is
+/// `gross / (1 + r)` rounded once by `rule`, and the tax is `gross − net`,
+/// never rounded on its own; `prop_inclusive_net_plus_tax_equals_gross` holds
+/// the net to integer division for every `i64` gross. Which `rule` a store may
+/// use is not this function's to choose: it is threaded from the store's
+/// approved `tax_computation_policy` (1.3.4's database half).
 pub fn compute_line_tax(
     taxable: Money,          // line gross (inclusive) or net (exclusive), post-discount
     qty: Qty,
@@ -1425,12 +1431,12 @@ pub enum TaxError {
     #[error(transparent)]                           Money(#[from] MoneyError),
 }
 
-/// A line a later 1.3 step computes (1.3.3). `Display` reads "a tax-inclusive
-/// price", "a line with 2 tax components", and so on. Each variant leaves with
-/// the step that computes it, and the type with the last.
+/// A line a later 1.3 step computes (1.3.3). `Display` reads "a line with 2 tax
+/// components", "a store not registered for GST", and so on. Each variant
+/// leaves with the step that computes it — `InclusivePrice` left at 1.3.4 — and
+/// the type with the last.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PendingTaxShape {
-    InclusivePrice,         // 1.3.4
     ComponentCount(usize),  // 1.3.5: anything but one
     FixedAmount,            // 1.3.5: PerUnit or Compound
     TaxOnTax,               // 1.3.5: NetPlusComponents
