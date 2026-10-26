@@ -368,14 +368,16 @@ The target feeds arbitrary bytes and lengths through the scanner boundary and as
 **Done when:** `cargo nextest run -p pos-domain tax::tests::compound_tax_basis_round_trips_without_loss` exits zero with the exact synthetic `Percent` ppm and the per-unit `Money` minor amount and currency unchanged after a serde JSON round-trip.
 
 ### 1.3.2 — `resolve_components`
-**Files:** `crates/pos-domain/src/tax.rs`
+**Files:** `crates/pos-domain/src/tax.rs` · [`ref/domain-api.md`](ref/domain-api.md) §5 (as delivered, and the zero-rating `⚠️ OPEN` item) · [`ref/merchant-decisions.md`](ref/merchant-decisions.md) (row 6.14) · [`00-master-plan.md`](00-master-plan.md) §4a.3 · [`README.md`](README.md) (implementation frontier) · this file (this microstep's `Files:` and `Done when:` lines and its note, and 1.3.3's refusal)
 `valid_from` inclusive, `valid_to` exclusive; scoped rules override unscoped; overlap and absence are both errors, never a guessed 16%.
 **Tests:** `prop_rate_resolution_is_deterministic_at_boundaries` · `overlapping_rules_error` · `no_rule_in_effect_errors` · `scoped_rule_overrides_unscoped`
+**Done when:** `cargo nextest run -p pos-domain tax::tests::` exits zero: the boundary property resolves the old rule up to the millisecond before every change and the new one from the instant itself, in any rule order, and an overlap and an absence are both refused by name.
+> **As delivered, 26 October 2026.** The override is per component and per profile: a rule scoped to the store's profile beats an unscoped one, an unscoped rule is `Standard`'s alone, and two rules left in effect at the same tier are `OverlappingRules`. Components come back by `sequence`, then code, whatever order the pack lists them in. A rule carries no inclusive-capability field, so `is_inclusive_capable` is derived — true only for a percentage of the line net, the one shape 1.3.4's extraction inverts — and 1.3.5 widens it with the arithmetic. Naming an incomplete zone pack as `ProfilePackIncomplete` rather than `NoRuleInEffect` is 1.3.5's too (`an_incomplete_profile_pack_fails_closed`), and an unregistered store's short-circuit is 1.3.8's. **This step was waiting on the zero-rating `⚠️ OPEN` item, and its own code never reads the supply.** The owner decided on 26 October that, while it is unknown whether the merchant makes non-domestic supplies, every one is refused ([`ref/merchant-decisions.md`](ref/merchant-decisions.md) 6.14); the item now belongs to 2.7.0, and 1.3.3 enforces the refusal.
 
 ### 1.3.3 — `compute_line_tax`, exclusive mode
 **Files:** `crates/pos-domain/src/tax.rs`
-Simpler direction first: `tax = net × r`, one rounding.
-**Tests:** `exclusive_16pct_adds_exactly`
+Simpler direction first: `tax = net × r`, one rounding. It is also the first code to read a `SupplyTaxContext`, so it enforces the owner's decision of 26 October 2026 ([`ref/merchant-decisions.md`](ref/merchant-decisions.md) 6.14): a supply whose destination is anything but `Domestic` is refused by name, whatever reason or evidence it carries, until the accountant names the return's zero-rated lines.
+**Tests:** `exclusive_16pct_adds_exactly` · `a_non_domestic_supply_is_refused`
 
 ### 1.3.4 — `compute_line_tax`, inclusive mode
 **Files:** `crates/pos-domain/src/tax.rs`, `crates/pos-db/src/tax_policy.rs` (new), `apps/terminal/src-tauri/src/provisioning.rs`, `apps/terminal/src-tauri/src/commands/sale.rs`

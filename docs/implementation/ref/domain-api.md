@@ -1364,6 +1364,15 @@ pub struct TaxSummaryRow {
 
 /// Rate resolution is time-effective DATA. Rates change by Cabinet decree;
 /// a rate in code is a re-release (master plan B.1).
+///
+/// As delivered at 1.3.2: `tax-jordan.md` §3 rules 1–4. A rule scoped to the
+/// store's profile overrides an unscoped one for the same component; two left in
+/// effect at the same tier are `OverlappingRules`; none in effect is
+/// `NoRuleInEffect`. Components come back by `sequence`, then code.
+/// `is_inclusive_capable` is derived, since a rule carries no such field: true
+/// only for a `Percentage` on `LineNet`, the one shape 1.3.4's extraction
+/// inverts, until 1.3.5 extends it. An `Unregistered` store resolves only rules
+/// scoped to it; 1.3.8 short-circuits before resolution.
 pub fn resolve_components(
     category: TaxCategoryId,
     rules: &[TaxRateRule],
@@ -1390,7 +1399,7 @@ pub struct TaxRateRule {
 
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum TaxError {
-    #[error("no rate rule for category at {0:?}")]  NoRuleInEffect(Timestamp),
+    #[error("no rate rule for category at {0}")]    NoRuleInEffect(Timestamp),  // ISO-8601
     #[error("overlapping rate rules for {0}")]      OverlappingRules(String),
     #[error("inclusive pricing with a component that cannot be inclusive")] NotInclusiveCapable,
     #[error("component {0} names a base component {1} that is not on this line")] UnknownBaseComponent(String, String),
@@ -1410,12 +1419,16 @@ pub enum TaxError {
 > and the General Sales Tax Law as read by the merchant's tax advisor, recorded in
 > [`merchant-decisions.md`](merchant-decisions.md).
 
-> ⚠️ **OPEN — blocks 1.3.2.** Which `ZeroRatingReason` values does the filing return distinguish, and
-> what evidence must `evidence_ref` point at for each? Default until answered: the four listed above,
-> `evidence_ref` mandatory for `Export` and `FreeZoneSupply`, and `SupplyDestination` other than
-> `Domestic` refused until a reason and evidence are supplied. Owner: 1.3.2, with the fiscal code
-> list confirmed by 2.7.0. Source that settles it: the official ISTD declaration form and its filing
-> instructions, plus the merchant's tax advisor.
+> ⚠️ **OPEN — blocks 2.7.0.** Which `ZeroRatingReason` values does the filing return distinguish, and
+> what evidence must `evidence_ref` point at for each? **Decided for now, by the owner on 26 October
+> 2026** ([`merchant-decisions.md`](merchant-decisions.md) 6.14): whether the merchant makes such
+> supplies at all is not yet known, so until the accountant answers, every `SupplyDestination` other
+> than `Domestic` is refused, whatever reason or evidence accompanies it. The calculation refuses it
+> from 1.3.3 on, and the cashier sells the item as an ordinary domestic sale. The four reasons above
+> stay the vocabulary; none is reachable yet. This no longer blocks 1.3.2, whose rate resolution
+> never reads the supply. Owner: 2.7.0, which confirms the fiscal code list, or the first
+> non-domestic sale, whichever comes first. Source that settles it: the official ISTD declaration
+> form and its filing instructions, plus the merchant's tax advisor.
 
 Properties — the ones that matter most in the whole crate:
 
