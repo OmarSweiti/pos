@@ -223,7 +223,7 @@ pub struct TaxRateRule {
 /// Every typed refusal the tax engine can return as groups 1.3.2–1.3.6 land.
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum TaxError {
-    #[error("no rate rule for category at {0:?}")]
+    #[error("no rate rule for category at {0}")]
     NoRuleInEffect(Timestamp),
     #[error("overlapping rate rules for {0}")]
     OverlappingRules(String),
@@ -655,8 +655,13 @@ mod tests {
         let standard =
             |ms| resolve_components(category(), &rules, StoreTaxProfile::Standard, at(ms));
 
-        // Before the rule begins, and at the instant it ends.
+        // Before the rule begins, and at the instant it ends — named as the
+        // instant an operator can read, not a count of milliseconds.
         assert_eq!(standard(999), Err(TaxError::NoRuleInEffect(at(999))));
+        assert_eq!(
+            standard(999).unwrap_err().to_string(),
+            "no rate rule for category at 1970-01-01T00:00:00.999Z"
+        );
         assert_eq!(standard(2_000), Err(TaxError::NoRuleInEffect(at(2_000))));
 
         // Another category's rule is not this category's.

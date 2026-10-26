@@ -1399,7 +1399,7 @@ pub struct TaxRateRule {
 
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum TaxError {
-    #[error("no rate rule for category at {0:?}")]  NoRuleInEffect(Timestamp),
+    #[error("no rate rule for category at {0}")]    NoRuleInEffect(Timestamp),  // ISO-8601
     #[error("overlapping rate rules for {0}")]      OverlappingRules(String),
     #[error("inclusive pricing with a component that cannot be inclusive")] NotInclusiveCapable,
     #[error("component {0} names a base component {1} that is not on this line")] UnknownBaseComponent(String, String),
