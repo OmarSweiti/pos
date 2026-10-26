@@ -2,7 +2,7 @@
 
 Master plan Parts H and J.5, turned into a form you fill in **with the merchant, before coding the feature that depends on it.**
 
-This questionnaire contains **117 questions**. **17 have no default** — `1.3`, `1.7`, `5.2b`, `5.4`, `7.1`, `7.2`, `7.4`, `7.5`, `7.8`, `10.5`, `10.6`, `11.1`, `11.2`, `11.6`, `11.7`, `12.2b`, and `13.5` — and must be answered before their consuming gate. Every other row ships with a **default**, so no other decision blocks the build. Every row names **where the answer lives** — almost always a `setting` row, occasionally a column — and **which gate consumes it**.
+This questionnaire contains **118 questions**. **17 have no default** — `1.3`, `1.7`, `5.2b`, `5.4`, `7.1`, `7.2`, `7.4`, `7.5`, `7.8`, `10.5`, `10.6`, `11.1`, `11.2`, `11.6`, `11.7`, `12.2b`, and `13.5` — and must be answered before their consuming gate. Every other row ships with a **default**, so no other decision blocks the build. Every row names **where the answer lives** — almost always a `setting` row, occasionally a column — and **which gate consumes it**.
 
 Print this. Sit with the merchant. Fill it in. Date it. A decision made by a developer at 2 a.m. is a decision the merchant will dispute in month three.
 
@@ -154,6 +154,7 @@ Print this. Sit with the merchant. Fill it in. Date it. A decision made by a dev
 | 6.11 | Who receives fiscal alarms, on which channel, and who escalates? | merchant owner **and** vendor | | `setting alerts.fiscal_recipients` | 3.9.3 |
 | 6.12 | **Cash-rounding treatment for tax and fiscal purposes** ⚖ | tender-level adjustment only; no line or tax row moves | | `store.cash_round_*` | 1.5.3 |
 | 6.13 | **The pilot's fiscal posture**, per store ⚖ | disabled on dated obligation evidence | | `docs/compliance/pre-pilot.md` | 4.9.0 |
+| 6.14 | Does the merchant make **any supply other than ordinary domestic retail** — exports, free-zone or development-area supplies, sales to an exempt body? If so, which zero-rated lines does the GST return distinguish, and what evidence does each need? ⚖ | **domestic only; every other destination refused** | **Not yet known** — the merchant may or may not (owner, 26 October 2026). The default stands until the accountant answers; revisit before `2.7.0`, or the first time such a sale is asked for. | `sale_supply_tax_context` | 1.3.2 → 1.3.3 |
 
 > **6.7 is the single most important row on this form.** The regulation says "clear before issue"; the architecture says "sell through any outage." Somebody must answer, in writing: *is a pending-clearance paper receipt acceptable, and within what window must it clear?* Record the answer with a name and a date. Do not launch fiscal on an assumption.
 >
@@ -164,6 +165,8 @@ Print this. Sit with the merchant. Fill it in. Date it. A decision made by a dev
 > **6.1b fails closed on purpose.** An unscoped rate rule applies only to the `standard` profile. Selecting ASEZ or a development area without its own complete pack used to inherit the generic 16%, which is a different regime and a different return — silently.
 >
 > **6.13 has exactly three permitted answers** (4.9.1), and "we'll sort it out during the week" is not one of them.
+>
+> **6.14 was answered "not yet known", and that is an answer the design can carry.** A supply the register refuses to zero-rate is still sold, at the ordinary rate. That is the cautious direction: if the sale did qualify, whether and how to correct it is the accountant's call, while a sale zero-rated with no evidence on file is the error an inspection finds. The reasons and their evidence already have a place on the sale (`SupplyTaxContext`); adding them when the accountant answers is planned work, not a redesign.
 
 ---
 

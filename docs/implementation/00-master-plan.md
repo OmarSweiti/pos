@@ -234,8 +234,10 @@ validation is a standing repository rule, and a fabricated tax fact is worse tha
 #### The six that still block Phase 1, and one answered
 
 Every owner above is Phase 2 or later, which read as though nothing in Phase 1 waits on an outside
-answer. Six `⚠️ OPEN` blocks say otherwise, and two of them contradict Phase 1's own exit gate. The
-count was seven until 24 September, when #234 answered the WAL-reset question below. Find the rest
+answer. Five `⚠️ OPEN` blocks say otherwise, and two of them contradict Phase 1's own exit gate. The
+count was seven until 24 September, when #234 answered the WAL-reset question below, and six until
+26 October, when the owner's decision on zero-rating ([`merchant-decisions.md`](ref/merchant-decisions.md)
+6.14) moved that question to 2.7.0 and let 1.3.2 proceed on a refusal. Find the rest
 with `grep -rn 'OPEN — blocks 1\.' docs/implementation/`.
 
 | Question | Owner | Default today | Settled by |
@@ -245,7 +247,7 @@ with `grep -rn 'OPEN — blocks 1\.' docs/implementation/`.
 | Which JSMO mark or certificate proves a trade scale is verified, when it expires, and what forces reverification | `1.2.4` | **`embedded_barcode_rule.is_active` stays `0`; no scale-derived price reaches checkout** | current JSMO metrology instructions, or written JSMO confirmation for the commissioned scale |
 | Whether the bundled SQLCipher/SQLite runtime carries the upstream WAL-reset corruption fix for every source-connection and checkpoint pattern | `1.8.1`, constants at `1.8.0` | **Answered 24 September (#234): it does not.** The build is SQLite `3.50.4` under SQLCipher `4.10.0`, and the fix is SQLite `3.51.3` / SQLCipher `4.14.0`. So **one source connection only** stands as a constraint until #244 lands the bump | the resolved runtime's own advisory and release evidence: [`ref/plan-validation.md`](ref/plan-validation.md) §5 carries it |
 | The taxable base when a line carries both General and Special Sales Tax | `1.3.5` | the engine fails closed; no SST rule is seeded | the merchant's tax advisor on their own SST position |
-| Which `ZeroRatingReason` values the filing return distinguishes | `1.3.2` | — | the return's own instructions, via the accountant |
+| Which `ZeroRatingReason` values the filing return distinguishes | `2.7.0`, or the first non-domestic sale | **every supply other than domestic is refused** — the owner's decision of 26 October 2026, [`merchant-decisions.md`](ref/merchant-decisions.md) 6.14, while whether the merchant makes such supplies is unknown | the return's own instructions, via the accountant |
 | Which second factor exists on a Jordanian minimarket counter for high-value refunds, user administration and recovery | `1.6.2` | manager PIN + audited reason + exception report | the merchant, on what hardware and process they will actually operate |
 
 **Two of these are in direct conflict with the Phase-1 exit gate, and the conflict is not

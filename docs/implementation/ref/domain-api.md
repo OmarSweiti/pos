@@ -1410,12 +1410,16 @@ pub enum TaxError {
 > and the General Sales Tax Law as read by the merchant's tax advisor, recorded in
 > [`merchant-decisions.md`](merchant-decisions.md).
 
-> ⚠️ **OPEN — blocks 1.3.2.** Which `ZeroRatingReason` values does the filing return distinguish, and
-> what evidence must `evidence_ref` point at for each? Default until answered: the four listed above,
-> `evidence_ref` mandatory for `Export` and `FreeZoneSupply`, and `SupplyDestination` other than
-> `Domestic` refused until a reason and evidence are supplied. Owner: 1.3.2, with the fiscal code
-> list confirmed by 2.7.0. Source that settles it: the official ISTD declaration form and its filing
-> instructions, plus the merchant's tax advisor.
+> ⚠️ **OPEN — blocks 2.7.0.** Which `ZeroRatingReason` values does the filing return distinguish, and
+> what evidence must `evidence_ref` point at for each? **Decided for now, by the owner on 26 October
+> 2026** ([`merchant-decisions.md`](merchant-decisions.md) 6.14): whether the merchant makes such
+> supplies at all is not yet known, so until the accountant answers, every `SupplyDestination` other
+> than `Domestic` is refused, whatever reason or evidence accompanies it. The calculation refuses it
+> from 1.3.3 on, and the cashier sells the item as an ordinary domestic sale. The four reasons above
+> stay the vocabulary; none is reachable yet. This no longer blocks 1.3.2, whose rate resolution
+> never reads the supply. Owner: 2.7.0, which confirms the fiscal code list, or the first
+> non-domestic sale, whichever comes first. Source that settles it: the official ISTD declaration
+> form and its filing instructions, plus the merchant's tax advisor.
 
 Properties — the ones that matter most in the whole crate:
 
