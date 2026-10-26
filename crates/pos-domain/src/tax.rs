@@ -972,6 +972,23 @@ mod tests {
         );
     }
 
+    /// A run of two to seven consecutive rules for one component: distinct
+    /// start instants within about eleven days either side of the epoch,
+    /// whether the last rule is open-ended, and how far to rotate the order the
+    /// pack lists them in. It excludes a gap between rules, which
+    /// `no_rule_in_effect_errors` covers, and an overlap, which
+    /// `overlapping_rules_error` does.
+    fn consecutive_rate_changes() -> impl Strategy<Value = (Vec<i64>, bool, usize)> {
+        (
+            prop::collection::btree_set(-1_000_000_000i64..1_000_000_000, 2..8),
+            any::<bool>(),
+            0usize..8,
+        )
+            .prop_map(|(starts, open_ended, rotation)| {
+                (starts.into_iter().collect(), open_ended, rotation)
+            })
+    }
+
     proptest! {
         #![proptest_config(domain_proptest_config())]
 
@@ -981,11 +998,8 @@ mod tests {
         /// last — whatever order the pack happens to list its rules in.
         #[test]
         fn prop_rate_resolution_is_deterministic_at_boundaries(
-            starts in prop::collection::btree_set(-1_000_000_000i64..1_000_000_000, 2..8),
-            open_ended in any::<bool>(),
-            rotation in 0usize..8,
+            (starts, open_ended, rotation) in consecutive_rate_changes(),
         ) {
-            let starts: Vec<i64> = starts.into_iter().collect();
             let first = *starts.first().unwrap();
             let end = (!open_ended).then(|| starts.last().unwrap() + 1_000);
             // Rule i runs from starts[i] to starts[i + 1], the last one to
@@ -1341,6 +1355,13 @@ mod tests {
         any::<i64>()
     }
 
+    /// A rate from 0% to 100% in ppm, the range in which an exclusive tax is
+    /// never larger than its net. It excludes negative rates, which are refused
+    /// (`a_negative_rate_is_refused`).
+    fn rates_to_a_hundred_percent() -> impl Strategy<Value = i64> {
+        0i64..=1_000_000
+    }
+
     /// A rate from 0% to 1000% in ppm, past any general sales tax and into an
     /// excise's range. It excludes negative rates, which are refused.
     fn rates_to_a_thousand_percent() -> impl Strategy<Value = i64> {
@@ -1362,8 +1383,8 @@ mod tests {
         /// the net and is never larger than it.
         #[test]
         fn prop_exclusive_tax_rounds_once_and_adds_exactly(
-            net in -1_000_000_000_000i64..=1_000_000_000_000,
-            ppm in 0i64..=1_000_000,
+            net in line_amounts(),
+            ppm in rates_to_a_hundred_percent(),
             rule in any_rounding_rule(),
         ) {
             let line = exclusive(net, &[percentage("SYNTH_A", ppm)], rule).unwrap();
