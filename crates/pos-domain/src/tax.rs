@@ -749,6 +749,8 @@ mod tests {
 
     #[test]
     fn resolved_components_come_in_application_order() {
+        // The code that sorts first alphabetically is applied last, so only an
+        // order by `sequence` passes, not one by code or by the pack's listing.
         let fixed = TaxRateRule {
             basis: TaxBasis::PerUnit {
                 amount: Money::from_minor(50, Currency::EUR),
@@ -760,15 +762,15 @@ mod tests {
             base: TaxBase::NetPlusComponents {
                 codes: vec!["SYNTH_FIXED".to_owned()],
             },
-            ..rule("SYNTH_GENERAL", 123_456, 0, None, None)
+            ..rule("SYNTH_A_ON_TOP", 123_456, 0, None, None)
         };
-        let plain = rule("SYNTH_ALSO_FIRST", 7_000, 0, None, None);
+        let plain = rule("SYNTH_Z_PLAIN", 7_000, 0, None, None);
 
-        // Listed last-first; resolved by sequence, then code. Only the plain
-        // percentage of the line net can come back out of an inclusive price.
+        // Within one sequence, by code. Only the plain percentage of the line
+        // net can come back out of an inclusive price.
         let resolved = resolve_components(
             category(),
-            &[on_top, fixed, plain],
+            &[on_top, plain, fixed],
             StoreTaxProfile::Standard,
             at(10),
         )
@@ -779,9 +781,9 @@ mod tests {
                 .map(|c| (c.code.as_str(), c.sequence, c.is_inclusive_capable))
                 .collect::<Vec<_>>(),
             [
-                ("SYNTH_ALSO_FIRST", 0, true),
                 ("SYNTH_FIXED", 0, false),
-                ("SYNTH_GENERAL", 1, false)
+                ("SYNTH_Z_PLAIN", 0, true),
+                ("SYNTH_A_ON_TOP", 1, false)
             ]
         );
     }
