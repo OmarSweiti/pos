@@ -625,15 +625,18 @@ pr $title='' $body='' $milestone='':
 
     # The board (03-github-workflow.md §5) holds status and is never a gate: a
     # card that fails to file leaves the PR open and says how to file it. It is
-    # filed again once the checks are green, because the labeler has run by then
-    # and its risk labels set the card's Risk.
+    # filed again once the checks have settled, because the labeler has run by
+    # then and its risk labels set the card's Risk — red checks included, which
+    # is when a card's Risk matters most. The recipe still fails as they did.
     board() {
       bash ./scripts/gh-project-item.sh "$created_pr" \
         || echo "pr: the PR is open, but its card on the board is not filed or current: run just gh-project-item $created_pr" >&2
     }
     board
-    bash ./scripts/watch-pr-checks.sh --awaiting-evidence "$created_pr"
+    checks=0
+    bash ./scripts/watch-pr-checks.sh --awaiting-evidence "$created_pr" || checks=$?
     board
+    exit "$checks"
 
 # Publish a pull request's validation evidence: the screenshots, committed to the
 # pos-evidence repository where no clone of the code downloads them, and one
