@@ -660,6 +660,7 @@ step.
 ```bash
 gh auth refresh -s project,read:project    # once — the default login lacks this scope
 just gh-project                            # creates missing fields; refuses schema drift
+just gh-project-item <pr>                  # files one pull request, or brings its card up to date
 ```
 
 **Live verification note — 8 September 2026:** project **#4 `POS delivery`** exists on the personal
@@ -681,11 +682,40 @@ What is **not** set is each view's grouping and sorting. `createProjectV2View` a
 input anywhere in the schema, so those two remain clicks — `Phase plan`'s in particular. Every
 view's name, layout and filter already match the table below.
 
-**Auto-add does not work, and it is the one automation that must be configured by hand.** Issues
-#68–#71, #110–#115 and #119–#120 were all created and none reached the board until added explicitly
-with `gh project item-add`. The other built-in workflows do work: "Item closed" moved #110 and #117
-to `Done` on merge with no intervention. Until Auto-add is configured, **add every new issue by
-hand**.
+**Auto-add is the one automation that has to be set up by hand, and until 27 October 2026 it had
+not been.** Issues #68–#71, #110–#115 and #119–#120 were all created and none reached the board
+until added explicitly with `gh project item-add`. Reading the board's workflows that day explained
+why: six built-in workflows were enabled — *Auto-add sub-issues to project*, *Auto-close issue*,
+*Item added to project*, *Item closed*, *Pull request linked to issue* and *Pull request merged* —
+and *Auto-add to project* was not among them at all. No API creates one, so the owner created it
+the same day: project → ⋯ → Workflows → *Auto-add to project* → repository `OmarSweiti/pos`, filter
+`is:issue,pr is:open` → save and turn on. The API now reports it enabled, but it exposes no
+workflow's filter, so that half rests on the owner's settings page. It catches only items opened or
+updated after it was turned on; #257 and #266, opened before, were added by hand. The other
+workflows work: "Item closed" moved #110 and #117 to `Done` on merge with no intervention, and
+moved #257 when it was closed on 27 October.
+
+**Every pull request is on the board, with the fields its title states.** `just pr` runs
+[`gh-project-item.sh`](../../scripts/gh-project-item.sh) on the pull request it has opened, and
+again once its checks are green: *Status* `In Progress`, and *Phase*, *Group* and *Microstep* from
+the title's `[N.N.N]`, so `[1.3.5]` files under `1 sellable MVP`, `1.3`, `1.3.5`. *Risk* is the
+most consequential `risk:` label the labeler applied, or `none`; a title ending in `[—]` names no
+step and leaves those three empty. *Pull request merged* then moves the card to `Done`. It runs as
+the owner's own login, because the engineering app that opens the pull request carries no project
+permission, and the board is status rather than a gate: a card that fails to file leaves the pull
+request open and prints the `just gh-project-item` command that files it. Auto-add, once on, is a
+second net under the same cards; adding an item already on the board returns that item. On 27
+October 2026 all 242 merged pull requests, #1 to #297, were filed this way, and the board was then
+read back against `gh pr list --state merged`: every card present, `Done`, and carrying its title's
+step and its labels' risk. The ten closed without merging were not filed, and the script refuses
+them, because they have no outcome to track.
+
+**A microstep's issue and its pull request are two cards, and the issue is the one that carries
+the plan.** §4 opens a *Microstep* issue for the step in flight, and the pull request says
+`Closes #<issue>`. *Pull request linked to issue* moves the issue as soon as the pull request
+names it, the merge closes it, and *Item closed* moves it to `Done`; the pull request's own card
+records what shipped. A pull request with no issue — a dependency bump, a tooling fix — is still
+filed, so nothing that changes `development` is missing from the board.
 
 The bootstrap validates exact field types, duplicate names, and every single-select option before
 it calls the board ready. A same-named but incompatible field is a blocking manual correction, not
@@ -713,7 +743,8 @@ Four views, and no more. A board with nine views is a board nobody reads:
 | **Money & compliance** | table, filtered to `Risk` ∈ money path, migration, compliance | the rows where a mistake costs money instead of time |
 
 Enable the three built-in workflows (project → ⋯ → Workflows) — they remove the step everyone
-forgets: *item closed* → Done, *PR merged* → Done, *auto-add* new open issues.
+forgets: *item closed* → Done, *PR merged* → Done, *auto-add* new open issues and pull requests
+(`is:issue,pr is:open`).
 
 **The board is not the plan.** The phase files are the plan. The board holds *status*: what is in
 flight, what is blocked, what is done. When the two disagree, the phase file is right and the
@@ -1130,6 +1161,7 @@ For the repository itself — idempotent, run again whenever this document chang
 just gh-bootstrap-dry     # read it first
 just gh-bootstrap         # labels, milestones, merge behaviour, default branch
 just gh-project           # the board and its fields; views by hand (grouping has no API)
+                          # then, once, by hand: the board's Auto-add workflow (§5)
 ./scripts/gh-actions-policy.sh --dry-run  # preflight now; no live mutation
 # after this hardened setup is merged on the default branch:
 ./scripts/gh-actions-policy.sh            # re-apply and verify SHA-only Actions (idempotent; already true)
