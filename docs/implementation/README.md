@@ -129,7 +129,8 @@ rate, every component rounded once on a base it can be re-derived from, a depend
 incomplete zone pack refused, and a tax-inclusive price on several components refused until a
 source says how it divides), and `1.3.6` (the receipt tax summary — the exact sum of the carried
 components, one row per rate, so an exempt line and a zero-rated one are two rows although neither
-carries tax, and a line that no longer adds up refused rather than summarized).
+carries tax, a zero-rated or exempt component that charges anything refused, and a line that no
+longer adds up refused rather than summarized).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
