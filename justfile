@@ -450,6 +450,11 @@ gh-protect:
 gh-project:
     bash ./scripts/gh-project.sh
 
+# File a pull request on the delivery board, or bring its card up to date. `just pr`
+# runs it for every pull request it opens. Needs the same 'project' scope.
+gh-project-item $pr:
+    bash ./scripts/gh-project-item.sh "$pr"
+
 # Start a group. `just branch phase-1/group-3-tax`. The `$` exports the recipe
 # parameter as data; it is never interpolated into shell source.
 branch $name:
@@ -617,7 +622,18 @@ pr $title='' $body='' $milestone='':
     # every one green except `validation`, which waits for the evidence the
     # validate-pr skill posts next.
     created_pr=$(gh pr view --json url --jq .url)
+
+    # The board (03-github-workflow.md §5) holds status and is never a gate: a
+    # card that fails to file leaves the PR open and says how to file it. It is
+    # filed again once the checks are green, because the labeler has run by then
+    # and its risk labels set the card's Risk.
+    board() {
+      bash ./scripts/gh-project-item.sh "$created_pr" \
+        || echo "pr: the PR is open, but its card on the board is not filed or current: run just gh-project-item $created_pr" >&2
+    }
+    board
     bash ./scripts/watch-pr-checks.sh --awaiting-evidence "$created_pr"
+    board
 
 # Publish a pull request's validation evidence: the screenshots, committed to the
 # pos-evidence repository where no clone of the code downloads them, and one

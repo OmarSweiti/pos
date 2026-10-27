@@ -308,9 +308,9 @@ Three things to do once by hand. Only the third is a hard API gap:
 3. AUTOMATION — free, no API can set it, and it removes the step everyone
    forgets. Auto-add is the one that matters: until it is configured, every new
    issue must be added with "gh project item-add", and every issue opened so far
-   had to be:
+   had to be. Pull requests are filed by just pr either way (gh-project-item.sh):
      project → ⋯ → Workflows → enable
        "Item closed"          → set Status = Done
        "Pull request merged"  → set Status = Done
-       "Auto-add to project"  → filter: is:issue is:open  (repo: OmarSweiti/pos)
+       "Auto-add to project"  → filter: is:issue,pr is:open  (repo: OmarSweiti/pos)
 TXT
