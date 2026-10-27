@@ -1879,6 +1879,23 @@ mod tests {
         );
         assert_eq!(carried.gross, jod(13_340));
 
+        // Its two parts are summed before its one rounding: 10% of 1005 is
+        // 100.5 and 333 fils on 1.5 units is 499.5, so it charges exactly 600,
+        // where rounding each part first would charge 601.
+        let halves = [component(
+            "SYNTH_SST",
+            0,
+            TaxBasis::Compound {
+                rate: Percent::from_ppm(100_000),
+                per_unit: jod(333),
+            },
+            &[],
+        )];
+        assert_eq!(
+            line(PriceMode::Exclusive, 1_005, 1_500, &halves, half_away).map(|l| l.tax_total),
+            Ok(jod(600))
+        );
+
         // A weighed 1.5 units at 333 fils a unit is 499.5 fils, which each rule
         // rounds once; the components above it are charged on what it rounded
         // to, which is what the line carries.
@@ -2282,6 +2299,14 @@ mod tests {
         })
     }
 
+    /// A tax-inclusive price: any amount `i64` holds, or one from nothing to a
+    /// million dinars, where a fixed amount of up to a thousand dinars on up to
+    /// a thousand units is as likely to exceed the price as not. A draw from
+    /// the whole of `i64` alone almost never lands that low.
+    fn inclusive_prices() -> impl Strategy<Value = i64> {
+        prop_oneof![any::<i64>(), 0i64..=1_000_000_000]
+    }
+
     /// A quantity from none to a thousand units, fractions of a unit included.
     /// It excludes negative quantities, which no sale line carries.
     fn quantities() -> impl Strategy<Value = i64> {
@@ -2384,7 +2409,7 @@ mod tests {
         /// remainder no amount can hold; no other price is.
         #[test]
         fn prop_inclusive_fixed_amount_extracts_exactly(
-            gross in any_gross(),
+            gross in inclusive_prices(),
             fils in 0i64..=1_000_000,
             qty in quantities(),
             ppm in rates_to_a_thousand_percent(),
