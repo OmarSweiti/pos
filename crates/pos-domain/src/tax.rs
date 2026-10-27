@@ -3,13 +3,15 @@
 //! The value types came first (1.3.1): fixed and ad-valorem bases, persisted
 //! component order and named dependencies, and the evidence explaining why one
 //! particular supply received its treatment. [`resolve_components`] (1.3.2)
-//! chooses which rules apply to a line, and [`compute_line_tax`] (1.3.3 on)
-//! charges them.
+//! chooses which rules apply to a line, [`compute_line_tax`] (1.3.3 on)
+//! charges them, and [`summarize_tax`] (1.3.6) adds a receipt's lines up by
+//! rate.
 //! No value here is a jurisdiction rate, rounding rule, tolerance or default:
 //! rates are data, and a rate compiled into code is a release every time the
 //! official schedule changes.
 
 use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 use std::fmt;
 
 use rust_decimal::Decimal;
@@ -185,7 +187,8 @@ pub struct ComponentTax {
     pub amount: Money,
 }
 
-/// One receipt-summary row, grouped later by all rate-defining facts.
+/// One receipt-summary row, grouped by [`summarize_tax`] on all rate-defining
+/// facts.
 ///
 /// A fixed per-unit amount is part of the grouping key: equal percentage rates
 /// with different fixed amounts are not the same rate. A supply reason likewise
@@ -197,8 +200,10 @@ pub struct TaxSummaryRow {
     pub rate: Percent,
     pub per_unit: Option<Money>,
     pub reason: Option<ZeroRatingReason>,
+    /// What the row's rate was charged on: the sum of its components' bases.
     pub net: Money,
     pub tax: Money,
+    /// `net + tax`.
     pub gross: Money,
 }
 
@@ -289,6 +294,11 @@ pub enum TaxError {
     InclusiveSplitUndefined(usize),
     #[error("component {0} charges a fixed amount larger than the tax-inclusive price")]
     FixedTaxExceedsPrice(String),
+    #[error(
+        "the line at position {0} does not add up, its components to its tax or its net and tax \
+         to its gross; a summary of it would disagree with the receipt"
+    )]
+    LineTaxUnbalanced(usize),
     #[error(transparent)]
     Money(#[from] MoneyError),
 }
@@ -701,6 +711,127 @@ fn extract_net(
         rule.round_to_i64(exact_net)?,
         gross.currency(),
     ))
+}
+
+/// A receipt's tax summary: one row per rate its lines were charged at, each
+/// the exact sum of the carried amounts it groups (`ref/tax-jordan.md` §4).
+///
+/// A row is keyed by everything that makes a rate a distinct rate on the
+/// filing report: the component's code, its treatment, its percentage, its
+/// fixed amount per unit, and the line's zero-rating reason. So an exempt line
+/// and a zero-rated one never share a row although neither carries tax, and
+/// one percentage beside two fixed amounts is two rows.
+///
+/// A row's `tax` is the sum of its components' carried amounts, its `net` the
+/// sum of the bases they were charged on, and its `gross` the two together.
+/// Nothing is re-derived from a rate or from the receipt total. On a line with
+/// one component the base is the line's net, so the rows add up to the
+/// receipt: their nets to its net, their taxes to its tax and their grosses to
+/// its gross. A line with several components counts its net under each of
+/// them, and a tax charged on another tax has that tax in its base, because a
+/// row states what its own rate was charged on; across such a receipt only the
+/// taxes add up.
+///
+/// Rows come back ordered by code, then treatment, percentage, fixed amount
+/// and reason, so the order the lines were scanned in never moves a row.
+///
+/// # Errors
+///
+/// [`TaxError::NoComponents`] for a line that carries no component, which
+/// [`compute_line_tax`] never returns. [`TaxError::LineTaxUnbalanced`] for a
+/// line whose components do not add up to its tax, or whose net and tax do not
+/// add up to its gross: its summary would disagree with the receipt's total.
+/// [`TaxError::Money`] for lines or amounts in more than one currency, and for
+/// a sum no amount can hold.
+pub fn summarize_tax(lines: &[LineTax]) -> Result<Vec<TaxSummaryRow>, TaxError> {
+    let Some(first) = lines.first() else {
+        return Ok(Vec::new());
+    };
+    let currency = first.net.currency();
+    let mut rows: BTreeMap<SummaryKey, TaxSummaryRow> = BTreeMap::new();
+    for (position, line) in lines.iter().enumerate() {
+        if line.net.currency() != currency {
+            return Err(
+                MoneyError::CurrencyMismatch(currency.code(), line.net.currency().code()).into(),
+            );
+        }
+        // Its net would be on no row at all.
+        if line.components.is_empty() {
+            return Err(TaxError::NoComponents);
+        }
+        let charged = Money::sum(line.components.iter().map(|c| c.amount), currency)?;
+        if charged != line.tax_total || line.net.checked_add(line.tax_total)? != line.gross {
+            return Err(TaxError::LineTaxUnbalanced(position));
+        }
+        for component in &line.components {
+            let (rate, per_unit) = charge_parts(&component.basis);
+            if let Some(fixed) = per_unit
+                && fixed.currency() != currency
+            {
+                return Err(
+                    MoneyError::CurrencyMismatch(currency.code(), fixed.currency().code()).into(),
+                );
+            }
+            let gross = component.base_amount.checked_add(component.amount)?;
+            let key = SummaryKey {
+                code: component.code.clone(),
+                treatment: treatment_rank(component.treatment),
+                rate,
+                per_unit: per_unit.map(Money::minor),
+                reason: line.supply_reason.map(reason_rank),
+            };
+            match rows.entry(key) {
+                Entry::Vacant(row) => {
+                    row.insert(TaxSummaryRow {
+                        code: component.code.clone(),
+                        treatment: component.treatment,
+                        rate,
+                        per_unit,
+                        reason: line.supply_reason,
+                        net: component.base_amount,
+                        tax: component.amount,
+                        gross,
+                    });
+                }
+                Entry::Occupied(mut row) => {
+                    let row = row.get_mut();
+                    row.net = row.net.checked_add(component.base_amount)?;
+                    row.tax = row.tax.checked_add(component.amount)?;
+                    row.gross = row.gross.checked_add(gross)?;
+                }
+            }
+        }
+    }
+    Ok(rows.into_values().collect())
+}
+
+/// What makes two charged components one summary row, in the order rows are
+/// printed. The treatment and reason are ranked by their declaration order.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct SummaryKey {
+    code: String,
+    treatment: u8,
+    rate: Percent,
+    per_unit: Option<i64>,
+    reason: Option<u8>,
+}
+
+fn treatment_rank(treatment: TaxTreatment) -> u8 {
+    match treatment {
+        TaxTreatment::Standard => 0,
+        TaxTreatment::Reduced => 1,
+        TaxTreatment::Zero => 2,
+        TaxTreatment::Exempt => 3,
+    }
+}
+
+fn reason_rank(reason: ZeroRatingReason) -> u8 {
+    match reason {
+        ZeroRatingReason::Export => 0,
+        ZeroRatingReason::FreeZoneSupply => 1,
+        ZeroRatingReason::EligibleEntity => 2,
+        ZeroRatingReason::ProductCategory => 3,
+    }
 }
 
 #[cfg(test)]
@@ -2444,6 +2575,446 @@ mod tests {
             prop_assert_eq!(carried.components.len(), 1);
             prop_assert_eq!(component.base_amount, carried.net);
             prop_assert_eq!(component.amount, carried.tax_total);
+        }
+    }
+
+    // ── summarize_tax (1.3.6) ───────────────────────────────────────────
+    // Codes stay synthetic and rates are arithmetic vectors. A zero-rated or
+    // exempt `SYNTH_GST` is a treatment the engine is handed, not a claim
+    // about which Jordanian supplies are either: the pack is 1.3.7's.
+
+    fn treated(code: &str, treatment: TaxTreatment, basis: TaxBasis) -> TaxComponent {
+        TaxComponent {
+            treatment,
+            ..component(code, 0, basis, &[])
+        }
+    }
+
+    /// An exclusive line of one unit, rounded half away from zero.
+    fn sold(net: i64, components: &[TaxComponent]) -> LineTax {
+        exclusive(net, components, RoundingRule::HalfAwayFromZero).unwrap()
+    }
+
+    fn summary_row(
+        code: &str,
+        treatment: TaxTreatment,
+        ppm: i64,
+        per_unit: Option<i64>,
+        net: i64,
+        tax: i64,
+        gross: i64,
+    ) -> TaxSummaryRow {
+        TaxSummaryRow {
+            code: code.to_owned(),
+            treatment,
+            rate: Percent::from_ppm(ppm),
+            per_unit: per_unit.map(jod),
+            reason: None,
+            net: jod(net),
+            tax: jod(tax),
+            gross: jod(gross),
+        }
+    }
+
+    #[test]
+    fn exempt_and_zero_rated_lines_make_two_summary_rows() {
+        let standard = treated("SYNTH_GST", TaxTreatment::Standard, rate(160_000));
+        let zero = treated("SYNTH_GST", TaxTreatment::Zero, rate(0));
+        let exempt = treated("SYNTH_GST", TaxTreatment::Exempt, rate(0));
+        let lines = [
+            sold(2_500, std::slice::from_ref(&zero)),
+            sold(10_000, &[standard]),
+            sold(3_000, &[exempt]),
+            sold(1_500, &[zero]),
+        ];
+        // The two untaxed rows share a code and a rate and carry no tax; only
+        // the treatment parts them. A summary that dropped it would print one
+        // untaxed row of 7.000 JOD, and the return would put an exempt supply
+        // in the zero-rated box.
+        assert_eq!(
+            summarize_tax(&lines).unwrap(),
+            vec![
+                summary_row(
+                    "SYNTH_GST",
+                    TaxTreatment::Standard,
+                    160_000,
+                    None,
+                    10_000,
+                    1_600,
+                    11_600
+                ),
+                summary_row("SYNTH_GST", TaxTreatment::Zero, 0, None, 4_000, 0, 4_000),
+                summary_row("SYNTH_GST", TaxTreatment::Exempt, 0, None, 3_000, 0, 3_000),
+            ]
+        );
+    }
+
+    #[test]
+    fn summary_rows_are_keyed_by_every_rate_defining_fact() {
+        let compound = |ppm, fils| TaxBasis::Compound {
+            rate: Percent::from_ppm(ppm),
+            per_unit: jod(fils),
+        };
+        let line_of = |code, treatment, basis| sold(10_000, &[treated(code, treatment, basis)]);
+        let standard = TaxTreatment::Standard;
+        // 16% of 10.000 JOD and 100 fils on one unit.
+        let base = line_of("SYNTH_A", standard, compound(160_000, 100));
+        // No sale carries a zero-rating reason until the accountant names the
+        // zero-rated lines (`ref/merchant-decisions.md` 6.14), so the engine
+        // refuses one and this line is built by hand.
+        let mut exported = base.clone();
+        exported.supply_reason = Some(ZeroRatingReason::Export);
+        let variants = [
+            (
+                "its code",
+                line_of("SYNTH_B", standard, compound(160_000, 100)),
+            ),
+            (
+                "its treatment",
+                line_of("SYNTH_A", TaxTreatment::Reduced, compound(160_000, 100)),
+            ),
+            (
+                "its percentage",
+                line_of("SYNTH_A", standard, compound(100_000, 100)),
+            ),
+            (
+                "its fixed amount",
+                line_of("SYNTH_A", standard, compound(160_000, 200)),
+            ),
+            (
+                "having a fixed amount at all",
+                line_of("SYNTH_A", standard, rate(160_000)),
+            ),
+            ("its zero-rating reason", exported),
+        ];
+        for (fact, variant) in variants {
+            let summary = summarize_tax(&[base.clone(), variant]).unwrap();
+            assert_eq!(
+                summary.len(),
+                2,
+                "a line differing in {fact} is a row of its own"
+            );
+        }
+        // The same rate twice is one row: exactly both lines.
+        assert_eq!(
+            summarize_tax(&[base.clone(), base]).unwrap(),
+            vec![summary_row(
+                "SYNTH_A",
+                standard,
+                160_000,
+                Some(100),
+                20_000,
+                3_400,
+                23_400
+            )]
+        );
+    }
+
+    #[test]
+    fn a_stacked_line_summarizes_each_component_on_its_own_base() {
+        // A fixed special tax, and a general tax charged on the net plus it.
+        let stacked = sold(
+            10_000,
+            &[
+                component("SYNTH_SST", 0, per_unit(500), &[]),
+                component("SYNTH_GST", 1, rate(160_000), &["SYNTH_SST"]),
+            ],
+        );
+        assert_eq!(
+            charged(&stacked),
+            [("SYNTH_SST", 10_000, 500), ("SYNTH_GST", 10_500, 1_680)]
+        );
+        // The same general tax on a line with nothing under it.
+        let plain = sold(2_000, &[percentage("SYNTH_GST", 160_000)]);
+        let summary = summarize_tax(&[stacked, plain]).unwrap();
+        // One general-tax row for both lines, on 10.500 + 2.000 JOD: what its
+        // rate was charged on, so 16% of its net is its tax.
+        assert_eq!(
+            summary,
+            vec![
+                summary_row(
+                    "SYNTH_GST",
+                    TaxTreatment::Standard,
+                    160_000,
+                    None,
+                    12_500,
+                    2_000,
+                    14_500
+                ),
+                summary_row(
+                    "SYNTH_SST",
+                    TaxTreatment::Standard,
+                    0,
+                    Some(500),
+                    10_000,
+                    500,
+                    10_500
+                ),
+            ]
+        );
+        // The taxes add up to the receipt's: 2.180 on the stacked line and
+        // 0.320 on the plain one. The nets do not, because the stacked line's
+        // net is the base of both its rows.
+        let rows = |pick: fn(&TaxSummaryRow) -> i64| summary.iter().map(pick).sum::<i64>();
+        assert_eq!(rows(|r| r.tax.minor()), 2_180 + 320);
+        assert_eq!(rows(|r| r.net.minor()), 12_500 + 10_000);
+    }
+
+    /// A line that has been changed after the engine computed it.
+    type Spoil = fn(&mut LineTax);
+
+    #[test]
+    fn a_summary_refuses_a_line_that_disagrees_with_itself() {
+        let good = sold(10_000, &[percentage("SYNTH_A", 160_000)]);
+        assert_eq!(summarize_tax(std::slice::from_ref(&good)).unwrap().len(), 1);
+        let first = |line: &mut LineTax| line.components.first_mut().unwrap().amount = jod(1_601);
+        let cases: [(&str, Spoil, TaxError); 5] = [
+            ("a component", first, TaxError::LineTaxUnbalanced(1)),
+            (
+                "the tax, with the gross to match",
+                |line| {
+                    line.tax_total = jod(1_601);
+                    line.gross = jod(11_601);
+                },
+                TaxError::LineTaxUnbalanced(1),
+            ),
+            (
+                "the gross",
+                |line| line.gross = jod(11_601),
+                TaxError::LineTaxUnbalanced(1),
+            ),
+            (
+                "the net",
+                |line| line.net = jod(10_001),
+                TaxError::LineTaxUnbalanced(1),
+            ),
+            (
+                "every component, with no tax left",
+                |line| {
+                    line.components.clear();
+                    line.tax_total = jod(0);
+                    line.gross = line.net;
+                },
+                TaxError::NoComponents,
+            ),
+        ];
+        for (changed, spoil, refusal) in cases {
+            let mut line = good.clone();
+            spoil(&mut line);
+            assert_eq!(
+                summarize_tax(&[good.clone(), line]),
+                Err(refusal),
+                "a line whose {changed} changed is refused, by its position"
+            );
+        }
+    }
+
+    #[test]
+    fn a_summary_refuses_mixed_currencies_and_overflow() {
+        assert_eq!(summarize_tax(&[]), Ok(Vec::new()));
+        let in_dinars = sold(10_000, &[percentage("SYNTH_A", 160_000)]);
+        let in_dollars = compute_line_tax(
+            Money::from_minor(10_000, Currency::USD),
+            Qty::ONE,
+            PriceMode::Exclusive,
+            &[percentage("SYNTH_A", 160_000)],
+            StoreTaxProfile::Standard,
+            &domestic(),
+            RoundingRule::HalfAwayFromZero,
+        )
+        .unwrap();
+        assert_eq!(
+            summarize_tax(&[in_dinars, in_dollars]),
+            Err(TaxError::Money(MoneyError::CurrencyMismatch("JOD", "USD")))
+        );
+        // A fixed amount in another currency than its line, which the engine
+        // never returns.
+        let mut foreign = sold(10_000, &[component("SYNTH_A", 0, per_unit(100), &[])]);
+        for charged in &mut foreign.components {
+            charged.basis = TaxBasis::PerUnit {
+                amount: Money::from_minor(100, Currency::EUR),
+            };
+        }
+        assert_eq!(
+            summarize_tax(&[foreign]),
+            Err(TaxError::Money(MoneyError::CurrencyMismatch("JOD", "EUR")))
+        );
+        // Three lines whose nets no amount can hold together.
+        let huge = sold(i64::MAX / 2, &[percentage("SYNTH_A", 0)]);
+        assert_eq!(
+            summarize_tax(&[huge.clone(), huge.clone(), huge]),
+            Err(TaxError::Money(MoneyError::Overflow))
+        );
+    }
+
+    /// One to `most` components on a line, coded by position so that lines
+    /// share codes: each of any treatment, charging 0%, 4% or 16%, a fixed 100
+    /// or 250 fils a unit, or both, on the net or on the net plus the component
+    /// before it. The rates are few so rows often merge across lines. It
+    /// excludes only the shapes `component_stacks` already covers for the
+    /// engine: rotated listings and a base naming several components.
+    fn summary_stacks(most: usize) -> impl Strategy<Value = Vec<TaxComponent>> {
+        let treatment = prop_oneof![
+            Just(TaxTreatment::Standard),
+            Just(TaxTreatment::Reduced),
+            Just(TaxTreatment::Zero),
+            Just(TaxTreatment::Exempt),
+        ];
+        let rates = || prop::sample::select(vec![0i64, 40_000, 160_000]);
+        let fixed = || prop::sample::select(vec![100i64, 250]);
+        let basis = prop_oneof![
+            rates().prop_map(rate),
+            fixed().prop_map(per_unit),
+            (rates(), fixed()).prop_map(|(ppm, fils)| TaxBasis::Compound {
+                rate: Percent::from_ppm(ppm),
+                per_unit: jod(fils),
+            }),
+        ];
+        prop::collection::vec((treatment, basis, any::<bool>()), 1..=most).prop_map(|drawn| {
+            let mut stack: Vec<TaxComponent> = Vec::new();
+            for ((treatment, basis, on_previous), sequence) in drawn.into_iter().zip(0u8..) {
+                let previous: Vec<String> = stack
+                    .last()
+                    .filter(|_| on_previous)
+                    .map(|c| c.code.clone())
+                    .into_iter()
+                    .collect();
+                let on: Vec<&str> = previous.iter().map(String::as_str).collect();
+                stack.push(TaxComponent {
+                    treatment,
+                    ..component(&format!("SYNTH_{sequence}"), sequence, basis, &on)
+                });
+            }
+            stack
+        })
+    }
+
+    /// A receipt of up to a dozen lines under one rounding rule, each priced
+    /// either way at up to a million dinars either side of zero, on up to a
+    /// thousand units; half the receipts carry one component a line, the case
+    /// in which the rows add up to the whole receipt. A line the engine
+    /// refuses, such as a tax-inclusive price on several components, is
+    /// dropped: a summary is only ever handed lines the engine computed.
+    fn receipts() -> impl Strategy<Value = Vec<LineTax>> {
+        let of = |most| {
+            let one = (
+                summary_stacks(most),
+                either_price_mode(),
+                -1_000_000_000i64..=1_000_000_000,
+                quantities(),
+            );
+            (prop::collection::vec(one, 0..=12), any_rounding_rule()).prop_map(|(specs, rule)| {
+                specs
+                    .into_iter()
+                    .filter_map(|(stack, mode, taxable, qty)| {
+                        line(mode, taxable, qty, &stack, rule).ok()
+                    })
+                    .collect::<Vec<LineTax>>()
+            })
+        };
+        prop_oneof![of(1), of(3)]
+    }
+
+    /// A price either way, up to a million dinars either side of zero.
+    fn summary_prices() -> impl Strategy<Value = Vec<i64>> {
+        prop::collection::vec(-1_000_000_000i64..=1_000_000_000, 1..=5)
+    }
+
+    proptest! {
+        #![proptest_config(domain_proptest_config())]
+
+        /// The receipt's tax summary is the sum of what its lines carry, never
+        /// a second calculation: its taxes add up to the lines' taxes to the
+        /// fil. Each row is exactly the components it groups, every component
+        /// is on exactly one row, and each row's gross is its net plus its
+        /// tax. When every line carries one component the rows add up to the
+        /// whole receipt, net and gross too. The order the lines were scanned
+        /// in never changes the summary.
+        #[test]
+        fn prop_line_tax_sum_equals_receipt_tax(lines in receipts()) {
+            let summary = summarize_tax(&lines).unwrap();
+            let receipt = |pick: fn(&LineTax) -> i64| lines.iter().map(pick).sum::<i64>();
+            let rows = |pick: fn(&TaxSummaryRow) -> i64| summary.iter().map(pick).sum::<i64>();
+            prop_assert_eq!(rows(|r| r.tax.minor()), receipt(|l| l.tax_total.minor()));
+
+            let mut grouped = 0usize;
+            for row in &summary {
+                let (mut net, mut tax) = (0i64, 0i64);
+                for line in &lines {
+                    for charged in &line.components {
+                        let (ppm, fixed) = match charged.basis {
+                            TaxBasis::Percentage { rate } => (rate, None),
+                            TaxBasis::PerUnit { amount } => (Percent::ZERO, Some(amount)),
+                            TaxBasis::Compound { rate, per_unit } => (rate, Some(per_unit)),
+                        };
+                        if charged.code == row.code
+                            && charged.treatment == row.treatment
+                            && ppm == row.rate
+                            && fixed == row.per_unit
+                            && line.supply_reason == row.reason
+                        {
+                            net += charged.base_amount.minor();
+                            tax += charged.amount.minor();
+                            grouped += 1;
+                        }
+                    }
+                }
+                prop_assert_eq!(row.net, jod(net));
+                prop_assert_eq!(row.tax, jod(tax));
+                prop_assert_eq!(row.gross, jod(net + tax));
+            }
+            // A component counted twice would mean two rows for one rate.
+            prop_assert_eq!(grouped, lines.iter().map(|l| l.components.len()).sum::<usize>());
+
+            if lines.iter().all(|l| l.components.len() == 1) {
+                prop_assert_eq!(rows(|r| r.net.minor()), receipt(|l| l.net.minor()));
+                prop_assert_eq!(rows(|r| r.gross.minor()), receipt(|l| l.gross.minor()));
+            }
+            let mut rescanned = lines.clone();
+            rescanned.reverse();
+            prop_assert_eq!(summarize_tax(&rescanned).unwrap(), summary);
+        }
+
+        /// A zero-rated line and an exempt one both carry no tax, whichever way
+        /// the price is written and under any rule, and the summary still keeps
+        /// them apart: one zero-rated row of exactly the zero-rated lines, one
+        /// exempt row of exactly the exempt lines, beside the taxed row. Pooling
+        /// them would report an exempt supply in the zero-rated box.
+        #[test]
+        fn prop_exempt_and_zero_produce_zero_tax_but_differ_in_reporting(
+            zero in summary_prices(),
+            exempt in summary_prices(),
+            taxed in prop::collection::vec(-1_000_000_000i64..=1_000_000_000, 0..=5),
+            mode in either_price_mode(),
+            rule in any_rounding_rule(),
+        ) {
+            let priced = |prices: &[i64], treatment, ppm| {
+                let gst = [treated("SYNTH_GST", treatment, rate(ppm))];
+                prices
+                    .iter()
+                    .map(|&price| line(mode, price, 1_000, &gst, rule).unwrap())
+                    .collect::<Vec<LineTax>>()
+            };
+            let mut lines = priced(&zero, TaxTreatment::Zero, 0);
+            lines.extend(priced(&exempt, TaxTreatment::Exempt, 0));
+            for untaxed in &lines {
+                prop_assert_eq!(untaxed.tax_total, jod(0));
+                prop_assert_eq!(untaxed.net, untaxed.gross);
+            }
+            lines.extend(priced(&taxed, TaxTreatment::Standard, 160_000));
+
+            let summary = summarize_tax(&lines).unwrap();
+            for (treatment, prices) in [(TaxTreatment::Zero, &zero), (TaxTreatment::Exempt, &exempt)] {
+                let total = jod(prices.iter().sum());
+                let row: Vec<&TaxSummaryRow> =
+                    summary.iter().filter(|r| r.treatment == treatment).collect();
+                prop_assert_eq!(row.len(), 1, "one {:?} row", treatment);
+                let row = row.first().unwrap();
+                prop_assert_eq!(row.tax, jod(0));
+                prop_assert_eq!(row.net, total);
+                prop_assert_eq!(row.gross, total);
+            }
+            prop_assert_eq!(summary.len(), 2 + usize::from(!taxed.is_empty()));
         }
     }
 }
