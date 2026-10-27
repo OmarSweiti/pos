@@ -169,8 +169,8 @@ such supplies at all, every supply other than domestic is refused
 ([`ref/merchant-decisions.md`](ref/merchant-decisions.md) 6.14), and the `⚠️ OPEN` item in
 [`ref/domain-api.md`](ref/domain-api.md) §5 now belongs to 2.7.0. `1.3.3`, the next step on that
 path, has landed and enforces the refusal. `1.3.4` is **partially delivered**: its pure half,
-extracting the tax from a tax-inclusive price, has landed. Its database half, which reads a store's
-approved computation policy into the rounding rule the engine is handed, is next; its terminal half
+extracting the tax from a tax-inclusive price, and its database half, which reads a store's approved
+computation policy into the rounding rule the engine is handed, have landed. Its terminal half
 waits for the files 1.8.3 and 1.8.5b create, and the policy itself waits on the `⚠️ OPEN` item in
 [`ref/schema.md`](ref/schema.md) §0003.
 Group 1.7's `1.7.8` is **partially delivered**: `ReceiptPrinter::print` returns one of the four
