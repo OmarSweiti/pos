@@ -295,6 +295,11 @@ pub enum TaxError {
     #[error("component {0} charges a fixed amount larger than the tax-inclusive price")]
     FixedTaxExceedsPrice(String),
     #[error(
+        "component {0} is zero-rated or exempt but charges a rate or an amount; an untaxed \
+         treatment never carries tax"
+    )]
+    UntaxedTreatmentCharges(String),
+    #[error(
         "the line at position {0} does not add up, its components to its tax or its net and tax \
          to its gross; a summary of it would disagree with the receipt"
     )]
@@ -452,6 +457,8 @@ fn in_effect(rule: &TaxRateRule, at: Timestamp) -> bool {
 /// [`TaxError::OverlappingRules`] for a code that appears twice,
 /// [`TaxError::NegativeRate`] for a rate or fixed amount below zero,
 /// [`TaxError::Money`] for a fixed amount in another currency,
+/// [`TaxError::UntaxedTreatmentCharges`] for a zero-rated or exempt component
+/// that charges a rate or an amount,
 /// [`TaxError::UnknownBaseComponent`], [`TaxError::CircularComponentBase`] and
 /// [`TaxError::BaseComponentNotEarlier`]; then, for an inclusive price,
 /// [`TaxError::InclusiveSplitUndefined`], [`TaxError::NotInclusiveCapable`] and
@@ -484,8 +491,9 @@ pub fn compute_line_tax(
 
 /// The components in application order, once the list is known to be one the
 /// engine can charge: not empty, no code twice, no rate or fixed amount below
-/// zero, every fixed amount in the line's currency, and every named base a
-/// component applied earlier.
+/// zero, every fixed amount in the line's currency, no zero-rated or exempt
+/// component charging anything, and every named base a component applied
+/// earlier.
 ///
 /// A dependency on a component that is not applied earlier is a cycle when
 /// that component depends back, directly or not, and is refused as one;
@@ -516,6 +524,15 @@ fn application_order(
                 fixed.currency().code(),
             )
             .into());
+        }
+        // A zero-rated or exempt component that charges would report a tax in
+        // a box that carries none.
+        let untaxed = matches!(
+            component.treatment,
+            TaxTreatment::Zero | TaxTreatment::Exempt
+        );
+        if untaxed && (rate != Percent::ZERO || fixed.is_some_and(|f| !f.is_zero())) {
+            return Err(TaxError::UntaxedTreatmentCharges(component.code.clone()));
         }
     }
     let mut ordered: Vec<&TaxComponent> = by_code.into_values().collect();
@@ -750,15 +767,12 @@ pub fn summarize_tax(lines: &[LineTax]) -> Result<Vec<TaxSummaryRow>, TaxError> 
     let currency = first.net.currency();
     let mut rows: BTreeMap<SummaryKey, TaxSummaryRow> = BTreeMap::new();
     for (position, line) in lines.iter().enumerate() {
-        if line.net.currency() != currency {
-            return Err(
-                MoneyError::CurrencyMismatch(currency.code(), line.net.currency().code()).into(),
-            );
-        }
         // Its net would be on no row at all.
         if line.components.is_empty() {
             return Err(TaxError::NoComponents);
         }
+        // Summed in the first line's currency, and then held to the line's own
+        // net and gross, so a line in another currency stops here.
         let charged = Money::sum(line.components.iter().map(|c| c.amount), currency)?;
         if charged != line.tax_total || line.net.checked_add(line.tax_total)? != line.gross {
             return Err(TaxError::LineTaxUnbalanced(position));
@@ -2813,11 +2827,13 @@ mod tests {
     fn a_summary_refuses_mixed_currencies_and_overflow() {
         assert_eq!(summarize_tax(&[]), Ok(Vec::new()));
         let in_dinars = sold(10_000, &[percentage("SYNTH_A", 160_000)]);
+        // Under another code, so no row would ever add the two together: only
+        // the line itself can stop it.
         let in_dollars = compute_line_tax(
             Money::from_minor(10_000, Currency::USD),
             Qty::ONE,
             PriceMode::Exclusive,
-            &[percentage("SYNTH_A", 160_000)],
+            &[percentage("SYNTH_B", 160_000)],
             StoreTaxProfile::Standard,
             &domestic(),
             RoundingRule::HalfAwayFromZero,
@@ -2839,18 +2855,39 @@ mod tests {
             summarize_tax(&[foreign]),
             Err(TaxError::Money(MoneyError::CurrencyMismatch("JOD", "EUR")))
         );
-        // Three lines whose nets no amount can hold together.
-        let huge = sold(i64::MAX / 2, &[percentage("SYNTH_A", 0)]);
-        assert_eq!(
-            summarize_tax(&[huge.clone(), huge.clone(), huge]),
-            Err(TaxError::Money(MoneyError::Overflow))
-        );
+        // Lines on one row whose nets, taxes or grosses no amount can hold
+        // together, each with the other two sums in range. The engine never
+        // carries a tax of the opposite sign to its net, so these are built by
+        // hand; each one adds up.
+        let carried = |net: i64, tax: i64| {
+            let mut line = sold(net, &[percentage("SYNTH_A", 0)]);
+            for charged in &mut line.components {
+                charged.amount = jod(tax);
+            }
+            line.tax_total = jod(tax);
+            line.gross = jod(net + tax);
+            line
+        };
+        let quarter = i64::MAX / 4;
+        for (sum, net, tax) in [
+            ("the nets", 2 * quarter + 1, -quarter),
+            ("the taxes", -quarter, 2 * quarter + 1),
+            ("the grosses", quarter, quarter),
+        ] {
+            let line = carried(net, tax);
+            assert_eq!(
+                summarize_tax(&[line.clone(), line.clone(), line]),
+                Err(TaxError::Money(MoneyError::Overflow)),
+                "{sum} overflow"
+            );
+        }
     }
 
     /// One to `most` components on a line, coded by position so that lines
     /// share codes: each of any treatment, charging 0%, 4% or 16%, a fixed 100
     /// or 250 fils a unit, or both, on the net or on the net plus the component
-    /// before it. The rates are few so rows often merge across lines. It
+    /// before it; a zero-rated or exempt one charges 0%, since anything else is
+    /// refused. The rates are few so rows often merge across lines. It
     /// excludes only the shapes `component_stacks` already covers for the
     /// engine: rotated listings and a base naming several components.
     fn summary_stacks(most: usize) -> impl Strategy<Value = Vec<TaxComponent>> {
@@ -2880,6 +2917,10 @@ mod tests {
                     .into_iter()
                     .collect();
                 let on: Vec<&str> = previous.iter().map(String::as_str).collect();
+                let basis = match treatment {
+                    TaxTreatment::Zero | TaxTreatment::Exempt => rate(0),
+                    TaxTreatment::Standard | TaxTreatment::Reduced => basis,
+                };
                 stack.push(TaxComponent {
                     treatment,
                     ..component(&format!("SYNTH_{sequence}"), sequence, basis, &on)
@@ -2918,6 +2959,60 @@ mod tests {
     /// A price either way, up to a million dinars either side of zero.
     fn summary_prices() -> impl Strategy<Value = Vec<i64>> {
         prop::collection::vec(-1_000_000_000i64..=1_000_000_000, 1..=5)
+    }
+
+    /// A basis that charges something: a rate above 0% to 1000%, a fixed
+    /// amount from a fil to a thousand dinars a unit, or both with at least one
+    /// above zero. It excludes negative rates and amounts, which are refused
+    /// before the treatment is read (`a_negative_rate_is_refused`).
+    fn charging_bases() -> impl Strategy<Value = TaxBasis> {
+        prop_oneof![
+            (1i64..=10_000_000).prop_map(rate),
+            (1i64..=1_000_000).prop_map(per_unit),
+            (0i64..=10_000_000, 0i64..=1_000_000)
+                .prop_filter("charges something", |&(ppm, fils)| ppm + fils > 0)
+                .prop_map(|(ppm, fils)| TaxBasis::Compound {
+                    rate: Percent::from_ppm(ppm),
+                    per_unit: jod(fils),
+                }),
+        ]
+    }
+
+    #[test]
+    fn an_untaxed_treatment_that_charges_is_refused() {
+        let rule = RoundingRule::HalfAwayFromZero;
+        let refused = |code: &str| Err(TaxError::UntaxedTreatmentCharges(code.to_owned()));
+        for mode in [PriceMode::Exclusive, PriceMode::Inclusive] {
+            let charge = |components: &[TaxComponent]| line(mode, 10_000, 2_000, components, rule);
+            // A zero rate or a fixed amount of nothing is what an untaxed
+            // treatment charges, and it carries no tax.
+            for treatment in [TaxTreatment::Zero, TaxTreatment::Exempt] {
+                for nothing in [rate(0), per_unit(0)] {
+                    let untaxed = charge(&[treated("SYNTH_GST", treatment, nothing)]).unwrap();
+                    assert_eq!(untaxed.tax_total, jod(0), "{mode:?} {treatment:?}");
+                }
+            }
+            assert_eq!(
+                charge(&[treated("SYNTH_GST", TaxTreatment::Zero, rate(160_000))]),
+                refused("SYNTH_GST")
+            );
+            assert_eq!(
+                charge(&[treated("SYNTH_GST", TaxTreatment::Exempt, per_unit(100))]),
+                refused("SYNTH_GST")
+            );
+            // A reduced rate is a rate, and is charged.
+            let reduced = charge(&[treated("SYNTH_GST", TaxTreatment::Reduced, rate(40_000))]);
+            assert!(!reduced.unwrap().tax_total.is_zero());
+        }
+        // Beside a taxed component, the untaxed one is named.
+        let exempt = TaxComponent {
+            treatment: TaxTreatment::Exempt,
+            ..component("SYNTH_EXEMPT", 1, rate(10_000), &[])
+        };
+        assert_eq!(
+            exclusive(10_000, &[percentage("SYNTH_GST", 160_000), exempt], rule),
+            refused("SYNTH_EXEMPT")
+        );
     }
 
     proptest! {
@@ -2976,18 +3071,28 @@ mod tests {
         }
 
         /// A zero-rated line and an exempt one both carry no tax, whichever way
-        /// the price is written and under any rule, and the summary still keeps
-        /// them apart: one zero-rated row of exactly the zero-rated lines, one
-        /// exempt row of exactly the exempt lines, beside the taxed row. Pooling
-        /// them would report an exempt supply in the zero-rated box.
+        /// the price is written and under any rule: a zero-rated or exempt
+        /// component that charges any rate or amount is refused. And the
+        /// summary still keeps them apart: one zero-rated row of exactly the
+        /// zero-rated lines, one exempt row of exactly the exempt lines, beside
+        /// the taxed row. Pooling them would report an exempt supply in the
+        /// zero-rated box.
         #[test]
         fn prop_exempt_and_zero_produce_zero_tax_but_differ_in_reporting(
             zero in summary_prices(),
             exempt in summary_prices(),
             taxed in prop::collection::vec(-1_000_000_000i64..=1_000_000_000, 0..=5),
+            charging in charging_bases(),
             mode in either_price_mode(),
             rule in any_rounding_rule(),
         ) {
+            for treatment in [TaxTreatment::Zero, TaxTreatment::Exempt] {
+                let charges = [treated("SYNTH_GST", treatment, charging.clone())];
+                prop_assert_eq!(
+                    line(mode, 10_000, 1_000, &charges, rule),
+                    Err(TaxError::UntaxedTreatmentCharges("SYNTH_GST".to_owned()))
+                );
+            }
             let priced = |prices: &[i64], treatment, ppm| {
                 let gst = [treated("SYNTH_GST", treatment, rate(ppm))];
                 prices

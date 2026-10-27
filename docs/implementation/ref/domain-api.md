@@ -1352,8 +1352,9 @@ pub struct ComponentTax {
 /// An `Unregistered` store is `NotComputedYet` until 1.3.8. Then the component
 /// list: none is `NoComponents`; a code twice is `OverlappingRules`; a rate or
 /// fixed amount below zero is `NegativeRate`; a fixed amount in another
-/// currency is `MoneyError::CurrencyMismatch`; and a base naming a component
-/// not on the line, not applied earlier, or in a loop is
+/// currency is `MoneyError::CurrencyMismatch`; a zero-rated or exempt component
+/// that charges any rate or amount is `UntaxedTreatmentCharges` (1.3.6); and a
+/// base naming a component not on the line, not applied earlier, or in a loop is
 /// `UnknownBaseComponent`, `BaseComponentNotEarlier` or
 /// `CircularComponentBase`. Exclusive: each component is its base times its
 /// rate plus its fixed amount times `qty`, rounded once, and the tax is their
@@ -1473,6 +1474,8 @@ pub enum TaxError {
                                                     InclusiveSplitUndefined(usize),
     #[error("component {0} charges a fixed amount larger than the tax-inclusive price")]
                                                     FixedTaxExceedsPrice(String),
+    #[error("component {0} is zero-rated or exempt but charges a rate or an amount; an untaxed treatment never carries tax")]
+                                                    UntaxedTreatmentCharges(String),
     #[error("the line at position {0} does not add up, its components to its tax or its net and tax to its gross; a summary of it would disagree with the receipt")]
                                                     LineTaxUnbalanced(usize),
     #[error(transparent)]                           Money(#[from] MoneyError),
