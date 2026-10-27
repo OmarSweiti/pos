@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **49 of 121 executable microsteps fully complete (~40%)**: `1.1.0`
+Phase 1 has **50 of 121 executable microsteps fully complete (~41%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -120,10 +120,14 @@ different cost into positive stock refused rather than blended until 4.2.2, the 
 ledger, and every companion row rolled back by a fault in front of each of the transaction's seven
 writes), `1.3.2` (rate resolution — the components a line's category carries in a store's profile
 at an instant, from-inclusive and to-exclusive, a scoped rule overriding an unscoped one, and an
-overlap or an absence refused rather than a rate guessed), and `1.3.3` (exclusive line tax — the
+overlap or an absence refused rather than a rate guessed), `1.3.3` (exclusive line tax — the
 net times the rate, rounded once by the caller's rule and added exactly, every supply but an
 ordinary domestic one refused, and every line a later step computes refused by name rather than
-approximated).
+approximated), and `1.3.5` (several components on a line — applied in order, each charged on the
+net or on the net plus the components it names, a fixed amount per unit beside or instead of a
+rate, every component rounded once on a base it can be re-derived from, a dependency cycle or an
+incomplete zone pack refused, and a tax-inclusive price on several components refused until a
+source says how it divides).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
@@ -172,7 +176,9 @@ path, has landed and enforces the refusal. `1.3.4` is **partially delivered**: i
 extracting the tax from a tax-inclusive price, and its database half, which reads a store's approved
 computation policy into the rounding rule the engine is handed, have landed. Its terminal half
 waits for the files 1.8.3 and 1.8.5b create, and the policy itself waits on the `⚠️ OPEN` item in
-[`ref/schema.md`](ref/schema.md) §0003.
+[`ref/schema.md`](ref/schema.md) §0003. `1.3.5` has landed on the default arrangement its
+`⚠️ OPEN` item in [`ref/domain-api.md`](ref/domain-api.md) §5 names; no Special Sales Tax rule is
+seeded, and the question now waits with the rate pack at 1.3.7.
 Group 1.7's `1.7.8` is **partially delivered**: `ReceiptPrinter::print` returns one of the four
 outcomes, the simulator scripts paper-out and silence at byte *N*, cover-open, offline and a slow
 device, and a sweep injects a fault at every byte of a real receipt. The sweep moves onto a golden

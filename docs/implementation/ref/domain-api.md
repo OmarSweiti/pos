@@ -1338,25 +1338,33 @@ pub struct ComponentTax {
 /// THE function. Everything about tax is here.
 ///   Inclusive: net = gross / (1+r);  tax = gross − net
 ///   Exclusive: tax = net × r;        gross = net + tax
-/// Computed in rust_decimal, rounded ONCE per line by `rule`, returned as fils.
+/// Computed in rust_decimal; every amount the line carries is rounded ONCE by
+/// `rule` and returned as fils.
 ///
 /// With more than one component, they are applied in `sequence` order, each on
-/// the base its `TaxBase` names, and the whole line still rounds once. `qty` is
-/// an argument because a `PerUnit` component is charged per unit and there is
-/// no way back from a line total to a quantity.
+/// the base its `TaxBase` names, and each rounds once on a base made of the
+/// amounts already carried. `qty` is an argument because a `PerUnit` component
+/// is charged per unit and there is no way back from a line total to a quantity.
 ///
-/// As delivered at 1.3.3 and 1.3.4: both modes, for one `Percentage` on
-/// `LineNet`. The supply is read first. Any destination but `Domestic` is
-/// `SupplyDestinationRefused`, and a domestic supply claiming a reason is
-/// `ZeroRatingReasonRefused` (the zero-rating `⚠️ OPEN` item below). Every line
-/// a later step computes is `NotComputedYet`, naming its `PendingTaxShape`: any
-/// other component count, a fixed amount or a tax on a tax (1.3.5), and an
-/// `Unregistered` store (1.3.8); each step removes its variant. An inclusive
-/// price on a component that is not inclusive-capable is `NotInclusiveCapable`,
-/// and a rate below zero is `NegativeRate`. The inclusive net is
-/// `gross / (1 + r)` rounded once by `rule`, and the tax is `gross − net`,
-/// never rounded on its own; `prop_inclusive_net_plus_tax_equals_gross` holds
-/// the net to integer division for every `i64` gross. Which `rule` a store may
+/// As delivered at 1.3.3–1.3.5. The supply is read first. Any destination but
+/// `Domestic` is `SupplyDestinationRefused`, and a domestic supply claiming a
+/// reason is `ZeroRatingReasonRefused` (the zero-rating `⚠️ OPEN` item below).
+/// An `Unregistered` store is `NotComputedYet` until 1.3.8. Then the component
+/// list: none is `NoComponents`; a code twice is `OverlappingRules`; a rate or
+/// fixed amount below zero is `NegativeRate`; a fixed amount in another
+/// currency is `MoneyError::CurrencyMismatch`; and a base naming a component
+/// not on the line, not applied earlier, or in a loop is
+/// `UnknownBaseComponent`, `BaseComponentNotEarlier` or
+/// `CircularComponentBase`. Exclusive: each component is its base times its
+/// rate plus its fixed amount times `qty`, rounded once, and the tax is their
+/// sum. Inclusive: one component only (several are `InclusiveSplitUndefined`,
+/// the Special Sales Tax `⚠️ OPEN` item below), on `LineNet` and
+/// inclusive-capable or `NotInclusiveCapable`; the net is
+/// `(gross − fixed × qty) / (1 + r)` rounded once by `rule`, and the tax is
+/// `gross − net`, never rounded on its own. A net of the opposite sign to the
+/// price is `FixedTaxExceedsPrice`. `prop_inclusive_net_plus_tax_equals_gross`
+/// and `prop_inclusive_fixed_amount_extracts_exactly` hold the net to integer
+/// division. Which `rule` a store may
 /// use is not this function's to choose: it is threaded from the store's
 /// approved `tax_computation_policy`, which 1.3.4's database half reads as
 /// `pos_db::tax_policy::TaxPolicyRepository::approved_for_store`.
@@ -1389,13 +1397,14 @@ pub struct TaxSummaryRow {
 /// Rate resolution is time-effective DATA. Rates change by Cabinet decree;
 /// a rate in code is a re-release (master plan B.1).
 ///
-/// As delivered at 1.3.2: `tax-jordan.md` §3 rules 1–4. A rule scoped to the
-/// store's profile overrides an unscoped one for the same component; two left in
-/// effect at the same tier are `OverlappingRules`; none in effect is
-/// `NoRuleInEffect`. Components come back by `sequence`, then code.
-/// `is_inclusive_capable` is derived, since a rule carries no such field: true
-/// only for a `Percentage` on `LineNet`, the one shape 1.3.4's extraction
-/// inverts, until 1.3.5 extends it. An `Unregistered` store resolves only rules
+/// As delivered at 1.3.2 and 1.3.5: `tax-jordan.md` §3 rules 1–4. A rule scoped
+/// to the store's profile overrides an unscoped one for the same component; two
+/// left in effect at the same tier are `OverlappingRules`; none in effect is
+/// `NoRuleInEffect`. A zone store whose pack lacks a component the standard pack
+/// charges on the category is `ProfilePackIncomplete`. Components come back by
+/// `sequence`, then code. `is_inclusive_capable` is derived, since a rule
+/// carries no such field: true for any basis on `LineNet`, the shapes the
+/// inclusive extraction inverts. An `Unregistered` store resolves only rules
 /// scoped to it; 1.3.8 short-circuits before resolution.
 pub fn resolve_components(
     category: TaxCategoryId,
@@ -1434,33 +1443,44 @@ pub enum TaxError {
                                                     SupplyDestinationRefused(SupplyDestination),
     #[error("zero-rating reason {0:?} is refused: no supply is zero-rated until the accountant names the zero-rated lines")]
                                                     ZeroRatingReasonRefused(ZeroRatingReason),
-    #[error("component {0} has a negative rate; a tax rate is never below zero")] NegativeRate(String),
+    #[error("component {0} has a negative rate or amount; a tax is never charged below zero")]
+                                                    NegativeRate(String),
     #[error("{0} is not computed yet; the line is refused rather than approximated")]
                                                     NotComputedYet(PendingTaxShape),
+    #[error("a line with no tax component is refused: an untaxed line is zero-rated or exempt, never componentless")]
+                                                    NoComponents,
+    #[error("component {0} is charged on {1}, which is not applied before it")]
+                                                    BaseComponentNotEarlier(String, String),
+    #[error("a tax-inclusive price on a line with {0} tax components is refused: how such a price divides between them is not settled")]
+                                                    InclusiveSplitUndefined(usize),
+    #[error("component {0} charges a fixed amount larger than the tax-inclusive price")]
+                                                    FixedTaxExceedsPrice(String),
     #[error(transparent)]                           Money(#[from] MoneyError),
 }
 
-/// A line a later 1.3 step computes (1.3.3). `Display` reads "a line with 2 tax
-/// components", "a store not registered for GST", and so on. Each variant
-/// leaves with the step that computes it — `InclusivePrice` left at 1.3.4 — and
-/// the type with the last.
+/// A line a later 1.3 step computes (1.3.3). `Display` reads "a store not
+/// registered for GST". Each variant leaves with the step that computes it —
+/// `InclusivePrice` left at 1.3.4, and `ComponentCount`, `FixedAmount` and
+/// `TaxOnTax` at 1.3.5 — and the type with the last.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PendingTaxShape {
-    ComponentCount(usize),  // 1.3.5: anything but one
-    FixedAmount,            // 1.3.5: PerUnit or Compound
-    TaxOnTax,               // 1.3.5: NetPlusComponents
     UnregisteredStore,      // 1.3.8
 }
 ```
 
-> ⚠️ **OPEN — blocks 1.3.5.** For a line carrying both General Sales Tax and Special Sales Tax: what
-> is each component's base, in what order, and is the fixed part per unit or per line? Default until
-> answered: `SST` at `sequence: 0` on `LineNet`, `GST` at `sequence: 1` on
-> `NetPlusComponents { codes: ["SST"] }`, fixed parts charged **per unit**. No SST rate rule ships
-> seeded, and a store whose assortment needs one fails closed on `ProfilePackIncomplete` rather than
-> selling at GST only. Owner: 1.3.5. Source that settles it: the consolidated Special Tax Regulation
-> and the General Sales Tax Law as read by the merchant's tax advisor, recorded in
-> [`merchant-decisions.md`](merchant-decisions.md).
+> ⚠️ **OPEN — blocks 1.3.7 for any Special Sales Tax rule.** For a line carrying both General Sales
+> Tax and Special Sales Tax: what is each component's base, in what order, is the fixed part per unit
+> or per line, and how does a tax-inclusive price divide between them? Default until answered: `SST`
+> at `sequence: 0` on `LineNet`, `GST` at `sequence: 1` on `NetPlusComponents { codes: ["SST"] }`,
+> fixed parts charged **per unit**, and a tax-inclusive price on more than one component refused
+> (`InclusiveSplitUndefined`). No SST rate rule ships seeded. 1.3.5 built the engine on this default
+> and reads order and bases from the rules, so the answer is data. The engine cannot tell a category
+> that needs a special tax from one that does not, so a store whose assortment needs one is held back
+> by the pack's approval at 1.3.7 ([`tax-jordan.md`](tax-jordan.md) §3 rule 6) and by §2's checkout
+> block on a Special-Tax-liable product, not by `ProfilePackIncomplete`, which refuses a zone pack
+> that lacks a standard component. Owner: 1.3.7, which seeds the packs. Source that settles it: the
+> consolidated Special Tax Regulation and the General Sales Tax Law as read by the merchant's tax
+> advisor, recorded in [`merchant-decisions.md`](merchant-decisions.md).
 
 > ⚠️ **OPEN — blocks 2.7.0.** Which `ZeroRatingReason` values does the filing return distinguish, and
 > what evidence must `evidence_ref` point at for each? **Decided for now, by the owner on 26 October
