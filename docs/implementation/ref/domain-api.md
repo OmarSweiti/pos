@@ -1352,8 +1352,9 @@ pub struct ComponentTax {
 /// An `Unregistered` store is `NotComputedYet` until 1.3.8. Then the component
 /// list: none is `NoComponents`; a code twice is `OverlappingRules`; a rate or
 /// fixed amount below zero is `NegativeRate`; a fixed amount in another
-/// currency is `MoneyError::CurrencyMismatch`; and a base naming a component
-/// not on the line, not applied earlier, or in a loop is
+/// currency is `MoneyError::CurrencyMismatch`; a zero-rated or exempt component
+/// that charges any rate or amount is `UntaxedTreatmentCharges` (1.3.6); and a
+/// base naming a component not on the line, not applied earlier, or in a loop is
 /// `UnknownBaseComponent`, `BaseComponentNotEarlier` or
 /// `CircularComponentBase`. Exclusive: each component is its base times its
 /// rate plus its fixed amount times `qty`, rounded once, and the tax is their
@@ -1381,7 +1382,23 @@ pub fn compute_line_tax(
 /// Receipt tax summary, grouped by rate. This is the EXACT SUM of line taxes.
 /// It is never re-derived from the total — that is how JoFotara total checks fail
 /// (master plan C.3, and correction C-3 in plan-validation.md).
-pub fn summarize_tax(lines: &[LineTax]) -> Vec<TaxSummaryRow>;
+///
+/// As delivered at 1.3.6. One row per `(code, treatment, rate, per_unit,
+/// reason)`, so an exempt line and a zero-rated one are two rows although
+/// neither carries tax. A row's `tax` is the sum of its components' carried
+/// amounts, its `net` the sum of the bases they were charged on, and its
+/// `gross` the two together. On a line with one component the base is the
+/// line's net, so the rows add up to the receipt in all three; a line with
+/// several counts its net under each, and a tax on a tax has that tax in its
+/// base, because a row states what its own rate was charged on — across such
+/// a receipt only the taxes add up. Rows come back ordered by code, then
+/// treatment, rate, fixed amount and reason, whatever order the lines came in.
+/// It returns a `Result`, where this signature first read `Vec`: a sum can
+/// overflow, lines can arrive in two currencies, and a line that no longer
+/// adds up — its components to its tax, or its net and tax to its gross — is
+/// `LineTaxUnbalanced` rather than a summary that disagrees with the receipt.
+/// A line with no component is `NoComponents`.
+pub fn summarize_tax(lines: &[LineTax]) -> Result<Vec<TaxSummaryRow>, TaxError>;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TaxSummaryRow {
@@ -1391,6 +1408,8 @@ pub struct TaxSummaryRow {
     /// two rows on the filing report, because they are two rates in law.
     pub per_unit: Option<Money>,
     pub reason: Option<ZeroRatingReason>,   // splits the zero-rated box by why
+    /// `net` is the base the row's rate was charged on (Σ `base_amount`);
+    /// `gross` is `net + tax`.
     pub net: Money, pub tax: Money, pub gross: Money,
 }
 
@@ -1455,6 +1474,10 @@ pub enum TaxError {
                                                     InclusiveSplitUndefined(usize),
     #[error("component {0} charges a fixed amount larger than the tax-inclusive price")]
                                                     FixedTaxExceedsPrice(String),
+    #[error("component {0} is zero-rated or exempt but charges a rate or an amount; an untaxed treatment never carries tax")]
+                                                    UntaxedTreatmentCharges(String),
+    #[error("the line at position {0} does not add up, its components to its tax or its net and tax to its gross; a summary of it would disagree with the receipt")]
+                                                    LineTaxUnbalanced(usize),
     #[error(transparent)]                           Money(#[from] MoneyError),
 }
 

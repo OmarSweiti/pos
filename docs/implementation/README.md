@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **50 of 121 executable microsteps fully complete (~41%)**: `1.1.0`
+Phase 1 has **51 of 121 executable microsteps fully complete (~42%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -123,11 +123,14 @@ at an instant, from-inclusive and to-exclusive, a scoped rule overriding an unsc
 overlap or an absence refused rather than a rate guessed), `1.3.3` (exclusive line tax — the
 net times the rate, rounded once by the caller's rule and added exactly, every supply but an
 ordinary domestic one refused, and every line a later step computes refused by name rather than
-approximated), and `1.3.5` (several components on a line — applied in order, each charged on the
+approximated), `1.3.5` (several components on a line — applied in order, each charged on the
 net or on the net plus the components it names, a fixed amount per unit beside or instead of a
 rate, every component rounded once on a base it can be re-derived from, a dependency cycle or an
 incomplete zone pack refused, and a tax-inclusive price on several components refused until a
-source says how it divides).
+source says how it divides), and `1.3.6` (the receipt tax summary — the exact sum of the carried
+components, one row per rate, so an exempt line and a zero-rated one are two rows although neither
+carries tax, a zero-rated or exempt component that charges anything refused, and a line that no
+longer adds up refused rather than summarized).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on

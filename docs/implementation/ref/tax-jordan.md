@@ -216,16 +216,22 @@ policy version so a later configuration change cannot alter it.
 ### The receipt tax summary
 
 The summary is the exact sum of the carried line components, grouped by `(component, treatment,
-rate, supply_reason)`:
+rate, fixed amount per unit, supply_reason)`:
 
 ```text
-summary_row.net_minor = sum(carried line-component net_minor)
+summary_row.net_minor = sum(carried line-component base_minor)
 summary_row.tax_minor = sum(carried line-component tax_minor)
-summary_row.gross_minor = sum(carried line-component gross_minor)
+summary_row.gross_minor = summary_row.net_minor + summary_row.tax_minor
 ```
 
 It is never re-derived from the receipt total. Exact identities over the document's carried values
 are what keep the receipt, fiscal document, and sales reconciliation consistent.
+
+A row's net is what its own rate was charged on, the component's carried base. On a line with one
+component that is the line's net, so the rows add up to the receipt in net, tax and gross. A line
+carrying several components counts its net under each, and a tax on a tax has that tax in its base,
+so across such a receipt only the taxes add up (`summarize_tax`, 1.3.6). Zero-rated and exempt lines
+both carry no tax and are still two rows, because they are two boxes on the return.
 
 ---
 
