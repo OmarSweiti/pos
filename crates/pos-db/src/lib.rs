@@ -10,6 +10,7 @@ pub mod fixtures;
 pub mod key;
 pub mod repo;
 pub mod search;
+pub mod tax_policy;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
@@ -183,6 +184,24 @@ pub enum DbError {
     StockReplayAcrossRegisters,
     #[error("stored stock record is malformed: {reason}")]
     StoredStockRecordInvalid { reason: String },
+    #[error("no store {0} to compute tax for")]
+    TaxPolicyStoreUnknown(pos_domain::StoreId),
+    #[error(
+        "store {0} has no tax computation policy this register holds, so no line can \
+         be taxed and no sale finished until an approved one is assigned"
+    )]
+    TaxPolicyMissing(pos_domain::StoreId),
+    #[error(
+        "store {store}'s tax computation policy {jurisdiction} {policy_version} is not \
+         approved, so no line can be taxed and no sale finished under it"
+    )]
+    TaxPolicyUnapproved {
+        store: pos_domain::StoreId,
+        jurisdiction: String,
+        policy_version: String,
+    },
+    #[error("stored tax computation policy is malformed: {reason}")]
+    StoredTaxPolicyInvalid { reason: String },
 }
 
 /// `PRAGMA synchronous = FULL`, as SQLite reports it back. The pragma accepts a
