@@ -100,6 +100,7 @@ STATIC_POLICY_PATHS = %w[
   scripts/gh-bootstrap.sh
   scripts/gh-protect.sh
   scripts/gh-project.sh
+  scripts/gh-project-item.sh
   scripts/gh-actions-policy.sh
   scripts/install-gitleaks-ci.sh
   scripts/install-script-linters-ci.sh

@@ -276,7 +276,7 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just bench-gate [budget]` | conventions §7's absolute limits and §7.1's regression rule. **Refuses until milestone 5.8** — no device is bought before it, so both reference-register records are blank and 1.12.3 watches budgets relatively until then (conventions §7.2); deliberately not part of `pre-push` |
 | `just fuzz [target] [runs]` | one fuzz target for `runs` inputs — `parse_scan` and 100 000 unless named — on the dated nightly its fuzz crate pins, reading the committed corpus and never writing it; a finding lands in `fuzz/artifacts/` to be minimized and committed. Needs `cargo install cargo-fuzz@0.13.2 --locked`. Deliberately never per pull request: a time-boxed search is not a merge check, so the corpus is replayed by a test instead (1.2.8) |
 | `just branch <name>` | fresh `development`, then a branch off it — **needs a clean tree** (§4.2) |
-| `just pr [title] [body-file] [milestone]` | gates → push → PR into `development` → watch CI. Pass the title on a branch with more than one commit (§4.12); the milestone is derived from a `phase-<0-5>/` branch name |
+| `just pr [title] [body-file] [milestone]` | gates → push → PR into `development` → file it on the board → watch CI → file it again with its risk labels. Pass the title on a branch with more than one commit (§4.12); the milestone is derived from a `phase-<0-5>/` branch name |
 | `just evidence-check <pr> <dir>` | validate a PR's evidence directory and preview its comment — writes nothing (§4.12) |
 | `just evidence <pr> <dir>` | scan the evidence for secrets and attribution, commit the screenshots to a new folder of `pos-evidence`, confirm GitHub serves them, post one comment as the engineering app naming the validated commit, and run the `validation` check again (§4.12) |
 | `just engineering-app [status]` | create, once, the GitHub App that opens every PR so the owner can approve it — or say where it is installed ([`03-github-workflow.md`](03-github-workflow.md) §6) |
@@ -287,6 +287,7 @@ One table, so you never have to grep the [`justfile`](../../justfile).
 | `just gh-bootstrap` | labels, milestones, merge behaviour, default branch — idempotent |
 | `just gh-protect` | **refuses, deliberately.** Written against a 403 that a public repository no longer returns, so its `PUT` would now actually apply — with an incomplete required-check list. A reviewed ruleset is the intended replacement; none is configured yet |
 | `just gh-project` | the delivery board and its fields |
+| `just gh-project-item <pr>` | file one pull request on the board, or bring its card up to date: *Status*, and *Phase*, *Group*, *Microstep* and *Risk* from its title and labels ([`03-github-workflow.md`](03-github-workflow.md) §5) |
 
 Not yet recipes, and the microstep that creates each: `just seed` (1.12.1) · `just test-soak` and the `soak` nextest profile (2.9.6) · the TS type
 generation gate (conventions §13). `just bench-gate` arrived with 1.2.0 and enforces nothing yet:
