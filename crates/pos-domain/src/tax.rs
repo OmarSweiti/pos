@@ -227,15 +227,11 @@ pub struct TaxRateRule {
 ///
 /// [`compute_line_tax`] refuses such a line by name until that step lands,
 /// rather than approximating it. Each variant leaves with the step that
-/// computes it, and the type leaves with the last of them.
+/// computes it, and the type leaves with the last of them: a tax-inclusive
+/// price left at 1.3.4, and several components, a fixed amount and a tax on a
+/// tax at 1.3.5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PendingTaxShape {
-    /// Anything but one component on the line; 1.3.5 orders several.
-    ComponentCount(usize),
-    /// A fixed amount per unit, alone or beside a rate (1.3.5).
-    FixedAmount,
-    /// A tax charged on another tax (1.3.5).
-    TaxOnTax,
     /// A store not registered for GST, which 1.3.8 short-circuits.
     UnregisteredStore,
 }
@@ -243,11 +239,6 @@ pub enum PendingTaxShape {
 impl fmt::Display for PendingTaxShape {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PendingTaxShape::ComponentCount(count) => {
-                write!(f, "a line with {count} tax components")
-            }
-            PendingTaxShape::FixedAmount => f.write_str("a fixed tax amount per unit"),
-            PendingTaxShape::TaxOnTax => f.write_str("a tax charged on another tax"),
             PendingTaxShape::UnregisteredStore => f.write_str("a store not registered for GST"),
         }
     }
@@ -280,10 +271,24 @@ pub enum TaxError {
          names the zero-rated lines"
     )]
     ZeroRatingReasonRefused(ZeroRatingReason),
-    #[error("component {0} has a negative rate; a tax rate is never below zero")]
+    #[error("component {0} has a negative rate or amount; a tax is never charged below zero")]
     NegativeRate(String),
     #[error("{0} is not computed yet; the line is refused rather than approximated")]
     NotComputedYet(PendingTaxShape),
+    #[error(
+        "a line with no tax component is refused: an untaxed line is zero-rated or exempt, \
+         never componentless"
+    )]
+    NoComponents,
+    #[error("component {0} is charged on {1}, which is not applied before it")]
+    BaseComponentNotEarlier(String, String),
+    #[error(
+        "a tax-inclusive price on a line with {0} tax components is refused: how such a price \
+         divides between them is not settled"
+    )]
+    InclusiveSplitUndefined(usize),
+    #[error("component {0} charges a fixed amount larger than the tax-inclusive price")]
+    FixedTaxExceedsPrice(String),
     #[error(transparent)]
     Money(#[from] MoneyError),
 }
@@ -299,6 +304,10 @@ pub enum TaxError {
 /// * For one component, a rule scoped to the store's profile overrides an
 ///   unscoped one. Two rules left in effect at the same tier are refused,
 ///   never chosen between.
+/// * A zone store, `Asez` or `DevelopmentArea`, whose own pack has no rule for
+///   a component the standard pack charges on this category is refused as an
+///   incomplete pack: selling it under the components its pack does have
+///   would leave one out.
 /// * A line with no component in effect is refused too. The engine never
 ///   guesses a rate.
 ///
@@ -306,11 +315,9 @@ pub enum TaxError {
 /// whatever order `rules` arrived in.
 ///
 /// `is_inclusive_capable` is derived, because a rule carries no such field:
-/// only a percentage of the line net can be taken back out of an inclusive
-/// price by 1.3.4's extraction. A fixed or tax-on-tax component is `false`
-/// until 1.3.5 extends the arithmetic, so an inclusive line that carries one
-/// fails with [`TaxError::NotInclusiveCapable`] instead of being decomposed by
-/// guesswork.
+/// a component on the line net can be taken back out of an inclusive price,
+/// whether it is a percentage, a fixed amount per unit or both, and a tax on
+/// another tax cannot, because it never stands on a line alone.
 ///
 /// An `Unregistered` store resolves only rules scoped to it. Whether it charges
 /// any GST at all is 1.3.8's short-circuit, which comes before resolution.
@@ -318,25 +325,36 @@ pub enum TaxError {
 /// # Errors
 ///
 /// [`TaxError::OverlappingRules`] naming the component with more than one rule
-/// in effect, and [`TaxError::NoRuleInEffect`] when no component is.
+/// in effect, [`TaxError::ProfilePackIncomplete`] for a zone pack missing a
+/// component, and [`TaxError::NoRuleInEffect`] when no component is in effect.
 pub fn resolve_components(
     category: TaxCategoryId,
     rules: &[TaxRateRule],
     profile: StoreTaxProfile,
     at: Timestamp,
 ) -> Result<Vec<TaxComponent>, TaxError> {
+    let zone = matches!(
+        profile,
+        StoreTaxProfile::Asez | StoreTaxProfile::DevelopmentArea
+    );
     // For each component, the rules in effect that apply to this profile:
-    // those scoped to it, and the unscoped ones a `Standard` store reads.
+    // those scoped to it, and the unscoped ones a `Standard` store reads. A
+    // zone store also notes which components the standard pack charges.
     let mut tiers: BTreeMap<&str, (Vec<&TaxRateRule>, Vec<&TaxRateRule>)> = BTreeMap::new();
+    let mut standard_charges: Vec<&str> = Vec::new();
     for rule in rules {
         if rule.tax_category_id != category || !in_effect(rule, at) {
             continue;
         }
-        let (scoped, unscoped) = tiers.entry(rule.component_code.as_str()).or_default();
+        let code = rule.component_code.as_str();
+        let (scoped, unscoped) = tiers.entry(code).or_default();
         match rule.profile_scope {
             Some(scope) if scope == profile => scoped.push(rule),
             None if profile == StoreTaxProfile::Standard => unscoped.push(rule),
             Some(_) | None => {}
+        }
+        if zone && matches!(rule.profile_scope, None | Some(StoreTaxProfile::Standard)) {
+            standard_charges.push(code);
         }
     }
 
@@ -344,6 +362,9 @@ pub fn resolve_components(
     for (code, (scoped, unscoped)) in tiers {
         let tier = if scoped.is_empty() { unscoped } else { scoped };
         let rule = match tier.as_slice() {
+            [] if standard_charges.contains(&code) => {
+                return Err(TaxError::ProfilePackIncomplete(profile));
+            }
             // Every rule for this component belongs to another profile.
             [] => continue,
             [rule] => *rule,
@@ -355,10 +376,7 @@ pub fn resolve_components(
             basis: rule.basis.clone(),
             sequence: rule.sequence,
             base: rule.base.clone(),
-            is_inclusive_capable: matches!(
-                (&rule.basis, &rule.base),
-                (TaxBasis::Percentage { .. }, TaxBase::LineNet)
-            ),
+            is_inclusive_capable: rule.base == TaxBase::LineNet,
         });
     }
     if components.is_empty() {
@@ -380,17 +398,28 @@ fn in_effect(rule: &TaxRateRule, at: Timestamp) -> bool {
 /// The tax on one line (`ref/tax-jordan.md` §4).
 ///
 /// `taxable` is the line's amount after discount: its net when `mode` is
-/// exclusive, its gross when inclusive. Either way the arithmetic is exact in
-/// `rust_decimal` and rounds once, by `rule`:
+/// exclusive, its gross when inclusive. `qty` is what a fixed amount per unit
+/// is multiplied by. The arithmetic is exact in `rust_decimal`, and every
+/// amount the line carries is rounded once, by `rule`:
 ///
-/// * **Exclusive** (1.3.3): the tax is `net × r`, rounded, and the gross is
-///   `net + tax`.
-/// * **Inclusive** (1.3.4): the net is `gross / (1 + r)`, rounded, and the tax
-///   is `gross − net`, a residual that is never rounded on its own, so net and
-///   tax always add back to the price the customer saw. Only a component that
-///   is inclusive-capable can be extracted this way.
+/// * **Exclusive** (1.3.3, 1.3.5): the components are applied in application
+///   order — `sequence`, then code — whatever order they arrive in. Each is
+///   charged on the base its [`TaxBase`] names: the net, or the net plus the
+///   components it names, which must be applied before it. Its exact charge,
+///   the rate times that base plus the fixed amount times the quantity, is
+///   rounded once. A base is built from amounts already rounded, because that
+///   is what the line carries, so every component re-derives from its own
+///   persisted base. The tax is the sum of the components and the gross is net
+///   plus tax.
+/// * **Inclusive** (1.3.4, 1.3.5): one component, on the line net. The net is
+///   the price less the fixed amount, divided by one plus the rate, rounded
+///   once; the tax is `gross − net`, a residual that is never rounded on its
+///   own, so net and tax always add back to the price the customer saw.
+///   Several components are refused: how a price that includes them all
+///   divides between them, a fil at a time, is the `⚠️ OPEN` item in
+///   `ref/domain-api.md` §5, and no source settles it yet.
 ///
-/// The result carries the net as the component's base, so a report never
+/// Each component carries the base it was charged on, so a report never
 /// re-derives it.
 ///
 /// This is the first code to read a [`SupplyTaxContext`], and it enforces the
@@ -400,22 +429,24 @@ fn in_effect(rule: &TaxRateRule, at: Timestamp) -> bool {
 /// or evidence it carries. A domestic supply that claims a zero-rating reason
 /// is refused too, so no reason reaches a line yet.
 ///
-/// The signature is the whole engine's, and the rest of group 1.3 fills it in.
-/// Until each step lands, the lines it computes are refused by name
-/// ([`TaxError::NotComputedYet`]) rather than approximated: anything but one
-/// percentage of the line net (1.3.5), and a store not registered for GST
-/// (1.3.8). Only a fixed amount per unit reads `qty`, so it is unused until
-/// 1.3.5.
+/// A store not registered for GST is refused by name
+/// ([`TaxError::NotComputedYet`]) until 1.3.8 short-circuits it.
 ///
 /// # Errors
 ///
 /// In the order they are checked:
 /// [`TaxError::SupplyDestinationRefused`] and
 /// [`TaxError::ZeroRatingReasonRefused`] for a supply that is not ordinary
-/// domestic retail, [`TaxError::NotComputedYet`] for a line a later step
-/// computes, [`TaxError::NotInclusiveCapable`] for an inclusive price on a
-/// component that cannot be extracted, [`TaxError::NegativeRate`] for a rate
-/// below zero, and [`TaxError::Money`] if an amount leaves the `i64` range.
+/// domestic retail; [`TaxError::NotComputedYet`] for an unregistered store;
+/// then the component list — [`TaxError::NoComponents`],
+/// [`TaxError::OverlappingRules`] for a code that appears twice,
+/// [`TaxError::NegativeRate`] for a rate or fixed amount below zero,
+/// [`TaxError::Money`] for a fixed amount in another currency,
+/// [`TaxError::UnknownBaseComponent`], [`TaxError::CircularComponentBase`] and
+/// [`TaxError::BaseComponentNotEarlier`]; then, for an inclusive price,
+/// [`TaxError::InclusiveSplitUndefined`], [`TaxError::NotInclusiveCapable`] and
+/// [`TaxError::FixedTaxExceedsPrice`]; and [`TaxError::Money`] if an amount
+/// leaves the `i64` range.
 pub fn compute_line_tax(
     taxable: Money,
     qty: Qty,
@@ -434,39 +465,197 @@ pub fn compute_line_tax(
     if profile == StoreTaxProfile::Unregistered {
         return Err(TaxError::NotComputedYet(PendingTaxShape::UnregisteredStore));
     }
-    let [component] = components else {
-        return Err(TaxError::NotComputedYet(PendingTaxShape::ComponentCount(
-            components.len(),
-        )));
-    };
-    let rate = match component.basis {
-        TaxBasis::Percentage { rate } => rate,
-        TaxBasis::PerUnit { .. } | TaxBasis::Compound { .. } => {
-            return Err(TaxError::NotComputedYet(PendingTaxShape::FixedAmount));
-        }
-    };
-    if component.base != TaxBase::LineNet {
-        return Err(TaxError::NotComputedYet(PendingTaxShape::TaxOnTax));
+    let ordered = application_order(components, taxable)?;
+    match mode {
+        PriceMode::Exclusive => exclusive_line(taxable, qty, &ordered, rule),
+        PriceMode::Inclusive => inclusive_line(taxable, qty, &ordered, rule),
     }
-    if mode == PriceMode::Inclusive && !component.is_inclusive_capable {
+}
+
+/// The components in application order, once the list is known to be one the
+/// engine can charge: not empty, no code twice, no rate or fixed amount below
+/// zero, every fixed amount in the line's currency, and every named base a
+/// component applied earlier.
+///
+/// A dependency on a component that is not applied earlier is a cycle when
+/// that component depends back, directly or not, and is refused as one;
+/// otherwise it contradicts the order, and is refused as that. Every cycle has
+/// such an edge, because a component may only be charged on one with a lower
+/// `sequence`.
+fn application_order(
+    components: &[TaxComponent],
+    taxable: Money,
+) -> Result<Vec<&TaxComponent>, TaxError> {
+    if components.is_empty() {
+        return Err(TaxError::NoComponents);
+    }
+    let mut by_code: BTreeMap<&str, &TaxComponent> = BTreeMap::new();
+    for component in components {
+        if by_code.insert(&component.code, component).is_some() {
+            return Err(TaxError::OverlappingRules(component.code.clone()));
+        }
+        let (rate, fixed) = charge_parts(&component.basis);
+        if rate < Percent::ZERO || fixed.is_some_and(Money::is_negative) {
+            return Err(TaxError::NegativeRate(component.code.clone()));
+        }
+        if let Some(fixed) = fixed
+            && fixed.currency() != taxable.currency()
+        {
+            return Err(MoneyError::CurrencyMismatch(
+                taxable.currency().code(),
+                fixed.currency().code(),
+            )
+            .into());
+        }
+    }
+    let mut ordered: Vec<&TaxComponent> = by_code.into_values().collect();
+    ordered.sort_by_key(|c| c.sequence);
+
+    for component in &ordered {
+        for named in named_bases(component) {
+            if !ordered.iter().any(|c| c.code == *named) {
+                return Err(TaxError::UnknownBaseComponent(
+                    component.code.clone(),
+                    named.clone(),
+                ));
+            }
+        }
+    }
+    for component in &ordered {
+        for named in named_bases(component) {
+            let Some(base) = ordered.iter().find(|c| c.code == *named) else {
+                continue;
+            };
+            if base.sequence < component.sequence {
+                continue;
+            }
+            return Err(if depends_on(&ordered, base, &component.code) {
+                TaxError::CircularComponentBase(component.code.clone(), named.clone())
+            } else {
+                TaxError::BaseComponentNotEarlier(component.code.clone(), named.clone())
+            });
+        }
+    }
+    Ok(ordered)
+}
+
+/// The codes a component's base names, if it names any.
+fn named_bases(component: &TaxComponent) -> &[String] {
+    match &component.base {
+        TaxBase::LineNet => &[],
+        TaxBase::NetPlusComponents { codes } => codes,
+    }
+}
+
+/// Whether `from` is charged on `target`, directly or through the components
+/// it is charged on. A component reaches itself.
+fn depends_on(ordered: &[&TaxComponent], from: &TaxComponent, target: &str) -> bool {
+    let mut seen: Vec<&str> = Vec::new();
+    let mut pending = vec![from];
+    while let Some(component) = pending.pop() {
+        if component.code == target {
+            return true;
+        }
+        if seen.contains(&component.code.as_str()) {
+            continue;
+        }
+        seen.push(&component.code);
+        pending.extend(
+            named_bases(component)
+                .iter()
+                .filter_map(|named| ordered.iter().find(|c| c.code == *named).copied()),
+        );
+    }
+    false
+}
+
+/// A basis as the rate it charges on a base and the fixed amount it charges
+/// per unit: a percentage has no fixed amount, and a fixed amount alone
+/// charges a rate of zero.
+fn charge_parts(basis: &TaxBasis) -> (Percent, Option<Money>) {
+    match *basis {
+        TaxBasis::Percentage { rate } => (rate, None),
+        TaxBasis::PerUnit { amount } => (Percent::ZERO, Some(amount)),
+        TaxBasis::Compound { rate, per_unit } => (rate, Some(per_unit)),
+    }
+}
+
+/// `amount × qty`, exact, in fils: what a fixed amount per unit charges on a
+/// line, before any rounding.
+fn fixed_charge(amount: Option<Money>, qty: Qty) -> Result<Decimal, TaxError> {
+    let Some(amount) = amount else {
+        return Ok(Decimal::ZERO);
+    };
+    within_i64(Decimal::from(amount.minor()).checked_mul(qty.to_decimal()))
+}
+
+/// An exact intermediate that no `i64` amount could hold is refused, never
+/// carried on into a sum where its lost digits would move a fil.
+fn within_i64(value: Option<Decimal>) -> Result<Decimal, TaxError> {
+    match value {
+        Some(value) if value.abs() <= Decimal::from(i64::MAX) => Ok(value),
+        _ => Err(MoneyError::Overflow.into()),
+    }
+}
+
+fn exclusive_line(
+    net: Money,
+    qty: Qty,
+    ordered: &[&TaxComponent],
+    rule: RoundingRule,
+) -> Result<LineTax, TaxError> {
+    let mut charged: Vec<ComponentTax> = Vec::with_capacity(ordered.len());
+    for component in ordered {
+        // Named bases were applied earlier, so each is already in `charged`,
+        // once, however many times the base lists it.
+        let mut base = net;
+        for earlier in &charged {
+            if named_bases(component).contains(&earlier.code) {
+                base = base.checked_add(earlier.amount)?;
+            }
+        }
+        let (rate, fixed) = charge_parts(&component.basis);
+        let on_base = within_i64(Decimal::from(base.minor()).checked_mul(rate.to_decimal()))?;
+        let exact = on_base + fixed_charge(fixed, qty)?;
+        charged.push(ComponentTax {
+            code: component.code.clone(),
+            treatment: component.treatment,
+            basis: component.basis.clone(),
+            base_amount: base,
+            amount: Money::from_minor(rule.round_to_i64(exact)?, net.currency()),
+        });
+    }
+    let tax_total = Money::sum(charged.iter().map(|c| c.amount), net.currency())?;
+    Ok(LineTax {
+        net,
+        components: charged,
+        tax_total,
+        gross: net.checked_add(tax_total)?,
+        // A reason was refused before anything was charged.
+        supply_reason: None,
+    })
+}
+
+fn inclusive_line(
+    gross: Money,
+    qty: Qty,
+    ordered: &[&TaxComponent],
+    rule: RoundingRule,
+) -> Result<LineTax, TaxError> {
+    let [component] = ordered else {
+        return Err(TaxError::InclusiveSplitUndefined(ordered.len()));
+    };
+    if !component.is_inclusive_capable {
         return Err(TaxError::NotInclusiveCapable);
     }
-    if rate < Percent::ZERO {
-        return Err(TaxError::NegativeRate(component.code.clone()));
+    let (rate, fixed) = charge_parts(&component.basis);
+    let net = extract_net(gross, fixed_charge(fixed, qty)?, rate, rule)?;
+    // A net of the opposite sign, or any net in a price of zero, would carry
+    // more tax than the customer pays.
+    if net.minor() != 0 && net.minor().signum() != gross.minor().signum() {
+        return Err(TaxError::FixedTaxExceedsPrice(component.code.clone()));
     }
-    // Read by a fixed amount per unit, from 1.3.5.
-    let _ = qty;
-
-    let (net, tax, gross) = match mode {
-        PriceMode::Exclusive => {
-            let tax = taxable.mul_percent(rate, rule)?;
-            (taxable, tax, taxable.checked_add(tax)?)
-        }
-        PriceMode::Inclusive => {
-            let net = extract_net(taxable, rate, rule)?;
-            (net, taxable.checked_sub(net)?, taxable)
-        }
-    };
+    let tax = gross.checked_sub(net)?;
     Ok(LineTax {
         net,
         components: vec![ComponentTax {
@@ -478,30 +667,36 @@ pub fn compute_line_tax(
         }],
         tax_total: tax,
         gross,
-        // A reason was refused above.
+        // A reason was refused before anything was charged.
         supply_reason: None,
     })
 }
 
-/// `gross / (1 + rate)`, rounded once by `rule`: the net inside an inclusive
-/// price.
+/// `(gross − fixed) / (1 + rate)`, rounded once by `rule`: the net inside an
+/// inclusive price whose one component charges `rate` on the net and `fixed`,
+/// exact in fils, on the quantity.
 ///
-/// The exact quotient is `gross × 10⁶ / (10⁶ + ppm)`. When it lies on a
+/// `fixed` is a whole number of thousandths of a fil, so the exact quotient is
+/// an integer `M` over `10⁶ + ppm`, and the price less the fixed amount is
+/// held to the `i64` range like any amount. When the quotient lies on a
 /// rounding boundary it terminates, and `rust_decimal` computes it exactly.
 /// When it does not, its distance from a boundary is a whole number of
 /// `1 / (2 × (10⁶ + ppm))` fils, and the 28 significant digits leave an error
-/// of the order of `10⁻⁹ / (1 + rate)` fils at any `i64` gross, hundreds of
-/// times smaller. So the one rounding lands where exact rational arithmetic
-/// puts it, which the test
-/// `inclusive_extraction_is_exact_over_the_whole_fils_range` checks against
-/// integer division.
-fn extract_net(gross: Money, rate: Percent, rule: RoundingRule) -> Result<Money, TaxError> {
+/// of the order of `10⁻⁹ / (1 + rate)` fils, hundreds of times smaller. So the
+/// one rounding lands where exact rational arithmetic puts it, which
+/// `inclusive_extraction_is_exact_over_the_whole_fils_range` and
+/// `prop_inclusive_net_plus_tax_equals_gross` check against integer division.
+fn extract_net(
+    gross: Money,
+    fixed: Decimal,
+    rate: Percent,
+    rule: RoundingRule,
+) -> Result<Money, TaxError> {
+    let priced = within_i64(Decimal::from(gross.minor()).checked_sub(fixed))?;
     let divisor = Decimal::ONE
         .checked_add(rate.to_decimal())
         .ok_or(MoneyError::Overflow)?;
-    let exact_net = Decimal::from(gross.minor())
-        .checked_div(divisor)
-        .ok_or(MoneyError::Overflow)?;
+    let exact_net = priced.checked_div(divisor).ok_or(MoneyError::Overflow)?;
     Ok(Money::from_minor(
         rule.round_to_i64(exact_net)?,
         gross.currency(),
@@ -851,18 +1046,20 @@ mod tests {
         );
 
         // An unscoped rule is the standard profile's, and no other profile
-        // inherits it.
-        for profile in [
-            StoreTaxProfile::Asez,
-            StoreTaxProfile::DevelopmentArea,
-            StoreTaxProfile::Unregistered,
-        ] {
+        // inherits it: a zone store's pack is incomplete without its own
+        // (`an_incomplete_profile_pack_fails_closed`), and an unregistered
+        // store has no rule at all.
+        for zone in [StoreTaxProfile::Asez, StoreTaxProfile::DevelopmentArea] {
             assert_eq!(
-                resolve_components(category(), &rules, profile, at(1_500)),
-                Err(TaxError::NoRuleInEffect(at(1_500))),
-                "{profile:?}"
+                resolve_components(category(), &rules, zone, at(1_500)),
+                Err(TaxError::ProfilePackIncomplete(zone)),
+                "{zone:?}"
             );
         }
+        assert_eq!(
+            resolve_components(category(), &rules, StoreTaxProfile::Unregistered, at(1_500)),
+            Err(TaxError::NoRuleInEffect(at(1_500)))
+        );
 
         // And no rules at all.
         assert_eq!(
@@ -886,7 +1083,9 @@ mod tests {
         assert_eq!(resolve(StoreTaxProfile::Asez), charges("SYNTH_A", 333_000));
         assert_eq!(
             resolve(StoreTaxProfile::DevelopmentArea),
-            Err(TaxError::NoRuleInEffect(at(10)))
+            Err(TaxError::ProfilePackIncomplete(
+                StoreTaxProfile::DevelopmentArea
+            ))
         );
 
         // The override is per component: an unscoped component with no scoped
@@ -950,8 +1149,8 @@ mod tests {
         };
         let plain = rule("SYNTH_Z_PLAIN", 7_000, 0, None, None);
 
-        // Within one sequence, by code. Only the plain percentage of the line
-        // net can come back out of an inclusive price.
+        // Within one sequence, by code. A component on the line net can come
+        // back out of an inclusive price, fixed or not; a tax on a tax cannot.
         let resolved = resolve_components(
             category(),
             &[on_top, plain, fixed],
@@ -965,7 +1164,7 @@ mod tests {
                 .map(|c| (c.code.as_str(), c.sequence, c.is_inclusive_capable))
                 .collect::<Vec<_>>(),
             [
-                ("SYNTH_FIXED", 0, false),
+                ("SYNTH_FIXED", 0, true),
                 ("SYNTH_Z_PLAIN", 0, true),
                 ("SYNTH_A_ON_TOP", 1, false)
             ]
@@ -1219,82 +1418,39 @@ mod tests {
 
     #[test]
     fn a_line_the_engine_does_not_compute_yet_is_refused() {
-        let sixteen = percentage("SYNTH_A", 160_000);
-        let alone = std::slice::from_ref(&sixteen);
-        let compute = |mode, components: &[TaxComponent], profile| {
+        let sixteen = [percentage("SYNTH_A", 160_000)];
+        let compute = |mode, profile| {
             compute_line_tax(
                 jod(1_000),
                 Qty::ONE,
                 mode,
-                components,
+                &sixteen,
                 profile,
                 &domestic(),
                 RoundingRule::HalfAwayFromZero,
             )
             .map(|line| line.tax_total)
         };
-        let pending = |shape| Err(TaxError::NotComputedYet(shape));
-        let standard = StoreTaxProfile::Standard;
-        let two = [sixteen.clone(), percentage("SYNTH_B", 10_000)];
-        let per_unit = TaxComponent {
-            basis: TaxBasis::PerUnit { amount: jod(50) },
-            is_inclusive_capable: false,
-            ..sixteen.clone()
-        };
-        let compound = TaxComponent {
-            basis: TaxBasis::Compound {
-                rate: Percent::from_ppm(160_000),
-                per_unit: jod(50),
-            },
-            is_inclusive_capable: false,
-            ..sixteen.clone()
-        };
-        let on_top = TaxComponent {
-            base: TaxBase::NetPlusComponents {
-                codes: vec!["SYNTH_B".to_owned()],
-            },
-            is_inclusive_capable: false,
-            ..sixteen.clone()
-        };
 
-        // Refused whichever way the price is written: the shape is the reason.
+        // 1.3.5 computes every other shape, so one is left: a store not
+        // registered for GST, refused whichever way the price is written.
         for mode in [PriceMode::Exclusive, PriceMode::Inclusive] {
             assert_eq!(
-                compute(mode, alone, StoreTaxProfile::Unregistered),
-                pending(PendingTaxShape::UnregisteredStore)
-            );
-            assert_eq!(
-                compute(mode, &[], standard),
-                pending(PendingTaxShape::ComponentCount(0))
-            );
-            assert_eq!(
-                compute(mode, &two, standard),
-                pending(PendingTaxShape::ComponentCount(2))
-            );
-            assert_eq!(
-                compute(mode, std::slice::from_ref(&per_unit), standard),
-                pending(PendingTaxShape::FixedAmount)
-            );
-            assert_eq!(
-                compute(mode, std::slice::from_ref(&compound), standard),
-                pending(PendingTaxShape::FixedAmount)
-            );
-            assert_eq!(
-                compute(mode, std::slice::from_ref(&on_top), standard),
-                pending(PendingTaxShape::TaxOnTax)
+                compute(mode, StoreTaxProfile::Unregistered),
+                Err(TaxError::NotComputedYet(PendingTaxShape::UnregisteredStore))
             );
         }
 
         // A zone store charges its own pack's rule with the same arithmetic.
         for zone in [StoreTaxProfile::Asez, StoreTaxProfile::DevelopmentArea] {
-            assert_eq!(compute(PriceMode::Exclusive, alone, zone), Ok(jod(160)));
-            assert_eq!(compute(PriceMode::Inclusive, alone, zone), Ok(jod(138)));
+            assert_eq!(compute(PriceMode::Exclusive, zone), Ok(jod(160)));
+            assert_eq!(compute(PriceMode::Inclusive, zone), Ok(jod(138)));
         }
 
         assert_eq!(
-            TaxError::NotComputedYet(PendingTaxShape::ComponentCount(2)).to_string(),
-            "a line with 2 tax components is not computed yet; the line is refused rather than \
-             approximated"
+            TaxError::NotComputedYet(PendingTaxShape::UnregisteredStore).to_string(),
+            "a store not registered for GST is not computed yet; the line is refused rather \
+             than approximated"
         );
     }
 
@@ -1312,7 +1468,7 @@ mod tests {
         );
         assert_eq!(
             TaxError::NegativeRate("SYNTH_A".to_owned()).to_string(),
-            "component SYNTH_A has a negative rate; a tax rate is never below zero"
+            "component SYNTH_A has a negative rate or amount; a tax is never charged below zero"
         );
     }
 
@@ -1433,8 +1589,16 @@ mod tests {
     /// quotient `gross × 10⁶ / (10⁶ + ppm)`, rounded by `rule`. No decimal type
     /// is involved, so it checks the engine rather than restating it.
     fn exact_net(gross: i64, ppm: i64, rule: RoundingRule) -> i64 {
-        let numerator = i128::from(gross) * 1_000_000;
-        let denominator = 1_000_000 + i128::from(ppm);
+        rounded_ratio(
+            i128::from(gross) * 1_000_000,
+            1_000_000 + i128::from(ppm),
+            rule,
+        )
+    }
+
+    /// `numerator / denominator`, rounded by `rule` with integer division
+    /// alone. The denominator is positive.
+    fn rounded_ratio(numerator: i128, denominator: i128, rule: RoundingRule) -> i64 {
         // The quotient is whole + fraction / denominator, the fraction in [0, 1).
         let whole = numerator.div_euclid(denominator);
         let fraction = numerator.rem_euclid(denominator);
@@ -1595,6 +1759,666 @@ mod tests {
             prop_assert!(net.abs() <= gross.abs(), "net {net} against gross {gross}");
             prop_assert!(tax.signum() * gross.signum() >= 0);
             prop_assert!(net.signum() * gross.signum() >= 0);
+        }
+    }
+
+    // ── several components, fixed amounts, tax on tax (1.3.5) ───────────
+    // Every code is synthetic and every rate and amount an arithmetic vector.
+    // `SYNTH_SST` and `SYNTH_GST` follow the default arrangement of the
+    // `⚠️ OPEN` item in `ref/domain-api.md` §5 — the special tax first on the
+    // net, the general tax on the net plus it — which no seeded rule uses yet.
+
+    fn component(code: &str, sequence: u8, basis: TaxBasis, on: &[&str]) -> TaxComponent {
+        TaxComponent {
+            code: code.to_owned(),
+            treatment: TaxTreatment::Standard,
+            basis,
+            sequence,
+            base: if on.is_empty() {
+                TaxBase::LineNet
+            } else {
+                TaxBase::NetPlusComponents {
+                    codes: on.iter().map(|&code| code.to_owned()).collect(),
+                }
+            },
+            is_inclusive_capable: on.is_empty(),
+        }
+    }
+
+    fn rate(ppm: i64) -> TaxBasis {
+        TaxBasis::Percentage {
+            rate: Percent::from_ppm(ppm),
+        }
+    }
+
+    fn per_unit(fils: i64) -> TaxBasis {
+        TaxBasis::PerUnit { amount: jod(fils) }
+    }
+
+    fn line(
+        mode: PriceMode,
+        taxable: i64,
+        qty_milli: i64,
+        components: &[TaxComponent],
+        rule: RoundingRule,
+    ) -> Result<LineTax, TaxError> {
+        compute_line_tax(
+            jod(taxable),
+            Qty::from_milli(qty_milli),
+            mode,
+            components,
+            StoreTaxProfile::Standard,
+            &domestic(),
+            rule,
+        )
+    }
+
+    /// Each component as (code, base, amount), in the order the line carries
+    /// them.
+    fn charged(line: &LineTax) -> Vec<(&str, i64, i64)> {
+        line.components
+            .iter()
+            .map(|c| (c.code.as_str(), c.base_amount.minor(), c.amount.minor()))
+            .collect()
+    }
+
+    #[test]
+    fn sst_fixed_and_ad_valorem_components_compound_in_order() {
+        let half_away = RoundingRule::HalfAwayFromZero;
+        // A fixed special tax, an ad-valorem one on top of it, and a general
+        // tax on top of both, listed in reverse so only the order the line
+        // applies them in can pass. Two units at a net of 10.000 JOD.
+        let stacked = [
+            component(
+                "SYNTH_GST",
+                2,
+                rate(160_000),
+                &["SYNTH_SST_FIXED", "SYNTH_SST_RATE"],
+            ),
+            component("SYNTH_SST_RATE", 1, rate(100_000), &["SYNTH_SST_FIXED"]),
+            component("SYNTH_SST_FIXED", 0, per_unit(250), &[]),
+        ];
+        let carried = line(PriceMode::Exclusive, 10_000, 2_000, &stacked, half_away).unwrap();
+        assert_eq!(
+            charged(&carried),
+            [
+                ("SYNTH_SST_FIXED", 10_000, 500),  // 250 × 2 units
+                ("SYNTH_SST_RATE", 10_500, 1_050), // 10% of the net plus 500
+                ("SYNTH_GST", 11_550, 1_848),      // 16% of the net plus both
+            ]
+        );
+        assert_eq!(
+            (carried.tax_total, carried.gross),
+            (jod(3_398), jod(13_398))
+        );
+        let mut reversed = stacked.clone();
+        reversed.reverse();
+        assert_eq!(
+            line(PriceMode::Exclusive, 10_000, 2_000, &reversed, half_away),
+            Ok(carried),
+            "the listing order is not the application order"
+        );
+
+        // Both shapes in one component: 10% of the net and 250 fils a unit.
+        let compound = [
+            component("SYNTH_GST", 1, rate(160_000), &["SYNTH_SST"]),
+            component(
+                "SYNTH_SST",
+                0,
+                TaxBasis::Compound {
+                    rate: Percent::from_ppm(100_000),
+                    per_unit: jod(250),
+                },
+                &[],
+            ),
+        ];
+        let carried = line(PriceMode::Exclusive, 10_000, 2_000, &compound, half_away).unwrap();
+        assert_eq!(
+            charged(&carried),
+            [("SYNTH_SST", 10_000, 1_500), ("SYNTH_GST", 11_500, 1_840)]
+        );
+        assert_eq!(carried.gross, jod(13_340));
+
+        // A weighed 1.5 units at 333 fils a unit is 499.5 fils, which each rule
+        // rounds once; the components above it are charged on what it rounded
+        // to, which is what the line carries.
+        let weighed = [
+            component(
+                "SYNTH_GST",
+                2,
+                rate(160_000),
+                &["SYNTH_SST_FIXED", "SYNTH_SST_RATE"],
+            ),
+            component("SYNTH_SST_RATE", 1, rate(100_000), &["SYNTH_SST_FIXED"]),
+            component("SYNTH_SST_FIXED", 0, per_unit(333), &[]),
+        ];
+        let at = |rule| line(PriceMode::Exclusive, 10_000, 1_500, &weighed, rule).unwrap();
+        assert_eq!(
+            charged(&at(RoundingRule::Floor)),
+            [
+                ("SYNTH_SST_FIXED", 10_000, 499),
+                ("SYNTH_SST_RATE", 10_499, 1_049), // 1049.9
+                ("SYNTH_GST", 11_548, 1_847),      // 1847.68
+            ]
+        );
+        assert_eq!(
+            charged(&at(half_away)),
+            [
+                ("SYNTH_SST_FIXED", 10_000, 500),
+                ("SYNTH_SST_RATE", 10_500, 1_050),
+                ("SYNTH_GST", 11_550, 1_848),
+            ]
+        );
+    }
+
+    #[test]
+    fn gst_base_includes_sst() {
+        let rule = RoundingRule::HalfAwayFromZero;
+        let sst = component("SYNTH_SST", 0, per_unit(100), &[]);
+        let on_both = [
+            sst.clone(),
+            component("SYNTH_GST", 1, rate(160_000), &["SYNTH_SST"]),
+        ];
+        let carried = line(PriceMode::Exclusive, 1_000, 1_000, &on_both, rule).unwrap();
+        // The general tax is charged on the net plus the special tax: 16% of
+        // 1100, not of 1000.
+        assert_eq!(
+            charged(&carried),
+            [("SYNTH_SST", 1_000, 100), ("SYNTH_GST", 1_100, 176)]
+        );
+        assert_eq!(carried.gross, jod(1_276));
+
+        // Left on the net alone, the same general tax would be 160: the
+        // dependency is what puts the special tax in its base.
+        let on_net = [sst, component("SYNTH_GST", 1, rate(160_000), &[])];
+        assert_eq!(
+            charged(&line(PriceMode::Exclusive, 1_000, 1_000, &on_net, rule).unwrap()),
+            [("SYNTH_SST", 1_000, 100), ("SYNTH_GST", 1_000, 160)]
+        );
+    }
+
+    #[test]
+    fn tax_component_dependency_cycle_is_refused() {
+        let refused = |components: &[TaxComponent]| {
+            let mut refusals: Vec<_> = [PriceMode::Exclusive, PriceMode::Inclusive]
+                .into_iter()
+                .map(|mode| {
+                    line(
+                        mode,
+                        1_000,
+                        1_000,
+                        components,
+                        RoundingRule::HalfAwayFromZero,
+                    )
+                    .unwrap_err()
+                })
+                .collect();
+            let inclusive = refusals.pop().unwrap();
+            let exclusive = refusals.pop().unwrap();
+            assert_eq!(
+                exclusive, inclusive,
+                "the list is refused before the mode is read"
+            );
+            exclusive
+        };
+        let named = |a: &str, b: &str| (a.to_owned(), b.to_owned());
+        let circular = |(a, b)| TaxError::CircularComponentBase(a, b);
+
+        // Two components, each charged on the other.
+        let mutual = [
+            component("SYNTH_A", 0, rate(10_000), &["SYNTH_B"]),
+            component("SYNTH_B", 1, rate(10_000), &["SYNTH_A"]),
+        ];
+        assert_eq!(refused(&mutual), circular(named("SYNTH_A", "SYNTH_B")));
+        // One charged on itself.
+        let itself = [component("SYNTH_A", 0, rate(10_000), &["SYNTH_A"])];
+        assert_eq!(refused(&itself), circular(named("SYNTH_A", "SYNTH_A")));
+        // Three in a ring.
+        let ring = [
+            component("SYNTH_A", 0, rate(10_000), &["SYNTH_C"]),
+            component("SYNTH_B", 1, rate(10_000), &["SYNTH_A"]),
+            component("SYNTH_C", 2, rate(10_000), &["SYNTH_B"]),
+        ];
+        assert_eq!(refused(&ring), circular(named("SYNTH_A", "SYNTH_C")));
+        // Two sharing a sequence, each on the other.
+        let level = [
+            component("SYNTH_A", 0, rate(10_000), &["SYNTH_B"]),
+            component("SYNTH_B", 0, rate(10_000), &["SYNTH_A"]),
+        ];
+        assert_eq!(refused(&level), circular(named("SYNTH_A", "SYNTH_B")));
+
+        // No cycle, but a base that is not applied first contradicts the order.
+        let forward = [
+            component("SYNTH_A", 0, rate(10_000), &["SYNTH_B"]),
+            component("SYNTH_B", 1, rate(10_000), &[]),
+        ];
+        assert_eq!(
+            refused(&forward),
+            TaxError::BaseComponentNotEarlier("SYNTH_A".to_owned(), "SYNTH_B".to_owned())
+        );
+        let same_sequence = [
+            component("SYNTH_A", 0, rate(10_000), &["SYNTH_B"]),
+            component("SYNTH_B", 0, rate(10_000), &[]),
+        ];
+        assert_eq!(
+            refused(&same_sequence),
+            TaxError::BaseComponentNotEarlier("SYNTH_A".to_owned(), "SYNTH_B".to_owned())
+        );
+        // And a base that is not on the line at all.
+        let dangling = [component("SYNTH_A", 0, rate(10_000), &["SYNTH_Z"])];
+        assert_eq!(
+            refused(&dangling),
+            TaxError::UnknownBaseComponent("SYNTH_A".to_owned(), "SYNTH_Z".to_owned())
+        );
+
+        assert_eq!(
+            circular(named("SYNTH_A", "SYNTH_B")).to_string(),
+            "components SYNTH_A and SYNTH_B depend on each other"
+        );
+        assert_eq!(
+            TaxError::BaseComponentNotEarlier("SYNTH_A".to_owned(), "SYNTH_B".to_owned())
+                .to_string(),
+            "component SYNTH_A is charged on SYNTH_B, which is not applied before it"
+        );
+    }
+
+    #[test]
+    fn an_incomplete_profile_pack_fails_closed() {
+        let resolve = |rules: &[TaxRateRule], profile| {
+            rates(resolve_components(category(), rules, profile, at(10)))
+        };
+        let zones = [StoreTaxProfile::Asez, StoreTaxProfile::DevelopmentArea];
+
+        // The standard pack charges this category, and no zone pack does: a
+        // zone store refuses rather than inheriting the standard 16%.
+        let standard_only = [rule("SYNTH_A", 160_000, 0, None, None)];
+        for zone in zones {
+            assert_eq!(
+                resolve(&standard_only, zone),
+                Err(TaxError::ProfilePackIncomplete(zone))
+            );
+        }
+        assert_eq!(
+            resolve(&standard_only, StoreTaxProfile::Standard),
+            charges("SYNTH_A", 160_000)
+        );
+        // A rule scoped to the standard profile is the standard pack's too.
+        let scoped_standard = [rule(
+            "SYNTH_A",
+            160_000,
+            0,
+            None,
+            Some(StoreTaxProfile::Standard),
+        )];
+        assert_eq!(
+            resolve(&scoped_standard, StoreTaxProfile::Asez),
+            Err(TaxError::ProfilePackIncomplete(StoreTaxProfile::Asez))
+        );
+
+        // A complete zone pack resolves its own rule, never the standard one.
+        let complete = [
+            rule("SYNTH_A", 160_000, 0, None, None),
+            rule("SYNTH_A", 0, 0, None, Some(StoreTaxProfile::Asez)),
+        ];
+        assert_eq!(
+            resolve(&complete, StoreTaxProfile::Asez),
+            charges("SYNTH_A", 0)
+        );
+        // A zone pack missing one of the standard pack's components is
+        // incomplete, even though it has the other.
+        let partial = [
+            rule("SYNTH_A", 160_000, 0, None, None),
+            rule("SYNTH_B", 10_000, 0, None, None),
+            rule("SYNTH_A", 0, 0, None, Some(StoreTaxProfile::Asez)),
+        ];
+        assert_eq!(
+            resolve(&partial, StoreTaxProfile::Asez),
+            Err(TaxError::ProfilePackIncomplete(StoreTaxProfile::Asez))
+        );
+        // A standard rule that has ended asks nothing of a zone pack, and a
+        // zone pack may charge a component the standard pack does not.
+        let ended_and_own = [
+            rule("SYNTH_A", 160_000, 0, Some(5), None),
+            rule("SYNTH_Z", 20_000, 0, None, Some(StoreTaxProfile::Asez)),
+        ];
+        assert_eq!(
+            resolve(&ended_and_own, StoreTaxProfile::Asez),
+            charges("SYNTH_Z", 20_000)
+        );
+        // With no rule anywhere, there is nothing incomplete: no rule applies.
+        for zone in zones {
+            assert_eq!(resolve(&[], zone), Err(TaxError::NoRuleInEffect(at(10))));
+        }
+
+        assert_eq!(
+            TaxError::ProfilePackIncomplete(StoreTaxProfile::Asez).to_string(),
+            "profile Asez has no complete rate pack; refusing to fall back"
+        );
+    }
+
+    #[test]
+    fn a_malformed_component_list_is_refused() {
+        let rule = RoundingRule::HalfAwayFromZero;
+        for mode in [PriceMode::Exclusive, PriceMode::Inclusive] {
+            let refused = |components: &[TaxComponent]| line(mode, 1_000, 1_000, components, rule);
+            // No component: an untaxed line is zero-rated or exempt, never empty.
+            assert_eq!(refused(&[]), Err(TaxError::NoComponents));
+            // One code twice is two rules for one component.
+            let twice = [
+                component("SYNTH_A", 0, rate(10_000), &[]),
+                component("SYNTH_A", 1, rate(20_000), &[]),
+            ];
+            assert_eq!(
+                refused(&twice),
+                Err(TaxError::OverlappingRules("SYNTH_A".to_owned()))
+            );
+            // A fixed amount below zero, alone or beside a rate.
+            for basis in [
+                per_unit(-1),
+                TaxBasis::Compound {
+                    rate: Percent::from_ppm(10_000),
+                    per_unit: jod(-1),
+                },
+            ] {
+                assert_eq!(
+                    refused(&[component("SYNTH_A", 0, basis, &[])]),
+                    Err(TaxError::NegativeRate("SYNTH_A".to_owned()))
+                );
+            }
+            // A fixed amount in another currency than the line's.
+            let euros = [component(
+                "SYNTH_A",
+                0,
+                TaxBasis::PerUnit {
+                    amount: Money::from_minor(50, Currency::EUR),
+                },
+                &[],
+            )];
+            assert_eq!(
+                refused(&euros),
+                Err(TaxError::Money(MoneyError::CurrencyMismatch("JOD", "EUR")))
+            );
+        }
+        // Zero is an amount, and charges nothing.
+        assert_eq!(
+            line(
+                PriceMode::Exclusive,
+                1_000,
+                3_000,
+                &[component("SYNTH_A", 0, per_unit(0), &[])],
+                rule
+            )
+            .map(|line| line.tax_total),
+            Ok(jod(0))
+        );
+    }
+
+    #[test]
+    fn an_inclusive_price_on_several_components_is_refused() {
+        let rule = RoundingRule::HalfAwayFromZero;
+        let side_by_side = [
+            component("SYNTH_A", 0, rate(160_000), &[]),
+            component("SYNTH_B", 0, rate(10_000), &[]),
+        ];
+        let stacked = [
+            component("SYNTH_SST", 0, per_unit(100), &[]),
+            component("SYNTH_GST", 1, rate(160_000), &["SYNTH_SST"]),
+        ];
+        for components in [&side_by_side[..], &stacked[..]] {
+            assert_eq!(
+                line(PriceMode::Inclusive, 1_276, 1_000, components, rule),
+                Err(TaxError::InclusiveSplitUndefined(2))
+            );
+            // The same components charge an exclusive price.
+            assert!(line(PriceMode::Exclusive, 1_000, 1_000, components, rule).is_ok());
+        }
+        assert_eq!(
+            TaxError::InclusiveSplitUndefined(2).to_string(),
+            "a tax-inclusive price on a line with 2 tax components is refused: how such a price \
+             divides between them is not settled"
+        );
+    }
+
+    #[test]
+    fn inclusive_fixed_amounts_extract_exactly() {
+        let half_away = RoundingRule::HalfAwayFromZero;
+        let split = |gross, qty_milli, basis: TaxBasis, rule| {
+            line(
+                PriceMode::Inclusive,
+                gross,
+                qty_milli,
+                &[component("SYNTH_A", 0, basis, &[])],
+                rule,
+            )
+            .map(|line| (line.net.minor(), line.tax_total.minor()))
+        };
+        // A fixed amount alone: two units at 250 fils in a 1.000 JOD price.
+        assert_eq!(
+            split(1_000, 2_000, per_unit(250), half_away),
+            Ok((500, 500))
+        );
+        // Both shapes: (1260 − 100) / 1.16 is exactly 1000.
+        let compound = || TaxBasis::Compound {
+            rate: Percent::from_ppm(160_000),
+            per_unit: jod(100),
+        };
+        assert_eq!(split(1_260, 1_000, compound(), half_away), Ok((1_000, 260)));
+        // A weighed 1.5 units at 333 fils is 499.5 fils, so the net is 500.5:
+        // the rule rounds the net once and the tax is what is left.
+        assert_eq!(
+            split(1_000, 1_500, per_unit(333), half_away),
+            Ok((501, 499))
+        );
+        assert_eq!(
+            split(1_000, 1_500, per_unit(333), RoundingRule::HalfEven),
+            Ok((500, 500))
+        );
+        assert_eq!(
+            split(1_000, 1_500, per_unit(333), RoundingRule::Floor),
+            Ok((500, 500))
+        );
+        assert_eq!(
+            split(1_000, 1_500, per_unit(333), RoundingRule::Ceil),
+            Ok((501, 499))
+        );
+
+        // A price that is all fixed tax leaves a net of zero; a smaller one
+        // cannot contain the tax, and is refused rather than given a negative
+        // net.
+        assert_eq!(split(500, 2_000, per_unit(250), half_away), Ok((0, 500)));
+        for gross in [499, 0] {
+            assert_eq!(
+                split(gross, 2_000, per_unit(250), half_away),
+                Err(TaxError::FixedTaxExceedsPrice("SYNTH_A".to_owned()))
+            );
+        }
+        assert_eq!(
+            TaxError::FixedTaxExceedsPrice("SYNTH_A".to_owned()).to_string(),
+            "component SYNTH_A charges a fixed amount larger than the tax-inclusive price"
+        );
+    }
+
+    /// One to four components with sequences from 0 to 3, each a percentage
+    /// to 100%, a fixed amount to 100 JOD a unit, or both, and each charged on
+    /// the net or on any choice of the components applied before it; with the
+    /// listing rotated so its order is not the application order. It excludes
+    /// a base that is not applied earlier, which
+    /// `tax_component_dependency_cycle_is_refused` covers, and negative rates
+    /// and amounts, which are refused.
+    fn component_stacks() -> impl Strategy<Value = Vec<TaxComponent>> {
+        let one = (
+            0u8..4,
+            0u8..3,
+            0i64..=1_000_000,
+            0i64..=100_000,
+            any::<u8>(),
+        );
+        (prop::collection::vec(one, 1..=4), 0usize..4).prop_map(|(drawn, rotation)| {
+            let mut stack: Vec<TaxComponent> = Vec::new();
+            let mut drawn = drawn;
+            drawn.sort_by_key(|&(sequence, ..)| sequence);
+            for (i, (sequence, kind, ppm, fixed, choice)) in drawn.into_iter().enumerate() {
+                let basis = match kind {
+                    0 => rate(ppm),
+                    1 => per_unit(fixed),
+                    _ => TaxBasis::Compound {
+                        rate: Percent::from_ppm(ppm),
+                        per_unit: jod(fixed),
+                    },
+                };
+                let earlier: Vec<String> = stack
+                    .iter()
+                    .filter(|c| c.sequence < sequence)
+                    .enumerate()
+                    .filter(|(bit, _)| choice & (1 << bit) != 0)
+                    .map(|(_, c)| c.code.clone())
+                    .collect();
+                let on: Vec<&str> = earlier.iter().map(String::as_str).collect();
+                stack.push(component(&format!("SYNTH_{i}"), sequence, basis, &on));
+            }
+            let len = stack.len();
+            stack.rotate_left(rotation % len);
+            stack
+        })
+    }
+
+    /// A quantity from none to a thousand units, fractions of a unit included.
+    /// It excludes negative quantities, which no sale line carries.
+    fn quantities() -> impl Strategy<Value = i64> {
+        0i64..=1_000_000
+    }
+
+    proptest! {
+        #![proptest_config(domain_proptest_config())]
+
+        /// However many components a line carries, in whatever order and on
+        /// whatever bases: each is applied after the components it is charged
+        /// on, on a base that is the net plus exactly their carried amounts,
+        /// and is that base times its rate plus its fixed amount times the
+        /// quantity, rounded once. The tax is exactly the sum of the
+        /// components and the gross is exactly net plus tax. An inclusive
+        /// price on more than one is refused, never divided by guesswork.
+        #[test]
+        fn prop_multi_component_line_sums_correctly(
+            stack in component_stacks(),
+            net in -1_000_000_000_000i64..=1_000_000_000_000,
+            qty in quantities(),
+            rule in any_rounding_rule(),
+        ) {
+            let carried = line(PriceMode::Exclusive, net, qty, &stack, rule).unwrap();
+            prop_assert_eq!(carried.components.len(), stack.len());
+            let mut sum = 0i64;
+            for (i, charged) in carried.components.iter().enumerate() {
+                let source = stack.iter().find(|c| c.code == charged.code).unwrap();
+                let named = match &source.base {
+                    TaxBase::LineNet => Vec::new(),
+                    TaxBase::NetPlusComponents { codes } => codes.clone(),
+                };
+                let before = carried.components.get(..i).unwrap();
+                let mut base = net;
+                for code in &named {
+                    let earlier = before.iter().find(|c| &c.code == code);
+                    prop_assert!(earlier.is_some(), "{} is applied before {code}", charged.code);
+                    base += earlier.unwrap().amount.minor();
+                }
+                let in_order = before.iter().all(|c| {
+                    let other = stack.iter().find(|s| s.code == c.code).unwrap();
+                    (other.sequence, &other.code) < (source.sequence, &source.code)
+                });
+                prop_assert!(in_order, "{} comes after every component before it", charged.code);
+                prop_assert_eq!(charged.base_amount, jod(base));
+                let (ppm, fixed) = match source.basis {
+                    TaxBasis::Percentage { rate } => (rate.ppm(), 0),
+                    TaxBasis::PerUnit { amount } => (0, amount.minor()),
+                    TaxBasis::Compound { rate, per_unit } => (rate.ppm(), per_unit.minor()),
+                };
+                // base × ppm / 10⁶ + fixed × qty / 10³, over one denominator.
+                let exact = i128::from(base) * i128::from(ppm)
+                    + i128::from(fixed) * i128::from(qty) * 1_000;
+                prop_assert_eq!(charged.amount, jod(rounded_ratio(exact, 1_000_000, rule)));
+                sum += charged.amount.minor();
+            }
+            prop_assert_eq!(carried.tax_total, jod(sum));
+            prop_assert_eq!(carried.gross, jod(net + sum));
+            if stack.len() > 1 {
+                prop_assert_eq!(
+                    line(PriceMode::Inclusive, net, qty, &stack, rule),
+                    Err(TaxError::InclusiveSplitUndefined(stack.len()))
+                );
+            }
+        }
+
+        /// A fixed amount on three units is exactly three times the amount on
+        /// one, whichever way the price is written; on a fraction of a unit it
+        /// is the amount times the quantity, rounded once by the caller's rule.
+        #[test]
+        fn prop_per_unit_component_scales_with_quantity(
+            fils in 0i64..=1_000_000,
+            units in 0i64..=1_000,
+            milli in quantities(),
+            price in 0i64..=1_000_000_000,
+            rule in any_rounding_rule(),
+        ) {
+            let fixed = [component("SYNTH_A", 0, per_unit(fils), &[])];
+            let tax = |mode, taxable, qty_milli| {
+                line(mode, taxable, qty_milli, &fixed, rule).map(|line| line.tax_total.minor())
+            };
+            // An inclusive price large enough to contain the tax on every unit.
+            let gross = price + fils * units;
+            for (mode, taxable) in [(PriceMode::Exclusive, price), (PriceMode::Inclusive, gross)] {
+                let one = tax(mode, taxable, 1_000).unwrap();
+                prop_assert_eq!(one, fils);
+                prop_assert_eq!(tax(mode, taxable, units * 1_000).unwrap(), units * one);
+            }
+            prop_assert_eq!(
+                tax(PriceMode::Exclusive, price, milli).map(jod),
+                jod(fils).mul_qty(Qty::from_milli(milli), rule).map_err(TaxError::from)
+            );
+        }
+
+        /// An inclusive price whose one component charges a fixed amount, alone
+        /// or beside a rate: the net is the price less the fixed amount,
+        /// divided by one plus the rate and rounded once, exactly as integer
+        /// division puts it, and net plus tax is the price. A price too small
+        /// to contain the fixed amount is refused, and so is one whose
+        /// remainder no amount can hold; no other price is.
+        #[test]
+        fn prop_inclusive_fixed_amount_extracts_exactly(
+            gross in any_gross(),
+            fils in 0i64..=1_000_000,
+            qty in quantities(),
+            ppm in rates_to_a_thousand_percent(),
+            with_rate in any::<bool>(),
+            rule in any_rounding_rule(),
+        ) {
+            let (ppm, basis) = if with_rate {
+                (ppm, TaxBasis::Compound { rate: Percent::from_ppm(ppm), per_unit: jod(fils) })
+            } else {
+                (0, per_unit(fils))
+            };
+            let result = line(PriceMode::Inclusive, gross, qty, &[component("SYNTH_A", 0, basis, &[])], rule);
+            // In thousandths of a fil: the price less the fixed amount.
+            let priced = i128::from(gross) * 1_000 - i128::from(fils) * i128::from(qty);
+            if priced.abs() > i128::from(i64::MAX) * 1_000 {
+                prop_assert_eq!(result, Err(TaxError::Money(MoneyError::Overflow)));
+                return Ok(());
+            }
+            let net = rounded_ratio(priced * 1_000, 1_000_000 + i128::from(ppm), rule);
+            if net != 0 && net.signum() != gross.signum() {
+                prop_assert_eq!(result, Err(TaxError::FixedTaxExceedsPrice("SYNTH_A".to_owned())));
+                return Ok(());
+            }
+            let carried = result.unwrap();
+            prop_assert_eq!(carried.net, jod(net));
+            prop_assert_eq!(
+                i128::from(carried.net.minor()) + i128::from(carried.tax_total.minor()),
+                i128::from(gross)
+            );
+            prop_assert_eq!(carried.gross, jod(gross));
+            let component = carried.components.first().unwrap();
+            prop_assert_eq!(carried.components.len(), 1);
+            prop_assert_eq!(component.base_amount, carried.net);
+            prop_assert_eq!(component.amount, carried.tax_total);
         }
     }
 }
