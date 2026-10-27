@@ -28,7 +28,36 @@ if [ "${1:-}" = "auth" ] && [ "${2:-}" = "status" ]; then
     echo "mock authentication failure" >&2
     exit 40
   fi
+  if [ "$MOCK_GH_SCENARIO" = "item_no_project_scope" ]; then
+    echo "Token scopes: 'repo'"
+    exit 0
+  fi
   echo "Token scopes: 'repo', 'project', 'read:project'"
+  exit 0
+fi
+
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
+  case "$MOCK_GH_SCENARIO" in
+    item_pr_missing)
+      echo "mock pr-view failure" >&2
+      exit 51
+      ;;
+    item_closed)
+      printf '%s\n' '{"url":"https://github.com/test/pos/pull/12","number":12,"title":"chore(repo): abandoned  [—]","state":"CLOSED","labels":[]}'
+      ;;
+    item_no_step)
+      printf '%s\n' '{"url":"https://github.com/test/pos/pull/12","number":12,"title":"chore(repo): bump a tool  [—]","state":"MERGED","labels":[{"name":"type: chore"}]}'
+      ;;
+    item_unlabelled)
+      printf '%s\n' '{"url":"https://github.com/test/pos/pull/12","number":12,"title":"feat(domain): several components  [1.3.5]","state":"OPEN","labels":[]}'
+      ;;
+    item_range)
+      printf '%s\n' '{"url":"https://github.com/test/pos/pull/12","number":12,"title":"feat(db): across two groups  [1.2.9–1.3.1]","state":"MERGED","labels":[{"name":"risk: security"},{"name":"risk: migration"}]}'
+      ;;
+    *)
+      printf '%s\n' '{"url":"https://github.com/test/pos/pull/12","number":12,"title":"feat(domain): several \"components\", stacked  [1.3.5]","state":"OPEN","labels":[{"name":"type: feat"},{"name":"risk: security"},{"name":"risk: money path"}]}'
+      ;;
+  esac
   exit 0
 fi
 
@@ -57,7 +86,7 @@ if [ "${1:-}" = "project" ]; then
         exit 43
       fi
       case "$MOCK_GH_SCENARIO" in
-        project_create_failure)
+        project_create_failure|item_board_missing)
           printf '{"projects":[]}\n'
           ;;
         *)
@@ -74,11 +103,51 @@ if [ "${1:-}" = "project" ]; then
       printf '{"number":7}\n'
       exit 0
       ;;
+    item-add)
+      if [ "$MOCK_GH_SCENARIO" = "item_add_failure" ]; then
+        echo "mock item-add failure" >&2
+        exit 50
+      fi
+      printf '{"id":"PVTI_mock"}\n'
+      exit 0
+      ;;
     field-create)
       if [ "$MOCK_GH_SCENARIO" = "field_create_failure" ]; then
         echo "mock field-create failure" >&2
         exit 46
       fi
+      exit 0
+      ;;
+  esac
+fi
+
+if [ "${1:-}" = "api" ] && [ "${2:-}" = "graphql" ]; then
+  case "$*" in
+    *"fragment Board"*)
+      case "$MOCK_GH_SCENARIO" in
+        item_board_unreadable)
+          echo "mock board read failure" >&2
+          exit 53
+          ;;
+        item_field_missing)
+          printf '%s\n' '{"data":{"repositoryOwner":{"projectV2":{"id":"PVT_mock","fields":{"nodes":[{"id":"F_status","name":"Status","dataType":"SINGLE_SELECT","options":[{"id":"O_todo","name":"Todo"},{"id":"O_progress","name":"In Progress"},{"id":"O_done","name":"Done"}]},{"id":"F_phase","name":"Phase","dataType":"SINGLE_SELECT","options":[{"id":"O_p0","name":"0 close-out"},{"id":"O_p1","name":"1 sellable MVP"},{"id":"O_p2","name":"2 money-grade"}]},{"id":"F_group","name":"Group","dataType":"TEXT"},{"id":"F_risk","name":"Risk","dataType":"SINGLE_SELECT","options":[{"id":"O_money","name":"money path"},{"id":"O_immutable","name":"immutable"},{"id":"O_migration","name":"migration"},{"id":"O_compliance","name":"compliance"},{"id":"O_security","name":"security"},{"id":"O_none","name":"none"}]},{}]}}}}}'
+          ;;
+        item_option_missing)
+          printf '%s\n' '{"data":{"repositoryOwner":{"projectV2":{"id":"PVT_mock","fields":{"nodes":[{"id":"F_status","name":"Status","dataType":"SINGLE_SELECT","options":[{"id":"O_todo","name":"Todo"},{"id":"O_done","name":"Done"}]},{"id":"F_phase","name":"Phase","dataType":"SINGLE_SELECT","options":[{"id":"O_p0","name":"0 close-out"},{"id":"O_p1","name":"1 sellable MVP"},{"id":"O_p2","name":"2 money-grade"}]},{"id":"F_group","name":"Group","dataType":"TEXT"},{"id":"F_microstep","name":"Microstep","dataType":"TEXT"},{"id":"F_risk","name":"Risk","dataType":"SINGLE_SELECT","options":[{"id":"O_money","name":"money path"},{"id":"O_immutable","name":"immutable"},{"id":"O_migration","name":"migration"},{"id":"O_compliance","name":"compliance"},{"id":"O_security","name":"security"},{"id":"O_none","name":"none"}]},{}]}}}}}'
+          ;;
+        *)
+          printf '%s\n' '{"data":{"repositoryOwner":{"projectV2":{"id":"PVT_mock","fields":{"nodes":[{"id":"F_status","name":"Status","dataType":"SINGLE_SELECT","options":[{"id":"O_todo","name":"Todo"},{"id":"O_progress","name":"In Progress"},{"id":"O_done","name":"Done"}]},{"id":"F_phase","name":"Phase","dataType":"SINGLE_SELECT","options":[{"id":"O_p0","name":"0 close-out"},{"id":"O_p1","name":"1 sellable MVP"},{"id":"O_p2","name":"2 money-grade"}]},{"id":"F_group","name":"Group","dataType":"TEXT"},{"id":"F_microstep","name":"Microstep","dataType":"TEXT"},{"id":"F_risk","name":"Risk","dataType":"SINGLE_SELECT","options":[{"id":"O_money","name":"money path"},{"id":"O_immutable","name":"immutable"},{"id":"O_migration","name":"migration"},{"id":"O_compliance","name":"compliance"},{"id":"O_security","name":"security"},{"id":"O_none","name":"none"}]},{}]}}}}}'
+          ;;
+      esac
+      exit 0
+      ;;
+    *"--input -"*)
+      cat >"$MOCK_GH_LOG.body"
+      if [ "$MOCK_GH_SCENARIO" = "item_update_failure" ]; then
+        echo "mock field-update failure" >&2
+        exit 52
+      fi
+      printf '{"data":{}}\n'
       exit 0
       ;;
   esac
@@ -203,6 +272,7 @@ run_case() {
   shift 2
   : >"$MOCK_LOG"
   : >"$OUTPUT"
+  rm -f "$MOCK_LOG.body"
   set +e
   PATH="$TMP/bin:$PATH" \
     MOCK_GH_SCENARIO="$scenario" \
@@ -238,6 +308,24 @@ expect_output() {
 expect_no_output() {
   local description="$1" pattern="$2"
   if grep -qF -- "$pattern" "$OUTPUT"; then fail "$description"; else pass "$description"; fi
+}
+
+expect_body() {
+  local description="$1" pattern="$2"
+  if [ -f "$MOCK_LOG.body" ] && grep -qF -- "$pattern" "$MOCK_LOG.body"; then
+    pass "$description"
+  else
+    fail "$description"
+  fi
+}
+
+expect_no_body() {
+  local description="$1" pattern="$2"
+  if [ -f "$MOCK_LOG.body" ] && grep -qF -- "$pattern" "$MOCK_LOG.body"; then
+    fail "$description"
+  else
+    pass "$description"
+  fi
 }
 
 expect_no_call() {
@@ -364,6 +452,81 @@ expect_success "existing complete project is idempotent"
 expect_no_call "existing complete project is reused rather than duplicated" "project create"
 expect_no_call "complete project creates no duplicate fields" "project field-create"
 expect_output "successful project setup prints ready" "Project ready:"
+
+echo
+echo "gh-project-item failure semantics"
+run_case normal scripts/gh-project-item.sh
+expect_failure "no pull request is a usage error"
+expect_output "the usage error names the argument" "usage:"
+
+run_case auth_failure scripts/gh-project-item.sh 12
+expect_failure "authentication failure is fatal"
+expect_no_call "authentication failure adds nothing" "project item-add"
+
+run_case item_no_project_scope scripts/gh-project-item.sh 12
+expect_failure "a login without the project scope is refused"
+expect_output "the refusal says how to grant the scope" "gh auth refresh -s project,read:project"
+expect_no_call "a login without the scope adds nothing" "project item-add"
+
+run_case item_board_missing scripts/gh-project-item.sh 12
+expect_failure "a board that does not resolve is fatal"
+expect_output "a missing board points at its bootstrap" "run just gh-project"
+expect_no_call "a missing board adds nothing" "project item-add"
+
+run_case item_board_unreadable scripts/gh-project-item.sh 12
+expect_failure "an unreadable board is fatal"
+expect_no_call "an unreadable board adds nothing" "project item-add"
+
+run_case item_pr_missing scripts/gh-project-item.sh 12
+expect_failure "a pull request that does not resolve is fatal"
+expect_no_call "an unresolved pull request adds nothing" "project item-add"
+
+run_case item_closed scripts/gh-project-item.sh 12
+expect_failure "a pull request closed without merging is refused"
+expect_output "the refusal says why" "closed without merging"
+expect_no_call "a closed pull request is not added" "project item-add"
+
+run_case item_field_missing scripts/gh-project-item.sh 12
+expect_failure "a board missing a field is refused"
+expect_output "the refusal names the field" "no 'Microstep' field"
+expect_no_call "a drifted board is refused before anything is added" "project item-add"
+
+run_case item_option_missing scripts/gh-project-item.sh 12
+expect_failure "a board missing an option is refused"
+expect_output "the refusal names the option" "no option 'In Progress'"
+expect_no_call "a missing option is refused before anything is added" "project item-add"
+
+run_case item_add_failure scripts/gh-project-item.sh 12
+expect_failure "an add failure is fatal"
+expect_no_call "an add failure sets no field" "graphql --input -"
+expect_no_output "an add failure never reports a card" "board: #"
+
+run_case item_update_failure scripts/gh-project-item.sh 12
+expect_failure "a field failure is fatal"
+expect_output "a field failure says the card was added but not set" "failed to set its fields"
+expect_no_output "a field failure never reports a card" "board: #"
+
+run_case normal scripts/gh-project-item.sh 12
+expect_success "an open pull request is filed"
+expect_output "it is in progress, with its step and its most consequential risk" "board: #12 → In Progress · 1 sellable MVP · 1.3 · 1.3.5 · money path"
+expect_body "the card is the one the add returned" '"item": "PVTI_mock"'
+expect_body "a select value is the board's own option id" '{"singleSelectOptionId": "O_progress"}'
+expect_body "a text value travels as a variable" '{"text": "1.3.5"}'
+expect_no_body "no value is written into the query text" 'value: {'
+
+run_case item_unlabelled scripts/gh-project-item.sh 12
+expect_success "an unlabelled pull request is filed"
+expect_output "an unlabelled pull request has no Risk yet" "board: #12 → In Progress · 1 sellable MVP · 1.3 · 1.3.5"
+expect_no_body "no Risk is set before the labeler has run" "F_risk"
+
+run_case item_no_step scripts/gh-project-item.sh 12
+expect_success "a merged pull request naming no step is filed"
+expect_output "it is done, with no risk and no step" "board: #12 → Done · none"
+expect_no_body "a title naming no step sets no Phase" "F_phase"
+
+run_case item_range scripts/gh-project-item.sh 12
+expect_success "a range of steps is filed"
+expect_output "a range across groups keeps both, and the gravest risk" "board: #12 → Done · 1 sellable MVP · 1.2–1.3 · 1.2.9–1.3.1 · migration"
 
 echo
 printf 'GitHub setup self-test: %d passed, %d failed\n' "$PASSED" "$FAILED"
