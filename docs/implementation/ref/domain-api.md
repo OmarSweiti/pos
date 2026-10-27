@@ -256,6 +256,14 @@ wrong, and a wrong one misprices every line in the system.
 > every persisted enum that follows: **one explicit mapping per enum in `pos-db`, never a derive
 > attribute that couples the JSON wire format to a column constraint.** Whoever writes the first such
 > mapping (group 1.3) owns establishing the pattern.
+>
+> **As delivered at 1.3.4's database half.** `crates/pos-db/src/tax_policy.rs` maps `RoundingRule` and
+> `RoundingDirection` in the shape `repo/trade_scale.rs` first gave `VerificationState` at 1.2.4: an
+> exhaustive `const fn` to the schema's spelling, so a new variant does not compile until it has one,
+> and the reverse found through that same function, so the two directions cannot disagree and a
+> spelling the build does not know is refused rather than read as a fallback. Its tests write the
+> schema's spellings out independently of the code and hold the serde wire spelling to being refused
+> by both the `CHECK` and the mapping.
 
 **There is no `Default` impl, deliberately.** `HalfAwayFromZero` is the jurisdiction default, not a
 type-level fallback: `unwrap_or_default()` is precisely how an unapproved tax rule would reach a
@@ -1350,7 +1358,8 @@ pub struct ComponentTax {
 /// never rounded on its own; `prop_inclusive_net_plus_tax_equals_gross` holds
 /// the net to integer division for every `i64` gross. Which `rule` a store may
 /// use is not this function's to choose: it is threaded from the store's
-/// approved `tax_computation_policy` (1.3.4's database half).
+/// approved `tax_computation_policy`, which 1.3.4's database half reads as
+/// `pos_db::tax_policy::TaxPolicyRepository::approved_for_store`.
 pub fn compute_line_tax(
     taxable: Money,          // line gross (inclusive) or net (exclusive), post-discount
     qty: Qty,
