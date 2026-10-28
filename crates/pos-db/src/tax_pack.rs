@@ -163,7 +163,7 @@ pub enum TaxPackRefusal {
          standard and reduced bands more"
     )]
     RateContradictsTreatment(String),
-    #[error("band {0} has a period that ends before it begins")]
+    #[error("band {0} has a period that ends on or before the day it begins")]
     EmptyPeriod(String),
     #[error("band {0} has two rates in effect on one day")]
     OverlappingRates(String),
