@@ -1582,6 +1582,33 @@ pub struct CartLine {
 }
 ```
 
+> **As delivered at 1.4.1–1.4.2.** The enum holds the states whose data exists: `Building(Cart)`
+> and `Parked(Cart)`. Each later state arrives with the transition that reaches it — `Tendering`,
+> `Finalizing`, `Complete` and `Voided` at 1.4.8 — and each later field with the step that gives it
+> meaning: `Cart.basket_discounts` and `CartLine.discounts` at 1.4.5, `CartLine.price_override` at
+> 1.4.7, `CartLine.promo_group` when promotions are first captured. A field added before its rule is
+> a value nothing checks, and a payload type invented before its transition is a guess the transition
+> would then have to live with. `open` takes a `CartContext`, which this section did not define:
+>
+> ```rust
+> #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+> pub struct CartContext {
+>     pub register_id: RegisterId, pub shift_id: ShiftId, pub cashier_id: UserId,
+>     pub currency: Currency, pub is_training: bool, pub opened_at: Timestamp,
+> }
+> ```
+>
+> A new cart is empty, sells to no named customer or buyer, and its supply is `Domestic`. `Cart`'s
+> `Debug` is written by hand so that `buyer_name` never reaches a log line; the TIN stays visible, as
+> on the receipt's buyer block. `CartError` is §6.3 exactly, every variant.
+>
+> **1.4.8 inherits a module cycle from this section.** §15 has `tender` depending on `cart`, because
+> §7's `Tendering` holds a `Cart`; but `Sale::Tendering(Tendering)` lives here, in `cart`, so the
+> enum would make `cart` depend on `tender` too, and `just acyclic` refuses a cycle. The resolution
+> recorded for 1.4.8: the whole state machine stays in `cart`, `Tendering` with it, and 1.5.2's
+> `remaining_due`, `change_due` and `is_settled` beside it, so `cart` depends on `tender` and `tender`
+> stays the vocabulary below it — the arrow between them in §15 reverses when 1.4.8 makes it true.
+
 ### 6.1 Transitions — [1.4.3 … 1.4.8]
 
 Every one is a free function taking the state by value and returning the next state or an error. No method mutates in place; no transition is reachable from the wrong state because the wrong state is a different type.
