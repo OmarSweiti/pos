@@ -79,10 +79,6 @@ KNOWN_KINDS = RUST_KINDS | {"web", "fuzz", "drill"}
 # As tests land, delete their entries; never add one merely to silence an
 # absent-test failure.
 PLANNED: dict[str, tuple[str, ...]] = {
-    "1.4.3": (
-        "age_restricted_line_requires_confirmation",
-        "inactive_product_cannot_be_added_but_can_be_refunded",
-    ),
     "1.4.3b": ("age_decline_removes_line_and_audits",),
     "1.4.4": ("prop_park_resume_roundtrip_is_identity",),
     "1.4.5": ("prop_discount_never_makes_a_line_negative",),
@@ -526,6 +522,7 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "a_pack_quantity_of_zero_is_refused_at_save",
         "a_second_live_barcode_claim_is_refused",
         "a_single_letter_query_does_not_match_a_vocalised_name",
+        "age_restricted_line_requires_confirmation",
         "an_altered_amount_is_refused",
         "an_expired_handle_is_refused",
         "an_unknown_print_outcome_never_auto_retries_the_drawer_pulse",
@@ -538,6 +535,7 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "fts_matches_arabic_with_and_without_diacritics",
         "fts_matches_taa_marbuta_spelled_as_haa",
         "fts_prefix_search_works_at_two_characters",
+        "inactive_product_cannot_be_added_but_can_be_refunded",
         "manager_self_approval_denied_when_policy_bans_it",
         "mutating_an_identity_column_breaks_the_chain",
         "narrow_profile_reflows_rather_than_truncates",
