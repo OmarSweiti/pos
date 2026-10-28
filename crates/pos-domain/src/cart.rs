@@ -212,7 +212,7 @@ mod tests {
 
     // Wire-format tripwires, not business data: every id, amount and name is
     // visibly synthetic.
-    const GOLDEN_CART_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","register_id":"00000000-0000-0000-0000-000000000002","shift_id":"00000000-0000-0000-0000-000000000003","cashier_id":"00000000-0000-0000-0000-000000000004","currency":"JOD","lines":[{"id":"00000000-0000-0000-0000-000000000010","product_id":"00000000-0000-0000-0000-000000000011","name_snapshot":"SYNTH item","unit_price":{"minor":1250,"currency":"JOD"},"price_origin":{"catalog":{"product_id":"00000000-0000-0000-0000-000000000011"}},"qty":1500,"unit":"kilogram","is_weighed":true,"tax_category_id":"00000000-0000-0000-0000-000000000012","min_age":18,"age_confirmed":false,"label":{"qty":1500,"catalog_unit_price":{"minor":1250,"currency":"JOD"}}}],"customer_id":null,"buyer_tin":"000000000","buyer_name":"SYNTH buyer","supply":{"destination":"Domestic","reason":null,"evidence_ref":null},"is_training":true,"opened_at":978307200000}"#;
+    const GOLDEN_CART_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","register_id":"00000000-0000-0000-0000-000000000002","shift_id":"00000000-0000-0000-0000-000000000003","cashier_id":"00000000-0000-0000-0000-000000000004","currency":"JOD","lines":[{"id":"00000000-0000-0000-0000-000000000010","product_id":"00000000-0000-0000-0000-000000000011","name_snapshot":"SYNTH item","unit_price":{"minor":1250,"currency":"JOD"},"price_origin":{"catalog":{"product_id":"00000000-0000-0000-0000-000000000011"}},"qty":1500,"unit":"kilogram","is_weighed":true,"tax_category_id":"00000000-0000-0000-0000-000000000012","min_age":18,"age_confirmed":false,"label":{"qty":1500,"catalog_unit_price":{"minor":1250,"currency":"JOD"}}}],"customer_id":null,"buyer_tin":"999888777","buyer_name":"SYNTH buyer","supply":{"destination":"Domestic","reason":null,"evidence_ref":null},"is_training":true,"opened_at":978307200000}"#;
 
     fn id(n: u128) -> Uuid {
         Uuid::from_u128(n)
@@ -254,7 +254,8 @@ mod tests {
     fn cart() -> Cart {
         let mut cart = open(SaleId::from_uuid(id(1)), &context(true));
         cart.lines.push(line());
-        cart.buyer_tin = Some("000000000".to_owned());
+        // A TIN no id in the fixture contains, so seeing it proves the TIN.
+        cart.buyer_tin = Some("999888777".to_owned());
         cart.buyer_name = Some("SYNTH buyer".to_owned());
         cart
     }
@@ -318,7 +319,7 @@ mod tests {
             assert!(!rendered.contains("SYNTH buyer"), "{rendered}");
             assert!(rendered.contains("[redacted]"));
             // The TIN stays visible, as on the receipt's buyer block.
-            assert!(rendered.contains("000000000"));
+            assert!(rendered.contains("999888777"));
         }
         // A cart with no buyer shows no redaction marker.
         let anonymous = open(SaleId::from_uuid(id(1)), &context(false));
