@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **54 of 121 executable microsteps fully complete (~45%)**: `1.1.0`
+Phase 1 has **56 of 121 executable microsteps fully complete (~46%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -132,9 +132,12 @@ components, one row per rate, so an exempt line and a zero-rated one are two row
 carries tax, a zero-rated or exempt component that charges anything refused, and a line that no
 longer adds up refused rather than summarized), `1.3.8` (a store not registered for GST
 charging none: its lines carry no component and its receipt no tax rows, while whether it owes an
-electronic invoice stays a separate setting), and `1.4.1` and `1.4.2` (the cart's first types — a
+electronic invoice stays a separate setting), `1.4.1` and `1.4.2` (the cart's first types — a
 sale being built or parked, its lines with the name and price they were captured at, a cart that
-opens domestic, on its shift and knowing whether it is training, and every refusal a cart can return).
+opens domestic, on its shift and knowing whether it is training, and every refusal a cart can return),
+`1.4.3` (adding, changing and voiding a line — by product or by scan, never at a price the caller
+chose, an age-restricted line held blocked until confirmed, and a void that says who and why), and
+`1.2.4` (the scan path, completed now that a price label becomes one package in the cart).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
@@ -153,20 +156,20 @@ device is bought before it ([`ref/hardware-and-receipts.md`](ref/hardware-and-re
 append-only facts, because every fact graph commits with its delivery envelope and the writer refuses
 to return success on an incomplete one. **`1.9.1`, `1.10.1` and `1.2.5` have landed too**, so the
 migration chain is contiguous to `0007`, and `1.2.3`, the product repository and its search, is
-built on it; the `1.2.4` database half and `1.10.2` have landed, so `1.10.3`–`1.10.5` may be built next. `1.2.4` is **partially delivered**: its pure half
+built on it; the `1.2.4` database half and `1.10.2` have landed, so `1.10.3`–`1.10.5` may be built next. `1.2.4` is **complete**: its pure half
 — the scan parser, `PriceSource`, `ScanLookup`, `resolve_scan` and the trade-scale gate — is in
 `pos-domain`, with the compile-fail proof that only the scan handler can make a price-embedded
 lookup. Its database half has landed too: `TradeScaleRepository` reads a scale's current evidence and
 a store's active label layouts, and records evidence only with the delivery envelope it travels in.
 Its shell half has landed as well: the scan handler reads a code with every layout the store has,
 makes a label answer for the scale that printed it before anything is looked up, and hands the hits to
-`resolve_scan`. One named test still waits for the cart's `AddLine::from_scan`, which is where a label
-becomes one unit, so 1.2.4 stays partially delivered until group 1.4. `1.2.7`'s search benchmark
+`resolve_scan`. Its last named test landed with 1.4.3's `AddLine::from_scan`, where a label becomes
+one package in the cart. `1.2.7`'s search benchmark
 has landed, and its first indicative run on a development laptop put the first two keystrokes over
 the 50 ms limit, which fires the risk-register trigger in [`00-master-plan.md`](00-master-plan.md)
 §6; what to do about it is the owner's decision, and the microstep's note records the measurement.
 `1.2.8`, the scan-parser fuzz target, has landed with `just fuzz`, so every microstep of group 1.2
-has begun; `1.2.0` and `1.2.4` are its two partial ones, each waiting on a named later step. `1.6.3` is closed: its seed comparison landed against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
+has begun; `1.2.0` is its one partial step, waiting on milestone 5.8. `1.6.3` is closed: its seed comparison landed against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
 `authorize`, `ApprovalHandle` and `EscalationPolicy` are complete in `pos-domain`, with the two
 compile-fail proofs that a token cannot be forged or substituted across capabilities. Its
 persistence half now stores, validates, reloads and one-use consumes a handle through a
