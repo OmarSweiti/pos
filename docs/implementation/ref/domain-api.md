@@ -1645,15 +1645,32 @@ impl AddLine {
                       scanned_code: Option<String>) -> Result<AddLine, CartError>;
 }
 
+/// As delivered at 1.4.3: `AddLine` derives `Serialize` but not `Deserialize`,
+/// because `PriceSource` has none, so no request from the screen carries a
+/// price into a line (`tests/ui/add_line_cannot_be_deserialized.rs`). It has no
+/// `max_price` (the ceiling is checked when a price changes, 1.4.7) and no
+/// `age_confirmed` (an operator confirms, 1.4.3b, never the request that adds
+/// the line). `from_scan` makes a price label one `Package` at the label's
+/// price, with the derived weight as `label`, and refuses a lookup that is not
+/// one product as `ScanNotOneProduct`; `department` is 1.4.12's.
+/// `VoidReason` is a configured code: `pub struct VoidReason(pub String);`.
+
 pub fn open(id: SaleId, ctx: &CartContext) -> Cart;
 
-/// Refuses a `PriceOrigin::Department` price (use `add_department_line`), an
-/// inactive product (E.38), an unconfirmed age-restricted line (E.69), and a
-/// fractional quantity of an indivisible unit (§6.3).
+/// Refuses a `PriceOrigin::Department` price (use `add_department_line`), a
+/// line with no product, a quantity of zero or less, a fractional quantity of
+/// an indivisible unit (§6.3), and a price in another currency. An inactive
+/// product (E.38) is refused by `AddLine`'s constructors. An age-restricted line
+/// (E.69) goes in **blocked** and `check_age_confirmed` refuses the cart until
+/// 1.4.3b's `confirm_age` (as delivered at 1.4.3).
 pub fn add_line(cart: Cart, req: AddLine)          -> Result<Cart, CartError>;
+/// Refuses zero, a fraction of an indivisible unit, a price label's line (one
+/// package; another is another scan) and a department line (1.4.12).
 pub fn set_qty(cart: Cart, line: SaleLineId, q: Qty) -> Result<Cart, CartError>;
-pub fn void_line(cart: Cart, line: SaleLineId, reason: VoidReason, by: UserId)
-                                                    -> Result<(Cart, AuditIntent), CartError>;
+/// `at` added at 1.4.3: the intent records when, and the domain reads no clock.
+pub fn void_line(cart: Cart, line: SaleLineId, reason: VoidReason, by: UserId,
+                 at: Timestamp)                     -> Result<(Cart, AuditIntent), CartError>;
+pub fn check_age_confirmed(cart: &Cart)             -> Result<(), CartError>;
 pub fn apply_line_discount(cart: Cart, line: SaleLineId, d: DiscountRequest,
                            auth: &Authorized<cap::DiscountManual>)
                                                     -> Result<(Cart, AuditIntent), CartError>;
@@ -1768,6 +1785,9 @@ pub enum CartError {
     #[error("product {0} is not sellable")]                    ProductInactive(ProductId), // E.38
     #[error("collected {0} is less than due {1}")]             Underpaid(String, String),
     #[error("overtender is only allowed for cash")]            OvertenderNotCash,
+    #[error("the scan did not resolve to one product")]        ScanNotOneProduct,     // 1.4.3
+    #[error("line {0} is one labelled package; scan the next label for another")]
+                                                               LabelLineIsOnePackage(SaleLineId), // 1.4.3
     #[error(transparent)] Tax(#[from] TaxError),
     #[error(transparent)] Money(#[from] MoneyError),
 }

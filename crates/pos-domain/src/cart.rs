@@ -17,11 +17,17 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::catalog::{DerivedWeight, PriceOrigin, UnitOfMeasure};
+use serde_json::json;
+
+use crate::audit::AuditIntent;
+use crate::catalog::{
+    DerivedWeight, PriceOrigin, PriceSource, Product, ProductHit, ScanLookup, UnitOfMeasure,
+};
 use crate::ids::{
     CustomerId, ProductId, RegisterId, SaleId, SaleLineId, ShiftId, TaxCategoryId, UserId,
 };
 use crate::money::{Currency, Money, MoneyError, Qty};
+use crate::permissions::{Capability, cap};
 use crate::tax::{SupplyDestination, SupplyTaxContext, TaxError};
 use crate::time::Timestamp;
 
@@ -154,6 +160,280 @@ pub fn open(id: SaleId, ctx: &CartContext) -> Cart {
     }
 }
 
+/// The only way to describe a new line, and it carries no number the caller
+/// chose (`ref/domain-api.md` §6.1).
+///
+/// `price` is a [`PriceSource`]: a catalogue price from a [`Product`], a
+/// label's price from a resolved scan, or a department amount, which
+/// [`add_line`] refuses. There is no `Deserialize`, because `PriceSource` has
+/// none: a command arriving from the screen cannot carry a price into a line.
+///
+/// As delivered at 1.4.3, it has no `max_price` and no `age_confirmed`: the
+/// regulated ceiling is checked when a price changes (1.4.7), and an age is
+/// confirmed only by an operator, through 1.4.3b, never by the request that
+/// adds the line.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AddLine {
+    pub line_id: SaleLineId,
+    pub product_id: Option<ProductId>,
+    pub name_snapshot: String,
+    pub price: PriceSource,
+    pub qty: Qty,
+    pub unit: UnitOfMeasure,
+    pub is_weighed: bool,
+    pub tax_category_id: TaxCategoryId,
+    pub min_age: Option<u8>,
+    pub label: Option<DerivedWeight>,
+}
+
+impl AddLine {
+    /// `qty` of `product` at its catalogue price, named as the catalogue names
+    /// it in Arabic.
+    ///
+    /// # Errors
+    ///
+    /// [`CartError::ProductInactive`] for a product that is not for sale
+    /// (E.38). Only adding is refused: a line already captured never reads the
+    /// catalogue again, so a sale of the product, and a refund of that sale,
+    /// are untouched by its deactivation.
+    pub fn from_product(
+        line_id: SaleLineId,
+        product: &Product,
+        qty: Qty,
+    ) -> Result<AddLine, CartError> {
+        if !product.is_active {
+            return Err(CartError::ProductInactive(product.id));
+        }
+        Ok(AddLine {
+            line_id,
+            product_id: Some(product.id),
+            name_snapshot: product.name_ar.clone(),
+            price: PriceSource::from_catalog(product),
+            qty,
+            unit: product.unit,
+            is_weighed: product.is_weighed,
+            tax_category_id: product.tax_category_id,
+            min_age: product.min_age,
+            label: None,
+        })
+    }
+
+    /// The line a scan resolved to, and the one place a barcode's pack
+    /// quantity and a label's price or weight are applied.
+    ///
+    /// * A barcode or code: the code's pack quantity of the product, at its
+    ///   catalogue price, so a six-pack's outer code adds six (E.78).
+    /// * A weight label: the label's weight, at the catalogue price.
+    /// * A price label: **one package at the label's price**. The label is
+    ///   what the customer is charged (E.80), and the weight it implies is
+    ///   kept on the line as the stock basis, never as its quantity, so
+    ///   `unit_price × qty` is the line's amount (`ref/domain-api.md` §4.3).
+    ///
+    /// # Errors
+    ///
+    /// [`CartError::ProductInactive`] for a product not for sale, and
+    /// [`CartError::ScanNotOneProduct`] for a scan that found several products,
+    /// none, or a damaged label: the till chooses, or sells it through a
+    /// department (1.4.12).
+    pub fn from_scan(line_id: SaleLineId, hit: ScanLookup) -> Result<AddLine, CartError> {
+        match hit {
+            ScanLookup::Product { hit, pack_qty } => {
+                let ProductHit { product, .. } = hit;
+                AddLine::from_product(line_id, &product, pack_qty)
+            }
+            ScanLookup::WeightEmbedded { hit, qty } => {
+                let ProductHit { product, .. } = hit;
+                AddLine::from_product(line_id, &product, qty)
+            }
+            ScanLookup::PriceEmbedded {
+                hit,
+                price,
+                derived,
+                ..
+            } => {
+                let ProductHit { product, .. } = hit;
+                let mut line = AddLine::from_product(line_id, &product, Qty::ONE)?;
+                line.price = price;
+                line.unit = UnitOfMeasure::Package;
+                line.is_weighed = false;
+                line.label = derived;
+                Ok(line)
+            }
+            ScanLookup::Ambiguous { .. }
+            | ScanLookup::ChecksumFailed { .. }
+            | ScanLookup::Unknown { .. } => Err(CartError::ScanNotOneProduct),
+        }
+    }
+}
+
+/// The configured reason a line was voided. A code from the store's list, never
+/// free text, because free text is unreportable (`ref/ui-spec.md`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoidReason(pub String);
+
+/// `cart` with one more line, as `req` describes it.
+///
+/// The name, the price and where it came from are copied onto the line (I-5).
+/// An age-restricted line goes in **blocked**: it stays in the cart, so the
+/// cashier sees the exact pack and quantity while checking the customer, and
+/// [`check_age_confirmed`] refuses to tender until an operator confirms it
+/// (1.4.3b).
+///
+/// # Errors
+///
+/// - [`CartError::DepartmentPriceOutsideDepartmentSale`]: a department price,
+///   the one price a caller types. Only the capped, audited department sale
+///   takes one (1.4.12).
+/// - [`CartError::NonPositiveQty`]: a quantity of zero or less.
+/// - [`CartError::FractionalQtyForDiscrete`]: a fraction of a unit that is
+///   counted, not measured.
+/// - [`CartError::Money`]: a price in another currency than the cart's.
+pub fn add_line(cart: Cart, req: AddLine) -> Result<Cart, CartError> {
+    let product = match (req.price.origin(), req.product_id) {
+        (PriceOrigin::Department { .. }, _) | (_, None) => {
+            return Err(CartError::DepartmentPriceOutsideDepartmentSale);
+        }
+        (_, Some(product)) => product,
+    };
+    check_qty(product, req.unit, req.qty)?;
+    let unit_price = req.price.amount();
+    if unit_price.currency() != cart.currency {
+        return Err(MoneyError::CurrencyMismatch(
+            cart.currency.code(),
+            unit_price.currency().code(),
+        )
+        .into());
+    }
+    let mut cart = cart;
+    cart.lines.push(CartLine {
+        id: req.line_id,
+        product_id: Some(product),
+        name_snapshot: req.name_snapshot,
+        unit_price,
+        price_origin: req.price.origin().clone(),
+        qty: req.qty,
+        unit: req.unit,
+        is_weighed: req.is_weighed,
+        tax_category_id: req.tax_category_id,
+        min_age: req.min_age,
+        age_confirmed: false,
+        label: req.label,
+    });
+    Ok(cart)
+}
+
+/// `cart` with line `line`'s quantity set to `qty`.
+///
+/// A quantity of zero is not a way to remove a line: removal is
+/// [`void_line`], which is audited.
+///
+/// # Errors
+///
+/// - [`CartError::LineNotFound`].
+/// - [`CartError::NonPositiveQty`] and [`CartError::FractionalQtyForDiscrete`],
+///   as for [`add_line`].
+/// - [`CartError::LabelLineIsOnePackage`]: a price label's line is the one
+///   package that label was printed for; another package is another scan.
+/// - [`CartError::DepartmentPriceOutsideDepartmentSale`]: a department line,
+///   whose quantity times its typed amount is still a typed amount (1.4.12).
+pub fn set_qty(cart: Cart, line: SaleLineId, qty: Qty) -> Result<Cart, CartError> {
+    let mut cart = cart;
+    let found = cart
+        .lines
+        .iter_mut()
+        .find(|l| l.id == line)
+        .ok_or(CartError::LineNotFound(line))?;
+    let product = match (&found.price_origin, found.product_id) {
+        (PriceOrigin::Label { .. }, _) => return Err(CartError::LabelLineIsOnePackage(line)),
+        (PriceOrigin::Department { .. }, _) | (_, None) => {
+            return Err(CartError::DepartmentPriceOutsideDepartmentSale);
+        }
+        (PriceOrigin::Catalog { .. }, Some(product)) => product,
+    };
+    check_qty(product, found.unit, qty)?;
+    found.qty = qty;
+    Ok(cart)
+}
+
+/// `cart` without line `line`, and the audit intent that records who removed
+/// it, why, and what it was.
+///
+/// `at` is when, supplied by the shell (I-8). The intent's action is the
+/// `line.void` capability's spelling, and its payload carries the line's
+/// facts — never its name, which is not needed to identify it.
+///
+/// # Errors
+///
+/// [`CartError::LineNotFound`].
+pub fn void_line(
+    cart: Cart,
+    line: SaleLineId,
+    reason: VoidReason,
+    by: UserId,
+    at: Timestamp,
+) -> Result<(Cart, AuditIntent), CartError> {
+    let mut cart = cart;
+    let position = cart
+        .lines
+        .iter()
+        .position(|l| l.id == line)
+        .ok_or(CartError::LineNotFound(line))?;
+    let removed = cart.lines.remove(position);
+    let intent = AuditIntent {
+        actor: by,
+        approver: None,
+        approval: None,
+        action: cap::LineVoid::NAME,
+        entity: "sale_line",
+        entity_id: line.as_uuid(),
+        reason: Some(reason.0),
+        payload: json!({
+            "sale_id": cart.id.as_uuid().to_string(),
+            "product_id": removed.product_id.map(|p| p.as_uuid().to_string()),
+            "qty_milli": removed.qty.milli(),
+            "unit_price_minor": removed.unit_price.minor(),
+            "currency": removed.unit_price.currency().code(),
+        }),
+        at,
+    };
+    Ok((cart, intent))
+}
+
+/// Whether every age-restricted line has been confirmed by an operator.
+///
+/// 1.4.8's `begin_tender` refuses a cart this refuses.
+///
+/// # Errors
+///
+/// [`CartError::AgeConfirmationRequired`] naming the first line's product
+/// still waiting for confirmation.
+pub fn check_age_confirmed(cart: &Cart) -> Result<(), CartError> {
+    match cart
+        .lines
+        .iter()
+        .find(|l| l.min_age.is_some() && !l.age_confirmed)
+    {
+        Some(CartLine {
+            product_id: Some(product),
+            ..
+        }) => Err(CartError::AgeConfirmationRequired(*product)),
+        // A line with no product is a department sale, which carries no age.
+        Some(_) | None => Ok(()),
+    }
+}
+
+/// A quantity a line of `unit` may carry: more than nothing, and a whole number
+/// of units where the unit is counted rather than measured.
+fn check_qty(product: ProductId, unit: UnitOfMeasure, qty: Qty) -> Result<(), CartError> {
+    if qty.milli() <= 0 {
+        return Err(CartError::NonPositiveQty);
+    }
+    if !unit.is_divisible() && !qty.is_whole_units() {
+        return Err(CartError::FractionalQtyForDiscrete(product, qty.milli()));
+    }
+    Ok(())
+}
+
 /// Every refusal a cart transition can return (`ref/domain-api.md` §6.3).
 ///
 /// Each carries the data its message needs, so the shell maps a variant to
@@ -196,6 +476,13 @@ pub enum CartError {
     Underpaid(String, String),
     #[error("overtender is only allowed for cash")]
     OvertenderNotCash,
+    /// Added at 1.4.3: a scan that found several products, none, or a damaged
+    /// label is a choice for the till, not a line.
+    #[error("the scan did not resolve to one product")]
+    ScanNotOneProduct,
+    /// Added at 1.4.3: a price label's line is one package.
+    #[error("line {0} is one labelled package; scan the next label for another")]
+    LabelLineIsOnePackage(SaleLineId),
     #[error(transparent)]
     Tax(#[from] TaxError),
     #[error(transparent)]
@@ -378,5 +665,424 @@ mod tests {
         );
         let money = MoneyError::Overflow;
         assert_eq!(CartError::from(money).to_string(), "arithmetic overflow");
+    }
+
+    // ── add_line, set_qty, void_line (1.4.3) ────────────────────────────
+
+    use crate::catalog::{
+        EmbeddedBarcodeRule, EmbeddedValue, MatchedOn, RegulatedSaleForm, SaleForm, parse_scan,
+        resolve_scan,
+    };
+    use pos_test_support::domain_proptest_config;
+    use proptest::prelude::*;
+
+    const JOD: Currency = Currency::JOD;
+
+    fn jod(minor: i64) -> Money {
+        Money::from_minor(minor, JOD)
+    }
+
+    /// A synthetic product sold in `unit`, at 1.250 JOD a unit.
+    fn product(n: u128, unit: UnitOfMeasure) -> Product {
+        Product {
+            id: ProductId::from_uuid(id(n)),
+            sku: format!("SYNTH-{n}"),
+            name_ar: format!("صنف اصطناعي {n}"),
+            name_en: Some(format!("SYNTH item {n}")),
+            category_id: None,
+            tax_category_id: TaxCategoryId::from_uuid(id(0x12)),
+            unit,
+            unit_price: jod(1_250),
+            is_weighed: unit.is_divisible(),
+            is_service: false,
+            is_active: true,
+            min_age: None,
+            max_price: None,
+            reorder_point: None,
+            regulated_sale_form: RegulatedSaleForm::Unregulated(if unit.is_divisible() {
+                SaleForm::Bulk
+            } else {
+                SaleForm::SealedPack
+            }),
+        }
+    }
+
+    fn building() -> Cart {
+        open(SaleId::from_uuid(id(1)), &context(false))
+    }
+
+    fn line_id(n: u128) -> SaleLineId {
+        SaleLineId::from_uuid(id(0x1000 + n))
+    }
+
+    fn add(cart: Cart, n: u128, p: &Product, milli: i64) -> Result<Cart, CartError> {
+        add_line(
+            cart,
+            AddLine::from_product(line_id(n), p, Qty::from_milli(milli))?,
+        )
+    }
+
+    #[test]
+    fn add_line_snapshots_name_and_price() {
+        let mut item = product(0x20, UnitOfMeasure::Each);
+        let cart = add(building(), 1, &item, 2_000).unwrap();
+        let line = cart.lines.first().unwrap();
+        assert_eq!(line.name_snapshot, item.name_ar);
+        assert_eq!(line.unit_price, jod(1_250));
+        assert_eq!(
+            line.price_origin,
+            PriceOrigin::Catalog {
+                product_id: item.id
+            }
+        );
+        assert_eq!(line.qty, Qty::from_milli(2_000));
+        assert_eq!(
+            (line.unit, line.is_weighed, line.tax_category_id),
+            (item.unit, false, item.tax_category_id)
+        );
+        // The catalogue changes after the line was captured; the line does not,
+        // because it is a copy and nothing reads the product again (I-5).
+        let captured = line.clone();
+        item.unit_price = jod(1_500);
+        item.name_ar = "اسم جديد".to_owned();
+        let cart = set_qty(cart, line_id(1), Qty::from_milli(3_000)).unwrap();
+        let line = cart.lines.first().unwrap();
+        assert_eq!(line.unit_price, captured.unit_price);
+        assert_eq!(line.name_snapshot, captured.name_snapshot);
+    }
+
+    #[test]
+    fn client_supplied_price_cannot_bypass_override() {
+        let item = product(0x20, UnitOfMeasure::Each);
+        let honest = AddLine::from_product(line_id(1), &item, Qty::ONE).unwrap();
+        // The one constructor that takes an amount is the department's. Swapped
+        // into an ordinary line to undercut the catalogue, it is refused: a
+        // deliberate change of price is an override (1.4.7), audited.
+        let mut undercut = honest.clone();
+        undercut.price = PriceSource::from_department(jod(100), item.tax_category_id);
+        assert_eq!(
+            add_line(building(), undercut),
+            Err(CartError::DepartmentPriceOutsideDepartmentSale)
+        );
+        // A line with no product is a department sale, and that path is
+        // capped and audited (1.4.12), not this one.
+        let mut nameless = honest.clone();
+        nameless.product_id = None;
+        assert_eq!(
+            add_line(building(), nameless),
+            Err(CartError::DepartmentPriceOutsideDepartmentSale)
+        );
+        // A price in another currency than the cart's is not this cart's price.
+        let mut dollars = item.clone();
+        dollars.unit_price = Money::from_minor(1_250, Currency::USD);
+        assert_eq!(
+            add_line(
+                building(),
+                AddLine::from_product(line_id(2), &dollars, Qty::ONE).unwrap()
+            ),
+            Err(CartError::Money(MoneyError::CurrencyMismatch("JOD", "USD")))
+        );
+        // And the honest line is added at the catalogue's price.
+        let cart = add_line(building(), honest).unwrap();
+        assert_eq!(cart.lines.first().unwrap().unit_price, jod(1_250));
+    }
+
+    #[test]
+    fn inactive_product_cannot_be_added_but_can_be_refunded() {
+        let mut item = product(0x20, UnitOfMeasure::Each);
+        let sold = add(building(), 1, &item, 1_000).unwrap();
+        // Deactivated with stock remaining (E.38): it can no longer be added,
+        // by its product or by a scan of its barcode.
+        item.is_active = false;
+        assert_eq!(
+            AddLine::from_product(line_id(2), &item, Qty::ONE),
+            Err(CartError::ProductInactive(item.id))
+        );
+        let scanned = ScanLookup::Product {
+            hit: ProductHit {
+                product: item.clone(),
+                matched_on: MatchedOn::Plu("12345".to_owned()),
+            },
+            pack_qty: Qty::ONE,
+        };
+        assert_eq!(
+            AddLine::from_scan(line_id(2), scanned),
+            Err(CartError::ProductInactive(item.id))
+        );
+        // But only adding is refused. The line already captured is what a
+        // refund reads (I-5, phase 2's refund), and nothing re-reads the
+        // product: it keeps its price and can still be changed in its cart.
+        let still = set_qty(sold, line_id(1), Qty::from_milli(2_000)).unwrap();
+        assert_eq!(still.lines.first().unwrap().unit_price, jod(1_250));
+    }
+
+    #[test]
+    fn age_restricted_line_requires_confirmation() {
+        let mut tobacco = product(0x30, UnitOfMeasure::Package);
+        tobacco.min_age = Some(18);
+        let plain = product(0x20, UnitOfMeasure::Each);
+        let cart = add(building(), 1, &plain, 1_000).unwrap();
+        assert_eq!(check_age_confirmed(&cart), Ok(()));
+        // The line goes in, visibly blocked, with its exact pack and quantity,
+        // and nothing may be tendered until an operator confirms the age
+        // (1.4.3b). It is not dropped, which would invite a second scan.
+        let cart = add(cart, 2, &tobacco, 1_000).unwrap();
+        let line = cart.lines.iter().find(|l| l.id == line_id(2)).unwrap();
+        assert_eq!((line.min_age, line.age_confirmed), (Some(18), false));
+        assert_eq!(
+            check_age_confirmed(&cart),
+            Err(CartError::AgeConfirmationRequired(tobacco.id))
+        );
+        // Changing the quantity does not confirm it.
+        let cart = set_qty(cart, line_id(2), Qty::from_milli(2_000)).unwrap();
+        assert_eq!(
+            check_age_confirmed(&cart),
+            Err(CartError::AgeConfirmationRequired(tobacco.id))
+        );
+    }
+
+    #[test]
+    fn set_qty_zero_is_rejected() {
+        let item = product(0x20, UnitOfMeasure::Each);
+        let cart = add(building(), 1, &item, 1_000).unwrap();
+        for milli in [0, -1_000] {
+            assert_eq!(
+                set_qty(cart.clone(), line_id(1), Qty::from_milli(milli)),
+                Err(CartError::NonPositiveQty),
+                "removing a line is a void, which is audited"
+            );
+        }
+        assert_eq!(
+            set_qty(cart.clone(), line_id(9), Qty::ONE),
+            Err(CartError::LineNotFound(line_id(9)))
+        );
+        assert_eq!(add(building(), 1, &item, 0), Err(CartError::NonPositiveQty));
+    }
+
+    #[test]
+    fn void_line_removes_it_and_says_who_and_why() {
+        let item = product(0x20, UnitOfMeasure::Each);
+        let cart = add(add(building(), 1, &item, 2_000).unwrap(), 2, &item, 1_000).unwrap();
+        let cashier = UserId::from_uuid(id(4));
+        let at = Timestamp::from_epoch_milliseconds(978_307_260_000).unwrap();
+        let (cart, intent) = void_line(
+            cart,
+            line_id(1),
+            VoidReason("mis_scan".to_owned()),
+            cashier,
+            at,
+        )
+        .unwrap();
+        assert_eq!(
+            cart.lines.iter().map(|l| l.id).collect::<Vec<_>>(),
+            vec![line_id(2)]
+        );
+        assert_eq!(
+            (intent.actor, intent.approver, intent.action, intent.entity),
+            (cashier, None, "line.void", "sale_line")
+        );
+        assert_eq!(intent.entity_id, line_id(1).as_uuid());
+        assert_eq!(intent.reason.as_deref(), Some("mis_scan"));
+        assert_eq!(intent.at, at);
+        assert_eq!(
+            intent.payload,
+            serde_json::json!({
+                "sale_id": "00000000-0000-0000-0000-000000000001",
+                "product_id": item.id.as_uuid().to_string(),
+                "qty_milli": 2_000,
+                "unit_price_minor": 1_250,
+                "currency": "JOD",
+            })
+        );
+        // The payload names no line text: not needed to identify it.
+        assert!(!intent.payload.to_string().contains(&item.name_ar));
+        assert_eq!(
+            void_line(
+                cart,
+                line_id(1),
+                VoidReason("mis_scan".to_owned()),
+                cashier,
+                at
+            )
+            .map(|_| ()),
+            Err(CartError::LineNotFound(line_id(1)))
+        );
+    }
+
+    /// The price layout of `catalog::scan`'s tests: `2`, five digits of item
+    /// code, a digit this rule does not read, five digits of price in fils,
+    /// and the EAN-13 check digit.
+    fn price_rule() -> EmbeddedBarcodeRule {
+        EmbeddedBarcodeRule {
+            prefix: "2".to_owned(),
+            item_code_span: (1, 5),
+            value_span: (7, 5),
+            value_kind: EmbeddedValue::PriceMinor,
+            value_scale: 1,
+            verify_checksum: true,
+        }
+    }
+
+    fn price_label(item: &str, price_minor: i64) -> String {
+        let first_twelve = format!("2{item}7{price_minor:05}");
+        let sum: u32 = first_twelve
+            .chars()
+            .rev()
+            .enumerate()
+            .map(|(i, c)| c.to_digit(10).unwrap() * if i % 2 == 0 { 3 } else { 1 })
+            .sum();
+        format!("{first_twelve}{}", (10 - sum % 10) % 10)
+    }
+
+    /// 1.2.4's last test, which waited for this constructor: a price label's
+    /// line is one package at the label's price, and the weight it implies is
+    /// the stock basis, never the quantity.
+    #[test]
+    fn price_embedded_line_is_one_unit_not_a_weight() {
+        let mut cheese = product(0xC4, UnitOfMeasure::Kilogram);
+        cheese.unit_price = jod(8_500);
+        let code = price_label("12345", 416);
+        let parsed = parse_scan(&code, &[price_rule()]).unwrap();
+        let hit = ProductHit {
+            product: cheese.clone(),
+            matched_on: MatchedOn::Plu("12345".to_owned()),
+        };
+        let lookup = resolve_scan(parsed, vec![hit], JOD).unwrap();
+        let cart = add_line(building(), AddLine::from_scan(line_id(1), lookup).unwrap()).unwrap();
+        let line = cart.lines.first().unwrap();
+        assert_eq!(line.qty, Qty::ONE);
+        assert_eq!(
+            (line.unit, line.is_weighed),
+            (UnitOfMeasure::Package, false)
+        );
+        assert_eq!(line.unit_price, jod(416));
+        assert_eq!(
+            line.price_origin,
+            PriceOrigin::Label {
+                rule_prefix: "2".to_owned(),
+                raw_code: code,
+            }
+        );
+        // 416 fils at 8.500 JOD a kilogram is 48.94 g, kept as the stock basis.
+        assert_eq!(
+            line.label,
+            Some(DerivedWeight {
+                qty: Qty::from_milli(49),
+                catalog_unit_price: jod(8_500),
+            })
+        );
+        // One package is what the label was printed for; another is a scan.
+        assert_eq!(
+            set_qty(cart, line_id(1), Qty::from_milli(2_000)),
+            Err(CartError::LabelLineIsOnePackage(line_id(1)))
+        );
+    }
+
+    #[test]
+    fn a_scan_adds_its_code_s_pack_quantity_or_its_label_s_weight() {
+        let cola = product(0x40, UnitOfMeasure::Each);
+        let six_pack = ScanLookup::Product {
+            hit: ProductHit {
+                product: cola.clone(),
+                matched_on: MatchedOn::Plu("12345".to_owned()),
+            },
+            pack_qty: Qty::from_milli(6_000),
+        };
+        let line = AddLine::from_scan(line_id(1), six_pack).unwrap();
+        assert_eq!(
+            (line.qty, line.price.amount()),
+            (Qty::from_milli(6_000), jod(1_250))
+        );
+        let mut cheese = product(0xC4, UnitOfMeasure::Kilogram);
+        cheese.unit_price = jod(8_500);
+        let weighed = ScanLookup::WeightEmbedded {
+            hit: ProductHit {
+                product: cheese,
+                matched_on: MatchedOn::Plu("12345".to_owned()),
+            },
+            qty: Qty::from_milli(1_250),
+        };
+        let line = AddLine::from_scan(line_id(2), weighed).unwrap();
+        assert_eq!(
+            (line.qty, line.unit, line.is_weighed),
+            (Qty::from_milli(1_250), UnitOfMeasure::Kilogram, true)
+        );
+        assert_eq!(line.price.amount(), jod(8_500));
+        for no_line in [
+            ScanLookup::Unknown {
+                code: "1".to_owned(),
+            },
+            ScanLookup::ChecksumFailed {
+                code: "1".to_owned(),
+            },
+            ScanLookup::Ambiguous { hits: Vec::new() },
+        ] {
+            assert_eq!(
+                AddLine::from_scan(line_id(3), no_line),
+                Err(CartError::ScanNotOneProduct)
+            );
+        }
+    }
+
+    /// Every unit, and a quantity anywhere from a negative thousand units to a
+    /// thousand, fractions included. It excludes nothing: the refusals are
+    /// what is checked.
+    fn units() -> impl Strategy<Value = UnitOfMeasure> {
+        prop_oneof![
+            Just(UnitOfMeasure::Each),
+            Just(UnitOfMeasure::Package),
+            Just(UnitOfMeasure::Kilogram),
+            Just(UnitOfMeasure::Litre),
+            Just(UnitOfMeasure::Metre),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(domain_proptest_config())]
+
+        /// A line of something counted rather than measured carries a whole
+        /// number of units, whichever way it was entered: by product, by a
+        /// barcode's pack quantity, by a price label, or by changing its
+        /// quantity afterwards. A fraction of one is refused by name, and a
+        /// quantity of zero or less is refused too.
+        #[test]
+        fn prop_discrete_products_never_carry_a_fractional_quantity(
+            unit in units(),
+            first in -1_000_000i64..=1_000_000,
+            later in -1_000_000i64..=1_000_000,
+            pack in -1_000_000i64..=1_000_000,
+        ) {
+            let item = product(0x50, unit);
+            let expect = |milli: i64| {
+                if milli <= 0 {
+                    Err(CartError::NonPositiveQty)
+                } else if !unit.is_divisible() && milli % 1_000 != 0 {
+                    Err(CartError::FractionalQtyForDiscrete(item.id, milli))
+                } else {
+                    Ok(())
+                }
+            };
+            let added = add(building(), 1, &item, first);
+            let want = expect(first);
+            prop_assert_eq!(added.as_ref().err(), want.as_ref().err());
+            if let Ok(cart) = added {
+                let changed = set_qty(cart, line_id(1), Qty::from_milli(later));
+                let want = expect(later);
+                prop_assert_eq!(changed.as_ref().err(), want.as_ref().err());
+            }
+            let scanned = ScanLookup::Product {
+                hit: ProductHit { product: item.clone(), matched_on: MatchedOn::Plu("1".to_owned()) },
+                pack_qty: Qty::from_milli(pack),
+            };
+            let by_scan = add_line(building(), AddLine::from_scan(line_id(2), scanned).unwrap());
+            let want = expect(pack);
+            prop_assert_eq!(by_scan.as_ref().err(), want.as_ref().err());
+            // And every line that did get in is whole, where it must be.
+            for cart in [by_scan.ok()].into_iter().flatten() {
+                for line in &cart.lines {
+                    prop_assert!(line.unit.is_divisible() || line.qty.is_whole_units());
+                }
+            }
+        }
     }
 }
