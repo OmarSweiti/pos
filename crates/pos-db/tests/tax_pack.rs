@@ -240,7 +240,18 @@ fn percentage(code: &str, treatment: TaxTreatment, ppm: i64) -> TaxComponent {
     }
 }
 
-fn refusal(result: Result<[u8; 16], DbError>) -> TaxPackRefusal {
+const TABLES: [&str; 3] = ["tax_category", "tax_rule_pack", "tax_rate"];
+
+/// The refusal, checked to have written nothing before it was found: the rows
+/// are counted inside the import's own transaction, before it rolls back, so
+/// a refusal reached after a write would show here even though the rollback
+/// would hide it from every later reader.
+fn refused(w: &mut World, pack: &PinnedTaxPack, approval: &AccountantApproval) -> TaxPackRefusal {
+    let tx = w.conn.transaction().unwrap();
+    let before = TABLES.map(|table| count(&tx, table));
+    let result = import_tax_pack(&tx, pack, approval, &w.ids);
+    let after = TABLES.map(|table| count(&tx, table));
+    assert_eq!(before, after, "{result:?} wrote rows before it was refused");
     match result {
         Err(DbError::TaxPackRefused(refusal)) => refusal,
         other => panic!("expected a refused pack, got {other:?}"),
@@ -361,7 +372,7 @@ fn unconfigured_reduced_band_fails_closed() {
         .categories
         .push(band("SYNTH_REDUCED_80000", TaxTreatment::Reduced));
     assert_eq!(
-        refusal(import(&mut w, &pinned(unconfigured))),
+        refused(&mut w, &pinned(unconfigured), &approval()),
         TaxPackRefusal::BandWithoutRate("SYNTH_REDUCED_80000".to_owned())
     );
     // Nor is a rate for a band the pack does not list.
@@ -370,7 +381,7 @@ fn unconfigured_reduced_band_fails_closed() {
         .rates
         .push(rate("SYNTH_REDUCED_80000", 80_000, "2001-01-01", None));
     assert_eq!(
-        refusal(import(&mut w, &pinned(stray))),
+        refused(&mut w, &pinned(stray), &approval()),
         TaxPackRefusal::UnknownCategory("SYNTH_REDUCED_80000".to_owned())
     );
     assert_eq!(count(&w.conn, "tax_rule_pack"), 0);
@@ -420,7 +431,7 @@ fn asez_profile_without_complete_pack_fails_closed() {
     // A zone pack is complete only against the approved standard pack, so
     // with none to check against it is refused.
     assert_eq!(
-        refusal(import(&mut w, &asez_pack("synthetic-asez-2001.1"))),
+        refused(&mut w, &asez_pack("synthetic-asez-2001.1"), &approval()),
         TaxPackRefusal::NoStandardPack
     );
     let standard = import(&mut w, &standard_pack("synthetic-2001.1")).unwrap();
@@ -431,7 +442,7 @@ fn asez_profile_without_complete_pack_fails_closed() {
     partial.categories.retain(|c| c.code != EXEMPT);
     partial.rates.retain(|r| r.category != EXEMPT);
     assert_eq!(
-        refusal(import(&mut w, &pinned(partial))),
+        refused(&mut w, &pinned(partial), &approval()),
         TaxPackRefusal::ZonePackIncomplete(EXEMPT.to_owned())
     );
     assert_eq!(count(&w.conn, "tax_rule_pack"), 1);
@@ -525,7 +536,7 @@ fn a_pack_that_is_not_what_was_pinned_is_refused() {
         r.rate = Percent::from_ppm(170_000);
     }
     assert!(matches!(
-        refusal(import(&mut w, &altered)),
+        refused(&mut w, &altered, &approval()),
         TaxPackRefusal::PinMismatch { .. }
     ));
     assert_eq!(count(&w.conn, "tax_rule_pack"), 0);
@@ -623,7 +634,7 @@ fn a_malformed_pack_is_refused_and_writes_nothing() {
         let mut w = world();
         let mut pack = standard_pack("synthetic-2001.1");
         spoil(&mut pack);
-        assert_eq!(refusal(import(&mut w, &pinned(pack))), expected);
+        assert_eq!(refused(&mut w, &pinned(pack), &approval()), expected);
         for table in ["tax_rule_pack", "tax_rate", "tax_category"] {
             assert_eq!(count(&w.conn, table), 0, "{expected}: {table} was written");
         }
@@ -637,7 +648,7 @@ fn a_pack_that_disagrees_with_the_register_is_refused() {
 
     // The same version twice.
     assert_eq!(
-        refusal(import(&mut w, &standard_pack("synthetic-2001.1"))),
+        refused(&mut w, &standard_pack("synthetic-2001.1"), &approval()),
         TaxPackRefusal::VersionExists {
             profile: StoreTaxProfile::Standard,
             pack_version: "synthetic-2001.1".to_owned(),
@@ -654,7 +665,7 @@ fn a_pack_that_disagrees_with_the_register_is_refused() {
         c.treatment = TaxTreatment::Exempt;
     }
     assert_eq!(
-        refusal(import(&mut w, &pinned(reclassified))),
+        refused(&mut w, &pinned(reclassified), &approval()),
         TaxPackRefusal::CategoryConflict(ZERO.to_owned())
     );
     // An approval recorded by nobody this register knows.
@@ -663,11 +674,7 @@ fn a_pack_that_disagrees_with_the_register_is_refused() {
         ..approval()
     };
     assert_eq!(
-        refusal(import_with(
-            &mut w,
-            &standard_pack("synthetic-2001.2"),
-            &unrecorded
-        )),
+        refused(&mut w, &standard_pack("synthetic-2001.2"), &unrecorded),
         TaxPackRefusal::ApproverUnknown(unrecorded.recorded_by)
     );
     assert_eq!(count(&w.conn, "tax_rule_pack"), 1);
