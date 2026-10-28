@@ -734,3 +734,29 @@ fn a_store_rate_this_build_cannot_read_is_refused_not_guessed() {
         Err(DbError::StoredTaxPackInvalid { .. })
     ));
 }
+
+#[test]
+fn a_store_on_a_retired_pack_is_refused_even_without_its_trigger() {
+    let mut w = world();
+    let pack = import(&mut w, &standard_pack("synthetic-2001.1")).unwrap();
+    let shop = store(&w, 0x600, "standard", &pack).unwrap();
+    // `0003` refuses to retire a pack a store still uses. This register's own
+    // copy of that trigger is dropped, as a later migration that rebuilt
+    // `tax_rule_pack` and forgot it would; the read must still refuse rather
+    // than charge a retired pack's rates.
+    w.conn
+        .execute_batch("DROP TRIGGER tax_rule_pack_retire_after_reassignment")
+        .unwrap();
+    w.conn
+        .execute(
+            "UPDATE tax_rule_pack SET status = 'retired',
+                    retired_at = '2001-12-31T00:00:00.000Z'
+              WHERE id = ?1",
+            [pack.as_slice()],
+        )
+        .unwrap();
+    assert!(matches!(
+        charges(&w, shop, STANDARD, "2001-03-01"),
+        Err(DbError::TaxPackUnapproved(_))
+    ));
+}
