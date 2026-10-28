@@ -12,7 +12,6 @@
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
-use std::fmt;
 
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -228,27 +227,6 @@ pub struct TaxRateRule {
     pub profile_scope: Option<StoreTaxProfile>,
 }
 
-/// A line whose arithmetic a later microstep of group 1.3 delivers.
-///
-/// [`compute_line_tax`] refuses such a line by name until that step lands,
-/// rather than approximating it. Each variant leaves with the step that
-/// computes it, and the type leaves with the last of them: a tax-inclusive
-/// price left at 1.3.4, and several components, a fixed amount and a tax on a
-/// tax at 1.3.5.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PendingTaxShape {
-    /// A store not registered for GST, which 1.3.8 short-circuits.
-    UnregisteredStore,
-}
-
-impl fmt::Display for PendingTaxShape {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PendingTaxShape::UnregisteredStore => f.write_str("a store not registered for GST"),
-        }
-    }
-}
-
 /// Every typed refusal the tax engine can return as groups 1.3.2–1.3.6 land.
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum TaxError {
@@ -278,8 +256,6 @@ pub enum TaxError {
     ZeroRatingReasonRefused(ZeroRatingReason),
     #[error("component {0} has a negative rate or amount; a tax is never charged below zero")]
     NegativeRate(String),
-    #[error("{0} is not computed yet; the line is refused rather than approximated")]
-    NotComputedYet(PendingTaxShape),
     #[error(
         "a line with no tax component is refused: an untaxed line is zero-rated or exempt, \
          never componentless"
@@ -444,16 +420,21 @@ fn in_effect(rule: &TaxRateRule, at: Timestamp) -> bool {
 /// or evidence it carries. A domestic supply that claims a zero-rating reason
 /// is refused too, so no reason reaches a line yet.
 ///
-/// A store not registered for GST is refused by name
-/// ([`TaxError::NotComputedYet`]) until 1.3.8 short-circuits it.
+/// **A store not registered for GST charges none** (1.3.8, `ref/tax-jordan.md`
+/// §2). Once the supply is read, its line is returned untaxed whatever it is
+/// handed: no component, no tax, and a net and gross that are both the price,
+/// in either price mode. The components are not read at all, because no rate
+/// applies to a seller who may not charge one. That decides the GST arithmetic
+/// only: whether the store must issue an electronic invoice is a separate,
+/// evidenced setting, and an unregistered store may still owe one.
 ///
 /// # Errors
 ///
 /// In the order they are checked:
 /// [`TaxError::SupplyDestinationRefused`] and
 /// [`TaxError::ZeroRatingReasonRefused`] for a supply that is not ordinary
-/// domestic retail; [`TaxError::NotComputedYet`] for an unregistered store;
-/// then the component list — [`TaxError::NoComponents`],
+/// domestic retail, for every store; then, for a registered store, the
+/// component list — [`TaxError::NoComponents`],
 /// [`TaxError::OverlappingRules`] for a code that appears twice,
 /// [`TaxError::NegativeRate`] for a rate or fixed amount below zero,
 /// [`TaxError::Money`] for a fixed amount in another currency,
@@ -480,7 +461,13 @@ pub fn compute_line_tax(
         return Err(TaxError::ZeroRatingReasonRefused(reason));
     }
     if profile == StoreTaxProfile::Unregistered {
-        return Err(TaxError::NotComputedYet(PendingTaxShape::UnregisteredStore));
+        return Ok(LineTax {
+            net: taxable,
+            components: Vec::new(),
+            tax_total: Money::zero(taxable.currency()),
+            gross: taxable,
+            supply_reason: None,
+        });
     }
     let ordered = application_order(components, taxable)?;
     match mode {
@@ -752,10 +739,15 @@ fn extract_net(
 /// Rows come back ordered by code, then treatment, percentage, fixed amount
 /// and reason, so the order the lines were scanned in never moves a row.
 ///
+/// A store not registered for GST carries lines with no component (1.3.8).
+/// Its receipt has no tax rows at all: there is no rate to report.
+///
 /// # Errors
 ///
-/// [`TaxError::NoComponents`] for a line that carries no component, which
-/// [`compute_line_tax`] never returns. [`TaxError::LineTaxUnbalanced`] for a
+/// [`TaxError::NoComponents`] for a line with no component on a receipt whose
+/// other lines carry one: a store is registered for GST or it is not, and on a
+/// registered store's receipt an untaxed line is zero-rated or exempt, never
+/// componentless. [`TaxError::LineTaxUnbalanced`] for a
 /// line whose components do not add up to its tax, or whose net and tax do not
 /// add up to its gross: its summary would disagree with the receipt's total.
 /// [`TaxError::Money`] for lines or amounts in more than one currency, and for
@@ -765,10 +757,13 @@ pub fn summarize_tax(lines: &[LineTax]) -> Result<Vec<TaxSummaryRow>, TaxError> 
         return Ok(Vec::new());
     };
     let currency = first.net.currency();
+    let registered = lines.iter().any(|line| !line.components.is_empty());
     let mut rows: BTreeMap<SummaryKey, TaxSummaryRow> = BTreeMap::new();
     for (position, line) in lines.iter().enumerate() {
-        // Its net would be on no row at all.
-        if line.components.is_empty() {
+        // Beside taxed lines its net would be on no row at all. On a receipt
+        // of such lines, none is, and the balance below holds each one to
+        // carrying no tax.
+        if registered && line.components.is_empty() {
             return Err(TaxError::NoComponents);
         }
         // Summed in the first line's currency, and then held to the line's own
@@ -1562,7 +1557,7 @@ mod tests {
     }
 
     #[test]
-    fn a_line_the_engine_does_not_compute_yet_is_refused() {
+    fn an_unregistered_store_charges_no_gst() {
         let sixteen = [percentage("SYNTH_A", 160_000)];
         let compute = |mode, profile| {
             compute_line_tax(
@@ -1574,29 +1569,34 @@ mod tests {
                 &domestic(),
                 RoundingRule::HalfAwayFromZero,
             )
-            .map(|line| line.tax_total)
         };
 
-        // 1.3.5 computes every other shape, so one is left: a store not
-        // registered for GST, refused whichever way the price is written.
+        // Handed a 16% component, a store not registered for GST still
+        // charges nothing, whichever way the price is written: the price is
+        // the net and the gross, and no component is carried.
         for mode in [PriceMode::Exclusive, PriceMode::Inclusive] {
             assert_eq!(
                 compute(mode, StoreTaxProfile::Unregistered),
-                Err(TaxError::NotComputedYet(PendingTaxShape::UnregisteredStore))
+                Ok(LineTax {
+                    net: jod(1_000),
+                    components: Vec::new(),
+                    tax_total: jod(0),
+                    gross: jod(1_000),
+                    supply_reason: None,
+                })
             );
         }
 
-        // A zone store charges its own pack's rule with the same arithmetic.
-        for zone in [StoreTaxProfile::Asez, StoreTaxProfile::DevelopmentArea] {
-            assert_eq!(compute(PriceMode::Exclusive, zone), Ok(jod(160)));
-            assert_eq!(compute(PriceMode::Inclusive, zone), Ok(jod(138)));
+        // Every registered profile charges its rule with the same arithmetic.
+        for zone in [
+            StoreTaxProfile::Standard,
+            StoreTaxProfile::Asez,
+            StoreTaxProfile::DevelopmentArea,
+        ] {
+            let tax = |mode| compute(mode, zone).map(|line| line.tax_total);
+            assert_eq!(tax(PriceMode::Exclusive), Ok(jod(160)));
+            assert_eq!(tax(PriceMode::Inclusive), Ok(jod(138)));
         }
-
-        assert_eq!(
-            TaxError::NotComputedYet(PendingTaxShape::UnregisteredStore).to_string(),
-            "a store not registered for GST is not computed yet; the line is refused rather \
-             than approximated"
-        );
     }
 
     #[test]
@@ -3120,6 +3120,106 @@ mod tests {
                 prop_assert_eq!(row.gross, total);
             }
             prop_assert_eq!(summary.len(), 2 + usize::from(!taxed.is_empty()));
+        }
+    }
+
+    // ── a store not registered for GST (1.3.8) ──────────────────────────
+
+    /// Any destination but the one a store may sell to today.
+    fn other_destinations() -> impl Strategy<Value = SupplyDestination> {
+        prop_oneof![
+            Just(SupplyDestination::Export),
+            Just(SupplyDestination::FreeZone),
+            Just(SupplyDestination::DevelopmentArea),
+            Just(SupplyDestination::EligibleBody),
+        ]
+    }
+
+    /// Whatever components a caller might hand the engine: none, or one to
+    /// four of any shape on any base (`component_stacks`), which it never reads
+    /// for an unregistered store.
+    fn any_components() -> impl Strategy<Value = Vec<TaxComponent>> {
+        prop_oneof![Just(Vec::new()), component_stacks()]
+    }
+
+    #[test]
+    fn unregistered_lines_summarize_to_no_tax_rows() {
+        let untaxed = |price| {
+            compute_line_tax(
+                jod(price),
+                Qty::ONE,
+                PriceMode::Inclusive,
+                &[percentage("SYNTH_GST", 160_000)],
+                StoreTaxProfile::Unregistered,
+                &domestic(),
+                RoundingRule::HalfAwayFromZero,
+            )
+            .unwrap()
+        };
+        // A receipt of them has no tax rows: there is no rate to report.
+        let receipt = [untaxed(2_500), untaxed(1_000)];
+        assert_eq!(summarize_tax(&receipt), Ok(Vec::new()));
+        // But one beside a registered store's line is not an untaxed line on
+        // that receipt; it is a line whose components are missing.
+        let taxed = sold(10_000, &[percentage("SYNTH_GST", 160_000)]);
+        assert_eq!(
+            summarize_tax(&[taxed, untaxed(2_500)]),
+            Err(TaxError::NoComponents)
+        );
+        // And with no component, it carries no tax: one that claims some does
+        // not add up.
+        let mut claims_tax = untaxed(2_500);
+        claims_tax.tax_total = jod(1);
+        claims_tax.gross = jod(2_501);
+        assert_eq!(
+            summarize_tax(&[claims_tax]),
+            Err(TaxError::LineTaxUnbalanced(0))
+        );
+    }
+
+    proptest! {
+        #![proptest_config(domain_proptest_config())]
+
+        /// A store not registered for GST charges no tax on any line: whatever
+        /// components it is handed, at any price either way, any quantity and
+        /// any rule, the line carries no component and its net and gross are
+        /// both the price, and its receipt has no tax rows. The supply is still
+        /// read first: a non-domestic supply is refused for every store.
+        #[test]
+        fn prop_unregistered_profile_yields_no_tax(
+            components in any_components(),
+            price in any_gross(),
+            qty in quantities(),
+            mode in either_price_mode(),
+            rule in any_rounding_rule(),
+            elsewhere in other_destinations(),
+        ) {
+            let compute = |supply: &SupplyTaxContext| {
+                compute_line_tax(
+                    jod(price),
+                    Qty::from_milli(qty),
+                    mode,
+                    &components,
+                    StoreTaxProfile::Unregistered,
+                    supply,
+                    rule,
+                )
+            };
+            let line = compute(&domestic()).unwrap();
+            prop_assert_eq!(&line, &LineTax {
+                net: jod(price),
+                components: Vec::new(),
+                tax_total: jod(0),
+                gross: jod(price),
+                supply_reason: None,
+            });
+            prop_assert_eq!(summarize_tax(&[line]), Ok(Vec::new()));
+
+            let abroad = SupplyTaxContext { destination: elsewhere, ..domestic() };
+            prop_assert_eq!(
+                compute(&abroad),
+                Err(TaxError::SupplyDestinationRefused(elsewhere))
+            );
         }
     }
 }
