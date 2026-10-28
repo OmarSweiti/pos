@@ -181,7 +181,12 @@ computation policy into the rounding rule the engine is handed, have landed. Its
 waits for the files 1.8.3 and 1.8.5b create, and the policy itself waits on the `⚠️ OPEN` item in
 [`ref/schema.md`](ref/schema.md) §0003. `1.3.5` has landed on the default arrangement its
 `⚠️ OPEN` item in [`ref/domain-api.md`](ref/domain-api.md) §5 names; no Special Sales Tax rule is
-seeded, and the question now waits with the rate pack at 1.3.7.
+seeded, and the question now waits with the rate pack at 1.3.7. `1.3.7` is **partially
+delivered**: the path a jurisdiction pack takes has landed. A pack is pinned to the hash of what
+was reviewed, imported only with the accountant's dated approval, and read back by business date
+as what a store charges, with an unconfigured band or an incomplete zone pack refused. It is proved
+on a synthetic fixture; the merchant's real pack waits on [`ref/schema.md`](ref/schema.md) §0003's
+`⚠️ OPEN` item.
 Group 1.7's `1.7.8` is **partially delivered**: `ReceiptPrinter::print` returns one of the four
 outcomes, the simulator scripts paper-out and silence at byte *N*, cover-open, offline and a slow
 device, and a sweep injects a fault at every byte of a real receipt. The sweep moves onto a golden
