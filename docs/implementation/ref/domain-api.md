@@ -1671,6 +1671,12 @@ pub fn set_qty(cart: Cart, line: SaleLineId, q: Qty) -> Result<Cart, CartError>;
 pub fn void_line(cart: Cart, line: SaleLineId, reason: VoidReason, by: UserId,
                  at: Timestamp)                     -> Result<(Cart, AuditIntent), CartError>;
 pub fn check_age_confirmed(cart: &Cart)             -> Result<(), CartError>;
+/// 1.4.3b. Confirmed, the line stays and is unblocked; declined, it is removed.
+/// The intent is `age.confirm` or `age.decline` on the `sale_line`, with the
+/// product's minimum age and no customer data. A line with no pending gate is
+/// `AgeConfirmationNotPending`.
+pub fn confirm_age(cart: Cart, line_id: SaleLineId, confirmed: bool, actor: UserId,
+                   at: Timestamp)                   -> Result<(Cart, AuditIntent), CartError>;
 pub fn apply_line_discount(cart: Cart, line: SaleLineId, d: DiscountRequest,
                            auth: &Authorized<cap::DiscountManual>)
                                                     -> Result<(Cart, AuditIntent), CartError>;
@@ -1788,6 +1794,8 @@ pub enum CartError {
     #[error("the scan did not resolve to one product")]        ScanNotOneProduct,     // 1.4.3
     #[error("line {0} is one labelled package; scan the next label for another")]
                                                                LabelLineIsOnePackage(SaleLineId), // 1.4.3
+    #[error("line {0} has no age waiting to be confirmed")]
+                                                               AgeConfirmationNotPending(SaleLineId), // 1.4.3b
     #[error(transparent)] Tax(#[from] TaxError),
     #[error(transparent)] Money(#[from] MoneyError),
 }
