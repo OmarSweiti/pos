@@ -10,6 +10,7 @@ pub mod fixtures;
 pub mod key;
 pub mod repo;
 pub mod search;
+pub mod tax_pack;
 pub mod tax_policy;
 
 #[derive(Debug, thiserror::Error)]
@@ -202,6 +203,28 @@ pub enum DbError {
     },
     #[error("stored tax computation policy is malformed: {reason}")]
     StoredTaxPolicyInvalid { reason: String },
+    #[error("tax pack refused: {0}")]
+    TaxPackRefused(#[from] tax_pack::TaxPackRefusal),
+    #[error("no store {0} to read a tax pack for")]
+    TaxPackStoreUnknown(pos_domain::StoreId),
+    #[error(
+        "store {0} has no tax pack this register holds, so no line can be taxed and no \
+         sale finished until an approved one is assigned"
+    )]
+    TaxPackMissing(pos_domain::StoreId),
+    #[error("store {0}'s tax pack is not approved, so no line can be taxed under it")]
+    TaxPackUnapproved(pos_domain::StoreId),
+    #[error(
+        "store {store}'s approved tax pack charges nothing on category {category} on {on}: \
+         an unconfigured band fails closed rather than being sold at a familiar rate"
+    )]
+    TaxBandUnconfigured {
+        store: pos_domain::StoreId,
+        category: pos_domain::TaxCategoryId,
+        on: String,
+    },
+    #[error("stored tax pack is malformed: {reason}")]
+    StoredTaxPackInvalid { reason: String },
 }
 
 /// `PRAGMA synchronous = FULL`, as SQLite reports it back. The pragma accepts a
