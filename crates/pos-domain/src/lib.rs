@@ -2,6 +2,7 @@
 //! (Blueprint §2: this purity is what makes it shareable between register and server.)
 
 pub mod audit;
+pub mod cart;
 pub mod catalog;
 pub mod ids;
 pub mod money;
@@ -29,6 +30,7 @@ pub use audit::{
     AuditError, AuditIntent, CanonicalAuditEntry, ChainAnchor, ChainVerdict, canonical_bytes,
     chain_hash, check_payload, verify_chain,
 };
+pub use cart::{Cart, CartContext, CartError, CartLine, Sale};
 pub use catalog::{
     Barcode, BarcodeKind, CatalogError, DerivedWeight, EmbeddedBarcodeRule, EmbeddedValue,
     MatchedOn, ParsedScan, PriceOrigin, PriceSource, Product, ProductHit, RegulatedKind,
