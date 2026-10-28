@@ -431,7 +431,7 @@ The existing OPEN item in [`ref/schema.md`](ref/schema.md) §0003 owns which cur
 > - **Not yet in a pack**: §3 rule 6 also names the return-box mapping and the filing calendar, which are 4.7.2's `tax_filing_profile`, and the command that will call this import, `tax_rate_upsert` under `tax.rate.edit` with its approval handle and audit row ([`ref/ipc-contract.md`](ref/ipc-contract.md), Phase 3), is not built. This is the repository function it will call.
 
 ### 1.3.8 — `unregistered` profile short-circuit
-**Files:** `crates/pos-domain/src/tax.rs`
+**Files:** `crates/pos-domain/src/tax.rs` · as delivered: `crates/pos-domain/src/tax.rs` (the short-circuit, `PendingTaxShape` and `TaxError::NotComputedYet` retired, and `summarize_tax` given an unregistered store's receipt) · `crates/pos-domain/src/receipt.rs` (the fiscal-independence test, beside the receipt fixture it uses) · `crates/pos-domain/src/lib.rs` (the re-export) · [`ref/domain-api.md`](ref/domain-api.md) §5 (as delivered) · [`README.md`](README.md) (implementation frontier) · this file (this microstep's `Files:` and `Tests:` lines and its note, and the notes it leaves at 1.8.3 and 1.8.5b)
 
 ```rust
 pub fn compute_line_tax(
@@ -441,8 +441,10 @@ pub fn compute_line_tax(
 ```
 
 This controls GST calculation only. JoFotara obligation and its income/general/special taxpayer category are separate evidenced settings; being GST-unregistered never disables fiscal issuance by implication.
-**Tests:** `prop_unregistered_profile_yields_no_tax` · `unregistered_gst_profile_does_not_disable_fiscal_obligation`
+**Tests:** `prop_unregistered_profile_yields_no_tax` · `unregistered_gst_profile_does_not_disable_fiscal_obligation` · `an_unregistered_store_charges_no_gst` · `unregistered_lines_summarize_to_no_tax_rows`
 **Done when:** `cargo nextest run -p pos-domain unregistered_` passes with independent GST and fiscal-profile fixtures.
+
+> **As delivered, 28 October 2026.** A store not registered for GST charges none. Once its supply is read, `compute_line_tax` returns its line with no component, no tax, and a net and gross that are both the price, in either mode, and never reads the components it was handed; `prop_unregistered_profile_yields_no_tax` holds that for any components, price, quantity and rule. Three choices are recorded here. **The supply is still read first**, so the owner's refusal of every non-domestic supply (`ref/merchant-decisions.md` 6.14) binds every store, registered or not. **The line carries no component**, not an exempt one: an exempt row is a box on a return this store does not file, so `summarize_tax` now gives a receipt of such lines no rows at all, and refuses one beside taxed lines as `NoComponents`, because a store is registered or it is not. **`PendingTaxShape` and `TaxError::NotComputedYet` are gone**, as their own documentation said they would be with the group's last pending shape. `unregistered_gst_profile_does_not_disable_fiscal_obligation` lives in `receipt.rs`, beside the receipt fixture it builds on: every pairing of an unregistered or registered store with a receipt that does or does not carry an invoice block is a valid sale document, and the block is always what the fiscal fixture says. Three findings leave this step for the database and the shell, recorded at 1.8.3 and 1.8.5b: `0005` refuses a completed line with no tax component, `StoreTaxProfile` folds two columns `store` keeps apart, and `store.gst_profile` defaults to `'unregistered'` where merchant decision 6.2b assumes a registered merchant.
 
 ---
 
@@ -1077,6 +1079,8 @@ The fault seam fires before every variant in `FinalizeWritePoint::ALL`. This is 
 **Done when:** `cargo nextest run -p terminal commands::sale::tests::` injects failure at every `FinalizeWritePoint::ALL` entry and leaves either the whole fact graph plus ready manifest or no financial fact, artifact, job, consumption or delivery row.
 > **1.3.4's terminal half waits on this file.** Finalize must refuse a store whose tax computation policy is not approved, through `crates/pos-db/src/tax_policy.rs`, and 1.3.4's terminal test proves it for both finalize and provisioning. It lands with whichever of this step and 1.8.5b comes second; 1.3.4's `Full-step status:` marker is what it clears.
 
+> **Group 1.3 leaves three things to this file.** A line's components come from `pos_db::tax_pack::TaxPackRepository::components_for` (1.3.7), which filters a store's pack by business date exactly as `0005`'s completion gate does, rather than from `resolve_components`, whose `TaxRateRule` carries instants. The `StoreTaxProfile` handed to `compute_line_tax` is read from two columns `store` keeps apart: `gst_profile = 'unregistered'` is `Unregistered` whatever the jurisdiction, and otherwise `tax_profile` names it (1.3.8). And a GST-unregistered store's lines carry no component, while `0005`'s `sale_completed_requires_tax_components_*` triggers refuse a completed line with no `sale_line_tax` row, so such a store cannot finish a sale until a forward migration lets a line go untaxed when its store's `gst_profile` is `'unregistered'`. That migration is this step's, before its first unregistered sale.
+
 ### 1.8.4 — Crash recovery for `Finalizing`
 **Scheduled in:** build `checkout_operation.rs` and the pre-effect journal before 1.8.3; complete startup recovery orchestration after finalize exists
 **Files:** `apps/terminal/src-tauri/src/recovery.rs` (new), `crates/pos-db/src/repo/checkout_operation.rs` (new)
@@ -1120,6 +1124,8 @@ The provisioning screen shows the formatted code and offers one direct recovery-
 **Tests:** `a_backup_opens_with_the_recovery_code_alone` · `wrong_recovery_code_is_refused` · `key_generation_refuses_when_a_database_already_exists` · `clean_machine_restore_path_precedes_key_generation` · `recovery_envelope_survives_restart` · `the_wrapped_envelope_travels_with_every_backup` · `recovery_code_is_displayed_exactly_once_at_provisioning` · `recovery_sheet_is_never_queued_or_persisted` · `unacknowledged_provisioning_rewraps_with_a_new_code` · `recovery_code_and_wrapped_key_are_redacted`
 **Done when:** `cargo nextest run -p pos-db key_custody:: && cargo nextest run -p pos-hardware recovery_sheet_ && cargo nextest run -p terminal recovery_code_provisioning_ && pnpm --filter terminal exec vitest run src/screens/RecoveryCodeProvisioning.test.tsx` exits zero and a fixture backup opens after deleting its credential-store entry using only its envelope and the once-displayed code.
 > **1.3.4's terminal half waits on this file too.** Provisioning must refuse a store whose tax computation policy is not approved, and 1.3.4's terminal test proves it for both provisioning and finalize. It lands with whichever of this step and 1.8.3 comes second; 1.3.4's `Full-step status:` marker is what it clears.
+
+> **1.3.8 leaves provisioning one setting to write explicitly.** `0003` defaults `store.gst_profile` to `'unregistered'`, while merchant decision 6.2b assumes the merchant is registered (and still names `store.tax_profile` as its column). Nothing reads the column yet; once 1.8.3 does, a store provisioned without it would charge no GST. Provisioning therefore writes `gst_profile` from the merchant's registration evidence and never leaves the default in place.
 
 ### 1.8.6 — Encrypted backup
 *Gap G-1.*

@@ -658,6 +658,62 @@ mod tests {
         assert_eq!(sale.validate(), Ok(()));
     }
 
+    /// GST registration and the electronic-invoice obligation are two
+    /// settings (`ref/tax-jordan.md` §2), and one never decides the other. A
+    /// store not registered for GST charges no tax and its receipt has no tax
+    /// rows, yet it may still owe an invoice; a registered store may owe none.
+    /// So every pairing of the two fixtures is a valid sale document, and the
+    /// fiscal block is exactly what the fiscal fixture says.
+    #[test]
+    fn unregistered_gst_profile_does_not_disable_fiscal_obligation() {
+        use crate::money::{Qty, RoundingRule};
+        use crate::tax::{
+            PriceMode, StoreTaxProfile, SupplyDestination, SupplyTaxContext, TaxBase, TaxBasis,
+            TaxComponent, compute_line_tax, summarize_tax,
+        };
+
+        let gst = TaxComponent {
+            code: "SYNTH_GST".to_owned(),
+            treatment: TaxTreatment::Standard,
+            basis: TaxBasis::Percentage {
+                rate: Percent::from_ppm(160_000),
+            },
+            sequence: 0,
+            base: TaxBase::LineNet,
+            is_inclusive_capable: true,
+        };
+        let domestic = SupplyTaxContext {
+            destination: SupplyDestination::Domestic,
+            reason: None,
+            evidence_ref: None,
+        };
+        let summary = |profile| {
+            let line = compute_line_tax(
+                jod(2_166),
+                Qty::ONE,
+                PriceMode::Inclusive,
+                std::slice::from_ref(&gst),
+                profile,
+                &domestic,
+                RoundingRule::HalfAwayFromZero,
+            )
+            .unwrap();
+            summarize_tax(&[line]).unwrap()
+        };
+
+        for profile in [StoreTaxProfile::Unregistered, StoreTaxProfile::Standard] {
+            let rows = summary(profile);
+            assert_eq!(rows.is_empty(), profile == StoreTaxProfile::Unregistered);
+            for invoice in [Some(fiscal()), None] {
+                let mut sale = model();
+                sale.totals.tax_summary = rows.clone();
+                sale.fiscal = invoice.clone();
+                assert_eq!(sale.validate(), Ok(()), "{profile:?}, {invoice:?}");
+                assert_eq!(sale.fiscal, invoice, "{profile:?} decided the invoice");
+            }
+        }
+    }
+
     /// `DocKind::ALL` really is every variant.
     ///
     /// The sweep could not find this one: adding a sixth variant to the enum

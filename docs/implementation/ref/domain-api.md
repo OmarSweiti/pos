@@ -1346,12 +1346,15 @@ pub struct ComponentTax {
 /// amounts already carried. `qty` is an argument because a `PerUnit` component
 /// is charged per unit and there is no way back from a line total to a quantity.
 ///
-/// As delivered at 1.3.3–1.3.5. The supply is read first. Any destination but
-/// `Domestic` is `SupplyDestinationRefused`, and a domestic supply claiming a
-/// reason is `ZeroRatingReasonRefused` (the zero-rating `⚠️ OPEN` item below).
-/// An `Unregistered` store is `NotComputedYet` until 1.3.8. Then the component
-/// list: none is `NoComponents`; a code twice is `OverlappingRules`; a rate or
-/// fixed amount below zero is `NegativeRate`; a fixed amount in another
+/// As delivered at 1.3.3–1.3.8. The supply is read first, for every store.
+/// Any destination but `Domestic` is `SupplyDestinationRefused`, and a
+/// domestic supply claiming a reason is `ZeroRatingReasonRefused` (the
+/// zero-rating `⚠️ OPEN` item below). An `Unregistered` store charges none
+/// (1.3.8): its line comes back with no component, no tax, and a net and gross
+/// that are both the price, in either mode, and the components it was handed
+/// are not read. For every other profile, the component list: none is
+/// `NoComponents`; a code twice is `OverlappingRules`; a rate or fixed amount
+/// below zero is `NegativeRate`; a fixed amount in another
 /// currency is `MoneyError::CurrencyMismatch`; a zero-rated or exempt component
 /// that charges any rate or amount is `UntaxedTreatmentCharges` (1.3.6); and a
 /// base naming a component not on the line, not applied earlier, or in a loop is
@@ -1397,7 +1400,8 @@ pub fn compute_line_tax(
 /// overflow, lines can arrive in two currencies, and a line that no longer
 /// adds up — its components to its tax, or its net and tax to its gross — is
 /// `LineTaxUnbalanced` rather than a summary that disagrees with the receipt.
-/// A line with no component is `NoComponents`.
+/// A receipt of lines with no component, a GST-unregistered store's, has no
+/// rows at all; one such line beside taxed lines is `NoComponents`.
 pub fn summarize_tax(lines: &[LineTax]) -> Result<Vec<TaxSummaryRow>, TaxError>;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1464,8 +1468,6 @@ pub enum TaxError {
                                                     ZeroRatingReasonRefused(ZeroRatingReason),
     #[error("component {0} has a negative rate or amount; a tax is never charged below zero")]
                                                     NegativeRate(String),
-    #[error("{0} is not computed yet; the line is refused rather than approximated")]
-                                                    NotComputedYet(PendingTaxShape),
     #[error("a line with no tax component is refused: an untaxed line is zero-rated or exempt, never componentless")]
                                                     NoComponents,
     #[error("component {0} is charged on {1}, which is not applied before it")]
@@ -1481,15 +1483,9 @@ pub enum TaxError {
     #[error(transparent)]                           Money(#[from] MoneyError),
 }
 
-/// A line a later 1.3 step computes (1.3.3). `Display` reads "a store not
-/// registered for GST". Each variant leaves with the step that computes it —
-/// `InclusivePrice` left at 1.3.4, and `ComponentCount`, `FixedAmount` and
-/// `TaxOnTax` at 1.3.5 — and the type with the last.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PendingTaxShape {
-    UnregisteredStore,      // 1.3.8
-}
 ```
+
+`PendingTaxShape` and `TaxError::NotComputedYet` named the lines a later step of the group would compute. Each variant left with its step, and the type and the error with the last, at 1.3.8.
 
 > ⚠️ **OPEN — blocks 1.3.7 for any Special Sales Tax rule.** For a line carrying both General Sales
 > Tax and Special Sales Tax: what is each component's base, in what order, is the fixed part per unit
