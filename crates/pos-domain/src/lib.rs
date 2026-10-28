@@ -57,7 +57,7 @@ pub use stock::{
 pub use tax::{
     ComponentTax, LineTax, PendingTaxShape, PriceMode, StoreTaxProfile, SupplyDestination,
     SupplyTaxContext, TaxBase, TaxBasis, TaxComponent, TaxError, TaxRateRule, TaxSummaryRow,
-    TaxTreatment, ZeroRatingReason, compute_line_tax, resolve_components,
+    TaxTreatment, ZeroRatingReason, compute_line_tax, resolve_components, summarize_tax,
 };
 pub use tender::{
     CashRounding, RefundRouting, Tender, TenderState, TenderType, compute_cash_rounding,
