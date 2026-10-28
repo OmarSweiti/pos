@@ -399,6 +399,72 @@ pub fn void_line(
     Ok((cart, intent))
 }
 
+/// An operator's answer to an age-restricted line's gate (E.69), and the audit
+/// intent that records it.
+///
+/// Confirmed, the line stays and is no longer blocked; declined, it is removed.
+/// Either way the intent names the operator, the line and its product's
+/// minimum age, at `at`, which the shell supplies (I-8). The blocked line was
+/// kept in the cart so that this call has a stable target across every
+/// rerender of the screen (1.4.3).
+///
+/// # Errors
+///
+/// [`CartError::LineNotFound`], and [`CartError::AgeConfirmationNotPending`]
+/// for a line with no age gate or one already confirmed: an answer for the
+/// wrong line never confirms the right one, and a second answer would be a
+/// second audit row for one decision.
+pub fn confirm_age(
+    cart: Cart,
+    line_id: SaleLineId,
+    confirmed: bool,
+    actor: UserId,
+    at: Timestamp,
+) -> Result<(Cart, AuditIntent), CartError> {
+    let mut cart = cart;
+    let position = cart
+        .lines
+        .iter()
+        .position(|l| l.id == line_id)
+        .ok_or(CartError::LineNotFound(line_id))?;
+    let (min_age, line) = match cart.lines.get(position) {
+        Some(line) => match (line.min_age, line.age_confirmed) {
+            (Some(min_age), false) => (min_age, line.clone()),
+            _ => return Err(CartError::AgeConfirmationNotPending(line_id)),
+        },
+        None => return Err(CartError::LineNotFound(line_id)),
+    };
+    let action = if confirmed {
+        if let Some(gated) = cart.lines.get_mut(position) {
+            gated.age_confirmed = true;
+        }
+        "age.confirm"
+    } else {
+        cart.lines.remove(position);
+        "age.decline"
+    };
+    let intent = AuditIntent {
+        actor,
+        approver: None,
+        approval: None,
+        action,
+        entity: "sale_line",
+        entity_id: line_id.as_uuid(),
+        reason: None,
+        payload: json!({
+            "sale_id": cart.id.as_uuid().to_string(),
+            "product_id": line.product_id.map(|p| p.as_uuid().to_string()),
+            "min_age": min_age,
+            "confirmed": confirmed,
+            "qty_milli": line.qty.milli(),
+            "unit_price_minor": line.unit_price.minor(),
+            "currency": line.unit_price.currency().code(),
+        }),
+        at,
+    };
+    Ok((cart, intent))
+}
+
 /// Whether every age-restricted line has been confirmed by an operator.
 ///
 /// 1.4.8's `begin_tender` refuses a cart this refuses.
@@ -483,6 +549,9 @@ pub enum CartError {
     /// Added at 1.4.3: a price label's line is one package.
     #[error("line {0} is one labelled package; scan the next label for another")]
     LabelLineIsOnePackage(SaleLineId),
+    /// Added at 1.4.3b: no age is waiting to be confirmed on that line.
+    #[error("line {0} has no age waiting to be confirmed")]
+    AgeConfirmationNotPending(SaleLineId),
     #[error(transparent)]
     Tax(#[from] TaxError),
     #[error(transparent)]
@@ -1084,5 +1153,144 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ── age confirmation (1.4.3b) ───────────────────────────────────────
+
+    /// A sealed pack of tobacco, which the law sells only to the over-18s.
+    fn tobacco() -> Product {
+        let mut pack = product(0x30, UnitOfMeasure::Package);
+        pack.min_age = Some(18);
+        pack.regulated_sale_form = RegulatedSaleForm::Tobacco;
+        pack
+    }
+
+    /// A cart with an ordinary line (1) and a tobacco pack (2), still blocked.
+    fn with_tobacco() -> Cart {
+        let plain = product(0x20, UnitOfMeasure::Each);
+        add(
+            add(building(), 1, &plain, 1_000).unwrap(),
+            2,
+            &tobacco(),
+            1_000,
+        )
+        .unwrap()
+    }
+
+    /// A shift lead, not the cart's cashier: the intent must name whoever
+    /// actually answered the gate.
+    fn operator() -> UserId {
+        UserId::from_uuid(id(5))
+    }
+
+    fn moment() -> Timestamp {
+        Timestamp::from_epoch_milliseconds(978_307_320_000).unwrap()
+    }
+
+    #[test]
+    fn age_restricted_line_blocks_tender_until_confirmation() {
+        let cart = with_tobacco();
+        // What 1.4.8's `begin_tender` asks before anything is collected.
+        assert_eq!(
+            check_age_confirmed(&cart),
+            Err(CartError::AgeConfirmationRequired(tobacco().id))
+        );
+        let (cart, intent) = confirm_age(cart, line_id(2), true, operator(), moment()).unwrap();
+        assert_eq!(check_age_confirmed(&cart), Ok(()));
+        // It is the confirmation, by a named operator, that opened the gate.
+        assert_eq!((intent.actor, intent.action), (operator(), "age.confirm"));
+        let line = cart.lines.iter().find(|l| l.id == line_id(2)).unwrap();
+        assert!(line.age_confirmed);
+        assert_eq!(cart.lines.len(), 2);
+    }
+
+    #[test]
+    fn age_confirmation_is_audited() {
+        let (_, intent) =
+            confirm_age(with_tobacco(), line_id(2), true, operator(), moment()).unwrap();
+        assert_eq!(intent.actor, operator());
+        assert_eq!((intent.approver, intent.approval), (None, None));
+        assert_eq!((intent.action, intent.entity), ("age.confirm", "sale_line"));
+        assert_eq!(intent.entity_id, line_id(2).as_uuid());
+        assert_eq!(intent.at, moment());
+        assert_eq!(
+            intent.payload,
+            serde_json::json!({
+                "sale_id": "00000000-0000-0000-0000-000000000001",
+                "product_id": tobacco().id.as_uuid().to_string(),
+                "min_age": 18,
+                "confirmed": true,
+                "qty_milli": 1_000,
+                "unit_price_minor": 1_250,
+                "currency": "JOD",
+            })
+        );
+        // Nothing about the customer: the gate records that it was checked,
+        // not who was checked.
+        assert_eq!(intent.reason, None);
+    }
+
+    #[test]
+    fn age_confirmation_for_a_different_line_is_refused() {
+        let cart = with_tobacco();
+        // The ordinary line has no age gate: confirming it confirms nothing,
+        // and certainly not the tobacco beside it.
+        assert_eq!(
+            confirm_age(cart.clone(), line_id(1), true, operator(), moment()).map(|_| ()),
+            Err(CartError::AgeConfirmationNotPending(line_id(1)))
+        );
+        assert_eq!(
+            confirm_age(cart.clone(), line_id(9), true, operator(), moment()).map(|_| ()),
+            Err(CartError::LineNotFound(line_id(9)))
+        );
+        assert_eq!(
+            check_age_confirmed(&cart),
+            Err(CartError::AgeConfirmationRequired(tobacco().id))
+        );
+        // A second answer for a line already confirmed would be a second audit
+        // row for one decision.
+        let (confirmed, _) = confirm_age(cart, line_id(2), true, operator(), moment()).unwrap();
+        assert_eq!(
+            confirm_age(confirmed, line_id(2), false, operator(), moment()).map(|_| ()),
+            Err(CartError::AgeConfirmationNotPending(line_id(2)))
+        );
+    }
+
+    #[test]
+    fn age_decline_removes_line_and_audits() {
+        let (cart, intent) =
+            confirm_age(with_tobacco(), line_id(2), false, operator(), moment()).unwrap();
+        assert_eq!(
+            cart.lines.iter().map(|l| l.id).collect::<Vec<_>>(),
+            vec![line_id(1)]
+        );
+        assert_eq!(check_age_confirmed(&cart), Ok(()));
+        assert_eq!((intent.actor, intent.action), (operator(), "age.decline"));
+        assert_eq!(intent.entity_id, line_id(2).as_uuid());
+        assert_eq!(
+            intent.payload.get("confirmed"),
+            Some(&serde_json::json!(false))
+        );
+        assert_eq!(intent.payload.get("min_age"), Some(&serde_json::json!(18)));
+    }
+
+    #[test]
+    fn unconfirmed_age_line_survives_cart_rerender() {
+        // The screen renders the cart from its serialized form and sends back
+        // only the line's id; the blocked line must be there, under the same
+        // id, every time it is redrawn.
+        let mut cart = with_tobacco();
+        for _ in 0..3 {
+            let rendered = serde_json::to_string(&Sale::Building(cart)).unwrap();
+            let back = match serde_json::from_str::<Sale>(&rendered).unwrap() {
+                Sale::Building(back) => Some(back),
+                Sale::Parked(_) => None,
+            };
+            cart = back.expect("a building cart renders as a building cart");
+            let line = cart.lines.iter().find(|l| l.id == line_id(2)).unwrap();
+            assert_eq!((line.min_age, line.age_confirmed), (Some(18), false));
+        }
+        let (cart, _) = confirm_age(cart, line_id(2), true, operator(), moment()).unwrap();
+        assert_eq!(check_age_confirmed(&cart), Ok(()));
     }
 }
