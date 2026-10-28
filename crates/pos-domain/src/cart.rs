@@ -1177,8 +1177,10 @@ mod tests {
         .unwrap()
     }
 
+    /// A shift lead, not the cart's cashier: the intent must name whoever
+    /// actually answered the gate.
     fn operator() -> UserId {
-        UserId::from_uuid(id(4))
+        UserId::from_uuid(id(5))
     }
 
     fn moment() -> Timestamp {
