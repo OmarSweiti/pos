@@ -1553,7 +1553,7 @@ pub struct Cart {
     pub cashier_id: UserId,
     pub currency: Currency,
     pub lines: Vec<CartLine>,
-    pub basket_discounts: Vec<BasketDiscount>,
+    pub basket_discounts: Vec<BasketDiscount>,   // as delivered at 1.4.6: `basket_discount: Option<BasketDiscount>`, §6.1
     pub customer_id: Option<CustomerId>,
     pub buyer_tin: Option<String>,      // B2B fiscal invoices (master plan B.2)
     pub buyer_name: Option<String>,
@@ -1710,9 +1710,39 @@ pub fn apply_line_discount(cart: Cart, line: SaleLineId, request: DiscountReques
                            auth: &Authorized<cap::DiscountManual>,
                            approval: Option<&ApprovalHandle>)
                                                     -> Result<(Cart, AuditIntent), CartError>;
-pub fn apply_basket_discount(cart: Cart, d: DiscountRequest,
-                           auth: &Authorized<cap::DiscountManual>)
+/// As delivered at 1.4.6, from `pricing.rs`:
+///   pub struct BasketDiscount { pub kind: DiscountKind, pub reason: DiscountReason,
+///                               pub by: UserId, pub approver: Option<UserId> }
+///   pub enum DiscountSource { ManualLine, ManualBasket }  // sale_line_discount.source
+///   pub struct DiscountAttribution { pub line_id: SaleLineId, pub source: DiscountSource,
+///       pub amount: Money, pub percent: Option<Percent>, pub reason: DiscountReason,
+///       pub by: UserId, pub approver: Option<UserId> }
+///   pub struct ProrationLine { pub line_id: SaleLineId, pub value: Money,
+///       pub tax_category_id: TaxCategoryId, pub product_id: Option<ProductId>,
+///       pub unit_price: Money, pub qty: Qty }
+///   pub fn prorate(amount: Money, lines: &[ProrationLine]) -> Result<Vec<Money>, PricingError>;
+///   pub enum PricingError { ExceedsTotal(String, String), Money(MoneyError) }
+///   impl DiscountCap { pub fn admits_basket(self, kind: DiscountKind, value: Money) -> bool; }
+///   pub fn exceeds_basket(kind: DiscountKind, value: Money) -> bool;
+/// A cart keeps one basket discount, `Cart.basket_discount: Option<BasketDiscount>`,
+/// as asked: another replaces it and a zero clears it. It is measured against the
+/// basket's value once each line's own discount is off, and held to the actor's
+/// cap on its own. A line's discount and the basket's may both apply, each within
+/// the cap (the owner's decision, 29 October 2026). Above the cap it needs a
+/// handle bound to the sale (`entity_id` is the sale's id) and the amount, and its
+/// intent is `discount.manual` on the `sale`. A share keeps its share as the
+/// basket changes. An amount off is cleared by any change that lowers the basket's
+/// value, `void_line`, a declining `confirm_age`, a lower `set_qty` or a line
+/// discount (the owner's decision), so it never outgrows the basket or its cap.
+/// `discount_attributions(cart, rule)` gives every line's share of every manual
+/// discount: a line's own whole, the basket's by `prorate`. The arguments match
+/// `apply_line_discount`'s.
+pub fn apply_basket_discount(cart: Cart, request: DiscountRequest, limit: DiscountCap,
+                             rule: RoundingRule, auth: &Authorized<cap::DiscountManual>,
+                             approval: Option<&ApprovalHandle>)
                                                     -> Result<(Cart, AuditIntent), CartError>;
+pub fn discount_attributions(cart: &Cart, rule: RoundingRule)
+                                                    -> Result<Vec<DiscountAttribution>, CartError>;
 pub fn override_price(cart: Cart, line: SaleLineId, to: Money, reason: OverrideReason,
                       auth: &Authorized<cap::PriceOverride>)
                                                     -> Result<(Cart, AuditIntent), CartError>;
@@ -1815,6 +1845,16 @@ difference is visible to ISTD because the fil becomes a per-line percentage in t
 `prop_price_cart_is_deterministic` does not catch this — same inputs in the same order is not the
 same claim as same inputs in any order.
 
+> **As delivered at 1.4.6.** The key is `(tax_category_id, product_id, unit_price_minor,
+> qty_milli)`, as the phase file's 1.4.6 specifies, and **not** `line_id`. Ids are minted in scan
+> order, so a tie broken by id is a tie broken by position, which is what this paragraph refuses;
+> `prop_proration_is_invariant_under_fresh_line_ids` holds it. `pricing::prorate` is true largest
+> remainder: each line takes its exact share rounded down, and the leftover fils go to the lines whose
+> exact shares were cut the most, the key deciding only between lines cut equally. Exact duplicates
+> are interchangeable and keep the order given. `Money::split_proportional_by` gives leftover fils to
+> the first lines it is handed, so `prorate` hands it the lines in that order. The weights are each
+> line's value after its own discount, so no share takes a line below nothing (E.19).
+
 ### 6.3 `CartError` — [1.4.2]
 
 ```rust
@@ -1850,6 +1890,7 @@ pub enum CartError {
     #[error("line {0} has an amount off; clear the discount to change its quantity")]
                                                                AmountDiscountFixesQuantity(SaleLineId), // 1.4.5
     #[error("the approval was given for {0}, not {1}")]        ApprovalReasonMismatch(String, String), // 1.4.5
+    #[error("discount {0} exceeds the basket's value")]        DiscountExceedsBasket(String), // 1.4.6
     #[error(transparent)] Permission(#[from] PermissionError),  // 1.4.5: an approval that does not match
     #[error(transparent)] Tax(#[from] TaxError),
     #[error(transparent)] Money(#[from] MoneyError),
