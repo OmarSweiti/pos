@@ -541,6 +541,19 @@ mod tests {
             minors(&prorate(jod(100), &[small, large]).unwrap()),
             vec![33, 67]
         );
+        // Two lines of one product at one price, worth the same — two teas with
+        // 1.250 off beside one tea — differ only in quantity, and that decides:
+        // the smaller quantity sorts first and takes the fil, in either order.
+        let two = ProrationLine {
+            qty: Qty::from_milli(2_000),
+            ..line(1, 1, 1_250)
+        };
+        let one = ProrationLine {
+            qty: Qty::from_milli(1_000),
+            ..line(2, 1, 1_250)
+        };
+        assert_eq!(minors(&prorate(jod(1), &[two, one]).unwrap()), vec![0, 1]);
+        assert_eq!(minors(&prorate(jod(1), &[one, two]).unwrap()), vec![1, 0]);
     }
 
     #[test]
