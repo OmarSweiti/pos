@@ -6,7 +6,8 @@
 //! and returns the next one or a [`CartError`]; nothing mutates in place.
 //!
 //! As delivered at 1.4.1, the machine holds the states whose data exists: a
-//! cart being built and a parked one. Each later state arrives with the
+//! cart being built and a parked one, which is its own type since 1.4.4 so
+//! that only a parked cart can be resumed. Each later state arrives with the
 //! transition that reaches it (tendering, finalizing, complete and voided at
 //! 1.4.8), and each later field of a cart or a line with the step that gives
 //! it meaning: discounts at 1.4.5, a price override at 1.4.7, and a promotion
@@ -38,7 +39,7 @@ pub enum Sale {
     Building(Cart),
     /// Set aside by the cashier to serve someone else, and resumed later
     /// (1.4.4).
-    Parked(Cart),
+    Parked(ParkedCart),
 }
 
 /// What a cart is opened with: the register, the shift, the cashier and the
@@ -488,6 +489,90 @@ pub fn check_age_confirmed(cart: &Cart) -> Result<(), CartError> {
     }
 }
 
+/// A cart set aside so the cashier can serve the next customer (1.4.4).
+///
+/// Its own type, so the state machine holds here too: a cart being built
+/// cannot be passed to [`resume`], and no line of a parked cart can be added,
+/// changed or voided until it is resumed. [`park`] makes one, and so does its
+/// stored form, which the register reads back after a restart (E.3, 1.8.2b);
+/// that form is exactly its cart's, because parking adds nothing to a cart.
+/// [`ParkedCart::cart`] reads it, for the list of parked carts the till shows.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ParkedCart(Cart);
+
+impl ParkedCart {
+    /// The cart as it was parked.
+    #[must_use]
+    pub fn cart(&self) -> &Cart {
+        &self.0
+    }
+}
+
+/// `cart` set aside exactly as it is, so the cashier can serve the next
+/// customer.
+///
+/// Nothing on it changes: its lines keep the names and prices they were
+/// captured at (I-5), and a line waiting for an age confirmation is still
+/// waiting when the cart is resumed. The label the cashier gives it and its
+/// end-of-day expiry are the register's to keep beside it (1.8.2b).
+///
+/// # Errors
+///
+/// [`CartError::NothingToPark`] for a cart with no line, which is no basket to
+/// come back to.
+pub fn park(cart: Cart) -> Result<ParkedCart, CartError> {
+    if cart.lines.is_empty() {
+        return Err(CartError::NothingToPark);
+    }
+    Ok(ParkedCart(cart))
+}
+
+/// The parked cart, being built again at `till`: the register, shift and
+/// cashier resuming it.
+///
+/// Its lines, prices, age gates, buyer, supply and the moment it was opened are
+/// exactly as they were parked. Its shift and cashier become the till's: a cart
+/// parked before a shift handover is paid for in the shift that takes the
+/// money, and a completed sale must name its register's open shift
+/// (`ref/schema.md` §0005). `till.opened_at` is not read, because a resumed sale
+/// began when it was first opened.
+///
+/// # Errors
+///
+/// - [`CartError::ParkedOnAnotherRegister`]: a parked cart never leaves the
+///   till it was parked at, where its customer is standing (master plan C.14).
+/// - [`CartError::TrainingModeMismatch`]: a training cart never resumes as a
+///   real sale, nor a real one as training, which every report and the fiscal
+///   queue would then leave out.
+/// - [`CartError::Money`]: a till in another currency than the cart's prices.
+pub fn resume(parked: ParkedCart, till: &CartContext) -> Result<Cart, CartError> {
+    let ParkedCart(mut cart) = parked;
+    if cart.register_id != till.register_id {
+        return Err(CartError::ParkedOnAnotherRegister(cart.id));
+    }
+    if cart.is_training != till.is_training {
+        return Err(CartError::TrainingModeMismatch(cart.id, cart.is_training));
+    }
+    if cart.currency != till.currency {
+        return Err(
+            MoneyError::CurrencyMismatch(cart.currency.code(), till.currency.code()).into(),
+        );
+    }
+    cart.shift_id = till.shift_id;
+    cart.cashier_id = till.cashier_id;
+    Ok(cart)
+}
+
+/// How a cart's training mode reads in [`CartError::TrainingModeMismatch`].
+fn training_mode(is_training: bool) -> &'static str {
+    if is_training {
+        "in training mode"
+    } else {
+        "live"
+    }
+}
+
 /// A quantity a line of `unit` may carry: more than nothing, and a whole number
 /// of units where the unit is counted rather than measured.
 fn check_qty(product: ProductId, unit: UnitOfMeasure, qty: Qty) -> Result<(), CartError> {
@@ -552,6 +637,20 @@ pub enum CartError {
     /// Added at 1.4.3b: no age is waiting to be confirmed on that line.
     #[error("line {0} has no age waiting to be confirmed")]
     AgeConfirmationNotPending(SaleLineId),
+    /// Added at 1.4.4: a cart with no line is no basket to come back to.
+    #[error("an empty cart cannot be parked")]
+    NothingToPark,
+    /// Added at 1.4.4: a parked cart resumes only at the till it was parked at.
+    #[error("sale {0} was parked on another register")]
+    ParkedOnAnotherRegister(SaleId),
+    /// Added at 1.4.4: the sale and whether it was parked in training mode,
+    /// which the resuming till's mode must match.
+    #[error(
+        "sale {0} was parked {parked} and this till is {till}",
+        parked = training_mode(*.1),
+        till = training_mode(!*.1)
+    )]
+    TrainingModeMismatch(SaleId, bool),
     #[error(transparent)]
     Tax(#[from] TaxError),
     #[error(transparent)]
@@ -658,7 +757,7 @@ mod tests {
 
     #[test]
     fn a_sale_round_trips_in_either_state() {
-        for sale in [Sale::Building(cart()), Sale::Parked(cart())] {
+        for sale in [Sale::Building(cart()), Sale::Parked(park(cart()).unwrap())] {
             let json = serde_json::to_string(&sale).unwrap();
             assert_eq!(serde_json::from_str::<Sale>(&json).unwrap(), sale);
         }
@@ -670,7 +769,7 @@ mod tests {
         for rendered in [
             format!("{cart:?}"),
             format!("{cart:#?}"),
-            format!("{:?}", Sale::Parked(cart.clone())),
+            format!("{:?}", Sale::Parked(park(cart.clone()).unwrap())),
         ] {
             assert!(!rendered.contains("SYNTH buyer"), "{rendered}");
             assert!(rendered.contains("[redacted]"));
@@ -1292,5 +1391,298 @@ mod tests {
         }
         let (cart, _) = confirm_age(cart, line_id(2), true, operator(), moment()).unwrap();
         assert_eq!(check_age_confirmed(&cart), Ok(()));
+    }
+
+    // ── park and resume (1.4.4) ─────────────────────────────────────────
+
+    use crate::tax::ZeroRatingReason;
+
+    /// The till a cart was opened at, which is where it resumes as it was.
+    fn till_of(cart: &Cart) -> CartContext {
+        CartContext {
+            register_id: cart.register_id,
+            shift_id: cart.shift_id,
+            cashier_id: cart.cashier_id,
+            currency: cart.currency,
+            is_training: cart.is_training,
+            opened_at: cart.opened_at,
+        }
+    }
+
+    /// The same register after a shift handover: another shift, another
+    /// cashier, a later moment.
+    fn next_shift() -> CartContext {
+        CartContext {
+            shift_id: ShiftId::from_uuid(id(6)),
+            cashier_id: UserId::from_uuid(id(7)),
+            opened_at: Timestamp::from_epoch_milliseconds(978_336_000_000).unwrap(),
+            ..context(false)
+        }
+    }
+
+    fn uuids() -> impl Strategy<Value = Uuid> {
+        any::<u128>().prop_map(Uuid::from_u128)
+    }
+
+    fn currencies() -> impl Strategy<Value = Currency> {
+        prop_oneof![
+            Just(Currency::JOD),
+            Just(Currency::USD),
+            Just(Currency::EUR)
+        ]
+    }
+
+    /// Any line, including the ones no transition makes — a department line, a
+    /// price in another currency, a quantity of zero — because parking keeps
+    /// whatever it is given and checks nothing it does not have to.
+    fn lines() -> impl Strategy<Value = CartLine> {
+        let origin = prop_oneof![
+            uuids().prop_map(|u| PriceOrigin::Catalog {
+                product_id: ProductId::from_uuid(u)
+            }),
+            (any::<String>(), any::<String>()).prop_map(|(rule_prefix, raw_code)| {
+                PriceOrigin::Label {
+                    rule_prefix,
+                    raw_code,
+                }
+            }),
+            uuids().prop_map(|u| PriceOrigin::Department {
+                tax_category_id: TaxCategoryId::from_uuid(u)
+            }),
+        ];
+        let label = proptest::option::of((any::<i64>(), any::<i64>(), currencies()).prop_map(
+            |(qty, price, currency)| DerivedWeight {
+                qty: Qty::from_milli(qty),
+                catalog_unit_price: Money::from_minor(price, currency),
+            },
+        ));
+        (
+            (uuids(), proptest::option::of(uuids()), any::<String>()),
+            (any::<i64>(), currencies(), origin),
+            (any::<i64>(), units(), any::<bool>(), uuids()),
+            (proptest::option::of(any::<u8>()), any::<bool>(), label),
+        )
+            .prop_map(
+                |(
+                    (line, product, name),
+                    (price, currency, price_origin),
+                    (qty, unit, is_weighed, tax),
+                    (min_age, age_confirmed, label),
+                )| CartLine {
+                    id: SaleLineId::from_uuid(line),
+                    product_id: product.map(ProductId::from_uuid),
+                    name_snapshot: name,
+                    unit_price: Money::from_minor(price, currency),
+                    price_origin,
+                    qty: Qty::from_milli(qty),
+                    unit,
+                    is_weighed,
+                    tax_category_id: TaxCategoryId::from_uuid(tax),
+                    min_age,
+                    age_confirmed,
+                    label,
+                },
+            )
+    }
+
+    /// Any cart of up to eight lines, the empty one included, with or without
+    /// a customer and a buyer, in any supply and either mode, opened at any
+    /// moment a `Timestamp` can hold.
+    fn carts() -> impl Strategy<Value = Cart> {
+        let supply = (
+            prop_oneof![
+                Just(SupplyDestination::Domestic),
+                Just(SupplyDestination::Export),
+                Just(SupplyDestination::FreeZone),
+                Just(SupplyDestination::DevelopmentArea),
+                Just(SupplyDestination::EligibleBody),
+            ],
+            proptest::option::of(prop_oneof![
+                Just(ZeroRatingReason::Export),
+                Just(ZeroRatingReason::FreeZoneSupply),
+                Just(ZeroRatingReason::EligibleEntity),
+                Just(ZeroRatingReason::ProductCategory),
+            ]),
+            proptest::option::of(any::<String>()),
+        )
+            .prop_map(|(destination, reason, evidence_ref)| SupplyTaxContext {
+                destination,
+                reason,
+                evidence_ref,
+            });
+        (
+            (uuids(), uuids(), uuids(), uuids()),
+            (currencies(), proptest::collection::vec(lines(), 0..=8)),
+            (
+                proptest::option::of(uuids()),
+                proptest::option::of(any::<String>()),
+                proptest::option::of(any::<String>()),
+            ),
+            (
+                supply,
+                any::<bool>(),
+                -377_705_023_201_000i64..=253_402_207_200_000,
+            ),
+        )
+            .prop_map(
+                |(
+                    (sale, register, shift, cashier),
+                    (currency, lines),
+                    (customer, buyer_tin, buyer_name),
+                    (supply, is_training, opened_at),
+                )| Cart {
+                    id: SaleId::from_uuid(sale),
+                    register_id: RegisterId::from_uuid(register),
+                    shift_id: ShiftId::from_uuid(shift),
+                    cashier_id: UserId::from_uuid(cashier),
+                    currency,
+                    lines,
+                    customer_id: customer.map(CustomerId::from_uuid),
+                    buyer_tin,
+                    buyer_name,
+                    supply,
+                    is_training,
+                    opened_at: Timestamp::from_epoch_milliseconds(opened_at).unwrap(),
+                },
+            )
+    }
+
+    proptest! {
+        #![proptest_config(domain_proptest_config())]
+
+        /// A cart parked and resumed at the till it was parked at comes back
+        /// exactly as it was — every line with its name, price, quantity and
+        /// age gate, the buyer, the supply and the moment it was opened —
+        /// whether it is resumed at once or read back from the form the
+        /// register keeps it in across a restart (E.3). Parking adds nothing to
+        /// that form, and the one cart it refuses is a cart with no line.
+        #[test]
+        fn prop_park_resume_roundtrip_is_identity(cart in carts()) {
+            let till = till_of(&cart);
+            let parked = match park(cart.clone()) {
+                Ok(parked) => parked,
+                Err(refused) => {
+                    prop_assert!(cart.lines.is_empty());
+                    prop_assert_eq!(refused, CartError::NothingToPark);
+                    return Ok(());
+                }
+            };
+            prop_assert!(!cart.lines.is_empty());
+            prop_assert_eq!(parked.cart(), &cart);
+            prop_assert_eq!(
+                serde_json::to_string(&parked).unwrap(),
+                serde_json::to_string(&cart).unwrap()
+            );
+            let stored = serde_json::to_string(&Sale::Parked(parked.clone())).unwrap();
+            let restored = match serde_json::from_str::<Sale>(&stored).unwrap() {
+                Sale::Parked(restored) => Some(restored),
+                Sale::Building(_) => None,
+            };
+            prop_assert_eq!(restored.as_ref(), Some(&parked));
+            let resumed = resume(parked, &till);
+            prop_assert_eq!(resumed.as_ref(), Ok(&cart));
+            if let Some(restored) = restored {
+                let resumed = resume(restored, &till);
+                prop_assert_eq!(resumed.as_ref(), Ok(&cart));
+            }
+        }
+    }
+
+    #[test]
+    fn an_empty_cart_cannot_be_parked() {
+        assert_eq!(park(building()), Err(CartError::NothingToPark));
+        // Nor one whose last line was voided: there is no basket to come back
+        // to.
+        let item = product(0x20, UnitOfMeasure::Each);
+        let (emptied, _) = void_line(
+            add(building(), 1, &item, 1_000).unwrap(),
+            line_id(1),
+            VoidReason("mis_scan".to_owned()),
+            UserId::from_uuid(id(4)),
+            moment(),
+        )
+        .unwrap();
+        assert_eq!(park(emptied), Err(CartError::NothingToPark));
+        assert_eq!(
+            CartError::NothingToPark.to_string(),
+            "an empty cart cannot be parked"
+        );
+    }
+
+    #[test]
+    fn a_cart_parked_before_a_shift_change_is_paid_for_in_the_next_one() {
+        let cart = with_tobacco();
+        let resumed = resume(park(cart.clone()).unwrap(), &next_shift()).unwrap();
+        // Rung up in the shift that takes the money, by the cashier taking it,
+        // and otherwise the cart that was parked: its lines at the prices they
+        // were captured at, and the moment it was first opened, not the
+        // moment it was resumed.
+        assert_eq!(
+            resumed,
+            Cart {
+                shift_id: next_shift().shift_id,
+                cashier_id: next_shift().cashier_id,
+                ..cart
+            }
+        );
+        // Parking confirms no age: the tobacco is still waiting.
+        assert_eq!(
+            check_age_confirmed(&resumed),
+            Err(CartError::AgeConfirmationRequired(tobacco().id))
+        );
+    }
+
+    #[test]
+    fn a_parked_cart_resumes_only_at_its_own_till_in_its_own_mode() {
+        let live = with_tobacco();
+        let sale = live.id;
+        let parked = park(live).unwrap();
+        // The customer is standing at the till the cart was parked at.
+        let elsewhere = CartContext {
+            register_id: RegisterId::from_uuid(id(8)),
+            ..next_shift()
+        };
+        let refused = resume(parked.clone(), &elsewhere);
+        assert_eq!(refused, Err(CartError::ParkedOnAnotherRegister(sale)));
+        assert_eq!(
+            refused.unwrap_err().to_string(),
+            format!("sale {sale} was parked on another register")
+        );
+        // A real sale never resumes as training, which every report and the
+        // fiscal queue would leave out ...
+        let training = CartContext {
+            is_training: true,
+            ..next_shift()
+        };
+        let refused = resume(parked.clone(), &training);
+        assert_eq!(refused, Err(CartError::TrainingModeMismatch(sale, false)));
+        assert_eq!(
+            refused.unwrap_err().to_string(),
+            format!("sale {sale} was parked live and this till is in training mode")
+        );
+        // ... nor a training cart as a real sale.
+        let practice = SaleId::from_uuid(id(9));
+        let item = product(0x20, UnitOfMeasure::Each);
+        let rehearsed = add(open(practice, &context(true)), 1, &item, 1_000).unwrap();
+        let refused = resume(park(rehearsed).unwrap(), &next_shift());
+        assert_eq!(
+            refused,
+            Err(CartError::TrainingModeMismatch(practice, true))
+        );
+        assert_eq!(
+            refused.unwrap_err().to_string(),
+            format!("sale {practice} was parked in training mode and this till is live")
+        );
+        // Its prices are in dinars; a till in dollars is not its till.
+        let dollars = CartContext {
+            currency: Currency::USD,
+            ..next_shift()
+        };
+        assert_eq!(
+            resume(parked.clone(), &dollars),
+            Err(CartError::Money(MoneyError::CurrencyMismatch("JOD", "USD")))
+        );
+        // At its own till, in its own mode, it resumes.
+        assert!(resume(parked, &next_shift()).is_ok());
     }
 }

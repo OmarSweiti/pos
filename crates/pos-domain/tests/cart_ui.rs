@@ -12,3 +12,11 @@ fn an_add_line_never_arrives_from_outside_with_its_price() {
     let cases = trybuild::TestCases::new();
     cases.compile_fail("tests/ui/add_line_cannot_be_deserialized.rs");
 }
+
+/// A parked cart is its own state (microstep 1.4.4): a cart being built cannot
+/// be resumed, and a parked cart cannot be changed until it is.
+#[test]
+fn a_cart_being_built_cannot_be_resumed() {
+    let cases = trybuild::TestCases::new();
+    cases.compile_fail("tests/ui/parked_cart_is_its_own_state.rs");
+}
