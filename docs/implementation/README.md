@@ -240,7 +240,7 @@ docs/implementation/
 └── ref/
     ├── plan-validation.md         the audit of record + every source
     ├── domain-api.md              every pos-domain type & signature
-    ├── schema.md                  migrations 0002→0012 — authoritative for every migration number
+    ├── schema.md                  migrations 0002→0013 — authoritative for every migration number
     ├── tax-jordan.md              GST as an engine
     ├── fiscal-jofotara.md         the highest-risk component
     ├── ipc-contract.md            every Tauri command
