@@ -1,6 +1,8 @@
 //! Manual discounts (microsteps 1.4.5–1.4.6, `ref/domain-api.md` §6.1–§6.2):
 //! what a cashier asks for, the cap that bounds it, what a discount leaves on a
 //! line or a basket, and how a basket's discount is divided among its lines.
+//! And a price override's reason and record (1.4.7), which
+//! `cart::override_price` holds to the cost floor and the ministry ceiling.
 //!
 //! A discount is kept as it was asked for — a share or an amount — and turned
 //! into money where every other number is, when the cart is priced (1.4.9),
@@ -11,8 +13,8 @@
 //! against the basket's value as priced.
 //!
 //! This module sits below `cart` (§15): it knows nothing of a cart, and
-//! `cart::apply_line_discount` and `cart::apply_basket_discount` are the
-//! transitions that use it.
+//! `cart::apply_line_discount`, `cart::apply_basket_discount` and
+//! `cart::override_price` are the transitions that use it.
 
 use std::cmp::Reverse;
 
@@ -398,6 +400,85 @@ pub fn prorate(amount: Money, lines: &[ProrationLine]) -> Result<Vec<Money>, Pri
     Ok(placed.into_iter().map(|(_, share)| share).collect())
 }
 
+/// Why a line's price was overridden (1.4.7): a code from the store's list, or
+/// the dedicated `displayed_price`, for a shelf showing less than the till
+/// charges (J.3, E.70).
+///
+/// The code is the reason's identity. `Code("displayed_price")` is a displayed
+/// price however it was built: it compares equal to [`OverrideReason::DisplayedPrice`],
+/// is written as the same string, and does everything a displayed price does,
+/// so no reason can read as one in the override report without having been
+/// one at the till.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
+pub enum OverrideReason {
+    /// The shelf showed less than the till charges, and the customer pays the
+    /// shelf's price.
+    DisplayedPrice,
+    /// Any other reason, by its code.
+    Code(String),
+}
+
+impl OverrideReason {
+    /// The displayed price's code, in the audit row and on the wire.
+    pub const DISPLAYED_PRICE: &'static str = "displayed_price";
+
+    /// The reason's code, as the audit row records it.
+    pub fn code(&self) -> &str {
+        match self {
+            OverrideReason::DisplayedPrice => Self::DISPLAYED_PRICE,
+            OverrideReason::Code(code) => code,
+        }
+    }
+
+    /// Whether this is the shelf's price, which the floor does not hold and
+    /// which asks for the label to be printed again.
+    pub fn is_displayed_price(&self) -> bool {
+        self.code() == Self::DISPLAYED_PRICE
+    }
+}
+
+impl PartialEq for OverrideReason {
+    fn eq(&self, other: &Self) -> bool {
+        self.code() == other.code()
+    }
+}
+
+impl Eq for OverrideReason {}
+
+impl From<String> for OverrideReason {
+    fn from(code: String) -> Self {
+        if code == Self::DISPLAYED_PRICE {
+            OverrideReason::DisplayedPrice
+        } else {
+            OverrideReason::Code(code)
+        }
+    }
+}
+
+impl From<OverrideReason> for String {
+    fn from(reason: OverrideReason) -> Self {
+        match reason {
+            OverrideReason::DisplayedPrice => OverrideReason::DISPLAYED_PRICE.to_owned(),
+            OverrideReason::Code(code) => code,
+        }
+    }
+}
+
+/// A line's price, overridden (1.4.7): what the line charges a unit now, why,
+/// who set it, and who approved it where the merchant's policy escalates
+/// `price.override`.
+///
+/// The line keeps the price it was captured at beside this (I-5), so the
+/// receipt, the override report and a refund can each say what it was.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PriceOverride {
+    pub to: Money,
+    pub reason: OverrideReason,
+    pub by: UserId,
+    pub approver: Option<UserId>,
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -500,6 +581,50 @@ mod tests {
         );
         let share = serde_json::to_string(&DiscountKind::Percent(Percent::from_ppm(50_000)));
         assert_eq!(share.unwrap(), r#"{"percent":50000}"#);
+    }
+
+    // ── price overrides (1.4.7) ─────────────────────────────────────────
+
+    #[test]
+    fn a_price_override_s_wire_form_is_pinned() {
+        let shelf = PriceOverride {
+            to: jod(990),
+            reason: OverrideReason::DisplayedPrice,
+            by: UserId::from_uuid(Uuid::from_u128(0x56)),
+            approver: Some(UserId::from_uuid(Uuid::from_u128(0x55))),
+        };
+        let json = serde_json::to_string(&shelf).unwrap();
+        assert_eq!(
+            json,
+            r#"{"to":{"minor":990,"currency":"JOD"},"reason":"displayed_price","by":"00000000-0000-0000-0000-000000000056","approver":"00000000-0000-0000-0000-000000000055"}"#
+        );
+        assert_eq!(serde_json::from_str::<PriceOverride>(&json).unwrap(), shelf);
+        // Any other reason is written as its code.
+        let typed = OverrideReason::Code("damaged_pack".to_owned());
+        assert_eq!(serde_json::to_string(&typed).unwrap(), r#""damaged_pack""#);
+        assert_eq!(
+            serde_json::from_str::<OverrideReason>(r#""damaged_pack""#).unwrap(),
+            typed
+        );
+    }
+
+    #[test]
+    fn a_reason_is_its_code_so_none_reads_as_the_shelf_s_without_being_it() {
+        let spelled = OverrideReason::Code(OverrideReason::DISPLAYED_PRICE.to_owned());
+        assert_eq!(spelled, OverrideReason::DisplayedPrice);
+        assert!(spelled.is_displayed_price());
+        assert_eq!(spelled.code(), "displayed_price");
+        // Written and read back, it is the dedicated variant.
+        let back: OverrideReason =
+            serde_json::from_str(&serde_json::to_string(&spelled).unwrap()).unwrap();
+        assert!(matches!(back, OverrideReason::DisplayedPrice));
+        // Another code is another reason, a near spelling included.
+        for other in ["damaged_pack", "Displayed_Price", "displayed_price ", ""] {
+            let reason = OverrideReason::from(other.to_owned());
+            assert!(!reason.is_displayed_price(), "{other:?}");
+            assert_ne!(reason, OverrideReason::DisplayedPrice);
+            assert_eq!(reason.code(), other);
+        }
     }
 
     // ── basket proration (1.4.6) ────────────────────────────────────────

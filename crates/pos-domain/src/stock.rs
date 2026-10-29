@@ -135,6 +135,19 @@ impl StockPosition {
             is_wac_estimated: true,
         }
     }
+
+    /// The cost a price override's floor is held to (1.4.7): the weighted
+    /// average cost, or `None` when no cost was ever recorded.
+    ///
+    /// A product with no recorded cost holds a WAC of zero marked estimated,
+    /// as [`StockPosition::unstocked`] does, because an event that brings no
+    /// cost never moves the WAC. Read as a cost, that zero would put the floor
+    /// at nothing, so it is no cost at all. A projected zero reads the same
+    /// way, which only ever refuses more. An estimated WAC above zero is a
+    /// blend of the costs that were recorded, and the best cost known.
+    pub fn cost_basis(&self) -> Option<Money> {
+        (!(self.is_wac_estimated && self.wac.is_zero())).then_some(self.wac)
+    }
 }
 
 /// A movement a caller asks the ledger to record.
@@ -403,6 +416,38 @@ mod tests {
         let event = StockEvent::capture(&unknown, &position(2_000, 450, false)).unwrap();
         assert_eq!((event.unit_cost, event.is_cost_estimated), (None, true));
         assert_eq!(event.after, position(7_000, 450, true));
+    }
+
+    /// What a price override's floor is held to (1.4.7), read through the
+    /// ledger rather than from positions typed by hand.
+    #[test]
+    fn a_product_never_given_a_cost_has_no_cost_basis() {
+        let unstocked = StockPosition::unstocked(JOD);
+        assert_eq!(unstocked.cost_basis(), None);
+        // Arriving with no cost leaves the zero in place, still no cost.
+        let unknown = movement(StockEventKind::Adjust, 5_000, Some(IncomingCost::Unknown));
+        let uncosted = StockEvent::capture(&unknown, &unstocked).unwrap().after;
+        assert_eq!(uncosted, position(5_000, 0, true));
+        assert_eq!(uncosted.cost_basis(), None);
+        // A recorded cost is the basis, and stays it when uncosted stock joins.
+        let observed = movement(
+            StockEventKind::Adjust,
+            12_000,
+            Some(IncomingCost::Observed(jod(380))),
+        );
+        let costed = StockEvent::capture(&observed, &unstocked).unwrap().after;
+        assert_eq!(costed.cost_basis(), Some(jod(380)));
+        let blended = StockEvent::capture(&unknown, &costed).unwrap().after;
+        assert!(blended.is_wac_estimated);
+        assert_eq!(blended.cost_basis(), Some(jod(380)));
+        // A real zero, observed on a document, is a cost of nothing.
+        let free = movement(
+            StockEventKind::Adjust,
+            1_000,
+            Some(IncomingCost::Observed(jod(0))),
+        );
+        let given = StockEvent::capture(&free, &unstocked).unwrap().after;
+        assert_eq!(given.cost_basis(), Some(jod(0)));
     }
 
     #[test]

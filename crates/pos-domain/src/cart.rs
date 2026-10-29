@@ -11,9 +11,11 @@
 //! transition that reaches it (tendering, finalizing, complete and voided at
 //! 1.4.8), and each later field of a cart or a line with the step that gives
 //! it meaning: a line's manual discount at 1.4.5, a basket's at 1.4.6, a price
-//! override at 1.4.7, and a promotion group when promotions are first
-//! captured. A field added before its rule would be a value nothing checks.
+//! override and the ministry ceiling at 1.4.7, and a promotion group when
+//! promotions are first captured. A field added before its rule would be a
+//! value nothing checks.
 
+use std::cmp::Ordering;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -22,7 +24,8 @@ use serde_json::json;
 
 use crate::audit::AuditIntent;
 use crate::catalog::{
-    DerivedWeight, PriceOrigin, PriceSource, Product, ProductHit, ScanLookup, UnitOfMeasure,
+    DerivedWeight, LabelReprint, PriceOrigin, PriceSource, Product, ProductHit, ReprintCause,
+    ScanLookup, UnitOfMeasure,
 };
 use crate::ids::{
     CustomerId, ProductId, RegisterId, SaleId, SaleLineId, ShiftId, TaxCategoryId, UserId,
@@ -33,8 +36,8 @@ use crate::permissions::{
 };
 use crate::pricing::{
     BasketDiscount, DiscountAttribution, DiscountCap, DiscountKind, DiscountRequest,
-    DiscountSource, LineDiscount, PricingError, ProrationLine, exceeds_basket, exceeds_value,
-    prorate,
+    DiscountSource, LineDiscount, OverrideReason, PriceOverride, PricingError, ProrationLine,
+    exceeds_basket, exceeds_value, prorate,
 };
 use crate::tax::{SupplyDestination, SupplyTaxContext, TaxError};
 use crate::time::Timestamp;
@@ -134,6 +137,12 @@ pub struct CartLine {
     pub name_snapshot: String,
     pub unit_price: Money,
     pub price_origin: PriceOrigin,
+    /// The ministry ceiling on the line's unit price, captured with it (J.3,
+    /// E.71, 1.4.7). `None` where no ceiling applies, and on a weighed
+    /// product's price label: that package is of a weight the till does not
+    /// know, so its price per unit is the scale's, which the catalogue the
+    /// scale was loaded from holds under the ceiling.
+    pub max_price: Option<Money>,
     pub qty: Qty,
     pub unit: UnitOfMeasure,
     pub is_weighed: bool,
@@ -141,6 +150,9 @@ pub struct CartLine {
     /// The line's manual discount, as it was asked for (1.4.5). At most one:
     /// another replaces it, and a discount of zero clears it.
     pub discount: Option<LineDiscount>,
+    /// The line's price, overridden (1.4.7). `unit_price` keeps the price the
+    /// line was captured at; [`CartLine::price`] is what it charges.
+    pub price_override: Option<PriceOverride>,
     /// Captured with the line, so a catalogue edit while the cart is open
     /// cannot clear the age gate (1.4.3, 1.4.3b).
     pub min_age: Option<u8>,
@@ -148,6 +160,18 @@ pub struct CartLine {
     /// The weight a scale's label claimed: the stock basis, never money
     /// (§4.3).
     pub label: Option<DerivedWeight>,
+}
+
+impl CartLine {
+    /// What the line charges a unit: its override's price, or the price it
+    /// was captured at. Every value a discount is measured against is this
+    /// price times the quantity.
+    #[must_use]
+    pub fn price(&self) -> Money {
+        self.price_override
+            .as_ref()
+            .map_or(self.unit_price, |o| o.to)
+    }
 }
 
 /// A new, empty cart for sale `id`, being built.
@@ -185,16 +209,18 @@ pub fn open(id: SaleId, ctx: &CartContext) -> Cart {
 /// [`add_line`] refuses. There is no `Deserialize`, because `PriceSource` has
 /// none: a command arriving from the screen cannot carry a price into a line.
 ///
-/// As delivered at 1.4.3, it has no `max_price` and no `age_confirmed`: the
-/// regulated ceiling is checked when a price changes (1.4.7), and an age is
-/// confirmed only by an operator, through 1.4.3b, never by the request that
-/// adds the line.
+/// It has no `age_confirmed`: an age is confirmed only by an operator,
+/// through 1.4.3b, never by the request that adds the line. Its `max_price`
+/// arrived at 1.4.7, from the product its constructors read, so the line is
+/// held to the ministry ceiling when it enters and when its price changes.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct AddLine {
     pub line_id: SaleLineId,
     pub product_id: Option<ProductId>,
     pub name_snapshot: String,
     pub price: PriceSource,
+    /// The ceiling on the line's unit price, [`CartLine::max_price`].
+    pub max_price: Option<Money>,
     pub qty: Qty,
     pub unit: UnitOfMeasure,
     pub is_weighed: bool,
@@ -226,6 +252,7 @@ impl AddLine {
             product_id: Some(product.id),
             name_snapshot: product.name_ar.clone(),
             price: PriceSource::from_catalog(product),
+            max_price: product.max_price,
             qty,
             unit: product.unit,
             is_weighed: product.is_weighed,
@@ -245,6 +272,9 @@ impl AddLine {
     ///   what the customer is charged (E.80), and the weight it implies is
     ///   kept on the line as the stock basis, never as its quantity, so
     ///   `unit_price × qty` is the line's amount (`ref/domain-api.md` §4.3).
+    ///   A counted product's label is one unit, held to the product's
+    ///   ceiling; a weighed product's is a package of a weight the till does
+    ///   not know, which no ceiling per kilogram can be compared with.
     ///
     /// # Errors
     ///
@@ -271,6 +301,9 @@ impl AddLine {
                 let ProductHit { product, .. } = hit;
                 let mut line = AddLine::from_product(line_id, &product, Qty::ONE)?;
                 line.price = price;
+                if product.is_weighed {
+                    line.max_price = None;
+                }
                 line.unit = UnitOfMeasure::Package;
                 line.is_weighed = false;
                 line.label = derived;
@@ -304,7 +337,11 @@ pub struct VoidReason(pub String);
 /// - [`CartError::NonPositiveQty`]: a quantity of zero or less.
 /// - [`CartError::FractionalQtyForDiscrete`]: a fraction of a unit that is
 ///   counted, not measured.
-/// - [`CartError::Money`]: a price in another currency than the cart's.
+/// - [`CartError::Money`]: a price in another currency than the cart's, or a
+///   ceiling that cannot be compared with it.
+/// - [`CartError::AboveMaxPrice`]: a price above the ministry ceiling (E.71),
+///   which nothing admits. A catalogue save refuses the same price, so this
+///   is the sale's half of the block; a label is where it can arise.
 pub fn add_line(cart: Cart, req: AddLine) -> Result<Cart, CartError> {
     let product = match (req.price.origin(), req.product_id) {
         (PriceOrigin::Department { .. }, _) | (_, None) => {
@@ -321,6 +358,14 @@ pub fn add_line(cart: Cart, req: AddLine) -> Result<Cart, CartError> {
         )
         .into());
     }
+    if let Some(ceiling) = req.max_price
+        && unit_price.checked_cmp(ceiling)? == Ordering::Greater
+    {
+        return Err(CartError::AboveMaxPrice(
+            unit_price.format_exact(),
+            ceiling.format_exact(),
+        ));
+    }
     let mut cart = cart;
     cart.lines.push(CartLine {
         id: req.line_id,
@@ -328,11 +373,13 @@ pub fn add_line(cart: Cart, req: AddLine) -> Result<Cart, CartError> {
         name_snapshot: req.name_snapshot,
         unit_price,
         price_origin: req.price.origin().clone(),
+        max_price: req.max_price,
         qty: req.qty,
         unit: req.unit,
         is_weighed: req.is_weighed,
         tax_category_id: req.tax_category_id,
         discount: None,
+        price_override: None,
         min_age: req.min_age,
         age_confirmed: false,
         label: req.label,
@@ -445,7 +492,9 @@ pub fn void_line(
 /// store's rounding rule: it states in money what a share takes off the line
 /// now, for the intent and for an approval's binding, and decides nothing else.
 /// The discount itself is kept as asked, so a percentage keeps its share if
-/// the quantity changes, and is turned into money when the cart is priced.
+/// the quantity or the price changes, and is turned into money when the cart
+/// is priced. The line is worth its [`CartLine::price`] times its quantity, so
+/// an overridden line is measured at the price it charges (1.4.7).
 ///
 /// A discount replaces any the line had, so two discounts within the cap never
 /// add up past it, and a discount of zero clears it. A discount on a line
@@ -488,7 +537,8 @@ pub fn apply_line_discount(
     if kind.is_negative() {
         return Err(CartError::NegativeDiscount(kind.format()));
     }
-    if found.unit_price.is_negative() {
+    let price = found.price();
+    if price.is_negative() {
         return Err(CartError::NegativeLine);
     }
     if let DiscountKind::Amount(amount) = kind
@@ -496,7 +546,7 @@ pub fn apply_line_discount(
     {
         return Err(MoneyError::CurrencyMismatch(currency.code(), amount.currency().code()).into());
     }
-    if exceeds_value(kind, found.unit_price, found.qty) {
+    if exceeds_value(kind, price, found.qty) {
         return Err(CartError::DiscountExceedsLine(kind.format()));
     }
     let discount = LineDiscount {
@@ -505,29 +555,28 @@ pub fn apply_line_discount(
         by: auth.actor(),
         approver: None,
     };
-    let gross = found.unit_price.mul_qty(found.qty, rule)?;
+    let gross = price.mul_qty(found.qty, rule)?;
     let amount = discount.amount_off(gross, rule)?;
-    let (approver, approval_id) =
-        if kind.is_zero() || limit.admits(kind, found.unit_price, found.qty) {
-            (auth.approver(), auth.approval())
-        } else {
-            let Some(handle) = approval else {
-                return Err(CartError::DiscountAboveCap(kind.format(), limit.format()));
-            };
-            if handle.reason() != discount.reason.0 {
-                return Err(CartError::ApprovalReasonMismatch(
-                    handle.reason().to_owned(),
-                    discount.reason.0,
-                ));
-            }
-            let binding = ApprovalBinding {
-                entity_id: line.as_uuid(),
-                amount_minor: amount.minor(),
-                content_hash: None,
-            };
-            handle.matches::<cap::DiscountManual>(auth.actor(), &binding, auth.at())?;
-            (Some(handle.approver()), Some(handle.id()))
+    let (approver, approval_id) = if kind.is_zero() || limit.admits(kind, price, found.qty) {
+        (auth.approver(), auth.approval())
+    } else {
+        let Some(handle) = approval else {
+            return Err(CartError::DiscountAboveCap(kind.format(), limit.format()));
         };
+        if handle.reason() != discount.reason.0 {
+            return Err(CartError::ApprovalReasonMismatch(
+                handle.reason().to_owned(),
+                discount.reason.0,
+            ));
+        }
+        let binding = ApprovalBinding {
+            entity_id: line.as_uuid(),
+            amount_minor: amount.minor(),
+            content_hash: None,
+        };
+        handle.matches::<cap::DiscountManual>(auth.actor(), &binding, auth.at())?;
+        (Some(handle.approver()), Some(handle.id()))
+    };
     let product = found.product_id;
     let reason = discount.reason.0.clone();
     found.discount = (!kind.is_zero()).then_some(LineDiscount {
@@ -676,7 +725,7 @@ pub fn apply_basket_discount(
     if kind.is_negative() {
         return Err(CartError::NegativeDiscount(kind.format()));
     }
-    if cart.lines.iter().any(|l| l.unit_price.is_negative()) {
+    if cart.lines.iter().any(|l| l.price().is_negative()) {
         return Err(CartError::NegativeLine);
     }
     if let DiscountKind::Amount(amount) = kind
@@ -751,6 +800,165 @@ pub fn apply_basket_discount(
     Ok((cart, intent))
 }
 
+/// `cart` with line `line` charging `to` a unit, for `reason`, and the audit
+/// intent that records it under `price.override` (1.4.7). A displayed price
+/// also returns the label to print again (E.70).
+///
+/// `unit_cost` is the product's cost per unit, [`StockPosition::cost_basis`],
+/// which the shell reads from the stock ledger: `None` when no cost was ever
+/// recorded. The line keeps the price it was captured at (I-5) and charges
+/// `to` from now on. Another override replaces this one, and an override to
+/// the captured price clears it.
+///
+/// Three limits hold, and the owner set the last two on 29 October 2026:
+/// - **The ministry ceiling (E.71) is a hard block.** No price goes above it,
+///   whoever approved it, a displayed price included.
+/// - **The floor is cost** (merchant decision 3.4). A price below the one the
+///   line was captured at may not go below the product's cost, and a product
+///   with no recorded cost may not be lowered at all. The floor never refuses
+///   the captured price or more, even where the catalogue sells below cost.
+/// - **A displayed price wins over the floor** (J.3). The shelf showed less
+///   than the till charges, and the customer pays the shelf's price whatever
+///   the cost. It only ever lowers the price, and asks for the product's label
+///   to be printed again.
+///
+/// Who may override is the grid's: `price.override` is the shift lead's and
+/// the manager's, never the cashier's. Where the merchant's policy escalates
+/// it, `auth` carries the approver, whose handle is bound to this line
+/// (`entity_id`) and to `to` (`amount_minor`), the amount the intent records.
+/// A lower price lowers the basket's value, so it clears an amount off the
+/// basket (1.4.6); a share off the line or the basket keeps its share.
+///
+/// [`StockPosition::cost_basis`]: crate::stock::StockPosition::cost_basis
+///
+/// # Errors
+///
+/// - [`CartError::LineNotFound`].
+/// - [`CartError::LabelPriceNotOverridable`]: a price label is the price
+///   displayed on the package itself; a wrong one is weighed and labelled
+///   again.
+/// - [`CartError::DepartmentPriceOutsideDepartmentSale`]: a department line,
+///   whose typed amount is its own capped command's (1.4.12).
+/// - [`CartError::Money`]: a price in another currency than the cart's, or a
+///   ceiling or cost that cannot be compared with it.
+/// - [`CartError::NegativeLine`]: a price below nothing (E.19).
+/// - [`CartError::AmountDiscountFixesPrice`]: a line with an amount off. A
+///   lower price would make the same amount a larger share than the cap that
+///   admitted it, or more than the line is worth, so the discount is cleared
+///   first. A share off keeps its share and needs nothing.
+/// - [`CartError::AboveMaxPrice`]: above the ministry ceiling.
+/// - [`CartError::DisplayedPriceNotLower`]: a displayed price at or above the
+///   price the line charges, which is no shelf price to honour.
+/// - [`CartError::NoRecordedCost`] and [`CartError::BelowPriceFloor`]: a
+///   lower price with no cost to hold it to, or below the cost.
+pub fn override_price(
+    cart: Cart,
+    line: SaleLineId,
+    to: Money,
+    reason: OverrideReason,
+    unit_cost: Option<Money>,
+    auth: &Authorized<cap::PriceOverride>,
+) -> Result<(Cart, AuditIntent, Option<LabelReprint>), CartError> {
+    let mut cart = cart;
+    let (sale, currency) = (cart.id, cart.currency);
+    let found = cart
+        .lines
+        .iter_mut()
+        .find(|l| l.id == line)
+        .ok_or(CartError::LineNotFound(line))?;
+    let product = match (&found.price_origin, found.product_id) {
+        (PriceOrigin::Label { .. }, _) => return Err(CartError::LabelPriceNotOverridable(line)),
+        (PriceOrigin::Department { .. }, _) | (_, None) => {
+            return Err(CartError::DepartmentPriceOutsideDepartmentSale);
+        }
+        (PriceOrigin::Catalog { .. }, Some(product)) => product,
+    };
+    if to.currency() != currency {
+        return Err(MoneyError::CurrencyMismatch(currency.code(), to.currency().code()).into());
+    }
+    if to.is_negative() {
+        return Err(CartError::NegativeLine);
+    }
+    if let Some(LineDiscount {
+        kind: DiscountKind::Amount(_),
+        ..
+    }) = found.discount
+    {
+        return Err(CartError::AmountDiscountFixesPrice(line));
+    }
+    let (captured, current, ceiling) = (found.unit_price, found.price(), found.max_price);
+    if let Some(ceiling) = ceiling
+        && to.checked_cmp(ceiling)? == Ordering::Greater
+    {
+        return Err(CartError::AboveMaxPrice(
+            to.format_exact(),
+            ceiling.format_exact(),
+        ));
+    }
+    let lowered = to.checked_cmp(current)? == Ordering::Less;
+    let displayed = reason.is_displayed_price();
+    let floor = if displayed {
+        if !lowered {
+            return Err(CartError::DisplayedPriceNotLower(
+                to.format_exact(),
+                current.format_exact(),
+            ));
+        }
+        None
+    } else if to.checked_cmp(captured)? == Ordering::Less {
+        let Some(cost) = unit_cost else {
+            return Err(CartError::NoRecordedCost(product, to.format_exact()));
+        };
+        if to.checked_cmp(cost)? == Ordering::Less {
+            return Err(CartError::BelowPriceFloor(
+                to.format_exact(),
+                cost.format_exact(),
+            ));
+        }
+        Some(cost)
+    } else {
+        None
+    };
+    let code = reason.code().to_owned();
+    found.price_override = (to != captured).then(|| PriceOverride {
+        to,
+        reason,
+        by: auth.actor(),
+        approver: auth.approver(),
+    });
+    let qty = found.qty;
+    if lowered {
+        clear_amount_off_basket(&mut cart);
+    }
+    let intent = AuditIntent {
+        actor: auth.actor(),
+        approver: auth.approver(),
+        approval: auth.approval(),
+        action: cap::PriceOverride::NAME,
+        entity: "sale_line",
+        entity_id: line.as_uuid(),
+        reason: Some(code),
+        payload: json!({
+            "sale_id": sale.as_uuid().to_string(),
+            "product_id": product.as_uuid().to_string(),
+            "amount_minor": to.minor(),
+            "captured_minor": captured.minor(),
+            "previous_minor": current.minor(),
+            "qty_milli": qty.milli(),
+            "currency": currency.code(),
+            "floor_minor": floor.map(Money::minor),
+            "ceiling_minor": ceiling.map(Money::minor),
+            "displayed_price": displayed,
+        }),
+        at: auth.at(),
+    };
+    let reprint = displayed.then_some(LabelReprint {
+        product_id: product,
+        cause: ReprintCause::DisplayedPriceOverride,
+    });
+    Ok((cart, intent, reprint))
+}
+
 /// Every line's share of every manual discount on `cart`, in money, priced
 /// under `rule` (1.4.6, §6.2).
 ///
@@ -774,7 +982,7 @@ pub fn discount_attributions(
     let mut attributions = Vec::new();
     let mut lines = Vec::with_capacity(cart.lines.len());
     for line in &cart.lines {
-        let gross = line.unit_price.mul_qty(line.qty, rule)?;
+        let gross = line.price().mul_qty(line.qty, rule)?;
         let off = match &line.discount {
             Some(d) => d.amount_off(gross, rule)?,
             None => Money::zero(gross.currency()),
@@ -795,6 +1003,8 @@ pub fn discount_attributions(
             value: gross.checked_sub(off)?,
             tax_category_id: line.tax_category_id,
             product_id: line.product_id,
+            // What the line is: the price it was captured at. What it is
+            // worth, an override included, is its value above.
             unit_price: line.unit_price,
             qty: line.qty,
         });
@@ -825,12 +1035,12 @@ pub fn discount_attributions(
     Ok(attributions)
 }
 
-/// What the basket is worth: each line priced under `rule`, less its own
-/// discount.
+/// What the basket is worth: each line at its price, overridden or not, priced
+/// under `rule`, less its own discount.
 fn basket_value(cart: &Cart, rule: RoundingRule) -> Result<Money, CartError> {
     let mut value = Money::zero(cart.currency);
     for line in &cart.lines {
-        let gross = line.unit_price.mul_qty(line.qty, rule)?;
+        let gross = line.price().mul_qty(line.qty, rule)?;
         let off = match &line.discount {
             Some(d) => d.amount_off(gross, rule)?,
             None => Money::zero(gross.currency()),
@@ -1006,6 +1216,8 @@ pub enum CartError {
     NegativeLine,
     #[error("discount {0} exceeds line value")]
     DiscountExceedsLine(String),
+    /// 1.4.7: the price asked for and the floor, the product's cost
+    /// (merchant decision 3.4).
     #[error("price {0} is below the floor {1}")]
     BelowPriceFloor(String, String),
     /// E.71: a regulated ceiling is a hard block.
@@ -1057,6 +1269,21 @@ pub enum CartError {
     /// Added at 1.4.5: an amount off fixes the line's quantity until cleared.
     #[error("line {0} has an amount off; clear the discount to change its quantity")]
     AmountDiscountFixesQuantity(SaleLineId),
+    /// Added at 1.4.7: an amount off fixes the line's price too.
+    #[error("line {0} has an amount off; clear the discount to change its price")]
+    AmountDiscountFixesPrice(SaleLineId),
+    /// Added at 1.4.7: a price label is the price displayed on the package.
+    #[error("line {0} is priced by its label; weigh and label it again to change its price")]
+    LabelPriceNotOverridable(SaleLineId),
+    /// Added at 1.4.7: the displayed price asked for, then the price the line
+    /// charges. A shelf price only ever lowers what the till charges.
+    #[error("a displayed price of {0} is not below the {1} the line charges")]
+    DisplayedPriceNotLower(String, String),
+    /// Added at 1.4.7: the product and the lower price asked for. With no
+    /// recorded cost there is no floor to hold the price to (the owner's
+    /// decision, 29 October 2026).
+    #[error("{0} has no recorded cost, so its price cannot be lowered to {1}")]
+    NoRecordedCost(ProductId, String),
     /// Added at 1.4.5: the approval's reason, then the request's. The audit
     /// row repeats the handle's reason, so the two must be one.
     #[error("the approval was given for {0}, not {1}")]
@@ -1080,7 +1307,7 @@ mod tests {
 
     // Wire-format tripwires, not business data: every id, amount and name is
     // visibly synthetic.
-    const GOLDEN_CART_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","register_id":"00000000-0000-0000-0000-000000000002","shift_id":"00000000-0000-0000-0000-000000000003","cashier_id":"00000000-0000-0000-0000-000000000004","currency":"JOD","lines":[{"id":"00000000-0000-0000-0000-000000000010","product_id":"00000000-0000-0000-0000-000000000011","name_snapshot":"SYNTH item","unit_price":{"minor":1250,"currency":"JOD"},"price_origin":{"catalog":{"product_id":"00000000-0000-0000-0000-000000000011"}},"qty":1500,"unit":"kilogram","is_weighed":true,"tax_category_id":"00000000-0000-0000-0000-000000000012","discount":null,"min_age":18,"age_confirmed":false,"label":{"qty":1500,"catalog_unit_price":{"minor":1250,"currency":"JOD"}}}],"basket_discount":null,"customer_id":null,"buyer_tin":"999888777","buyer_name":"SYNTH buyer","supply":{"destination":"Domestic","reason":null,"evidence_ref":null},"is_training":true,"opened_at":978307200000}"#;
+    const GOLDEN_CART_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","register_id":"00000000-0000-0000-0000-000000000002","shift_id":"00000000-0000-0000-0000-000000000003","cashier_id":"00000000-0000-0000-0000-000000000004","currency":"JOD","lines":[{"id":"00000000-0000-0000-0000-000000000010","product_id":"00000000-0000-0000-0000-000000000011","name_snapshot":"SYNTH item","unit_price":{"minor":1250,"currency":"JOD"},"price_origin":{"catalog":{"product_id":"00000000-0000-0000-0000-000000000011"}},"max_price":null,"qty":1500,"unit":"kilogram","is_weighed":true,"tax_category_id":"00000000-0000-0000-0000-000000000012","discount":null,"price_override":null,"min_age":18,"age_confirmed":false,"label":{"qty":1500,"catalog_unit_price":{"minor":1250,"currency":"JOD"}}}],"basket_discount":null,"customer_id":null,"buyer_tin":"999888777","buyer_name":"SYNTH buyer","supply":{"destination":"Domestic","reason":null,"evidence_ref":null},"is_training":true,"opened_at":978307200000}"#;
 
     fn id(n: u128) -> Uuid {
         Uuid::from_u128(n)
@@ -1106,11 +1333,13 @@ mod tests {
             price_origin: PriceOrigin::Catalog {
                 product_id: ProductId::from_uuid(id(0x11)),
             },
+            max_price: None,
             qty: Qty::from_milli(1_500),
             unit: UnitOfMeasure::Kilogram,
             is_weighed: true,
             tax_category_id: TaxCategoryId::from_uuid(id(0x12)),
             discount: None,
+            price_override: None,
             min_age: Some(18),
             age_confirmed: false,
             label: Some(DerivedWeight {
@@ -1890,34 +2119,60 @@ mod tests {
                 catalog_unit_price: Money::from_minor(price, currency),
             },
         ));
+        let ceiling = proptest::option::of(
+            (any::<i64>(), currencies()).prop_map(|(minor, c)| Money::from_minor(minor, c)),
+        );
+        // Any code, `displayed_price` spelled by hand among them, which reads
+        // back as the dedicated variant and is equal to it.
+        let price_override = proptest::option::of(
+            (
+                (any::<i64>(), currencies()),
+                prop_oneof![
+                    Just(OverrideReason::DisplayedPrice),
+                    Just(OverrideReason::Code("displayed_price".to_owned())),
+                    any::<String>().prop_map(OverrideReason::Code),
+                ],
+                uuids(),
+                proptest::option::of(uuids()),
+            )
+                .prop_map(|((minor, c), reason, by, approver)| PriceOverride {
+                    to: Money::from_minor(minor, c),
+                    reason,
+                    by: UserId::from_uuid(by),
+                    approver: approver.map(UserId::from_uuid),
+                }),
+        );
         (
             (uuids(), proptest::option::of(uuids()), any::<String>()),
-            (any::<i64>(), currencies(), origin),
+            (any::<i64>(), currencies(), origin, ceiling),
             (any::<i64>(), units(), any::<bool>(), uuids()),
             (
                 proptest::option::of(any::<u8>()),
                 any::<bool>(),
                 label,
                 discount,
+                price_override,
             ),
         )
             .prop_map(
                 |(
                     (line, product, name),
-                    (price, currency, price_origin),
+                    (price, currency, price_origin, max_price),
                     (qty, unit, is_weighed, tax),
-                    (min_age, age_confirmed, label, discount),
+                    (min_age, age_confirmed, label, discount, price_override),
                 )| CartLine {
                     id: SaleLineId::from_uuid(line),
                     product_id: product.map(ProductId::from_uuid),
                     name_snapshot: name,
                     unit_price: Money::from_minor(price, currency),
                     price_origin,
+                    max_price,
                     qty: Qty::from_milli(qty),
                     unit,
                     is_weighed,
                     tax_category_id: TaxCategoryId::from_uuid(tax),
                     discount,
+                    price_override,
                     min_age,
                     age_confirmed,
                     label,
@@ -2172,6 +2427,12 @@ mod tests {
     /// `who`'s proof of `discount.manual`, under the shipped grid for `role`,
     /// checked at `at`.
     fn proof(who: UserId, role: Role, at: Timestamp) -> Authorized<cap::DiscountManual> {
+        proof_of(who, role, at)
+    }
+
+    /// `who`'s proof of `C`, under the shipped grid for `role`, checked at `at`,
+    /// where the merchant's policy escalates nothing.
+    fn proof_of<C: Capability>(who: UserId, role: Role, at: Timestamp) -> Authorized<C> {
         let unbound = ApprovalBinding {
             entity_id: Uuid::nil(),
             amount_minor: 0,
@@ -2911,5 +3172,645 @@ mod tests {
         .unwrap()
         .0;
         assert_eq!(shared.basket_discount.unwrap().kind, pct(100_000));
+    }
+
+    // ── price overrides (1.4.7) ─────────────────────────────────────────
+
+    use crate::audit::check_payload;
+    use crate::catalog::{LabelReprint, ReprintCause};
+    use crate::pricing::{OverrideReason, PriceOverride};
+
+    fn shift_lead() -> UserId {
+        UserId::from_uuid(id(0x56))
+    }
+
+    fn code(reason: &str) -> OverrideReason {
+        OverrideReason::Code(reason.to_owned())
+    }
+
+    fn tea() -> ProductId {
+        ProductId::from_uuid(id(0x20))
+    }
+
+    /// The shift lead, under the shipped grid, setting line 1 to `to`, where
+    /// the product cost `cost` a unit or has no recorded cost.
+    fn reprice(
+        cart: Cart,
+        to: i64,
+        reason: OverrideReason,
+        cost: Option<i64>,
+    ) -> Result<(Cart, AuditIntent, Option<LabelReprint>), CartError> {
+        override_price(
+            cart,
+            line_id(1),
+            jod(to),
+            reason,
+            cost.map(jod),
+            &proof_of(shift_lead(), Role::ShiftLead, moment()),
+        )
+    }
+
+    /// The shift lead's proof where the merchant escalates `price.override`:
+    /// a manager's handle for line 1 at `to`, for `reason`.
+    fn escalated(to: i64, reason: &str) -> Authorized<cap::PriceOverride> {
+        let handle = ApprovalId::from_uuid(id(0x701));
+        let binding = ApprovalBinding {
+            entity_id: line_id(1).as_uuid(),
+            amount_minor: to,
+            content_hash: None,
+        };
+        let approval = ApprovalHandle::issue(
+            handle,
+            shift_lead(),
+            &proof_of::<cap::PriceOverride>(manager(), Role::Manager, moment()),
+            &binding,
+            reason.to_owned(),
+            moment(),
+            120_000,
+            *handle.as_uuid().as_bytes(),
+        )
+        .unwrap();
+        authorize(
+            shift_lead(),
+            &GrantSet::of_role(Role::ShiftLead),
+            Some(&approval),
+            &binding,
+            &EscalationPolicy::empty().with_escalation::<cap::PriceOverride>(),
+            moment(),
+        )
+        .unwrap()
+    }
+
+    fn price_of(cart: &Cart) -> Money {
+        cart.lines.first().unwrap().price()
+    }
+
+    /// One field of an intent's payload, which must be there.
+    fn field<'a>(intent: &'a AuditIntent, key: &str) -> &'a serde_json::Value {
+        intent.payload.get(key).unwrap()
+    }
+
+    /// E.33: the friend price stops at what the goods cost the shop.
+    #[test]
+    fn override_below_floor_is_denied() {
+        // Two teas sell at 1.250 and cost 1.000 a unit.
+        assert_eq!(
+            reprice(two_teas(), 999, code("damaged_pack"), Some(1_000)).map(|r| r.0),
+            Err(CartError::BelowPriceFloor(
+                "0.999".to_owned(),
+                "1.000".to_owned()
+            ))
+        );
+        let (cart, intent, reprint) =
+            reprice(two_teas(), 1_000, code("damaged_pack"), Some(1_000)).unwrap();
+        assert_eq!(price_of(&cart), jod(1_000));
+        assert_eq!(field(&intent, "floor_minor"), 1_000);
+        assert_eq!(reprint, None);
+        // The floor is not a cap an approver lifts: a manager is held to it,
+        // and so is a shift lead whose override a manager approved.
+        for auth in [
+            proof_of(manager(), Role::Manager, moment()),
+            escalated(999, "damaged_pack"),
+        ] {
+            assert_eq!(
+                override_price(
+                    two_teas(),
+                    line_id(1),
+                    jod(999),
+                    code("damaged_pack"),
+                    Some(jod(1_000)),
+                    &auth
+                )
+                .map(|r| r.0),
+                Err(CartError::BelowPriceFloor(
+                    "0.999".to_owned(),
+                    "1.000".to_owned()
+                ))
+            );
+        }
+        // A cashier holds no `price.override` at all, so no proof can be made
+        // for one, and with none the transition cannot be called.
+        assert_eq!(
+            authorize::<cap::PriceOverride>(
+                cashier(),
+                &GrantSet::of_role(Role::Cashier),
+                None,
+                &ApprovalBinding {
+                    entity_id: line_id(1).as_uuid(),
+                    amount_minor: 990,
+                    content_hash: None,
+                },
+                &EscalationPolicy::empty(),
+                moment(),
+            )
+            .err(),
+            Some(PermissionError::Denied(cashier(), "price.override"))
+        );
+    }
+
+    #[test]
+    fn a_product_with_no_recorded_cost_is_never_lowered() {
+        assert_eq!(
+            reprice(two_teas(), 1_249, code("damaged_pack"), None).map(|r| r.0),
+            Err(CartError::NoRecordedCost(tea(), "1.249".to_owned()))
+        );
+        // Raising it, and putting it back, need no cost.
+        let (raised, ..) = reprice(two_teas(), 1_300, code("catalogue_error"), None).unwrap();
+        assert_eq!(price_of(&raised), jod(1_300));
+        let (back, ..) = reprice(raised, 1_250, code("catalogue_error"), None).unwrap();
+        assert_eq!(back.lines.first().unwrap().price_override, None);
+        // The shelf's price is honoured all the same (the owner's decision).
+        let (shelf, ..) = reprice(two_teas(), 990, OverrideReason::DisplayedPrice, None).unwrap();
+        assert_eq!(price_of(&shelf), jod(990));
+    }
+
+    #[test]
+    fn the_floor_never_refuses_the_catalogue_s_own_price() {
+        // The catalogue sells the tea at 1.250 though it cost 1.400.
+        let (up, intent, _) =
+            reprice(two_teas(), 1_300, code("catalogue_error"), Some(1_400)).unwrap();
+        assert_eq!(price_of(&up), jod(1_300));
+        assert_eq!(field(&intent, "floor_minor"), &serde_json::Value::Null);
+        // Lower than the price charged, still not below the catalogue's.
+        let (down, ..) = reprice(up, 1_250, code("catalogue_error"), Some(1_400)).unwrap();
+        assert_eq!(down.lines.first().unwrap().price_override, None);
+        assert_eq!(
+            reprice(down, 1_249, code("damaged_pack"), Some(1_400)).map(|r| r.0),
+            Err(CartError::BelowPriceFloor(
+                "1.249".to_owned(),
+                "1.400".to_owned()
+            ))
+        );
+    }
+
+    /// E.71: the ministry ceiling holds when a line enters and whenever its
+    /// price changes, and nobody's approval lifts it.
+    #[test]
+    fn sale_above_ceiling_is_hard_blocked() {
+        let mut staple = product(0x20, UnitOfMeasure::Each);
+        // Sold at its ceiling, which is lawful: equal is not above.
+        staple.max_price = Some(jod(1_250));
+        let cart = add(building(), 1, &staple, 1_000).unwrap();
+        assert_eq!(cart.lines.first().unwrap().max_price, Some(jod(1_250)));
+        for auth in [
+            proof_of(shift_lead(), Role::ShiftLead, moment()),
+            proof_of(manager(), Role::Manager, moment()),
+            escalated(1_251, "catalogue_error"),
+        ] {
+            assert_eq!(
+                override_price(
+                    cart.clone(),
+                    line_id(1),
+                    jod(1_251),
+                    code("catalogue_error"),
+                    Some(jod(900)),
+                    &auth
+                )
+                .map(|r| r.0),
+                Err(CartError::AboveMaxPrice(
+                    "1.251".to_owned(),
+                    "1.250".to_owned()
+                ))
+            );
+        }
+        // A product held above its ceiling, which no catalogue save keeps,
+        // never enters a cart.
+        let mut over = staple.clone();
+        over.unit_price = jod(1_300);
+        assert_eq!(
+            add(building(), 1, &over, 1_000),
+            Err(CartError::AboveMaxPrice(
+                "1.300".to_owned(),
+                "1.250".to_owned()
+            ))
+        );
+        // Nor does a counted product's price label above its ceiling.
+        let scan = |item: &Product, price: i64| {
+            let code = price_label("12345", price);
+            let hit = ProductHit {
+                product: item.clone(),
+                matched_on: MatchedOn::Plu("12345".to_owned()),
+            };
+            let lookup =
+                resolve_scan(parse_scan(&code, &[price_rule()]).unwrap(), vec![hit], JOD).unwrap();
+            add_line(building(), AddLine::from_scan(line_id(1), lookup).unwrap())
+        };
+        assert_eq!(
+            scan(&staple, 1_300),
+            Err(CartError::AboveMaxPrice(
+                "1.300".to_owned(),
+                "1.250".to_owned()
+            ))
+        );
+        let marked_down = scan(&staple, 1_200).unwrap();
+        assert_eq!(
+            marked_down.lines.first().unwrap().max_price,
+            Some(jod(1_250))
+        );
+        // A weighed product's label is a package of a weight the till does
+        // not know, which no ceiling per kilogram compares with.
+        let mut cheese = product(0xC4, UnitOfMeasure::Kilogram);
+        cheese.unit_price = jod(8_500);
+        cheese.max_price = Some(jod(9_000));
+        let weighed = scan(&cheese, 9_500).unwrap();
+        assert_eq!(weighed.lines.first().unwrap().max_price, None);
+        // A ceiling that cannot be compared with the price is refused, not
+        // passed.
+        let mut dollars = staple.clone();
+        dollars.max_price = Some(Money::from_minor(1_250, Currency::USD));
+        assert_eq!(
+            add(building(), 1, &dollars, 1_000),
+            Err(CartError::Money(MoneyError::CurrencyMismatch("JOD", "USD")))
+        );
+    }
+
+    /// E.70: the shelf says 0.990, the till says 1.250. The customer pays the
+    /// shelf's price, and the label goes on the worklist to be printed again.
+    #[test]
+    fn displayed_price_override_queues_a_label_reprint() {
+        // The tea cost 1.000, so the floor would refuse 0.990; the shelf wins.
+        let (cart, intent, reprint) =
+            reprice(two_teas(), 990, OverrideReason::DisplayedPrice, Some(1_000)).unwrap();
+        assert_eq!(
+            reprint,
+            Some(LabelReprint {
+                product_id: tea(),
+                cause: ReprintCause::DisplayedPriceOverride,
+            })
+        );
+        let line = cart.lines.first().unwrap();
+        assert_eq!((line.unit_price, line.price()), (jod(1_250), jod(990)));
+        assert_eq!(intent.reason.as_deref(), Some("displayed_price"));
+        assert_eq!(field(&intent, "displayed_price"), true);
+        assert_eq!(field(&intent, "floor_minor"), &serde_json::Value::Null);
+        // The code typed from the store's list is the same reason, and does
+        // the same.
+        let typed = reprice(two_teas(), 990, code("displayed_price"), Some(1_000)).unwrap();
+        assert_eq!((typed.1, typed.2), (intent, reprint));
+        // Any other reason asks for no label.
+        let (.., none) = reprice(two_teas(), 1_100, code("damaged_pack"), Some(1_000)).unwrap();
+        assert_eq!(none, None);
+        // A shelf price only ever lowers what the till charges.
+        for not_lower in [1_250, 1_300] {
+            assert_eq!(
+                reprice(
+                    two_teas(),
+                    not_lower,
+                    OverrideReason::DisplayedPrice,
+                    Some(1_000)
+                )
+                .map(|r| r.0),
+                Err(CartError::DisplayedPriceNotLower(
+                    jod(not_lower).format_exact(),
+                    "1.250".to_owned()
+                ))
+            );
+        }
+        // Measured against the price charged now, not the one captured.
+        let (twice, ..) = reprice(cart, 950, OverrideReason::DisplayedPrice, None).unwrap();
+        assert_eq!(price_of(&twice), jod(950));
+        assert_eq!(
+            reprice(twice, 960, OverrideReason::DisplayedPrice, None).map(|r| r.0),
+            Err(CartError::DisplayedPriceNotLower(
+                "0.960".to_owned(),
+                "0.950".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn an_override_is_audited_with_its_prices() {
+        let (cart, intent, _) =
+            reprice(two_teas(), 1_100, code("damaged_pack"), Some(1_000)).unwrap();
+        assert_eq!(
+            intent,
+            AuditIntent {
+                actor: shift_lead(),
+                approver: None,
+                approval: None,
+                action: "price.override",
+                entity: "sale_line",
+                entity_id: line_id(1).as_uuid(),
+                reason: Some("damaged_pack".to_owned()),
+                payload: serde_json::json!({
+                    "sale_id": "00000000-0000-0000-0000-000000000001",
+                    "product_id": "00000000-0000-0000-0000-000000000020",
+                    "amount_minor": 1_100,
+                    "captured_minor": 1_250,
+                    "previous_minor": 1_250,
+                    "qty_milli": 2_000,
+                    "currency": "JOD",
+                    "floor_minor": 1_000,
+                    "ceiling_minor": null,
+                    "displayed_price": false,
+                }),
+                at: moment(),
+            }
+        );
+        check_payload(&intent.payload).unwrap();
+        assert_eq!(
+            cart.lines.first().unwrap().price_override,
+            Some(PriceOverride {
+                to: jod(1_100),
+                reason: code("damaged_pack"),
+                by: shift_lead(),
+                approver: None,
+            })
+        );
+        // Where policy escalates `price.override`, the approver and the handle
+        // ride on the proof, and the intent names both.
+        let (cart, intent, _) = override_price(
+            two_teas(),
+            line_id(1),
+            jod(1_100),
+            code("damaged_pack"),
+            Some(jod(1_000)),
+            &escalated(1_100, "damaged_pack"),
+        )
+        .unwrap();
+        assert_eq!(
+            (intent.approver, intent.approval),
+            (Some(manager()), Some(ApprovalId::from_uuid(id(0x701))))
+        );
+        assert_eq!(field(&intent, "amount_minor"), 1_100);
+        assert_eq!(
+            cart.lines
+                .first()
+                .unwrap()
+                .price_override
+                .as_ref()
+                .unwrap()
+                .approver,
+            Some(manager())
+        );
+        // The line's name is not needed to identify it.
+        assert!(!intent.payload.to_string().contains("صنف"));
+    }
+
+    #[test]
+    fn a_second_override_replaces_the_first_and_the_captured_price_clears_it() {
+        let (cart, ..) = reprice(two_teas(), 1_100, code("damaged_pack"), Some(1_000)).unwrap();
+        let (cart, intent, _) = reprice(cart, 1_050, code("damaged_pack"), Some(1_000)).unwrap();
+        assert_eq!(price_of(&cart), jod(1_050));
+        assert_eq!(
+            (
+                field(&intent, "captured_minor"),
+                field(&intent, "previous_minor")
+            ),
+            (&serde_json::json!(1_250), &serde_json::json!(1_100))
+        );
+        let (cart, intent, _) = reprice(cart, 1_250, code("catalogue_error"), Some(1_000)).unwrap();
+        let line = cart.lines.first().unwrap();
+        assert_eq!(
+            (line.price_override.as_ref(), line.price()),
+            (None, jod(1_250))
+        );
+        assert_eq!(field(&intent, "amount_minor"), 1_250);
+    }
+
+    #[test]
+    fn an_override_is_refused_by_name() {
+        let refused = |cart: Cart, line: SaleLineId, to: Money| {
+            override_price(
+                cart,
+                line,
+                to,
+                code("damaged_pack"),
+                Some(jod(1_000)),
+                &proof_of(shift_lead(), Role::ShiftLead, moment()),
+            )
+            .map(|r| r.0)
+        };
+        assert_eq!(
+            refused(two_teas(), line_id(9), jod(1_100)),
+            Err(CartError::LineNotFound(line_id(9)))
+        );
+        assert_eq!(
+            refused(
+                two_teas(),
+                line_id(1),
+                Money::from_minor(1_100, Currency::USD)
+            ),
+            Err(CartError::Money(MoneyError::CurrencyMismatch("JOD", "USD")))
+        );
+        assert_eq!(
+            refused(two_teas(), line_id(1), jod(-1)),
+            Err(CartError::NegativeLine)
+        );
+        // A price label is the price displayed on the package itself.
+        let mut cheese = product(0xC4, UnitOfMeasure::Kilogram);
+        cheese.unit_price = jod(8_500);
+        let code_read = price_label("12345", 416);
+        let hit = ProductHit {
+            product: cheese,
+            matched_on: MatchedOn::Plu("12345".to_owned()),
+        };
+        let lookup = resolve_scan(
+            parse_scan(&code_read, &[price_rule()]).unwrap(),
+            vec![hit],
+            JOD,
+        )
+        .unwrap();
+        let labelled =
+            add_line(building(), AddLine::from_scan(line_id(1), lookup).unwrap()).unwrap();
+        assert_eq!(
+            refused(labelled, line_id(1), jod(400)),
+            Err(CartError::LabelPriceNotOverridable(line_id(1)))
+        );
+        // A department line's amount is its own capped command's (1.4.12).
+        let mut department = two_teas();
+        if let Some(line) = department.lines.first_mut() {
+            line.product_id = None;
+            line.price_origin = PriceOrigin::Department {
+                tax_category_id: line.tax_category_id,
+            };
+        }
+        assert_eq!(
+            refused(department, line_id(1), jod(1_100)),
+            Err(CartError::DepartmentPriceOutsideDepartmentSale)
+        );
+        // An amount off fixes the price until it is cleared; a share does not.
+        let (amount_off, _) = discount(two_teas(), off(100)).unwrap();
+        assert_eq!(
+            refused(amount_off.clone(), line_id(1), jod(1_100)),
+            Err(CartError::AmountDiscountFixesPrice(line_id(1)))
+        );
+        let (cleared, _) = discount(amount_off, off(0)).unwrap();
+        assert!(refused(cleared, line_id(1), jod(1_100)).is_ok());
+        let (share_off, _) = discount(two_teas(), pct(50_000)).unwrap();
+        assert!(refused(share_off, line_id(1), jod(1_100)).is_ok());
+        // A cost that cannot be compared with the price is refused, not passed.
+        assert_eq!(
+            override_price(
+                two_teas(),
+                line_id(1),
+                jod(1_100),
+                code("damaged_pack"),
+                Some(Money::from_minor(1_000, Currency::USD)),
+                &proof_of(shift_lead(), Role::ShiftLead, moment()),
+            )
+            .map(|r| r.0),
+            Err(CartError::Money(MoneyError::CurrencyMismatch("JOD", "USD")))
+        );
+    }
+
+    #[test]
+    fn an_overridden_line_is_discounted_and_divided_at_its_new_price() {
+        // Two teas at 1.000 instead of 1.250: a line worth 2.000.
+        let (cart, ..) = reprice(two_teas(), 1_000, code("damaged_pack"), Some(900)).unwrap();
+        // 5% of 2.000 is 0.100, which is the cashier's to give, and no more.
+        assert!(discount(cart.clone(), off(100)).is_ok());
+        assert_eq!(
+            discount(cart.clone(), off(101)).map(|r| r.0),
+            Err(CartError::DiscountAboveCap(
+                "0.101 JOD".to_owned(),
+                "5%".to_owned()
+            ))
+        );
+        let managed = |cart: Cart, kind: DiscountKind| {
+            apply_line_discount(
+                cart,
+                line_id(1),
+                ask(kind, "loyal_customer"),
+                DiscountCap::Unlimited,
+                RULE,
+                &proof(manager(), Role::Manager, moment()),
+                None,
+            )
+            .map(|r| r.0)
+        };
+        assert!(managed(cart.clone(), off(2_000)).is_ok());
+        assert_eq!(
+            managed(cart, off(2_001)),
+            Err(CartError::DiscountExceedsLine("2.001 JOD".to_owned()))
+        );
+        // A share off the line, given before the override, is a share of the
+        // new price; the basket is worth its lines at their prices.
+        let (shared, _) = discount(basket(), pct(50_000)).unwrap();
+        let (shared, ..) = reprice(shared, 1_000, code("damaged_pack"), Some(900)).unwrap();
+        let (shared, intent) = by_manager(shared, off(5_650)).unwrap();
+        assert_eq!(field(&intent, "basket_value_minor"), 5_650);
+        assert_eq!(
+            discount_attributions(&shared, RULE)
+                .unwrap()
+                .iter()
+                .map(|a| (a.line_id, a.source, a.amount.minor()))
+                .collect::<Vec<_>>(),
+            vec![
+                (line_id(1), DiscountSource::ManualLine, 100),
+                (line_id(1), DiscountSource::ManualBasket, 1_900),
+                (line_id(2), DiscountSource::ManualBasket, 3_750),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_lower_price_clears_an_amount_off_the_basket() {
+        let (cart, _) = by_manager(basket(), off(500)).unwrap();
+        // A higher price raises the basket's value, and the amount stays.
+        let (cart, ..) = reprice(cart, 1_300, code("catalogue_error"), Some(1_000)).unwrap();
+        assert_eq!(cart.basket_discount.as_ref().unwrap().kind, off(500));
+        // A lower one lowers it, and the amount is cleared, as for a void.
+        let (cart, ..) = reprice(cart, 1_100, code("damaged_pack"), Some(1_000)).unwrap();
+        assert_eq!(cart.basket_discount, None);
+        // A share off the basket keeps its share.
+        let (shared, _) = by_manager(basket(), pct(100_000)).unwrap();
+        let (shared, ..) =
+            reprice(shared, 990, OverrideReason::DisplayedPrice, Some(1_000)).unwrap();
+        assert_eq!(shared.basket_discount.unwrap().kind, pct(100_000));
+    }
+
+    fn anchors() -> impl Strategy<Value = (usize, i64, i64)> {
+        (0usize..=4, -2i64..=2, -50i64..=3_600)
+    }
+
+    proptest! {
+        #![proptest_config(domain_proptest_config())]
+
+        /// No line charges more than its ministry ceiling, from the moment it
+        /// enters the cart through every override. No override takes a price
+        /// below what the catalogue charged unless the product's recorded cost
+        /// admits it, or the shelf showed that price, which only ever lowers
+        /// it. And every override is the one the line then charges, recorded
+        /// at that amount, with a label to reprint exactly when the shelf was
+        /// wrong (E.33, E.70, E.71).
+        #[test]
+        fn prop_no_price_passes_its_floor_or_its_ceiling(
+            catalogue in 0i64..=3_000,
+            ceiling in proptest::option::of((any::<bool>(), -2i64..=2, 0i64..=3_500)),
+            cost in proptest::option::of((any::<bool>(), -2i64..=2, 0i64..=3_500)),
+            steps in proptest::collection::vec((anchors(), any::<bool>()), 1..=4),
+        ) {
+            // Each limit sits at the catalogue's price, give or take a fil,
+            // or anywhere: the boundaries are where a wrong comparison shows.
+            let near = |(anchored, delta, anywhere): (bool, i64, i64)| {
+                if anchored { (catalogue + delta).max(0) } else { anywhere }
+            };
+            let (ceiling, cost) = (ceiling.map(near), cost.map(near));
+            let mut item = product(0x20, UnitOfMeasure::Each);
+            item.unit_price = jod(catalogue);
+            item.max_price = ceiling.map(jod);
+            let added = add(building(), 1, &item, 2_000);
+            if let Some(c) = ceiling.filter(|c| catalogue > *c) {
+                prop_assert_eq!(
+                    added,
+                    Err(CartError::AboveMaxPrice(
+                        jod(catalogue).format_exact(),
+                        jod(c).format_exact()
+                    ))
+                );
+                return Ok(());
+            }
+            let mut cart = added.unwrap();
+            let auth = proof_of(shift_lead(), Role::ShiftLead, moment());
+            for ((anchor, delta, anywhere), displayed) in steps {
+                let current = price_of(&cart).minor();
+                let to = match anchor {
+                    0 => catalogue + delta,
+                    1 => ceiling.map_or(anywhere, |c| c + delta),
+                    2 => cost.map_or(anywhere, |c| c + delta),
+                    3 => current + delta,
+                    _ => anywhere,
+                };
+                let reason = if displayed {
+                    OverrideReason::DisplayedPrice
+                } else {
+                    code("damaged_pack")
+                };
+                let fmt = |minor: i64| jod(minor).format_exact();
+                let expected = if to < 0 {
+                    Some(CartError::NegativeLine)
+                } else if let Some(c) = ceiling.filter(|c| to > *c) {
+                    Some(CartError::AboveMaxPrice(fmt(to), fmt(c)))
+                } else if displayed && to >= current {
+                    Some(CartError::DisplayedPriceNotLower(fmt(to), fmt(current)))
+                } else if !displayed && to < catalogue {
+                    match cost {
+                        None => Some(CartError::NoRecordedCost(item.id, fmt(to))),
+                        Some(c) if to < c => Some(CartError::BelowPriceFloor(fmt(to), fmt(c))),
+                        Some(_) => None,
+                    }
+                } else {
+                    None
+                };
+                match override_price(cart.clone(), line_id(1), jod(to), reason, cost.map(jod), &auth) {
+                    Ok((next, intent, reprint)) => {
+                        prop_assert_eq!(expected, None);
+                        let line = next.lines.first().unwrap();
+                        prop_assert_eq!(line.price(), jod(to));
+                        prop_assert_eq!(line.unit_price, jod(catalogue));
+                        prop_assert_eq!(line.price_override.is_none(), to == catalogue);
+                        prop_assert_eq!(field(&intent, "amount_minor"), &serde_json::json!(to));
+                        prop_assert_eq!(reprint.is_some(), displayed);
+                        cart = next;
+                    }
+                    Err(refused) => prop_assert_eq!(Some(refused), expected),
+                }
+                let line = cart.lines.first().unwrap();
+                if let Some(c) = line.max_price {
+                    prop_assert!(line.price().minor() <= c.minor());
+                }
+            }
+        }
     }
 }
