@@ -31,7 +31,11 @@ use crate::money::{Currency, Money, MoneyError, Qty, RoundingRule};
 use crate::permissions::{
     ApprovalBinding, ApprovalHandle, Authorized, Capability, PermissionError, cap,
 };
-use crate::pricing::{DiscountCap, DiscountKind, DiscountRequest, LineDiscount, exceeds_value};
+use crate::pricing::{
+    BasketDiscount, DiscountAttribution, DiscountCap, DiscountKind, DiscountRequest,
+    DiscountSource, LineDiscount, PricingError, ProrationLine, exceeds_basket, exceeds_value,
+    prorate,
+};
 use crate::tax::{SupplyDestination, SupplyTaxContext, TaxError};
 use crate::time::Timestamp;
 
@@ -76,6 +80,10 @@ pub struct Cart {
     pub cashier_id: UserId,
     pub currency: Currency,
     pub lines: Vec<CartLine>,
+    /// The basket's manual discount, as it was asked for (1.4.6). At most one:
+    /// another replaces it, a zero clears it, and an amount off is cleared by
+    /// any change that lowers the basket's value.
+    pub basket_discount: Option<BasketDiscount>,
     pub customer_id: Option<CustomerId>,
     /// A business buyer's tax number, for a B2B fiscal invoice (master plan
     /// B.2).
@@ -100,6 +108,7 @@ impl fmt::Debug for Cart {
             .field("cashier_id", &self.cashier_id)
             .field("currency", &self.currency)
             .field("lines", &self.lines)
+            .field("basket_discount", &self.basket_discount)
             .field("customer_id", &self.customer_id)
             .field("buyer_tin", &self.buyer_tin)
             .field(
@@ -154,6 +163,7 @@ pub fn open(id: SaleId, ctx: &CartContext) -> Cart {
         cashier_id: ctx.cashier_id,
         currency: ctx.currency,
         lines: Vec::new(),
+        basket_discount: None,
         customer_id: None,
         buyer_tin: None,
         buyer_name: None,
@@ -348,6 +358,9 @@ pub fn add_line(cart: Cart, req: AddLine) -> Result<Cart, CartError> {
 ///   Fewer units would make the same amount a larger share than the cap that
 ///   admitted it, or more than the line is worth (E.19), so the discount is
 ///   cleared first. A percentage off keeps its share and needs nothing.
+///
+/// A lower quantity lowers the basket's value, so it clears an amount off the
+/// basket (1.4.6).
 pub fn set_qty(cart: Cart, line: SaleLineId, qty: Qty) -> Result<Cart, CartError> {
     let mut cart = cart;
     let found = cart
@@ -370,7 +383,11 @@ pub fn set_qty(cart: Cart, line: SaleLineId, qty: Qty) -> Result<Cart, CartError
     {
         return Err(CartError::AmountDiscountFixesQuantity(line));
     }
+    let lowered = qty < found.qty;
     found.qty = qty;
+    if lowered {
+        clear_amount_off_basket(&mut cart);
+    }
     Ok(cart)
 }
 
@@ -379,7 +396,8 @@ pub fn set_qty(cart: Cart, line: SaleLineId, qty: Qty) -> Result<Cart, CartError
 ///
 /// `at` is when, supplied by the shell (I-8). The intent's action is the
 /// `line.void` capability's spelling, and its payload carries the line's
-/// facts — never its name, which is not needed to identify it.
+/// facts — never its name, which is not needed to identify it. A void lowers
+/// the basket's value, so it clears an amount off the basket (1.4.6).
 ///
 /// # Errors
 ///
@@ -398,6 +416,7 @@ pub fn void_line(
         .position(|l| l.id == line)
         .ok_or(CartError::LineNotFound(line))?;
     let removed = cart.lines.remove(position);
+    clear_amount_off_basket(&mut cart);
     let intent = AuditIntent {
         actor: by,
         approver: None,
@@ -429,7 +448,9 @@ pub fn void_line(
 /// the quantity changes, and is turned into money when the cart is priced.
 ///
 /// A discount replaces any the line had, so two discounts within the cap never
-/// add up past it, and a discount of zero clears it. Within the cap no approval
+/// add up past it, and a discount of zero clears it. A discount on a line
+/// lowers the basket's value, so it clears an amount off the basket (1.4.6);
+/// the line's discount and the basket's are each held to the cap on their own. Within the cap no approval
 /// is needed and none is consumed. Above it, `approval` must be a handle a
 /// manager issued for this actor, this line and this amount, for the same
 /// reason, valid at `auth.at()`; the intent then names its approver and its id,
@@ -513,6 +534,9 @@ pub fn apply_line_discount(
         approver,
         ..discount
     });
+    if !kind.is_zero() {
+        clear_amount_off_basket(&mut cart);
+    }
     let intent = AuditIntent {
         actor: auth.actor(),
         approver,
@@ -545,7 +569,8 @@ pub fn apply_line_discount(
 /// An operator's answer to an age-restricted line's gate (E.69), and the audit
 /// intent that records it.
 ///
-/// Confirmed, the line stays and is no longer blocked; declined, it is removed.
+/// Confirmed, the line stays and is no longer blocked; declined, it is removed,
+/// which clears an amount off the basket as any lower basket value does (1.4.6).
 /// Either way the intent names the operator, the line and its product's
 /// minimum age, at `at`, which the shell supplies (I-8). The blocked line was
 /// kept in the cart so that this call has a stable target across every
@@ -584,6 +609,7 @@ pub fn confirm_age(
         "age.confirm"
     } else {
         cart.lines.remove(position);
+        clear_amount_off_basket(&mut cart);
         "age.decline"
     };
     let intent = AuditIntent {
@@ -606,6 +632,232 @@ pub fn confirm_age(
         at,
     };
     Ok((cart, intent))
+}
+
+/// `cart` with its basket discounted as `request` asks, and the audit intent
+/// that records it under `discount.manual` (1.4.6).
+///
+/// The basket is worth what its lines are worth once each line's own discount
+/// is taken off, priced under `rule`, and the discount is measured against
+/// that. It is held to the actor's cap `limit` on its own: a line's discount
+/// and the basket's may both apply, each within the cap (the owner's decision,
+/// 29 October 2026). As for a line, a discount replaces any the basket had and
+/// a zero clears it; above the cap, `approval` must be a handle a manager
+/// issued for this actor, this sale (`entity_id` is the sale's id), this
+/// amount and this reason, valid at `auth.at()`.
+///
+/// A share keeps its share as the basket changes. An amount off is cleared by
+/// any change that lowers the basket's value — a void, an age decline, a
+/// lower quantity, a line discount — so it never takes more than the basket is
+/// worth nor a larger share than the cap admitted; the priced cart shows it
+/// gone, and the cashier gives it again if it still applies.
+///
+/// # Errors
+///
+/// - [`CartError::NegativeDiscount`]: a surcharge (1.4.7's to make).
+/// - [`CartError::NegativeLine`]: a line worth less than nothing (E.19).
+/// - [`CartError::Money`]: an amount in another currency than the cart's, or
+///   an overflow pricing the lines.
+/// - [`CartError::DiscountExceedsBasket`]: more than the basket is worth.
+/// - [`CartError::DiscountAboveCap`]: above the actor's cap, with no approval.
+/// - [`CartError::ApprovalReasonMismatch`] and [`CartError::Permission`]: an
+///   approval given for another reason, actor, sale or amount, or no longer
+///   valid.
+pub fn apply_basket_discount(
+    cart: Cart,
+    request: DiscountRequest,
+    limit: DiscountCap,
+    rule: RoundingRule,
+    auth: &Authorized<cap::DiscountManual>,
+    approval: Option<&ApprovalHandle>,
+) -> Result<(Cart, AuditIntent), CartError> {
+    let mut cart = cart;
+    let kind = request.kind;
+    if kind.is_negative() {
+        return Err(CartError::NegativeDiscount(kind.format()));
+    }
+    if cart.lines.iter().any(|l| l.unit_price.is_negative()) {
+        return Err(CartError::NegativeLine);
+    }
+    if let DiscountKind::Amount(amount) = kind
+        && amount.currency() != cart.currency
+    {
+        return Err(
+            MoneyError::CurrencyMismatch(cart.currency.code(), amount.currency().code()).into(),
+        );
+    }
+    let value = basket_value(&cart, rule)?;
+    if exceeds_basket(kind, value) {
+        return Err(CartError::DiscountExceedsBasket(kind.format()));
+    }
+    let discount = BasketDiscount {
+        kind,
+        reason: request.reason,
+        by: auth.actor(),
+        approver: None,
+    };
+    let amount = discount.amount_off(value, rule)?;
+    let (approver, approval_id) = if kind.is_zero() || limit.admits_basket(kind, value) {
+        (auth.approver(), auth.approval())
+    } else {
+        let Some(handle) = approval else {
+            return Err(CartError::DiscountAboveCap(kind.format(), limit.format()));
+        };
+        if handle.reason() != discount.reason.0 {
+            return Err(CartError::ApprovalReasonMismatch(
+                handle.reason().to_owned(),
+                discount.reason.0,
+            ));
+        }
+        let binding = ApprovalBinding {
+            entity_id: cart.id.as_uuid(),
+            amount_minor: amount.minor(),
+            content_hash: None,
+        };
+        handle.matches::<cap::DiscountManual>(auth.actor(), &binding, auth.at())?;
+        (Some(handle.approver()), Some(handle.id()))
+    };
+    let reason = discount.reason.0.clone();
+    cart.basket_discount = (!kind.is_zero()).then_some(BasketDiscount {
+        approver,
+        ..discount
+    });
+    let intent = AuditIntent {
+        actor: auth.actor(),
+        approver,
+        approval: approval_id,
+        action: cap::DiscountManual::NAME,
+        entity: "sale",
+        entity_id: cart.id.as_uuid(),
+        reason: Some(reason),
+        payload: json!({
+            "sale_id": cart.id.as_uuid().to_string(),
+            "kind": match kind {
+                DiscountKind::Percent(_) => "percent",
+                DiscountKind::Amount(_) => "amount",
+            },
+            "percent_ppm": match kind {
+                DiscountKind::Percent(p) => Some(p.ppm()),
+                DiscountKind::Amount(_) => None,
+            },
+            "amount_minor": amount.minor(),
+            "basket_value_minor": value.minor(),
+            "lines": cart.lines.len(),
+            "currency": cart.currency.code(),
+            "cap_ppm": limit.ppm(),
+        }),
+        at: auth.at(),
+    };
+    Ok((cart, intent))
+}
+
+/// Every line's share of every manual discount on `cart`, in money, priced
+/// under `rule` (1.4.6, §6.2).
+///
+/// A line's own discount is attributed to it whole. The basket's is turned
+/// into money against the basket's value and divided among the lines in
+/// proportion to what each is worth once its own discount is off, by
+/// [`prorate`]: to the fil, largest remainder, ties by what the lines are and
+/// never by where they sit. A share of nothing is no attribution. The basket's
+/// attributions add up to its discount exactly, which is the recap a fiscal
+/// document repeats (2.7.3).
+///
+/// # Errors
+///
+/// [`CartError::Money`] when pricing a line overflows, and
+/// [`CartError::DiscountExceedsBasket`] for a basket discount the lines can no
+/// longer carry, which the clearing rule above keeps from arising.
+pub fn discount_attributions(
+    cart: &Cart,
+    rule: RoundingRule,
+) -> Result<Vec<DiscountAttribution>, CartError> {
+    let mut attributions = Vec::new();
+    let mut lines = Vec::with_capacity(cart.lines.len());
+    for line in &cart.lines {
+        let gross = line.unit_price.mul_qty(line.qty, rule)?;
+        let off = match &line.discount {
+            Some(d) => d.amount_off(gross, rule)?,
+            None => Money::zero(gross.currency()),
+        };
+        if let Some(d) = line.discount.as_ref().filter(|_| !off.is_zero()) {
+            attributions.push(DiscountAttribution {
+                line_id: line.id,
+                source: DiscountSource::ManualLine,
+                amount: off,
+                percent: percent_of(d.kind),
+                reason: d.reason.clone(),
+                by: d.by,
+                approver: d.approver,
+            });
+        }
+        lines.push(ProrationLine {
+            line_id: line.id,
+            value: gross.checked_sub(off)?,
+            tax_category_id: line.tax_category_id,
+            product_id: line.product_id,
+            unit_price: line.unit_price,
+            qty: line.qty,
+        });
+    }
+    let Some(basket) = &cart.basket_discount else {
+        return Ok(attributions);
+    };
+    let value = Money::sum(lines.iter().map(|l| l.value), cart.currency)?;
+    let amount = basket.amount_off(value, rule)?;
+    let shares = prorate(amount, &lines).map_err(|e| match e {
+        PricingError::ExceedsTotal(asked, _) => CartError::DiscountExceedsBasket(asked),
+        PricingError::Money(m) => CartError::Money(m),
+    })?;
+    for (line, share) in lines.iter().zip(shares) {
+        if share.is_zero() {
+            continue;
+        }
+        attributions.push(DiscountAttribution {
+            line_id: line.line_id,
+            source: DiscountSource::ManualBasket,
+            amount: share,
+            percent: percent_of(basket.kind),
+            reason: basket.reason.clone(),
+            by: basket.by,
+            approver: basket.approver,
+        });
+    }
+    Ok(attributions)
+}
+
+/// What the basket is worth: each line priced under `rule`, less its own
+/// discount.
+fn basket_value(cart: &Cart, rule: RoundingRule) -> Result<Money, CartError> {
+    let mut value = Money::zero(cart.currency);
+    for line in &cart.lines {
+        let gross = line.unit_price.mul_qty(line.qty, rule)?;
+        let off = match &line.discount {
+            Some(d) => d.amount_off(gross, rule)?,
+            None => Money::zero(gross.currency()),
+        };
+        value = value.checked_add(gross.checked_sub(off)?)?;
+    }
+    Ok(value)
+}
+
+/// The percentage a discount was asked as, for its attributions' provenance.
+const fn percent_of(kind: DiscountKind) -> Option<crate::money::Percent> {
+    match kind {
+        DiscountKind::Percent(p) => Some(p),
+        DiscountKind::Amount(_) => None,
+    }
+}
+
+/// Clears an amount off the basket after a change that lowered its value; a
+/// share off stays (1.4.6).
+fn clear_amount_off_basket(cart: &mut Cart) {
+    if let Some(BasketDiscount {
+        kind: DiscountKind::Amount(_),
+        ..
+    }) = cart.basket_discount
+    {
+        cart.basket_discount = None;
+    }
 }
 
 /// Whether every age-restricted line has been confirmed by an operator.
@@ -796,6 +1048,9 @@ pub enum CartError {
     /// Added at 1.4.5: the discount asked for and the actor's cap, rendered.
     #[error("discount {0} is above the cap {1} and needs a manager's approval")]
     DiscountAboveCap(String, String),
+    /// Added at 1.4.6: the basket discount asked for, rendered.
+    #[error("discount {0} exceeds the basket's value")]
+    DiscountExceedsBasket(String),
     /// Added at 1.4.5: a discount of less than nothing is a surcharge.
     #[error("discount {0} is negative")]
     NegativeDiscount(String),
@@ -825,7 +1080,7 @@ mod tests {
 
     // Wire-format tripwires, not business data: every id, amount and name is
     // visibly synthetic.
-    const GOLDEN_CART_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","register_id":"00000000-0000-0000-0000-000000000002","shift_id":"00000000-0000-0000-0000-000000000003","cashier_id":"00000000-0000-0000-0000-000000000004","currency":"JOD","lines":[{"id":"00000000-0000-0000-0000-000000000010","product_id":"00000000-0000-0000-0000-000000000011","name_snapshot":"SYNTH item","unit_price":{"minor":1250,"currency":"JOD"},"price_origin":{"catalog":{"product_id":"00000000-0000-0000-0000-000000000011"}},"qty":1500,"unit":"kilogram","is_weighed":true,"tax_category_id":"00000000-0000-0000-0000-000000000012","discount":null,"min_age":18,"age_confirmed":false,"label":{"qty":1500,"catalog_unit_price":{"minor":1250,"currency":"JOD"}}}],"customer_id":null,"buyer_tin":"999888777","buyer_name":"SYNTH buyer","supply":{"destination":"Domestic","reason":null,"evidence_ref":null},"is_training":true,"opened_at":978307200000}"#;
+    const GOLDEN_CART_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","register_id":"00000000-0000-0000-0000-000000000002","shift_id":"00000000-0000-0000-0000-000000000003","cashier_id":"00000000-0000-0000-0000-000000000004","currency":"JOD","lines":[{"id":"00000000-0000-0000-0000-000000000010","product_id":"00000000-0000-0000-0000-000000000011","name_snapshot":"SYNTH item","unit_price":{"minor":1250,"currency":"JOD"},"price_origin":{"catalog":{"product_id":"00000000-0000-0000-0000-000000000011"}},"qty":1500,"unit":"kilogram","is_weighed":true,"tax_category_id":"00000000-0000-0000-0000-000000000012","discount":null,"min_age":18,"age_confirmed":false,"label":{"qty":1500,"catalog_unit_price":{"minor":1250,"currency":"JOD"}}}],"basket_discount":null,"customer_id":null,"buyer_tin":"999888777","buyer_name":"SYNTH buyer","supply":{"destination":"Domestic","reason":null,"evidence_ref":null},"is_training":true,"opened_at":978307200000}"#;
 
     fn id(n: u128) -> Uuid {
         Uuid::from_u128(n)
@@ -1695,9 +1950,31 @@ mod tests {
                 reason,
                 evidence_ref,
             });
+        let basket = proptest::option::of(
+            (
+                prop_oneof![
+                    any::<i64>().prop_map(|ppm| DiscountKind::Percent(Percent::from_ppm(ppm))),
+                    (any::<i64>(), currencies())
+                        .prop_map(|(minor, c)| DiscountKind::Amount(Money::from_minor(minor, c))),
+                ],
+                any::<String>(),
+                uuids(),
+                proptest::option::of(uuids()),
+            )
+                .prop_map(|(kind, reason, by, approver)| BasketDiscount {
+                    kind,
+                    reason: DiscountReason(reason),
+                    by: UserId::from_uuid(by),
+                    approver: approver.map(UserId::from_uuid),
+                }),
+        );
         (
             (uuids(), uuids(), uuids(), uuids()),
-            (currencies(), proptest::collection::vec(lines(), 0..=8)),
+            (
+                currencies(),
+                proptest::collection::vec(lines(), 0..=8),
+                basket,
+            ),
             (
                 proptest::option::of(uuids()),
                 proptest::option::of(any::<String>()),
@@ -1712,7 +1989,7 @@ mod tests {
             .prop_map(
                 |(
                     (sale, register, shift, cashier),
-                    (currency, lines),
+                    (currency, lines, basket_discount),
                     (customer, buyer_tin, buyer_name),
                     (supply, is_training, opened_at),
                 )| Cart {
@@ -1722,6 +1999,7 @@ mod tests {
                     cashier_id: UserId::from_uuid(cashier),
                     currency,
                     lines,
+                    basket_discount,
                     customer_id: customer.map(CustomerId::from_uuid),
                     buyer_tin,
                     buyer_name,
@@ -1913,9 +2191,14 @@ mod tests {
     /// A manager's approval for the cashier: `amount_minor` off line `line`,
     /// for `reason`, valid for two minutes from `moment()`.
     fn approval(line: SaleLineId, amount_minor: i64, reason: &str) -> ApprovalHandle {
+        approval_for(line.as_uuid(), amount_minor, reason)
+    }
+
+    /// As [`approval`], for any entity: a line, or the sale itself (1.4.6).
+    fn approval_for(entity: Uuid, amount_minor: i64, reason: &str) -> ApprovalHandle {
         let handle = ApprovalId::from_uuid(id(0x700));
         let binding = ApprovalBinding {
-            entity_id: line.as_uuid(),
+            entity_id: entity,
             amount_minor,
             content_hash: None,
         };
@@ -2317,5 +2600,316 @@ mod tests {
                 prop_assert!(taken.minor() <= gross.minor(), "{taken:?} off {gross:?}");
             }
         }
+    }
+
+    // ── basket discounts (1.4.6) ────────────────────────────────────────
+
+    use crate::pricing::{DiscountAttribution, DiscountSource};
+
+    /// Two teas at 1.250 (line 1, 2.500) and three packs at 1.250 (line 2,
+    /// 3.750): a basket worth 6.250.
+    fn basket() -> Cart {
+        add(two_teas(), 2, &product(0x21, UnitOfMeasure::Package), 3_000).unwrap()
+    }
+
+    /// `who`, holding `role`'s grid and cap `limit`, discounting the basket.
+    fn basket_off(
+        cart: Cart,
+        kind: DiscountKind,
+        limit: DiscountCap,
+        who: UserId,
+        role: Role,
+        approval: Option<&ApprovalHandle>,
+    ) -> Result<(Cart, AuditIntent), CartError> {
+        apply_basket_discount(
+            cart,
+            ask(kind, "loyal_customer"),
+            limit,
+            RULE,
+            &proof(who, role, moment()),
+            approval,
+        )
+    }
+
+    fn by_cashier(cart: Cart, kind: DiscountKind) -> Result<(Cart, AuditIntent), CartError> {
+        basket_off(cart, kind, five_percent(), cashier(), Role::Cashier, None)
+    }
+
+    fn by_manager(cart: Cart, kind: DiscountKind) -> Result<(Cart, AuditIntent), CartError> {
+        basket_off(
+            cart,
+            kind,
+            DiscountCap::Unlimited,
+            manager(),
+            Role::Manager,
+            None,
+        )
+    }
+
+    fn sale() -> Uuid {
+        SaleId::from_uuid(id(1)).as_uuid()
+    }
+
+    #[test]
+    fn a_basket_discount_within_the_cap_is_given_and_audited() {
+        let (cart, intent) = by_cashier(basket(), pct(50_000)).unwrap();
+        assert_eq!(cart.basket_discount.as_ref().unwrap().kind, pct(50_000));
+        assert_eq!(
+            (intent.actor, intent.approver, intent.approval),
+            (cashier(), None, None)
+        );
+        assert_eq!((intent.action, intent.entity), ("discount.manual", "sale"));
+        assert_eq!(intent.entity_id, sale());
+        assert_eq!(intent.reason.as_deref(), Some("loyal_customer"));
+        // 5% of 6.250 is 312.5 fils, which the store's rule rounds to 313.
+        assert_eq!(
+            intent.payload,
+            serde_json::json!({
+                "sale_id": "00000000-0000-0000-0000-000000000001",
+                "kind": "percent",
+                "percent_ppm": 50_000,
+                "amount_minor": 313,
+                "basket_value_minor": 6_250,
+                "lines": 2,
+                "currency": "JOD",
+                "cap_ppm": 50_000,
+            })
+        );
+        // As an amount, the cap is the exact share: 0.312 is within 5% of
+        // 6.250 and 0.313 is not, although 5% asked as a share comes to 0.313.
+        assert!(by_cashier(basket(), off(312)).is_ok());
+        assert_eq!(
+            by_cashier(basket(), off(313)).map(|_| ()),
+            Err(CartError::DiscountAboveCap(
+                "0.313 JOD".to_owned(),
+                "5%".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_basket_discount_above_the_cap_needs_an_approval_bound_to_the_sale() {
+        // 20% of 6.250 is 1.250.
+        assert_eq!(
+            by_cashier(basket(), pct(200_000)).map(|_| ()),
+            Err(CartError::DiscountAboveCap(
+                "20%".to_owned(),
+                "5%".to_owned()
+            ))
+        );
+        let handle = approval_for(sale(), 1_250, "loyal_customer");
+        let approved = |handle: &ApprovalHandle| {
+            basket_off(
+                basket(),
+                pct(200_000),
+                five_percent(),
+                cashier(),
+                Role::Cashier,
+                Some(handle),
+            )
+        };
+        let (cart, intent) = approved(&handle).unwrap();
+        assert_eq!(
+            cart.basket_discount.as_ref().unwrap().approver,
+            Some(manager())
+        );
+        assert_eq!(
+            (intent.approver, intent.approval, intent.entity_id),
+            (Some(manager()), Some(handle.id()), sale())
+        );
+        assert_eq!(
+            intent.payload.get("amount_minor"),
+            Some(&serde_json::json!(1_250))
+        );
+        // An approval for one line is not an approval for the basket.
+        assert_eq!(
+            approved(&approval(line_id(1), 1_250, "loyal_customer")).map(|_| ()),
+            Err(CartError::Permission(
+                PermissionError::ApprovalEntityMismatch(line_id(1).as_uuid(), sale())
+            ))
+        );
+        assert_eq!(
+            approved(&approval_for(sale(), 1_000, "loyal_customer")).map(|_| ()),
+            Err(CartError::Permission(
+                PermissionError::ApprovalAmountMismatch("1000".to_owned(), "1250".to_owned())
+            ))
+        );
+        assert_eq!(
+            approved(&approval_for(sale(), 1_250, "damaged_pack")).map(|_| ()),
+            Err(CartError::ApprovalReasonMismatch(
+                "damaged_pack".to_owned(),
+                "loyal_customer".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_basket_is_worth_its_lines_after_their_own_discounts() {
+        // 0.125 off the teas leaves a basket worth 6.125.
+        let (cart, _) = discount(basket(), off(125)).unwrap();
+        assert!(by_manager(cart.clone(), off(6_125)).is_ok());
+        let refused = by_manager(cart.clone(), off(6_126)).map(|_| ());
+        assert_eq!(
+            refused,
+            Err(CartError::DiscountExceedsBasket("6.126 JOD".to_owned()))
+        );
+        assert_eq!(
+            refused.unwrap_err().to_string(),
+            "discount 6.126 JOD exceeds the basket's value"
+        );
+        let (_, all) = by_manager(cart.clone(), pct(1_000_000)).unwrap();
+        assert_eq!(
+            all.payload.get("amount_minor"),
+            Some(&serde_json::json!(6_125))
+        );
+        assert_eq!(
+            by_manager(cart, pct(1_000_001)).map(|_| ()),
+            Err(CartError::DiscountExceedsBasket("100.0001%".to_owned()))
+        );
+    }
+
+    #[test]
+    fn a_basket_discount_is_refused_by_name() {
+        assert_eq!(
+            by_manager(basket(), pct(-10_000)).map(|_| ()),
+            Err(CartError::NegativeDiscount("-1%".to_owned()))
+        );
+        // Seventy dollars is 7,000 minor units, more than the basket's 6,250
+        // fils: refused as another currency, never weighed as fils.
+        assert_eq!(
+            by_manager(
+                basket(),
+                DiscountKind::Amount(Money::from_minor(7_000, Currency::USD))
+            )
+            .map(|_| ()),
+            Err(CartError::Money(MoneyError::CurrencyMismatch("JOD", "USD")))
+        );
+        let mut odd = product(0x22, UnitOfMeasure::Each);
+        odd.unit_price = jod(-100);
+        let negative = add(basket(), 3, &odd, 1_000).unwrap();
+        assert_eq!(
+            by_manager(negative, pct(10_000)).map(|_| ()),
+            Err(CartError::NegativeLine)
+        );
+        // An empty basket is worth nothing: a share of it is nothing, and any
+        // amount is too much.
+        assert!(by_manager(building(), pct(100_000)).is_ok());
+        assert_eq!(
+            by_manager(building(), off(1)).map(|_| ()),
+            Err(CartError::DiscountExceedsBasket("0.001 JOD".to_owned()))
+        );
+    }
+
+    #[test]
+    fn a_line_discount_and_a_basket_discount_each_within_the_cap_both_apply() {
+        // The owner's decision: each discount is held to the cap on its own.
+        let (cart, _) = discount(basket(), off(125)).unwrap();
+        let (cart, _) = by_cashier(cart, pct(50_000)).unwrap();
+        // 5% of 6.125 is 306.25 fils, 306 once rounded. Divided by what the
+        // lines are worth after their own discounts, 2.375 and 3.750, the
+        // exact shares are 118.65 and 187.35: 118 and 187, and the fil left
+        // over goes to the larger remainder, the teas.
+        let attributions = discount_attributions(&cart, RULE).unwrap();
+        let summary: Vec<_> = attributions
+            .iter()
+            .map(|a| (a.line_id, a.source, a.amount.minor()))
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                (line_id(1), DiscountSource::ManualLine, 125),
+                (line_id(1), DiscountSource::ManualBasket, 119),
+                (line_id(2), DiscountSource::ManualBasket, 187),
+            ]
+        );
+        let basket_share: i64 = attributions
+            .iter()
+            .filter(|a| a.source == DiscountSource::ManualBasket)
+            .map(|a| a.amount.minor())
+            .sum();
+        assert_eq!(basket_share, 306);
+        // Who gave each, and as what, travels with it.
+        let first = attributions.first().unwrap();
+        assert_eq!(
+            (first.by, first.approver, first.percent),
+            (cashier(), None, None)
+        );
+        let shared = attributions.get(1).unwrap();
+        assert_eq!(shared.percent, Some(Percent::from_ppm(50_000)));
+    }
+
+    #[test]
+    fn a_line_worth_nothing_takes_no_share_of_the_basket() {
+        let mut free = product(0x23, UnitOfMeasure::Each);
+        free.unit_price = jod(0);
+        let cart = add(basket(), 3, &free, 1_000).unwrap();
+        let (cart, _) = by_manager(cart, off(1_000)).unwrap();
+        let attributions = discount_attributions(&cart, RULE).unwrap();
+        assert!(attributions.iter().all(|a| a.line_id != line_id(3)));
+        let total: i64 = attributions.iter().map(|a| a.amount.minor()).sum();
+        assert_eq!(total, 1_000);
+        // A cart with no discount has nothing to attribute.
+        assert_eq!(
+            discount_attributions(&basket(), RULE).unwrap(),
+            Vec::<DiscountAttribution>::new()
+        );
+    }
+
+    #[test]
+    fn an_amount_off_the_basket_is_cleared_when_the_basket_shrinks() {
+        let with_amount = |cart: Cart| by_manager(cart, off(500)).unwrap().0;
+        let kept = |cart: &Cart| cart.basket_discount.is_some();
+        // Each change that lowers the basket's value clears it.
+        let voided = void_line(
+            with_amount(basket()),
+            line_id(2),
+            VoidReason("mis_scan".to_owned()),
+            cashier(),
+            moment(),
+        )
+        .unwrap()
+        .0;
+        assert!(!kept(&voided));
+        let lowered = set_qty(with_amount(basket()), line_id(2), Qty::from_milli(2_000)).unwrap();
+        assert!(!kept(&lowered));
+        let discounted = discount(with_amount(basket()), pct(50_000)).unwrap().0;
+        assert!(!kept(&discounted));
+        let declined = confirm_age(
+            with_amount(with_tobacco()),
+            line_id(2),
+            false,
+            operator(),
+            moment(),
+        )
+        .unwrap()
+        .0;
+        assert!(!kept(&declined));
+        // A change that raises it keeps it: more of a line, another line, or a
+        // line's discount cleared.
+        let raised = set_qty(with_amount(basket()), line_id(2), Qty::from_milli(4_000)).unwrap();
+        assert!(kept(&raised));
+        let grown = add(
+            with_amount(basket()),
+            3,
+            &product(0x24, UnitOfMeasure::Each),
+            1_000,
+        )
+        .unwrap();
+        assert!(kept(&grown));
+        let (discounted_first, _) = discount(basket(), pct(50_000)).unwrap();
+        let cleared_line = discount(with_amount(discounted_first), pct(0)).unwrap().0;
+        assert!(kept(&cleared_line));
+        // And a share off the basket keeps its share through all of them.
+        let (shared, _) = by_manager(basket(), pct(100_000)).unwrap();
+        let shared = void_line(
+            shared,
+            line_id(2),
+            VoidReason("mis_scan".to_owned()),
+            cashier(),
+            moment(),
+        )
+        .unwrap()
+        .0;
+        assert_eq!(shared.basket_discount.unwrap().kind, pct(100_000));
     }
 }

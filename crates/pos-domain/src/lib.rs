@@ -50,7 +50,10 @@ pub use permissions::{
     Grant, GrantSet, JournalScope, Limit, PermissionError, PreparedIntentHash, Role, RoleGrants,
     StoredApprovalHandle, authorize, cap, default_grants,
 };
-pub use pricing::{DiscountCap, DiscountKind, DiscountReason, DiscountRequest, LineDiscount};
+pub use pricing::{
+    BasketDiscount, DiscountAttribution, DiscountCap, DiscountKind, DiscountReason,
+    DiscountRequest, DiscountSource, LineDiscount, PricingError, ProrationLine, prorate,
+};
 pub use receipt::{
     BuyerBlock, DocKind, FiscalBlock, FooterBlock, Language, LoyaltyBlock, MerchantBlock,
     ReceiptDiscount, ReceiptError, ReceiptHeader, ReceiptLine, ReceiptLocale, ReceiptModel,

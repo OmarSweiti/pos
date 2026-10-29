@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **58 of 121 executable microsteps fully complete (~48%)**: `1.1.0`
+Phase 1 has **59 of 121 executable microsteps fully complete (~49%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -139,10 +139,11 @@ opens domestic, on its shift and knowing whether it is training, and every refus
 chose, an age-restricted line held blocked until confirmed, and a void that says who and why),
 `1.2.4` (the scan path, completed now that a price label becomes one package in the cart),
 `1.4.4` (parking a cart and resuming it exactly as it was — only at its own till and in its own
-training mode, and rung up in the shift that takes the money), and `1.4.5` (a manual discount on a
+training mode, and rung up in the shift that takes the money), `1.4.5` (a manual discount on a
 line, never more than the line is worth and never above the actor's cap without a manager's bound
 approval, audited either way, with the caps the owner adopted — 5% for a cashier, 15% for a shift
-lead — in the shipped role grid).
+lead — in the shipped role grid), and `1.4.6` (a discount on the whole basket, divided among its
+lines to the fil by largest remainder, the tie decided by what a line is and never where it sits).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
