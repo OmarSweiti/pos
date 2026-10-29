@@ -1541,7 +1541,7 @@ pub enum Sale {
     Tendering(Tendering),
     Finalizing(Finalizing),
     Complete(CompletedSale),
-    Parked(Cart),
+    Parked(ParkedCart),                 // 1.4.4: its own type, so only a parked cart resumes
     Voided(VoidedSale),
 }
 
@@ -1583,7 +1583,7 @@ pub struct CartLine {
 ```
 
 > **As delivered at 1.4.1–1.4.2.** The enum holds the states whose data exists: `Building(Cart)`
-> and `Parked(Cart)`. Each later state arrives with the transition that reaches it — `Tendering`,
+> and `Parked`, which held a `Cart` until 1.4.4 gave it its own type (§6.1). Each later state arrives with the transition that reaches it — `Tendering`,
 > `Finalizing`, `Complete` and `Voided` at 1.4.8 — and each later field with the step that gives it
 > meaning: `Cart.basket_discounts` and `CartLine.discounts` at 1.4.5, `CartLine.price_override` at
 > 1.4.7, `CartLine.promo_group` when promotions are first captured. A field added before its rule is
@@ -1700,8 +1700,22 @@ pub fn set_buyer_tin(cart: Cart, tin: String, name: Option<String>)
 pub fn clear_buyer_tin(cart: Cart)                  -> Result<Cart, CartError>;
 pub fn set_supply_context(cart: Cart, supply: SupplyTaxContext) -> Result<Cart, CartError>;
 
-pub fn park(cart: Cart)                              -> Result<Sale, CartError>;
-pub fn resume(parked: Cart)                          -> Result<Cart, CartError>;
+/// As delivered at 1.4.4. A parked cart is its own type, so a cart being built
+/// cannot be resumed and a parked one cannot be changed until it is
+/// (`tests/ui/parked_cart_is_its_own_state.rs`). `park` and the stored form are
+/// the only ways to make one, and that form is exactly its cart's
+/// (`#[serde(transparent)]`), which is what the register reads back after a
+/// restart (E.3, 1.8.2b). `park` refuses an empty cart as `NothingToPark`.
+/// `resume` takes the till resuming it, which this section's signature did not:
+/// another register is `ParkedOnAnotherRegister`, the other training mode is
+/// `TrainingModeMismatch`, and another currency is `Money(CurrencyMismatch)`.
+/// The shift and the cashier become the till's, so a cart parked before a shift
+/// handover is paid for in the shift that takes the money, which is the open
+/// shift a completed sale must name (`schema.md` §0005); `till.opened_at` is not
+/// read, because a resumed sale began when it was first opened.
+pub struct ParkedCart(Cart);                         // `cart(&self) -> &Cart` reads it
+pub fn park(cart: Cart)                              -> Result<ParkedCart, CartError>;
+pub fn resume(parked: ParkedCart, till: &CartContext) -> Result<Cart, CartError>;
 
 pub fn begin_tender(cart: Cart, priced: PricedCart)  -> Result<Tendering, CartError>;
 pub fn back_to_building(t: Tendering)                -> Result<Cart, CartError>; // only if no tender collected
@@ -1796,6 +1810,10 @@ pub enum CartError {
                                                                LabelLineIsOnePackage(SaleLineId), // 1.4.3
     #[error("line {0} has no age waiting to be confirmed")]
                                                                AgeConfirmationNotPending(SaleLineId), // 1.4.3b
+    #[error("an empty cart cannot be parked")]                 NothingToPark,         // 1.4.4
+    #[error("sale {0} was parked on another register")]        ParkedOnAnotherRegister(SaleId), // 1.4.4
+    #[error("sale {0} was parked {parked} and this till is {till}")] // "live" or "in training mode"
+                                                               TrainingModeMismatch(SaleId, bool), // 1.4.4
     #[error(transparent)] Tax(#[from] TaxError),
     #[error(transparent)] Money(#[from] MoneyError),
 }
