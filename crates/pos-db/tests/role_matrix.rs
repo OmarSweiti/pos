@@ -85,12 +85,31 @@ fn encoded_limit(limit: Limit) -> String {
     format!(r#"{{"kind":"{}"}}"#, limit.as_str())
 }
 
-fn expected_grant(grant: Grant) -> StoredGrant {
+/// The number a role-capped cell carries beside its kind, where the registered
+/// chain configures one: merchant decisions 3.1–3.2, the caps the owner adopted
+/// on 29 October 2026, written by migration `0008`. The domain grid records
+/// which limit applies and never its number, so the number is pinned here,
+/// independently of the migration that writes it.
+fn configured_cap_ppm(role: Role, capability: &str) -> Option<i64> {
+    if capability != cap::DiscountManual::NAME {
+        return None;
+    }
+    match role {
+        Role::Cashier => Some(50_000),
+        Role::ShiftLead => Some(150_000),
+        Role::Manager | Role::Owner => None,
+    }
+}
+
+fn expected_grant(role: Role, capability: &str, grant: Grant) -> StoredGrant {
     match grant {
         Grant::Held => stored_grant("granted", None),
         Grant::HeldWithin(limit) => StoredGrant {
             decision: "granted".to_owned(),
-            limit_json: Some(encoded_limit(limit)),
+            limit_json: Some(match configured_cap_ppm(role, capability) {
+                Some(ppm) => format!(r#"{{"kind":"{}","max_percent_ppm":{ppm}}}"#, limit.as_str()),
+                None => encoded_limit(limit),
+            }),
         },
         Grant::Withheld => stored_grant("withheld", None),
         Grant::SetsTheLimit => stored_grant("sets_the_limit", None),
@@ -102,7 +121,7 @@ fn domain_cell(role: Role, capability: &str) -> StoredGrant {
         .iter()
         .find_map(|(name, grants)| (*name == capability).then_some(*grants))
         .unwrap_or_else(|| panic!("`{capability}` is not in cap::DEFAULT_MATRIX"));
-    expected_grant(grants.for_role(role))
+    expected_grant(role, capability, grants.for_role(role))
 }
 
 fn mismatches(conn: &Connection) -> rusqlite::Result<Vec<MatrixMismatch>> {
@@ -110,7 +129,10 @@ fn mismatches(conn: &Connection) -> rusqlite::Result<Vec<MatrixMismatch>> {
     for &(capability, grants) in cap::DEFAULT_MATRIX {
         for role in Role::ALL {
             let cell = cell(role, capability);
-            let previous = expected.insert(cell.clone(), expected_grant(grants.for_role(role)));
+            let previous = expected.insert(
+                cell.clone(),
+                expected_grant(role, capability, grants.for_role(role)),
+            );
             assert!(
                 previous.is_none(),
                 "the domain matrix declares the same cell more than once: {cell:?}"
@@ -196,8 +218,8 @@ fn seeded_role_capability_rows_equal_the_domain_default_matrix() -> rusqlite::Re
     let baseline_mismatches = mismatches(&baseline.conn)?;
     assert!(
         baseline_mismatches.is_empty(),
-        "migration 0004's seed must match the domain matrix before sensitivity probes run: \
-         {baseline_mismatches:#?}"
+        "the registered chain's seed (0004, and 0008's caps) must match the domain \
+         matrix before sensitivity probes run: {baseline_mismatches:#?}"
     );
 
     let added = fresh_database("added.db");
@@ -328,7 +350,7 @@ fn seeded_role_capability_rows_equal_the_domain_default_matrix() -> rusqlite::Re
         limit_expected,
         StoredGrant {
             decision: "granted".to_owned(),
-            limit_json: Some(encoded_limit(Limit::RoleCap)),
+            limit_json: Some(r#"{"kind":"role_cap","max_percent_ppm":50000}"#.to_owned()),
         },
         "cashier/discount.manual must remain bounded by role_cap for this probe"
     );

@@ -1,0 +1,20 @@
+-- Mirrors SQLite 0008_discount_caps.sql (conventions §9 rule 4).
+--
+-- This migration creates nothing. As with the 0005, 0006 and 0007 mirrors, that
+-- is the finding, recorded here because a committed migration cannot be
+-- reopened to explain itself later.
+--
+-- 0008 changes two rows of `role_capability`: the cashier's and the shift
+-- lead's `discount.manual` cells, which now carry the caps the owner adopted
+-- (merchant decisions 3.1–3.3) as {"kind":"role_cap","max_percent_ppm":50000}
+-- and {"kind":"role_cap","max_percent_ppm":150000}.
+--
+-- The server has no `role_capability` table. The 0004 mirror deferred it, with
+-- `role`, `app_user` and `user_role`, as tenant-owned and blocked on the shared
+-- multi-tenant decision that ref/schema.md §"Shared multi-tenant decision for
+-- sign-off" records as still awaiting owner sign-off "before the first Phase-3
+-- server migration". So there is no row here to update.
+--
+-- What this leaves the migration that creates the table: it seeds the cells as
+-- the register now holds them, these two numbers included, so a register and
+-- the server hold the same grid when the reference sync first runs.

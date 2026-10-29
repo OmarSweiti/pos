@@ -3471,6 +3471,64 @@ migration fixture also begins with products and barcodes created before `0007`.
 
 ---
 
+## 0008 — discount caps  ·  Phase 1, microstep 1.4.5  ·  SHIPPED
+
+Merchant decisions 3.1–3.3, answered: the owner adopted the defaults on 29 October 2026, a cashier
+5%, a shift lead 15% and a manager no cap. `0004` left the number out of the cashier's
+`discount.manual` cell because nobody had answered, and granted the shift lead the capability with
+no cap. `0008` writes both numbers as `max_percent_ppm`, beside the limit's `kind` as `0004`'s
+header promised, and caps the shift lead's cell. Each `UPDATE` matches the exact row `0004`
+shipped, so a cell a merchant has already edited stays as they set it
+(`migration_0008_leaves_a_merchant_s_edited_cell_as_set`).
+
+`pos_db::repo::role::RoleRepository::discount_cap` reads a role's cell back as a
+`pos_domain::DiscountCap`. A role-capped cell with no whole number, a number outside 0–1,000,000
+ppm, a limit of another kind or a column that is not JSON is `DbError::StoredRoleLimitInvalid`,
+never a default: a cap misread is money a cashier can give away. Combining a user's several roles
+is the session's, at 1.8.x.
+
+The server has no `role_capability` yet (the `0004` mirror deferred it as tenant-owned), so
+`20261029120000_discount_caps.sql` creates nothing and records that the migration creating the table
+must seed these two numbers with it.
+
+```sql
+-- 0008: the manual-discount caps the owner adopted (merchant decisions
+-- 3.1–3.3, microstep 1.4.5), written where 0004's header said they would land.
+--
+-- 0004 seeded `discount.manual` for the cashier as {"kind":"role_cap"} with no
+-- number, because the merchant had not answered, and granted it to the shift
+-- lead with no cap at all. On 29 October 2026 the owner adopted the
+-- questionnaire's defaults: cashier 5%, shift lead 15%, manager unlimited. The
+-- number joins the kind as the sibling key 0004 promised, `max_percent_ppm`
+-- (5% is 50000), and the shift lead's cell becomes role-capped like the
+-- cashier's. The manager's cell stays granted with no limit, and the owner's
+-- stays `sets_the_limit`: the owner sets these numbers and runs no till.
+--
+-- Each UPDATE matches the exact row 0004 shipped. A cell a merchant has
+-- already changed under `user.admin` is left as they set it: a migration
+-- writes the vendor default, never over the merchant's own answer.
+--
+-- `role_capability` is reference data, not a fact table: no I-4 trigger guards
+-- it, and nothing appends to an outbox here. The server does not have the
+-- table yet; its mirror records what the table must carry when it does.
+
+UPDATE role_capability
+   SET limit_json = '{"kind":"role_cap","max_percent_ppm":50000}'
+ WHERE role_id = X'01A05F6A580070008000000000000001'   -- cashier
+   AND capability = 'discount.manual'
+   AND decision = 'granted'
+   AND limit_json = '{"kind":"role_cap"}';
+
+UPDATE role_capability
+   SET limit_json = '{"kind":"role_cap","max_percent_ppm":150000}'
+ WHERE role_id = X'01A05F6A580070008000000000000002'   -- shift lead
+   AND capability = 'discount.manual'
+   AND decision = 'granted'
+   AND limit_json IS NULL;
+```
+
+---
+
 ## 0009 — shifts and cash  ·  Phase 2, microstep 2.4.1
 
 ```sql
