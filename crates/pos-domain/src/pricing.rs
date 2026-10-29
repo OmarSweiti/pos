@@ -323,11 +323,14 @@ pub enum PricingError {
 /// Largest remainder: each line takes its exact share rounded down, and the
 /// fils left over go one each to the lines whose exact shares were cut the
 /// most. Where two lines were cut equally, the line that sorts first by
-/// `(tax_category_id, product_id, unit_price_minor, qty_milli)` takes it —
-/// never the one scanned first, and never the one whose id sorts first. On a
-/// basket of several tax rates a fil of discount moves tax, so a tie broken by
-/// position would charge two cashiers differently for the same items (§6.2).
-/// Exact duplicates are interchangeable, and stay in the order given.
+/// `(tax_category_id, product_id, unit_price_minor, qty_milli)`, then by its
+/// value, takes it — never the one scanned first, and never the one whose id
+/// sorts first. On a basket of several tax rates a fil of discount moves tax,
+/// so a tie broken by position would charge two cashiers differently for the
+/// same items (§6.2). The value is in the key because two lines of one product
+/// at one price and quantity can be worth different amounts, their own
+/// discounts differing, and still be cut equally. Only lines alike in all of
+/// it, which are interchangeable, keep the order given.
 ///
 /// A line worth nothing takes nothing. [`Money::split_proportional_by`] gives
 /// its leftover fils to the first lines it is handed, so it is handed the
@@ -380,16 +383,16 @@ pub fn prorate(amount: Money, lines: &[ProrationLine]) -> Result<Vec<Money>, Pri
         .map(|(index, line)| {
             let weight = line.value.minor();
             let cut = magnitude * u128::from(weight.unsigned_abs()) % total;
-            (Reverse(cut), line.content(), index, weight)
+            (Reverse(cut), line.content(), weight, index)
         })
         .collect();
     ranked.sort_unstable();
-    let weights: Vec<i64> = ranked.iter().map(|(.., weight)| *weight).collect();
+    let weights: Vec<i64> = ranked.iter().map(|(_, _, weight, _)| *weight).collect();
     let shares = amount.split_proportional_by(&weights)?;
     let mut placed: Vec<(usize, Money)> = ranked
         .into_iter()
         .zip(shares)
-        .map(|((_, _, index, _), share)| (index, share))
+        .map(|((.., index), share)| (index, share))
         .collect();
     placed.sort_unstable_by_key(|(index, _)| *index);
     Ok(placed.into_iter().map(|(_, share)| share).collect())
@@ -588,26 +591,30 @@ mod tests {
         assert_eq!(minors(&prorate(jod(0), &[]).unwrap()), Vec::<i64>::new());
     }
 
-    /// A pool of up to four kinds of line, and a basket of up to twelve drawn
-    /// from it, so baskets repeat what they hold and cut equally often.
+    /// Up to four kinds of line and up to four values, and a basket of up to
+    /// twelve lines each drawn from both, so baskets repeat what they hold,
+    /// hold lines alike but for what they are worth, and cut equally often.
     fn baskets() -> impl Strategy<Value = Vec<ProrationLine>> {
         let kind = (
             1u128..=3,
             proptest::option::of(1u128..=3),
             0i64..=5_000,
             1i64..=5_000,
-            0i64..=10_000_000,
         );
         (
             proptest::collection::vec(kind, 1..=4),
-            proptest::collection::vec(any::<Index>(), 1..=12),
+            // Mostly a few fils, where unequal values are cut equally often;
+            // sometimes thousands of dinars.
+            proptest::collection::vec(prop_oneof![3 => 0i64..=12, 1 => 0i64..=10_000_000], 1..=4),
+            proptest::collection::vec((any::<Index>(), any::<Index>()), 1..=12),
         )
-            .prop_map(|(pool, picks)| {
+            .prop_map(|(kinds, values, picks)| {
                 picks
                     .iter()
                     .enumerate()
-                    .map(|(n, pick)| {
-                        let (tax, product, price, milli, value) = *pick.get(&pool);
+                    .map(|(n, (what, worth))| {
+                        let (tax, product, price, milli) = *what.get(&kinds);
+                        let value = *worth.get(&values);
                         ProrationLine {
                             line_id: SaleLineId::from_uuid(Uuid::from_u128(0x1000 + n as u128)),
                             value: jod(value),
@@ -650,7 +657,7 @@ mod tests {
         /// the discount. Each line takes its exact share rounded down or up,
         /// never more than it is worth, and the fils left over go to the lines
         /// cut the most — between two cut equally, to the one that sorts first
-        /// by what it is.
+        /// by what it is and then by what it is worth.
         #[test]
         fn prop_basket_discount_prorates_to_the_fil((lines, amount) in discounted_baskets()) {
             let shares = prorate(jod(amount), &lines).unwrap();
@@ -671,7 +678,7 @@ mod tests {
                     let up_j = i128::from(sj.minor()) * total > i128::from(amount) * i128::from(lj.value.minor());
                     if up_i && !up_j && lj.value.minor() > 0 {
                         let (ci, cj) = (cut(li), cut(lj));
-                        prop_assert!(ci > cj || (ci == cj && (li.content() < lj.content() || li.content() == lj.content() && i < j)),
+                        prop_assert!(ci > cj || (ci == cj && (li.content(), li.value.minor(), i) < (lj.content(), lj.value.minor(), j)),
                             "line {i} took the fil over line {j}");
                     }
                 }

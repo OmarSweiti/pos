@@ -1846,12 +1846,15 @@ difference is visible to ISTD because the fil becomes a per-line percentage in t
 same claim as same inputs in any order.
 
 > **As delivered at 1.4.6.** The key is `(tax_category_id, product_id, unit_price_minor,
-> qty_milli)`, as the phase file's 1.4.6 specifies, and **not** `line_id`. Ids are minted in scan
+> qty_milli)`, as the phase file's 1.4.6 specifies, then the line's value, and **not** `line_id`.
+> The value is there because two lines of one product at one price and quantity can be worth
+> different amounts, their own discounts differing, and still be cut equally: without it their tie
+> fell to position, which 1.4.6's evidence harness found and its properties now generate. Ids are minted in scan
 > order, so a tie broken by id is a tie broken by position, which is what this paragraph refuses;
 > `prop_proration_is_invariant_under_fresh_line_ids` holds it. `pricing::prorate` is true largest
 > remainder: each line takes its exact share rounded down, and the leftover fils go to the lines whose
-> exact shares were cut the most, the key deciding only between lines cut equally. Exact duplicates
-> are interchangeable and keep the order given. `Money::split_proportional_by` gives leftover fils to
+> exact shares were cut the most, the key deciding only between lines cut equally. Lines alike in all
+> of it are interchangeable and keep the order given. `Money::split_proportional_by` gives leftover fils to
 > the first lines it is handed, so `prorate` hands it the lines in that order. The weights are each
 > line's value after its own discount, so no share takes a line below nothing (E.19).
 
