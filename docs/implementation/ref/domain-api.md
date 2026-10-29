@@ -2264,7 +2264,7 @@ capabilities! {
     // The open-price line (ref/domain-api.md §6.5), capped and audited.
     DepartmentSale       => "sale.department"        { cashier: yes, shift_lead: yes, manager: yes, owner: no },
     LineVoid             => "line.void"              { cashier: yes, shift_lead: yes, manager: yes, owner: no },
-    DiscountManual       => "discount.manual"        { cashier: role_cap, shift_lead: yes, manager: yes, owner: sets_the_limit },
+    DiscountManual       => "discount.manual"        { cashier: role_cap, shift_lead: role_cap, manager: yes, owner: sets_the_limit },
     PriceOverride        => "price.override"         { cashier: no, shift_lead: yes, manager: yes, owner: sets_the_limit },
     RefundReceipted      => "refund.receipted"       { cashier: refund_threshold, shift_lead: yes, manager: yes, owner: sets_the_limit },
     RefundAboveThreshold => "refund.above_threshold" { cashier: no, shift_lead: no, manager: yes, owner: no },
@@ -2640,7 +2640,7 @@ without answering for all thirty-two.
 | `sale.reprint` | ✓ | ✓ | ✓ | ✓ |
 | `sale.void` | — | ✓ | ✓ | — |
 | `line.void` | ✓ | ✓ | ✓ | — |
-| `discount.manual` | ✓ *(role cap)* | ✓ | ✓ | sets the caps |
+| `discount.manual` | ✓ *(role cap)* | ✓ *(role cap)* | ✓ | sets the caps |
 | `price.override` | — | ✓ | ✓ | sets floor and ceiling |
 | `refund.receipted` | ✓ *(≤ threshold)* | ✓ | ✓ | sets the threshold |
 | `refund.above_threshold` | — | — | ✓ | — |

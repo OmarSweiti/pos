@@ -86,11 +86,19 @@ fact-ness is a design judgement rather than something the DDL records.
 | 0005 | `0005_sale_columns_and_sequences.sql` | sale identity/training/rounding columns, the minimal shift skeleton, checkout recovery, receipt artifacts, tender transition facts, scoped counters | 1 |
 | 0006 | `0006_stock_ledger.sql` | stock ledger + rebuildable on-hand/WAC cache | 1 |
 | 0007 | `0007_search_and_seed.sql` | FTS5 index + triggers, price-embedded barcode rules | 1 |
-| 0008 | `0008_shifts_and_cash.sql` | blind-close detail, cash locations and movements, counts, drawer events, Z reports | 2 |
-| 0009 | `0009_refunds_and_returns.sql` | immutable refund/exchange links, restock decisions, refund policy, minimal store credit | 2 |
-| 0010 | `0010_fiscal.sql` | fiscal queue, results, dead letters, reconciliation | 2 |
-| 0011 | `0011_customers_loyalty.sql` | customers, consent notices/events, privacy tombstones, loyalty ledger, offline authorization leases | 3 |
-| 0012 | `0012_pricing_promotions_supply.sql` | price lists, versioned promotions, supplier tax invoices, receipts, counts, transfers, filing periods | 4 |
+| 0008 | `0008_discount_caps.sql` | the adopted manual-discount caps in `role_capability.limit_json`, and the shift lead's capped cell | 1 |
+| 0009 | `0009_shifts_and_cash.sql` | blind-close detail, cash locations and movements, counts, drawer events, Z reports | 2 |
+| 0010 | `0010_refunds_and_returns.sql` | immutable refund/exchange links, restock decisions, refund policy, minimal store credit | 2 |
+| 0011 | `0011_fiscal.sql` | fiscal queue, results, dead letters, reconciliation | 2 |
+| 0012 | `0012_customers_loyalty.sql` | customers, consent notices/events, privacy tombstones, loyalty ledger, offline authorization leases | 3 |
+| 0013 | `0013_pricing_promotions_supply.sql` | price lists, versioned promotions, supplier tax invoices, receipts, counts, transfers, filing periods | 4 |
+
+**Renumbered on 29 October 2026, at the owner's direction.** Merchant decisions 3.1–3.3 were
+answered at microstep 1.4.5, and writing them needs a migration: `0004` seeded the cashier's
+`discount.manual` cell without a number and the shift lead's without a cap, and a committed
+migration is never edited. `0008` is therefore the discount caps, and every migration still planned
+moved up one: shifts and cash `0009`, refunds `0010`, fiscal `0011`, customers `0012`, the Phase-4
+spine `0013`. No committed file changed, and the phase files name the new numbers.
 
 Each migration is complete when its file is first committed. `0003` commits at 1.2.1 with the
 structural tax vocabulary and no guessed rates. Microstep 1.3.7 later imports the reviewed,
@@ -100,7 +108,7 @@ evidence that was not available when the migration committed.
 explicit decision for every one of their 128 (role, capability) cells; provisioning creates the
 merchant's users and their `user_role` grants against those rows rather than inventing a role per
 install. `0005` owns the complete tender-type catalogue with unsupported tenders inactive. A later microstep verifies, configures or consumes those rows; it never edits the earlier
-migration to append them. The three Phase-4 workstreams consume one complete `0012` schema-spine
+migration to append them. The three Phase-4 workstreams consume one complete `0013` schema-spine
 migration rather than successively reopening it.
 
 ---
@@ -2666,7 +2674,7 @@ END;
 > plus a repair on a sequence required to be gapless — so `2.7.4` MUST re-check 6.9 before it
 > allocates the first value. That standing obligation is what this block now carries.
 > Default until answered: the store-scoped counter keyed `('store', store_id, 'fiscal_icv')`
-> described under `0010`.
+> described under `0011`.
 > Owner: `2.7.0` ratifies 6.9, arriving through #69 on a timeline outside this project's control.
 > Tracked as **#113**, which stays **open**: what is settled is what `0005` does, not what the ICV
 > namespace is. Source that settles it: the official ISTD business rules or a written ISTD
@@ -3463,7 +3471,65 @@ migration fixture also begins with products and barcodes created before `0007`.
 
 ---
 
-## 0008 — shifts and cash  ·  Phase 2, microstep 2.4.1
+## 0008 — discount caps  ·  Phase 1, microstep 1.4.5  ·  SHIPPED
+
+Merchant decisions 3.1–3.3, answered: the owner adopted the defaults on 29 October 2026, a cashier
+5%, a shift lead 15% and a manager no cap. `0004` left the number out of the cashier's
+`discount.manual` cell because nobody had answered, and granted the shift lead the capability with
+no cap. `0008` writes both numbers as `max_percent_ppm`, beside the limit's `kind` as `0004`'s
+header promised, and caps the shift lead's cell. Each `UPDATE` matches the exact row `0004`
+shipped, so a cell a merchant has already edited stays as they set it
+(`migration_0008_leaves_a_merchant_s_edited_cell_as_set`).
+
+`pos_db::repo::role::RoleRepository::discount_cap` reads a role's cell back as a
+`pos_domain::DiscountCap`. A role-capped cell with no whole number, a number outside 0–1,000,000
+ppm, a limit of another kind or a column that is not JSON is `DbError::StoredRoleLimitInvalid`,
+never a default: a cap misread is money a cashier can give away. Combining a user's several roles
+is the session's, at 1.8.x.
+
+The server has no `role_capability` yet (the `0004` mirror deferred it as tenant-owned), so
+`20261029120000_discount_caps.sql` creates nothing and records that the migration creating the table
+must seed these two numbers with it.
+
+```sql
+-- 0008: the manual-discount caps the owner adopted (merchant decisions
+-- 3.1–3.3, microstep 1.4.5), written where 0004's header said they would land.
+--
+-- 0004 seeded `discount.manual` for the cashier as {"kind":"role_cap"} with no
+-- number, because the merchant had not answered, and granted it to the shift
+-- lead with no cap at all. On 29 October 2026 the owner adopted the
+-- questionnaire's defaults: cashier 5%, shift lead 15%, manager unlimited. The
+-- number joins the kind as the sibling key 0004 promised, `max_percent_ppm`
+-- (5% is 50000), and the shift lead's cell becomes role-capped like the
+-- cashier's. The manager's cell stays granted with no limit, and the owner's
+-- stays `sets_the_limit`: the owner sets these numbers and runs no till.
+--
+-- Each UPDATE matches the exact row 0004 shipped. A cell a merchant has
+-- already changed under `user.admin` is left as they set it: a migration
+-- writes the vendor default, never over the merchant's own answer.
+--
+-- `role_capability` is reference data, not a fact table: no I-4 trigger guards
+-- it, and nothing appends to an outbox here. The server does not have the
+-- table yet; its mirror records what the table must carry when it does.
+
+UPDATE role_capability
+   SET limit_json = '{"kind":"role_cap","max_percent_ppm":50000}'
+ WHERE role_id = X'01A05F6A580070008000000000000001'   -- cashier
+   AND capability = 'discount.manual'
+   AND decision = 'granted'
+   AND limit_json = '{"kind":"role_cap"}';
+
+UPDATE role_capability
+   SET limit_json = '{"kind":"role_cap","max_percent_ppm":150000}'
+ WHERE role_id = X'01A05F6A580070008000000000000002'   -- shift lead
+   AND capability = 'discount.manual'
+   AND decision = 'granted'
+   AND limit_json IS NULL;
+```
+
+---
+
+## 0009 — shifts and cash  ·  Phase 2, microstep 2.4.1
 
 ```sql
 -- 0005 already owns the immutable opening fact, minimal close event and one-open
@@ -3834,7 +3900,7 @@ END;
 
 ---
 
-## 0009 — refunds and returns  ·  Phase 2, microstep 2.3.1
+## 0010 — refunds and returns  ·  Phase 2, microstep 2.3.1
 
 ```sql
 -- Post-completion "void" DOES NOT EXIST. It is a same-day full refund document
@@ -4128,7 +4194,7 @@ CREATE TABLE document_link (
 
 -- Store credit is needed by Phase 2 receiptless-return policy, so its minimum
 -- ledger belongs here rather than waiting for the customer migration. Identity
--- may be anonymous; 0011 adds the optional customer link after `customer` exists.
+-- may be anonymous; 0012 adds the optional customer link after `customer` exists.
 CREATE TABLE stored_value_instrument (
   id             BLOB PRIMARY KEY,
   org_id         BLOB NOT NULL REFERENCES org(id),
@@ -4293,7 +4359,7 @@ END;
 
 ---
 
-## 0010 — fiscal  ·  Phase 2, microstep 2.7.4
+## 0011 — fiscal  ·  Phase 2, microstep 2.7.4
 
 Full pipeline design in [`fiscal-jofotara.md`](fiscal-jofotara.md).
 
@@ -4479,8 +4545,8 @@ BEGIN
   SELECT RAISE(ABORT, 'fiscal payload allocation must match its store identity and durable commit');
 END;
 
--- `credit_note_context` is created in 0009 so receiptless/non-fiscal returns can
--- exist without the fiscal migration. Once 0010 is installed, a fiscal source
+-- `credit_note_context` is created in 0010 so receiptless/non-fiscal returns can
+-- exist without the fiscal migration. Once 0011 is installed, a fiscal source
 -- must copy its locally generated UUID exactly; a non-fiscal source must not
 -- invent one.
 CREATE TRIGGER credit_note_original_fiscal_uuid_matches
@@ -4959,7 +5025,7 @@ distinct monotonic ICVs without changing either `fiscal_uuid`.
 
 ---
 
-## 0011 — customers and loyalty  ·  Phase 3, microstep 3.4.1
+## 0012 — customers and loyalty  ·  Phase 3, microstep 3.4.1
 
 PDPL is the spec for this migration (master plan B.3).
 
@@ -5336,7 +5402,7 @@ BEGIN
     updated_at = NEW.occurred_at;
 END;
 
--- 0009 owns the minimal stored-value ledger. Phase 3 may associate an
+-- 0010 owns the minimal stored-value ledger. Phase 3 may associate an
 -- instrument with a customer without moving or rewriting any ledger entry.
 ALTER TABLE stored_value_instrument
   ADD COLUMN customer_id BLOB REFERENCES customer(id);
@@ -5455,7 +5521,7 @@ END;
 
 ---
 
-## 0012 — pricing, promotions, supply  ·  Phase 4, microsteps 4.1.1, 4.2.1, 4.4.1
+## 0013 — pricing, promotions, supply  ·  Phase 4, microsteps 4.1.1, 4.2.1, 4.4.1
 
 ```sql
 CREATE TABLE price_list (

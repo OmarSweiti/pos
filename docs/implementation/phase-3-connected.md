@@ -3,7 +3,7 @@
 > **Exit:** two registers and a back office converge — the server holding exactly the union of what the registers produced, every reference table projecting identically on all three nodes — through a week of offline chaos; customers exist under PDPL-grade consent; the server is something a person operates rather than something that happens to be running; and a new register can be provisioned from scratch by someone who is not you.
 
 **Effort:** 11–14 weeks.
-**Scope from the master plan:** C.8 customers & loyalty, C.13 back office core, C.14 sync, migration **0011**.
+**Scope from the master plan:** C.8 customers & loyalty, C.13 back office core, C.14 sync, migration **0012**.
 **Plus:** gap G-3 device provisioning, licensing/entitlements (blueprint §7), Sentry (gap G-8's remote half), **back-office human authentication and the tenancy posture** ([`ref/security-compliance.md`](ref/security-compliance.md) §5a and §5b), and **group 3.10 — operating the server**, which nothing in the plan owned and Phase 4's gate depends on entirely.
 
 Until now every register has been an island, and that was deliberate — register autonomy is the product's spine and building it first means sync can never become a runtime dependency. This phase adds coordination without adding dependency: **a cut network cable must still change nothing about the ability to sell.**
@@ -42,7 +42,7 @@ Extend the existing `PushBatch` / `Change` / `PullRequest` skeleton with `PushRe
 **Tests:** `protocol_types_roundtrip_json` · `entity_names_are_stable` (a golden — renaming an entity is a wire break) · `an_unsupported_protocol_version_fails_the_batch_and_applies_nothing` (E.88) · `a_version_mismatch_never_dead_letters_a_fact` · `a_too_old_register_keeps_selling_and_says_so_in_device_health`
 
 ### 3.1.2 — Server schema mirror, with tenancy in the schema
-**Files:** `apps/server/migrations/` (mirroring SQLite 0002–0011), `scripts/verify-pg-migrations.py`, `scripts/tests/verify_pg_migrations_test.py` (new), `crates/pos-db/tests/sync_authority.rs` (new), `apps/server/tests/tenancy.rs` (new)
+**Files:** `apps/server/migrations/` (mirroring SQLite 0002–0012), `scripts/verify-pg-migrations.py`, `scripts/tests/verify_pg_migrations_test.py` (new), `crates/pos-db/tests/sync_authority.rs` (new), `apps/server/tests/tenancy.rs` (new)
 Per [`ref/schema.md`](ref/schema.md) "Postgres mirror". Four things the SQLite side does not have:
 
 - a `BEFORE INSERT OR UPDATE` trigger on every reference table assigning `version = nextval('change_seq')`, so the pull cursor cannot drift because someone forgot to bump it — **insert as well as update**, or a newly inserted row sits at version 0 and never pulls;
@@ -176,9 +176,9 @@ The answer is a fetch, not replication: the server owns a `reprint_bundle` conta
 
 *PDPL is the specification for this group. Read [`ref/security-compliance.md`](ref/security-compliance.md) §2 first.*
 
-### 3.4.1 — Migration `0011`
-**Files:** `crates/pos-db/migrations/0011_customers_loyalty.sql`
-Per [`ref/schema.md`](ref/schema.md) §0011: customers, immutable `consent_notice` records, the append-only `consent_event` ledger, privacy request cases and events, server-issued `privacy_tombstone`, the loyalty ledger, the offline `authorization_lease`, and `org_recovery_envelope`.
+### 3.4.1 — Migration `0012`
+**Files:** `crates/pos-db/migrations/0012_customers_loyalty.sql`
+Per [`ref/schema.md`](ref/schema.md) §0012: customers, immutable `consent_notice` records, the append-only `consent_event` ledger, privacy request cases and events, server-issued `privacy_tombstone`, the loyalty ledger, the offline `authorization_lease`, and `org_recovery_envelope`.
 
 > ⚠️ **OPEN — blocks 3.4.1.** For this deployment, which entity is controller, which is processor, who is a recipient, is a DPO required, and is the Personal Data Processing Register entry required and complete? Default until answered: the schema may migrate, but customer capture, consent collection and customer-PII sync remain disabled.
 > Owner: 3.4.1. Source that settles it: the current MoDEE Personal Data Processing Register instructions and dated Jordanian counsel advice for the deployed roles.

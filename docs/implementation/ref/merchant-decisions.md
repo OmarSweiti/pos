@@ -86,7 +86,7 @@ Print this. Sit with the merchant. Fill it in. Date it. A decision made by a dev
 | # | Question | Default | Answer | Lives in | Step |
 |---|---|---|---|---|---|
 | 3.1 | Maximum manual discount — cashier | **5%** | **5%** — the default, adopted by the owner (29 October 2026). The merchant may revise it, which is an edit of the cashier's `discount.manual` row. | `role_capability.limit_json` | 1.4.5 |
-| 3.2 | Maximum manual discount — shift lead | **15%** | **15%** — the default, adopted by the owner (29 October 2026). The shift lead's grid cell holds `discount.manual` uncapped until 1.4.5's second half caps it. | same | 1.4.5 |
+| 3.2 | Maximum manual discount — shift lead | **15%** | **15%** — the default, adopted by the owner (29 October 2026). Migration `0008` caps the shift lead's `discount.manual` cell, which `0004` had granted uncapped. | same | 1.4.5 |
 | 3.3 | Maximum manual discount — manager | **unlimited** | **unlimited** — the default, adopted by the owner (29 October 2026). | same | 1.4.5 |
 | 3.4 | Price-override floor | **cost** | | `setting price.override_floor` | 1.4.7 |
 | 3.5 | Are any items subject to a **ministry price ceiling**? ⚖ | **none** | | `product.max_price_minor` | 4.6.3 |

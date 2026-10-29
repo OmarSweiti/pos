@@ -44,7 +44,7 @@ An earlier revision of this document said the electronic controller/processor re
 |---|---|---|
 | Explicit informed consent | consent is an **append-only event**, not a boolean and not a mutable row: kind, the immutable notice it references, timestamp, who captured it, which channel | `consent_event`; microstep 3.4.2 |
 | Purpose limitation | consent kinds are distinct — `loyalty_terms`, `marketing`, `data_processing` — and each feature checks its own | `prop`-tested per feature |
-| Minimal collection | name, phone, email, consent events. **No ID numbers** unless a real requirement emerges | schema `0011` |
+| Minimal collection | name, phone, email, consent events. **No ID numbers** unless a real requirement emerges | schema `0012` |
 | Right of access | *export my data*: profile + consent events + purchase history + loyalty ledger, one file, complete against the inventory below | 3.4.5 |
 | Right of correction | back-office edit with a full audit trail | 3.6 |
 | Right of erasure | **anonymisation** — null the person, keep the immutable financial facts against the anonymised id; server-authoritative and monotonic, so a restore cannot resurrect the identity | 3.4.4 |

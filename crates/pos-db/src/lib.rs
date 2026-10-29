@@ -143,6 +143,8 @@ pub enum DbError {
     ProductRetired(pos_domain::ProductId),
     #[error("stored product is malformed: {reason}")]
     StoredProductInvalid { reason: String },
+    #[error("stored role limit is malformed: {reason}")]
+    StoredRoleLimitInvalid { reason: String },
     #[error(
         "refusing to record scale verification evidence with no delivery \
          envelope naming it: write the commit and its manifest first, in the \
@@ -241,6 +243,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0005_sale_columns_and_sequences.sql"),
     include_str!("../migrations/0006_stock_ledger.sql"),
     include_str!("../migrations/0007_search_and_seed.sql"),
+    include_str!("../migrations/0008_discount_caps.sql"),
 ];
 
 /// The schema version this build understands: the number of migrations it

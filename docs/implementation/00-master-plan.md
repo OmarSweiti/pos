@@ -56,7 +56,7 @@ is superseded, and what is still open — is **§4a** below. Read §4a before ac
 |---|---|
 | [`ref/plan-validation.md`](ref/plan-validation.md) | the audit of record and every source. §4a below, not this file, is the current correction ledger |
 | [`ref/domain-api.md`](ref/domain-api.md) | every `pos-domain` type and signature |
-| [`ref/schema.md`](ref/schema.md) | migrations 0002→0012, SQLite and Postgres. **Authoritative for every migration number** |
+| [`ref/schema.md`](ref/schema.md) | migrations 0002→0013, SQLite and Postgres. **Authoritative for every migration number** |
 | [`ref/tax-jordan.md`](ref/tax-jordan.md) | GST as an engine: categories, rates-as-data, rounding, the sales-side reconciliation |
 | [`ref/fiscal-jofotara.md`](ref/fiscal-jofotara.md) | the highest-risk component in the product |
 | [`ref/ipc-contract.md`](ref/ipc-contract.md) | every Tauri command, its capability, its audit |
@@ -179,7 +179,7 @@ A reader arriving from a source plan will meet every left-hand column as though 
 | Master-plan C.6 expected-cash formula | master plan C.6 | [`ref/domain-api.md`](ref/domain-api.md) §11. The old formula omitted change given out, omitted two of five movement kinds, and double-counted cash rounding |
 | Master-plan C.10 default permission matrix | master plan C.10 | [`ref/domain-api.md`](ref/domain-api.md) §8.2 — the full grid over `cap::ALL`. C.10 is 15 prose rows bundling several capability strings each; it is not a usable fixture |
 | Master-plan J.3: a defective claim "may bypass the window per policy" | master plan J.3 | Interim default pending the counsel-owned OPEN item at 2.3.2: only `ReturnReason::Defective` bypasses `window_days`, under audited `refund.outside_window`; `Damaged`, `ChangeOfMind`, and `WrongItem` remain subject to the store window. The default is not a settled statement of Jordanian law |
-| Master-plan J.1: store credit is Phase 4 | master plan J.1 | The **minimum** instrument — issue, redeem, balance — is Phase 2 migration `0009`, because Phase 2's receiptless-return default already depends on it. Gift cards stay Phase 4 |
+| Master-plan J.1: store credit is Phase 4 | master plan J.1 | The **minimum** instrument — issue, redeem, balance — is Phase 2 migration `0010`, because Phase 2's receiptless-return default already depends on it. Gift cards stay Phase 4 |
 | Blueprint's "3-2-1 backups" as Phase-5 scope | blueprint §10 | Restored as microstep `1.8.6b`: a second, off-machine destination, verified, with its age on device health |
 | Blueprint's WebDriver packaged-app smoke suite | blueprint §8 | Restored as microstep `2.9.5`. It was dropped without a reason, leaving the only artefact a merchant runs as the one nothing executes |
 | `sale_tender` settlement columns mutating after completion | `0002_sale_integrity.sql` | `tender_status_event` — an append-only transition fact, with `tender_status_current` as a rebuildable projection. `0003` closes the shipped exception |

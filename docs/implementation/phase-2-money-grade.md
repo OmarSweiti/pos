@@ -3,7 +3,7 @@
 > **Exit:** the register takes cards that reconcile to the fil, handles returns without being defrauded, closes a shift that balances, and produces fiscal documents that pass every check short of the ISTD network.
 
 **Effort:** 10–13 weeks.
-**Scope from the master plan:** C.4 card, C.5 returns/refunds/voids, C.6 shifts & cash, C.11 fiscal pipeline, C.12 X/Z reports, D screens 6–9, migrations **0008–0010**, diagnostics.
+**Scope from the master plan:** C.4 card, C.5 returns/refunds/voids, C.6 shifts & cash, C.11 fiscal pipeline, C.12 X/Z reports, D screens 6–9, migrations **0009–0011**, diagnostics.
 **Plus:** microstep **2.7.0** — obtain and pin the official ISTD specification, a precondition of everything fiscal; the minimum store-credit instrument Phase 2's own refund policy already depends on; and the packaged-application smoke suite the blueprint asked for and the implementation set dropped.
 
 This phase is where the product stops being a demo. Every feature in it exists because money moves in a direction someone can exploit, or because a device lies about what happened.
@@ -39,12 +39,12 @@ authoritative for every migration number, Phase 2 authors three:
 
 | File | Written by | Must be on `development` before |
 |---|---|---|
-| `0008_shifts_and_cash.sql` | **2.4.1** | 2.3.1 branches |
-| `0009_refunds_and_returns.sql` | **2.3.1** | 2.7.4 branches |
-| `0010_fiscal.sql` | **2.7.4** | Phase 3 |
+| `0009_shifts_and_cash.sql` | **2.4.1** | 2.3.1 branches |
+| `0010_refunds_and_returns.sql` | **2.3.1** | 2.7.4 branches |
+| `0011_fiscal.sql` | **2.7.4** | Phase 3 |
 
 So the *behavioural* work of group 2.3 may run whenever, but its **migration** lands after 2.4.1's.
-Cut the group-2.4 branch first, merge it, then branch group 2.3. Authoring `0009` before `0008`
+Cut the group-2.4 branch first, merge it, then branch group 2.3. Authoring `0010` before `0009`
 exists produces a number collision that a compensating migration cannot fully undo, and
 `just verify-schema` rejects the gap on the spot.
 
@@ -166,10 +166,10 @@ A `Pending` wallet tender is therefore never silently dropped and never silently
 
 *The fraud-and-money feature. Most rules here are anti-abuse.*
 
-### 2.3.1 — Migration `0009`
+### 2.3.1 — Migration `0010`
 **Depends on:** 2.4.1 merged — see "the schema lane" above.
-**Files:** `crates/pos-db/migrations/0009_refunds_and_returns.sql`
-Per [`ref/schema.md`](ref/schema.md) §0009: immutable refund/exchange links, restock decisions, the refund policy, the defect-resolution facts, and the **minimum stored-value instrument** (2.3.11).
+**Files:** `crates/pos-db/migrations/0010_refunds_and_returns.sql`
+Per [`ref/schema.md`](ref/schema.md) §0010: immutable refund/exchange links, restock decisions, the refund policy, the defect-resolution facts, and the **minimum stored-value instrument** (2.3.11).
 `refund_line_link` and `document_link` are fact tables, so they get their no-`UPDATE`/no-`DELETE` triggers **in this migration** and their rows in `FACT_TABLES` in the same commit. They are the remaining-refundable ledger and the exchange chain; leaving them writable would put the plan's "refunds cannot exceed what was sold" claim on top of a table anyone with the database key can edit.
 `refund_line_link.reason_code` carries a `CHECK` matching `ReturnReason`, so a reason nobody handles cannot be stored.
 
@@ -251,7 +251,7 @@ The shared escalation pattern itself lands in Phase 1, because Phase 1 already h
 **Files:** `crates/pos-domain/src/stored_value.rs` (new), `crates/pos-db/src/repo/stored_value.rs` (new)
 Phase 2 depends on store credit twice — as the fallback when a PSP refund errors (E.22) and as the *default* outcome of a receiptless return, since `refund_policy.receiptless_store_credit_only` defaults to 1 — and no phase built it. Three documents put it in three different phases and no microstep created it, so an implementer under time pressure substitutes cash, which is precisely the fraud channel store-credit-only exists to close.
 
-The **minimum** is issue, redeem, and balance, against `stored_value_instrument` and the append-only `stored_value_ledger` in [`ref/schema.md`](ref/schema.md) §0009. Balance = Σ of the ledger, exactly like stock and loyalty. Gift cards, top-ups and expiry stay in Phase 4; the instrument does not.
+The **minimum** is issue, redeem, and balance, against `stored_value_instrument` and the append-only `stored_value_ledger` in [`ref/schema.md`](ref/schema.md) §0010. Balance = Σ of the ledger, exactly like stock and loyalty. Gift cards, top-ups and expiry stay in Phase 4; the instrument does not.
 
 Redemption is **online-authorise-only by default**: an unbacked balance spent twice offline is money owed to a customer with no record of it. When the register is offline, redemption is refused with a named reason rather than approximated.
 **Tests:** `issued_store_credit_appears_as_a_balance` · `prop_balance_equals_stored_value_ledger_sum` · `redeem_beyond_balance_is_refused` · `stored_value_is_online_authorize_only_by_default` (E.61) · `an_offline_redemption_is_refused_with_a_named_error` · `two_offline_registers_cannot_both_spend_the_same_balance` (E.62)
@@ -267,11 +267,11 @@ The `store_credit` tender type — `is_cash_counted = 0`, `is_internal = 1` — 
 
 ## Group 2.4 — Shifts and cash management
 
-### 2.4.1 — Migration `0008`
-**Files:** `crates/pos-db/migrations/0008_shifts_and_cash.sql`
-Per [`ref/schema.md`](ref/schema.md) §0008. **This is the first migration of Phase 2** — see "the schema lane" above.
+### 2.4.1 — Migration `0009`
+**Files:** `crates/pos-db/migrations/0009_shifts_and_cash.sql`
+Per [`ref/schema.md`](ref/schema.md) §0009. **This is the first migration of Phase 2** — see "the schema lane" above.
 
-The `shift` skeleton itself — open, the opening float, one-open-per-register — is already in `0005`, because `Cart.shift_id` is not optional and conventions §11 defines the business date as the business date of its shift. What `0008` adds is the rest of cash accountability: `shift_count_line` and `cash_count` for the blind count, `cash_location` and the two-ended `cash_movement`, `drawer_event`, and `z_report`.
+The `shift` skeleton itself — open, the opening float, one-open-per-register — is already in `0005`, because `Cart.shift_id` is not optional and conventions §11 defines the business date as the business date of its shift. What `0009` adds is the rest of cash accountability: `shift_count_line` and `cash_count` for the blind count, `cash_location` and the two-ended `cash_movement`, `drawer_event`, and `z_report`.
 
 `cash_location(store_id, kind IN ('drawer','safe','bank_in_transit'))` is the change that makes the arithmetic in 2.4.4 expressible at all, and `cash_movement` carries `from_location_id` / `to_location_id` with a nullable `shift_id`, so a safe-to-bank deposit needs no drawer to be recorded against.
 
@@ -458,9 +458,9 @@ A failure is `QueueState::BuildFailed`, not `Rejected` and not `Dead`: ISTD did 
 > ⚠️ **OPEN — blocks 2.7.0.** What tolerance, if any, does the current ISTD validator apply to transmitted line and document equations? Default until answered: enforce the half-fil per-line projection check and exact identities over the document's own carried values; do not implement an invoice-level tolerance or claim an ISTD tolerance.
 > Owner: 2.7.0. Source that settles it: the pinned official ISTD business rules and Schematron/XSD package, plus credentialed accepted boundary vectors.
 
-### 2.7.4 — Migration `0010` and the queue
+### 2.7.4 — Migration `0011` and the queue
 **Depends on:** 2.3.1 merged, 2.7.0
-**Files:** `crates/pos-db/migrations/0010_fiscal.sql`, `crates/pos-fiscal/src/queue.rs`
+**Files:** `crates/pos-db/migrations/0011_fiscal.sql`, `crates/pos-fiscal/src/queue.rs`
 Durable queue, backoff with jitter, dead letters, `depends_on` for credit-note ordering. The queue row is written **in the same transaction as the sale** — the drain loop is a background task and never sits in the checkout path.
 
 **`fiscal_queue.icv` is nullable, and ICV is not allocated at checkout.** The requirement is a counter monotonic in the authority-confirmed scope; allocating it from independent register counters would let two registers each allocate `1`. `doc_sequence` is keyed `(scope_kind, scope_id, kind)` with `scope_kind IN ('register','store')`: receipts and Z reports stay register-scoped, while fiscal ICV is store-scoped by default. Phase 2 has no server and supports one register per store, so the submission worker locks that register database's store row in process, allocates **once after preflight at first submission**, and records the allocating register in `allocator_ref`. Idempotency rests on `fiscal_uuid`, generated locally in the sale transaction; the checkout queue row starts with `icv IS NULL`, and selling never waits for the worker. A `Suspect` or `Untrusted` clock also leaves `issue_date IS NULL`; merely reaching ISTD is not a time-authentication event, so allocation and payload freeze wait for the authenticated source required by the open item in API reference §3.2.
