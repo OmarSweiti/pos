@@ -181,7 +181,14 @@ fn a_discount_cell_that_cannot_be_read_as_a_cap_is_refused() {
             r#"{"kind":"role_cap","max_percent_ppm":1000001}"#,
             "a cap above 100%",
         ),
-        (r#"{"kind":"own_shift"}"#, "another kind of limit"),
+        (
+            r#"{"kind":"own_shift","max_percent_ppm":50000}"#,
+            "another kind of limit, even with a number beside it",
+        ),
+        (
+            r#"{"max_percent_ppm":50000}"#,
+            "a number with no kind at all",
+        ),
         ("not json", "a column that is not JSON"),
     ] {
         set_cell(&conn, Role::Cashier, "granted", Some(limit_json));
