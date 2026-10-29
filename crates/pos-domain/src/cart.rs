@@ -2181,8 +2181,15 @@ mod tests {
             everything(off(2_501)).map(|_| ()),
             Err(CartError::DiscountExceedsLine("2.501 JOD".to_owned()))
         );
+        // Fifty dollars is 5,000 minor units, more than the line's 2,500 fils:
+        // it is refused as another currency, never weighed against the line as
+        // if a cent were a fil.
         assert_eq!(
-            everything(DiscountKind::Amount(Money::from_minor(100, Currency::USD))).map(|_| ()),
+            everything(DiscountKind::Amount(Money::from_minor(
+                5_000,
+                Currency::USD
+            )))
+            .map(|_| ()),
             Err(CartError::Money(MoneyError::CurrencyMismatch("JOD", "USD")))
         );
         assert_eq!(
