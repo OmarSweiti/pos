@@ -88,7 +88,7 @@ Print this. Sit with the merchant. Fill it in. Date it. A decision made by a dev
 | 3.1 | Maximum manual discount — cashier | **5%** | **5%** — the default, adopted by the owner (29 October 2026). The merchant may revise it, which is an edit of the cashier's `discount.manual` row. | `role_capability.limit_json` | 1.4.5 |
 | 3.2 | Maximum manual discount — shift lead | **15%** | **15%** — the default, adopted by the owner (29 October 2026). Migration `0008` caps the shift lead's `discount.manual` cell, which `0004` had granted uncapped. | same | 1.4.5 |
 | 3.3 | Maximum manual discount — manager | **unlimited** | **unlimited** — the default, adopted by the owner (29 October 2026). | same | 1.4.5 |
-| 3.4 | Price-override floor | **cost** | | `setting price.override_floor` | 1.4.7 |
+| 3.4 | Price-override floor | **cost** | **cost** — the default, adopted by the owner (29 October 2026), with two rules beside it. A product with no recorded cost may not have its price lowered at all, only raised. A `displayed_price` override wins over the floor, never over a ministry ceiling, and only ever lowers a price. The floor never refuses the price the catalogue charges, or more. Cost plus a margin would be a new value of the setting. | `setting price.override_floor` | 1.4.7 |
 | 3.5 | Are any items subject to a **ministry price ceiling**? ⚖ | **none** | | `product.max_price_minor` | 4.6.3 |
 | 3.6 | May a manual discount stack with an automatic promotion? | **no** | | `setting promo.allow_manual_with_auto` | 4.4.3 |
 

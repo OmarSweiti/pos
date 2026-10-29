@@ -226,7 +226,7 @@ and the ministry ceiling. Two commands could set a line's price and only one of 
 so a cashier could add the line at 0.100 instead of 1.000 with no audit row, no reason code, no entry
 in the override report, and no label-reprint worklist row. That is the threat the plan's own model
 ranks first, executable without a trace, and it also made
-`override_below_floor_is_denied` and `override_above_max_price_is_hard_blocked` (E.71 — where "the
+`override_below_floor_is_denied` and `sale_above_ceiling_is_hard_blocked` (E.71 — where "the
 fine is real") optional. Price-embedded barcodes, which is what the optional field was for, arrive
 through `cart_add_scan` as a typed `ScanLookup::PriceEmbedded`.
 

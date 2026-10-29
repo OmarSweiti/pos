@@ -195,10 +195,14 @@ Reuse the Phase-1 raster pipeline: Arabic name, price, barcode, unit price where
 Fed by price changes (4.1.3), new products, and `displayed_price` overrides (Phase 1, 1.4.7). Print in batches, mark printed.
 **Tests:** `worklist_clears_only_what_was_printed`
 
+> **Left by 1.4.7.** `override_price` returns a `LabelReprint { product_id, cause: DisplayedPriceOverride }` for every displayed-price override from Phase 1 on, and nothing can store it until `label_reprint_queue` exists (migration `0013`). When the table lands, seed it with one row for each product that has a `price.override` audit row with the reason `displayed_price`, so the shelves the till honoured before the table existed are printed too.
+
 ### 4.6.3 — Regulated price ceilings
 **Files:** `crates/pos-domain/src/cart.rs`, back office
 `max_price_minor` blocks a sale above the ceiling **and** blocks the catalogue save — belt and braces (E.71).
 **Tests:** `catalog_save_above_ceiling_is_rejected` · `sale_above_ceiling_is_hard_blocked`
+
+> **Left by 1.4.7.** Both tests have landed in Phase 1: `catalog_save_above_ceiling_is_rejected` at 1.2.3, and `sale_above_ceiling_is_hard_blocked` at 1.4.7, which holds the ceiling when a line enters the cart and at every override. What remains here is the back office's half: the form that sets a product's ceiling, and merchant decision 3.5's list of controlled items.
 
 ### 4.6.4 — Price-check station mode
 **Files:** `apps/terminal/src/screens/PriceCheck.tsx`
