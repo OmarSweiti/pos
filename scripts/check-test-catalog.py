@@ -79,7 +79,6 @@ KNOWN_KINDS = RUST_KINDS | {"web", "fuzz", "drill"}
 # As tests land, delete their entries; never add one merely to silence an
 # absent-test failure.
 PLANNED: dict[str, tuple[str, ...]] = {
-    "1.4.4": ("prop_park_resume_roundtrip_is_identity",),
     "1.4.5": ("prop_discount_never_makes_a_line_negative",),
     "1.4.7": (
         "displayed_price_override_queues_a_label_reprint",
@@ -546,6 +545,7 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "prop_corrupt_digit_never_parses_clean",
         "prop_monotonic_clock_never_decreases",
         "prop_no_query_string_produces_a_database_error",
+        "prop_park_resume_roundtrip_is_identity",
         "search_survives_every_fts5_metacharacter",
         "tail_deletion_is_detected_against_the_last_anchor",
         "the_effect_and_the_consumption_commit_together_or_not_at_all",
