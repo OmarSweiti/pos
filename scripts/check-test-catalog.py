@@ -79,10 +79,6 @@ KNOWN_KINDS = RUST_KINDS | {"web", "fuzz", "drill"}
 # As tests land, delete their entries; never add one merely to silence an
 # absent-test failure.
 PLANNED: dict[str, tuple[str, ...]] = {
-    "1.4.7": (
-        "displayed_price_override_queues_a_label_reprint",
-        "override_below_floor_is_denied",
-    ),
     "1.4.9": (
         "prop_price_cart_is_invariant_under_line_reordering",
         "prop_zero_total_cart_is_valid",
@@ -300,7 +296,6 @@ PLANNED: dict[str, tuple[str, ...]] = {
     "4.3.3": ("short_receipt_creates_destination_adjustment_and_notifies",),
     "4.3.5": ("waste_adjustment_by_reason_code",),
     "4.4.6": ("single_use_code_marked_used_on_redemption_sync",),
-    "4.6.3": ("sale_above_ceiling_is_hard_blocked",),
     "4.7.4": ("override_report_groups_by_user_with_reasons",),
     "4.7.10": ("barcode_conflict_report_lists_both",),
     "4.8.3": ("second_store_refund_of_the_same_receipt_is_refused_when_connected",),
@@ -527,6 +522,7 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "card_charged_exact_unrounded_total",
         "catalog_save_above_ceiling_is_rejected",
         "clock_jump_back_reports_anomaly",
+        "displayed_price_override_queues_a_label_reprint",
         "exact_spelling_outranks_a_folded_variant",
         "fts_ignores_tatweel",
         "fts_matches_alef_and_yaa_spelling_variants",
@@ -537,6 +533,7 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "manager_self_approval_denied_when_policy_bans_it",
         "mutating_an_identity_column_breaks_the_chain",
         "narrow_profile_reflows_rather_than_truncates",
+        "override_below_floor_is_denied",
         "price_embedded_line_total_equals_the_label",
         "price_embedded_stock_event_carries_the_derived_weight_flagged_estimated",
         "print_failure_after_finalize_leaves_sale_complete",
@@ -546,6 +543,7 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "prop_monotonic_clock_never_decreases",
         "prop_no_query_string_produces_a_database_error",
         "prop_park_resume_roundtrip_is_identity",
+        "sale_above_ceiling_is_hard_blocked",
         "search_survives_every_fts5_metacharacter",
         "tail_deletion_is_detected_against_the_last_anchor",
         "the_effect_and_the_consumption_commit_together_or_not_at_all",
