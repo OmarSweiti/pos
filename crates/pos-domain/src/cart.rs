@@ -543,8 +543,8 @@ pub fn park(cart: Cart) -> Result<ParkedCart, CartError> {
 /// - [`CartError::ParkedOnAnotherRegister`]: a parked cart never leaves the
 ///   till it was parked at, where its customer is standing (master plan C.14).
 /// - [`CartError::TrainingModeMismatch`]: a training cart never resumes as a
-///   real sale, nor a real one as training, which every report and the fiscal
-///   queue would then leave out.
+///   real sale, nor a real one as training. Every report and the fiscal queue
+///   tell the two apart by this flag, so either would count the sale wrongly.
 /// - [`CartError::Money`]: a till in another currency than the cart's prices.
 pub fn resume(parked: ParkedCart, till: &CartContext) -> Result<Cart, CartError> {
     let ParkedCart(mut cart) = parked;
