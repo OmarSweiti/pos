@@ -7,6 +7,7 @@ pub mod catalog;
 pub mod ids;
 pub mod money;
 pub mod permissions;
+pub mod pricing;
 pub mod receipt;
 pub mod stock;
 pub mod tax;
@@ -23,7 +24,8 @@ pub mod trade_scale;
 // not the `ids` and `audit` §15 predicted — the handle names an approver and an
 // expiry, and reaches for no audit type to do it. `trade_scale` (1.2.4) reads only the
 // pure `Timestamp` and `ClockConfidence` values from `time`. `stock` (1.10.2) reads `money` and
-// `ids`, and the pure `Timestamp` and `BusinessDate` values from `time`. `money`'s external arithmetic dependency is
+// `ids`, and the pure `Timestamp` and `BusinessDate` values from `time`. `pricing` (1.4.5) reads `money` and `ids`,
+// and `cart` reads it: §15 puts it between the two. `money`'s external arithmetic dependency is
 // `rust_decimal`; `time` performs only integer calendar arithmetic. `just
 // acyclic` is what establishes the graph, not this comment.
 pub use audit::{
@@ -48,6 +50,7 @@ pub use permissions::{
     Grant, GrantSet, JournalScope, Limit, PermissionError, PreparedIntentHash, Role, RoleGrants,
     StoredApprovalHandle, authorize, cap, default_grants,
 };
+pub use pricing::{DiscountCap, DiscountKind, DiscountReason, DiscountRequest, LineDiscount};
 pub use receipt::{
     BuyerBlock, DocKind, FiscalBlock, FooterBlock, Language, LoyaltyBlock, MerchantBlock,
     ReceiptDiscount, ReceiptError, ReceiptHeader, ReceiptLine, ReceiptLocale, ReceiptModel,

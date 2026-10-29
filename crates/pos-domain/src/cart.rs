@@ -10,9 +10,9 @@
 //! that only a parked cart can be resumed. Each later state arrives with the
 //! transition that reaches it (tendering, finalizing, complete and voided at
 //! 1.4.8), and each later field of a cart or a line with the step that gives
-//! it meaning: discounts at 1.4.5, a price override at 1.4.7, and a promotion
-//! group when promotions are first captured. A field added before its rule
-//! would be a value nothing checks.
+//! it meaning: a line's manual discount at 1.4.5, a basket's at 1.4.6, a price
+//! override at 1.4.7, and a promotion group when promotions are first
+//! captured. A field added before its rule would be a value nothing checks.
 
 use std::fmt;
 
@@ -27,8 +27,11 @@ use crate::catalog::{
 use crate::ids::{
     CustomerId, ProductId, RegisterId, SaleId, SaleLineId, ShiftId, TaxCategoryId, UserId,
 };
-use crate::money::{Currency, Money, MoneyError, Qty};
-use crate::permissions::{Capability, cap};
+use crate::money::{Currency, Money, MoneyError, Qty, RoundingRule};
+use crate::permissions::{
+    ApprovalBinding, ApprovalHandle, Authorized, Capability, PermissionError, cap,
+};
+use crate::pricing::{DiscountCap, DiscountKind, DiscountRequest, LineDiscount, exceeds_value};
 use crate::tax::{SupplyDestination, SupplyTaxContext, TaxError};
 use crate::time::Timestamp;
 
@@ -126,6 +129,9 @@ pub struct CartLine {
     pub unit: UnitOfMeasure,
     pub is_weighed: bool,
     pub tax_category_id: TaxCategoryId,
+    /// The line's manual discount, as it was asked for (1.4.5). At most one:
+    /// another replaces it, and a discount of zero clears it.
+    pub discount: Option<LineDiscount>,
     /// Captured with the line, so a catalogue edit while the cart is open
     /// cannot clear the age gate (1.4.3, 1.4.3b).
     pub min_age: Option<u8>,
@@ -316,6 +322,7 @@ pub fn add_line(cart: Cart, req: AddLine) -> Result<Cart, CartError> {
         unit: req.unit,
         is_weighed: req.is_weighed,
         tax_category_id: req.tax_category_id,
+        discount: None,
         min_age: req.min_age,
         age_confirmed: false,
         label: req.label,
@@ -337,6 +344,10 @@ pub fn add_line(cart: Cart, req: AddLine) -> Result<Cart, CartError> {
 ///   package that label was printed for; another package is another scan.
 /// - [`CartError::DepartmentPriceOutsideDepartmentSale`]: a department line,
 ///   whose quantity times its typed amount is still a typed amount (1.4.12).
+/// - [`CartError::AmountDiscountFixesQuantity`]: a line with an amount off.
+///   Fewer units would make the same amount a larger share than the cap that
+///   admitted it, or more than the line is worth (E.19), so the discount is
+///   cleared first. A percentage off keeps its share and needs nothing.
 pub fn set_qty(cart: Cart, line: SaleLineId, qty: Qty) -> Result<Cart, CartError> {
     let mut cart = cart;
     let found = cart
@@ -352,6 +363,13 @@ pub fn set_qty(cart: Cart, line: SaleLineId, qty: Qty) -> Result<Cart, CartError
         (PriceOrigin::Catalog { .. }, Some(product)) => product,
     };
     check_qty(product, found.unit, qty)?;
+    if let Some(LineDiscount {
+        kind: DiscountKind::Amount(_),
+        ..
+    }) = found.discount
+    {
+        return Err(CartError::AmountDiscountFixesQuantity(line));
+    }
     found.qty = qty;
     Ok(cart)
 }
@@ -396,6 +414,130 @@ pub fn void_line(
             "currency": removed.unit_price.currency().code(),
         }),
         at,
+    };
+    Ok((cart, intent))
+}
+
+/// `cart` with line `line` discounted as `request` asks, and the audit intent
+/// that records it under `discount.manual` (1.4.5).
+///
+/// `limit` is the actor's own cap, which the shell resolves from their grant
+/// and never from the request (merchant decisions 3.1–3.3). `rule` is the
+/// store's rounding rule: it states in money what a share takes off the line
+/// now, for the intent and for an approval's binding, and decides nothing else.
+/// The discount itself is kept as asked, so a percentage keeps its share if
+/// the quantity changes, and is turned into money when the cart is priced.
+///
+/// A discount replaces any the line had, so two discounts within the cap never
+/// add up past it, and a discount of zero clears it. Within the cap no approval
+/// is needed and none is consumed. Above it, `approval` must be a handle a
+/// manager issued for this actor, this line and this amount, for the same
+/// reason, valid at `auth.at()`; the intent then names its approver and its id,
+/// which the shell consumes with this effect.
+///
+/// # Errors
+///
+/// - [`CartError::LineNotFound`].
+/// - [`CartError::NegativeDiscount`]: a surcharge is a price change, which only
+///   an audited override makes (1.4.7).
+/// - [`CartError::NegativeLine`]: a line worth less than nothing (E.19).
+/// - [`CartError::Money`]: an amount in another currency than the cart's.
+/// - [`CartError::DiscountExceedsLine`]: more than the line is worth (E.19).
+/// - [`CartError::DiscountAboveCap`]: above the actor's cap, with no approval.
+/// - [`CartError::ApprovalReasonMismatch`] and [`CartError::Permission`]: an
+///   approval given for another reason, actor, line or amount, or no longer
+///   valid.
+pub fn apply_line_discount(
+    cart: Cart,
+    line: SaleLineId,
+    request: DiscountRequest,
+    limit: DiscountCap,
+    rule: RoundingRule,
+    auth: &Authorized<cap::DiscountManual>,
+    approval: Option<&ApprovalHandle>,
+) -> Result<(Cart, AuditIntent), CartError> {
+    let mut cart = cart;
+    let (sale, currency) = (cart.id, cart.currency);
+    let found = cart
+        .lines
+        .iter_mut()
+        .find(|l| l.id == line)
+        .ok_or(CartError::LineNotFound(line))?;
+    let kind = request.kind;
+    if kind.is_negative() {
+        return Err(CartError::NegativeDiscount(kind.format()));
+    }
+    if found.unit_price.is_negative() {
+        return Err(CartError::NegativeLine);
+    }
+    if let DiscountKind::Amount(amount) = kind
+        && amount.currency() != currency
+    {
+        return Err(MoneyError::CurrencyMismatch(currency.code(), amount.currency().code()).into());
+    }
+    if exceeds_value(kind, found.unit_price, found.qty) {
+        return Err(CartError::DiscountExceedsLine(kind.format()));
+    }
+    let discount = LineDiscount {
+        kind,
+        reason: request.reason,
+        by: auth.actor(),
+        approver: None,
+    };
+    let gross = found.unit_price.mul_qty(found.qty, rule)?;
+    let amount = discount.amount_off(gross, rule)?;
+    let (approver, approval_id) =
+        if kind.is_zero() || limit.admits(kind, found.unit_price, found.qty) {
+            (auth.approver(), auth.approval())
+        } else {
+            let Some(handle) = approval else {
+                return Err(CartError::DiscountAboveCap(kind.format(), limit.format()));
+            };
+            if handle.reason() != discount.reason.0 {
+                return Err(CartError::ApprovalReasonMismatch(
+                    handle.reason().to_owned(),
+                    discount.reason.0,
+                ));
+            }
+            let binding = ApprovalBinding {
+                entity_id: line.as_uuid(),
+                amount_minor: amount.minor(),
+                content_hash: None,
+            };
+            handle.matches::<cap::DiscountManual>(auth.actor(), &binding, auth.at())?;
+            (Some(handle.approver()), Some(handle.id()))
+        };
+    let product = found.product_id;
+    let reason = discount.reason.0.clone();
+    found.discount = (!kind.is_zero()).then_some(LineDiscount {
+        approver,
+        ..discount
+    });
+    let intent = AuditIntent {
+        actor: auth.actor(),
+        approver,
+        approval: approval_id,
+        action: cap::DiscountManual::NAME,
+        entity: "sale_line",
+        entity_id: line.as_uuid(),
+        reason: Some(reason),
+        payload: json!({
+            "sale_id": sale.as_uuid().to_string(),
+            "product_id": product.map(|p| p.as_uuid().to_string()),
+            "kind": match kind {
+                DiscountKind::Percent(_) => "percent",
+                DiscountKind::Amount(_) => "amount",
+            },
+            "percent_ppm": match kind {
+                DiscountKind::Percent(p) => Some(p.ppm()),
+                DiscountKind::Amount(_) => None,
+            },
+            "amount_minor": amount.minor(),
+            "line_value_minor": gross.minor(),
+            "currency": currency.code(),
+            "cap_ppm": limit.ppm(),
+        }),
+        at: auth.at(),
     };
     Ok((cart, intent))
 }
@@ -651,6 +793,22 @@ pub enum CartError {
         till = training_mode(!*.1)
     )]
     TrainingModeMismatch(SaleId, bool),
+    /// Added at 1.4.5: the discount asked for and the actor's cap, rendered.
+    #[error("discount {0} is above the cap {1} and needs a manager's approval")]
+    DiscountAboveCap(String, String),
+    /// Added at 1.4.5: a discount of less than nothing is a surcharge.
+    #[error("discount {0} is negative")]
+    NegativeDiscount(String),
+    /// Added at 1.4.5: an amount off fixes the line's quantity until cleared.
+    #[error("line {0} has an amount off; clear the discount to change its quantity")]
+    AmountDiscountFixesQuantity(SaleLineId),
+    /// Added at 1.4.5: the approval's reason, then the request's. The audit
+    /// row repeats the handle's reason, so the two must be one.
+    #[error("the approval was given for {0}, not {1}")]
+    ApprovalReasonMismatch(String, String),
+    /// Added at 1.4.5: an approval that does not match the operation.
+    #[error(transparent)]
+    Permission(#[from] PermissionError),
     #[error(transparent)]
     Tax(#[from] TaxError),
     #[error(transparent)]
@@ -667,7 +825,7 @@ mod tests {
 
     // Wire-format tripwires, not business data: every id, amount and name is
     // visibly synthetic.
-    const GOLDEN_CART_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","register_id":"00000000-0000-0000-0000-000000000002","shift_id":"00000000-0000-0000-0000-000000000003","cashier_id":"00000000-0000-0000-0000-000000000004","currency":"JOD","lines":[{"id":"00000000-0000-0000-0000-000000000010","product_id":"00000000-0000-0000-0000-000000000011","name_snapshot":"SYNTH item","unit_price":{"minor":1250,"currency":"JOD"},"price_origin":{"catalog":{"product_id":"00000000-0000-0000-0000-000000000011"}},"qty":1500,"unit":"kilogram","is_weighed":true,"tax_category_id":"00000000-0000-0000-0000-000000000012","min_age":18,"age_confirmed":false,"label":{"qty":1500,"catalog_unit_price":{"minor":1250,"currency":"JOD"}}}],"customer_id":null,"buyer_tin":"999888777","buyer_name":"SYNTH buyer","supply":{"destination":"Domestic","reason":null,"evidence_ref":null},"is_training":true,"opened_at":978307200000}"#;
+    const GOLDEN_CART_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","register_id":"00000000-0000-0000-0000-000000000002","shift_id":"00000000-0000-0000-0000-000000000003","cashier_id":"00000000-0000-0000-0000-000000000004","currency":"JOD","lines":[{"id":"00000000-0000-0000-0000-000000000010","product_id":"00000000-0000-0000-0000-000000000011","name_snapshot":"SYNTH item","unit_price":{"minor":1250,"currency":"JOD"},"price_origin":{"catalog":{"product_id":"00000000-0000-0000-0000-000000000011"}},"qty":1500,"unit":"kilogram","is_weighed":true,"tax_category_id":"00000000-0000-0000-0000-000000000012","discount":null,"min_age":18,"age_confirmed":false,"label":{"qty":1500,"catalog_unit_price":{"minor":1250,"currency":"JOD"}}}],"customer_id":null,"buyer_tin":"999888777","buyer_name":"SYNTH buyer","supply":{"destination":"Domestic","reason":null,"evidence_ref":null},"is_training":true,"opened_at":978307200000}"#;
 
     fn id(n: u128) -> Uuid {
         Uuid::from_u128(n)
@@ -697,6 +855,7 @@ mod tests {
             unit: UnitOfMeasure::Kilogram,
             is_weighed: true,
             tax_category_id: TaxCategoryId::from_uuid(id(0x12)),
+            discount: None,
             min_age: Some(18),
             age_confirmed: false,
             label: Some(DerivedWeight {
@@ -1395,6 +1554,8 @@ mod tests {
 
     // ── park and resume (1.4.4) ─────────────────────────────────────────
 
+    use crate::money::Percent;
+    use crate::pricing::DiscountReason;
     use crate::tax::ZeroRatingReason;
 
     /// The till a cart was opened at, which is where it resumes as it was.
@@ -1450,6 +1611,24 @@ mod tests {
                 tax_category_id: TaxCategoryId::from_uuid(u)
             }),
         ];
+        let discount = proptest::option::of(
+            (
+                prop_oneof![
+                    any::<i64>().prop_map(|ppm| DiscountKind::Percent(Percent::from_ppm(ppm))),
+                    (any::<i64>(), currencies())
+                        .prop_map(|(minor, c)| DiscountKind::Amount(Money::from_minor(minor, c))),
+                ],
+                any::<String>(),
+                uuids(),
+                proptest::option::of(uuids()),
+            )
+                .prop_map(|(kind, reason, by, approver)| LineDiscount {
+                    kind,
+                    reason: DiscountReason(reason),
+                    by: UserId::from_uuid(by),
+                    approver: approver.map(UserId::from_uuid),
+                }),
+        );
         let label = proptest::option::of((any::<i64>(), any::<i64>(), currencies()).prop_map(
             |(qty, price, currency)| DerivedWeight {
                 qty: Qty::from_milli(qty),
@@ -1460,14 +1639,19 @@ mod tests {
             (uuids(), proptest::option::of(uuids()), any::<String>()),
             (any::<i64>(), currencies(), origin),
             (any::<i64>(), units(), any::<bool>(), uuids()),
-            (proptest::option::of(any::<u8>()), any::<bool>(), label),
+            (
+                proptest::option::of(any::<u8>()),
+                any::<bool>(),
+                label,
+                discount,
+            ),
         )
             .prop_map(
                 |(
                     (line, product, name),
                     (price, currency, price_origin),
                     (qty, unit, is_weighed, tax),
-                    (min_age, age_confirmed, label),
+                    (min_age, age_confirmed, label, discount),
                 )| CartLine {
                     id: SaleLineId::from_uuid(line),
                     product_id: product.map(ProductId::from_uuid),
@@ -1478,6 +1662,7 @@ mod tests {
                     unit,
                     is_weighed,
                     tax_category_id: TaxCategoryId::from_uuid(tax),
+                    discount,
                     min_age,
                     age_confirmed,
                     label,
@@ -1684,5 +1869,446 @@ mod tests {
         );
         // At its own till, in its own mode, it resumes.
         assert!(resume(parked, &next_shift()).is_ok());
+    }
+
+    // ── manual line discounts (1.4.5) ───────────────────────────────────
+
+    use crate::ids::ApprovalId;
+    use crate::permissions::{EscalationPolicy, GrantSet, Role, authorize};
+
+    const RULE: RoundingRule = RoundingRule::HalfAwayFromZero;
+
+    /// The cashier's cap, merchant decision 3.1.
+    fn five_percent() -> DiscountCap {
+        DiscountCap::AtMost(Percent::from_ppm(50_000))
+    }
+
+    fn cashier() -> UserId {
+        UserId::from_uuid(id(4))
+    }
+
+    fn manager() -> UserId {
+        UserId::from_uuid(id(0x55))
+    }
+
+    /// `who`'s proof of `discount.manual`, under the shipped grid for `role`,
+    /// checked at `at`.
+    fn proof(who: UserId, role: Role, at: Timestamp) -> Authorized<cap::DiscountManual> {
+        let unbound = ApprovalBinding {
+            entity_id: Uuid::nil(),
+            amount_minor: 0,
+            content_hash: None,
+        };
+        authorize(
+            who,
+            &GrantSet::of_role(role),
+            None,
+            &unbound,
+            &EscalationPolicy::empty(),
+            at,
+        )
+        .unwrap()
+    }
+
+    /// A manager's approval for the cashier: `amount_minor` off line `line`,
+    /// for `reason`, valid for two minutes from `moment()`.
+    fn approval(line: SaleLineId, amount_minor: i64, reason: &str) -> ApprovalHandle {
+        let handle = ApprovalId::from_uuid(id(0x700));
+        let binding = ApprovalBinding {
+            entity_id: line.as_uuid(),
+            amount_minor,
+            content_hash: None,
+        };
+        ApprovalHandle::issue(
+            handle,
+            cashier(),
+            &proof(manager(), Role::Manager, moment()),
+            &binding,
+            reason.to_owned(),
+            moment(),
+            120_000,
+            // Derived from the handle's id, not written as a literal: CodeQL
+            // reads a fixed array passed as a nonce as a hard-coded one.
+            *handle.as_uuid().as_bytes(),
+        )
+        .unwrap()
+    }
+
+    fn ask(kind: DiscountKind, reason: &str) -> DiscountRequest {
+        DiscountRequest {
+            kind,
+            reason: DiscountReason(reason.to_owned()),
+        }
+    }
+
+    fn pct(ppm: i64) -> DiscountKind {
+        DiscountKind::Percent(Percent::from_ppm(ppm))
+    }
+
+    fn off(minor: i64) -> DiscountKind {
+        DiscountKind::Amount(jod(minor))
+    }
+
+    /// Two units at 1.250: a line worth 2.500.
+    fn two_teas() -> Cart {
+        add(building(), 1, &product(0x20, UnitOfMeasure::Each), 2_000).unwrap()
+    }
+
+    /// The cashier, within their own cap and with no approval.
+    fn discount(cart: Cart, kind: DiscountKind) -> Result<(Cart, AuditIntent), CartError> {
+        apply_line_discount(
+            cart,
+            line_id(1),
+            ask(kind, "loyal_customer"),
+            five_percent(),
+            RULE,
+            &proof(cashier(), Role::Cashier, moment()),
+            None,
+        )
+    }
+
+    #[test]
+    fn discount_above_role_cap_is_denied() {
+        // 5% of 2.500 is 0.125: up to it, the cashier needs nobody.
+        for within in [pct(50_000), off(125)] {
+            let (cart, intent) = discount(two_teas(), within).unwrap();
+            assert_eq!(
+                cart.lines.first().unwrap().discount.as_ref().unwrap().kind,
+                within
+            );
+            assert_eq!((intent.approver, intent.approval), (None, None));
+        }
+        // A fil past it, as a share or as an amount, needs a manager.
+        assert_eq!(
+            discount(two_teas(), pct(50_001)).map(|_| ()),
+            Err(CartError::DiscountAboveCap(
+                "5.0001%".to_owned(),
+                "5%".to_owned()
+            ))
+        );
+        let refused = discount(two_teas(), off(126)).map(|_| ());
+        assert_eq!(
+            refused,
+            Err(CartError::DiscountAboveCap(
+                "0.126 JOD".to_owned(),
+                "5%".to_owned()
+            ))
+        );
+        assert_eq!(
+            refused.unwrap_err().to_string(),
+            "discount 0.126 JOD is above the cap 5% and needs a manager's approval"
+        );
+        // An approval offered for a discount within the cap is not spent on it.
+        let (_, intent) = apply_line_discount(
+            two_teas(),
+            line_id(1),
+            ask(pct(50_000), "loyal_customer"),
+            five_percent(),
+            RULE,
+            &proof(cashier(), Role::Cashier, moment()),
+            Some(&approval(line_id(1), 125, "loyal_customer")),
+        )
+        .unwrap();
+        assert_eq!((intent.approver, intent.approval), (None, None));
+        // The manager's grant holds no cap, and gives half off alone.
+        let (cart, intent) = apply_line_discount(
+            two_teas(),
+            line_id(1),
+            ask(pct(500_000), "damaged_pack"),
+            DiscountCap::Unlimited,
+            RULE,
+            &proof(manager(), Role::Manager, moment()),
+            None,
+        )
+        .unwrap();
+        assert!(cart.lines.first().unwrap().discount.is_some());
+        assert_eq!((intent.actor, intent.approver), (manager(), None));
+    }
+
+    #[test]
+    fn a_discount_above_the_cap_is_given_with_a_managers_approval() {
+        // 20% of 2.500 is 0.500, and the manager approved exactly that.
+        let given = |handle: &ApprovalHandle, at: Timestamp| {
+            apply_line_discount(
+                two_teas(),
+                line_id(1),
+                ask(pct(200_000), "loyal_customer"),
+                five_percent(),
+                RULE,
+                &proof(cashier(), Role::Cashier, at),
+                Some(handle),
+            )
+        };
+        let handle = approval(line_id(1), 500, "loyal_customer");
+        let (cart, intent) = given(&handle, moment()).unwrap();
+        let line = cart.lines.first().unwrap();
+        assert_eq!(line.discount.as_ref().unwrap().approver, Some(manager()));
+        assert_eq!(
+            (intent.actor, intent.approver, intent.approval),
+            (cashier(), Some(manager()), Some(handle.id()))
+        );
+        // The handle the database consumes names this line and this amount.
+        assert_eq!(intent.entity_id, line_id(1).as_uuid());
+        assert_eq!(
+            intent.payload.get("amount_minor"),
+            Some(&serde_json::json!(500))
+        );
+        assert_eq!(intent.reason.as_deref(), Some(handle.reason()));
+
+        // An approval for anything else approves nothing.
+        assert_eq!(
+            given(&approval(line_id(1), 400, "loyal_customer"), moment()).map(|_| ()),
+            Err(CartError::Permission(
+                PermissionError::ApprovalAmountMismatch("400".to_owned(), "500".to_owned())
+            ))
+        );
+        assert_eq!(
+            given(&approval(line_id(2), 500, "loyal_customer"), moment()).map(|_| ()),
+            Err(CartError::Permission(
+                PermissionError::ApprovalEntityMismatch(line_id(2).as_uuid(), line_id(1).as_uuid())
+            ))
+        );
+        assert_eq!(
+            given(&approval(line_id(1), 500, "damaged_pack"), moment()).map(|_| ()),
+            Err(CartError::ApprovalReasonMismatch(
+                "damaged_pack".to_owned(),
+                "loyal_customer".to_owned()
+            ))
+        );
+        let expired = Timestamp::from_epoch_milliseconds(978_307_320_000 + 120_000).unwrap();
+        assert!(matches!(
+            given(&handle, expired),
+            Err(CartError::Permission(PermissionError::ApprovalExpired(_)))
+        ));
+        // Nor does one issued to somebody else, used by the cashier.
+        let lead = UserId::from_uuid(id(5));
+        let theirs = ApprovalHandle::issue(
+            ApprovalId::from_uuid(id(0x701)),
+            lead,
+            &proof(manager(), Role::Manager, moment()),
+            &ApprovalBinding {
+                entity_id: line_id(1).as_uuid(),
+                amount_minor: 500,
+                content_hash: None,
+            },
+            "loyal_customer".to_owned(),
+            moment(),
+            120_000,
+            *ApprovalId::from_uuid(id(0x701)).as_uuid().as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(
+            given(&theirs, moment()).map(|_| ()),
+            Err(CartError::Permission(
+                PermissionError::ApprovalActorMismatch(lead, cashier())
+            ))
+        );
+    }
+
+    #[test]
+    fn a_line_discount_is_audited_with_its_amount() {
+        let (_, intent) = discount(two_teas(), pct(40_000)).unwrap();
+        assert_eq!(
+            (intent.actor, intent.action, intent.entity),
+            (cashier(), "discount.manual", "sale_line")
+        );
+        assert_eq!(intent.entity_id, line_id(1).as_uuid());
+        assert_eq!(intent.reason.as_deref(), Some("loyal_customer"));
+        assert_eq!(intent.at, moment());
+        assert_eq!(
+            intent.payload,
+            serde_json::json!({
+                "sale_id": "00000000-0000-0000-0000-000000000001",
+                "product_id": "00000000-0000-0000-0000-000000000020",
+                "kind": "percent",
+                "percent_ppm": 40_000,
+                "amount_minor": 100,
+                "line_value_minor": 2_500,
+                "currency": "JOD",
+                "cap_ppm": 50_000,
+            })
+        );
+        // The line's name is not needed to identify it.
+        assert!(!intent.payload.to_string().contains("صنف"));
+    }
+
+    #[test]
+    fn a_second_discount_replaces_the_first_and_zero_clears_it() {
+        let (cart, _) = discount(two_teas(), pct(50_000)).unwrap();
+        // Two discounts each within the cap do not add up past it: the second
+        // replaces the first.
+        let (cart, _) = discount(cart, off(125)).unwrap();
+        let line = cart.lines.first().unwrap();
+        assert_eq!(line.discount.as_ref().unwrap().kind, off(125));
+        // A discount of zero clears it, and is audited as one.
+        let (cart, intent) = discount(cart, pct(0)).unwrap();
+        assert_eq!(cart.lines.first().unwrap().discount, None);
+        assert_eq!(
+            intent.payload.get("amount_minor"),
+            Some(&serde_json::json!(0))
+        );
+    }
+
+    #[test]
+    fn a_discount_that_is_negative_or_exceeds_the_line_is_refused() {
+        assert_eq!(
+            discount(two_teas(), pct(-10_000)).map(|_| ()),
+            Err(CartError::NegativeDiscount("-1%".to_owned()))
+        );
+        assert_eq!(
+            discount(two_teas(), off(-1)).map(|_| ()),
+            Err(CartError::NegativeDiscount("-0.001 JOD".to_owned()))
+        );
+        // Above the line's value is refused before the cap is asked (E.19).
+        let everything = |kind| {
+            apply_line_discount(
+                two_teas(),
+                line_id(1),
+                ask(kind, "damaged_pack"),
+                DiscountCap::Unlimited,
+                RULE,
+                &proof(manager(), Role::Manager, moment()),
+                None,
+            )
+        };
+        assert!(everything(pct(1_000_000)).is_ok());
+        assert!(everything(off(2_500)).is_ok());
+        assert_eq!(
+            everything(pct(1_000_001)).map(|_| ()),
+            Err(CartError::DiscountExceedsLine("100.0001%".to_owned()))
+        );
+        assert_eq!(
+            everything(off(2_501)).map(|_| ()),
+            Err(CartError::DiscountExceedsLine("2.501 JOD".to_owned()))
+        );
+        assert_eq!(
+            everything(DiscountKind::Amount(Money::from_minor(100, Currency::USD))).map(|_| ()),
+            Err(CartError::Money(MoneyError::CurrencyMismatch("JOD", "USD")))
+        );
+        assert_eq!(
+            discount(building(), pct(10_000)).map(|_| ()),
+            Err(CartError::LineNotFound(line_id(1)))
+        );
+        // A line already worth less than nothing takes no discount at all: a
+        // share of it would be a surcharge.
+        let mut odd = product(0x21, UnitOfMeasure::Each);
+        odd.unit_price = jod(-100);
+        let negative = add(building(), 1, &odd, 1_000).unwrap();
+        assert_eq!(
+            discount(negative, pct(10_000)).map(|_| ()),
+            Err(CartError::NegativeLine)
+        );
+    }
+
+    #[test]
+    fn an_amount_off_fixes_the_line_s_quantity_until_cleared() {
+        let (cart, _) = discount(two_teas(), off(125)).unwrap();
+        // One tea instead of two would make 0.125 a 10% discount the cashier's
+        // cap never admitted.
+        assert_eq!(
+            set_qty(cart.clone(), line_id(1), Qty::ONE),
+            Err(CartError::AmountDiscountFixesQuantity(line_id(1)))
+        );
+        let (cleared, _) = discount(cart, pct(0)).unwrap();
+        assert!(set_qty(cleared, line_id(1), Qty::ONE).is_ok());
+        // A share off keeps its share, whatever the quantity.
+        let (shared, _) = discount(two_teas(), pct(50_000)).unwrap();
+        let shared = set_qty(shared, line_id(1), Qty::from_milli(5_000)).unwrap();
+        let line = shared.lines.first().unwrap();
+        assert_eq!(line.discount.as_ref().unwrap().kind, pct(50_000));
+    }
+
+    fn rules() -> impl Strategy<Value = RoundingRule> {
+        prop_oneof![
+            Just(RoundingRule::HalfAwayFromZero),
+            Just(RoundingRule::HalfEven),
+            Just(RoundingRule::Floor),
+            Just(RoundingRule::Ceil),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(domain_proptest_config())]
+
+        /// No discount the cart accepts takes a line below nothing (E.19):
+        /// whatever the price, the quantity, the share or amount asked, the
+        /// cap and the rounding rule, and whatever quantity the line is then
+        /// given, the money the discount takes off is between zero and the
+        /// line's value. What would take more is refused by name, before any
+        /// cap is asked, and so is a discount of less than nothing.
+        #[test]
+        fn prop_discount_never_makes_a_line_negative(
+            price in 0i64..=10_000_000_000,
+            milli in 1i64..=1_000_000,
+            unit in units(),
+            share in -100_000i64..=1_200_000,
+            jitter in -3i64..=3,
+            as_amount in any::<bool>(),
+            cap in prop_oneof![
+                Just(DiscountCap::Unlimited),
+                (0i64..=1_000_000).prop_map(|ppm| DiscountCap::AtMost(Percent::from_ppm(ppm))),
+            ],
+            rule in rules(),
+            later in 1i64..=1_000_000,
+        ) {
+            let mut item = product(0x60, unit);
+            item.unit_price = jod(price);
+            let qty = if unit.is_divisible() { milli } else { (milli + 999) / 1_000 * 1_000 };
+            let cart = add(building(), 1, &item, qty).unwrap();
+            // An amount near the asked share of the line's exact value, so the
+            // boundary is crossed in both directions.
+            let exact = i128::from(price) * i128::from(qty) / 1_000;
+            let kind = if as_amount {
+                let near = exact * i128::from(share) / 1_000_000 + i128::from(jitter);
+                off(i64::try_from(near).unwrap())
+            } else {
+                pct(share)
+            };
+            let applied = apply_line_discount(
+                cart,
+                line_id(1),
+                ask(kind, "loyal_customer"),
+                cap,
+                rule,
+                &proof(manager(), Role::Manager, moment()),
+                None,
+            );
+            if kind.is_negative() {
+                prop_assert_eq!(applied.err(), Some(CartError::NegativeDiscount(kind.format())));
+                return Ok(());
+            }
+            if exceeds_value(kind, item.unit_price, Qty::from_milli(qty)) {
+                prop_assert_eq!(applied.err(), Some(CartError::DiscountExceedsLine(kind.format())));
+                return Ok(());
+            }
+            let mut cart = match applied {
+                Ok((cart, _)) => cart,
+                Err(refused) => {
+                    // Only the cap may refuse what fits the line.
+                    prop_assert!(matches!(refused, CartError::DiscountAboveCap(..)));
+                    prop_assert!(!cap.admits(kind, item.unit_price, Qty::from_milli(qty)));
+                    return Ok(());
+                }
+            };
+            let later = if unit.is_divisible() { later } else { (later + 999) / 1_000 * 1_000 };
+            if let Ok(changed) = set_qty(cart.clone(), line_id(1), Qty::from_milli(later)) {
+                cart = changed;
+            }
+            let line = cart.lines.first().unwrap();
+            for priced_under in [
+                RoundingRule::HalfAwayFromZero,
+                RoundingRule::HalfEven,
+                RoundingRule::Floor,
+                RoundingRule::Ceil,
+            ] {
+                let gross = line.unit_price.mul_qty(line.qty, priced_under).unwrap();
+                let taken = match &line.discount {
+                    Some(d) => d.amount_off(gross, priced_under).unwrap(),
+                    None => jod(0),
+                };
+                prop_assert!(taken.minor() >= 0, "{taken:?} off {gross:?}");
+                prop_assert!(taken.minor() <= gross.minor(), "{taken:?} off {gross:?}");
+            }
+        }
     }
 }
