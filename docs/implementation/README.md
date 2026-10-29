@@ -173,7 +173,10 @@ the 50 ms limit, which fires the risk-register trigger in [`00-master-plan.md`](
 `1.2.8`, the scan-parser fuzz target, has landed with `just fuzz`, so every microstep of group 1.2
 has begun; `1.2.0` is its one partial step, waiting on milestone 5.8. Group 1.4's `1.4.3b` is **partially delivered**: an
 operator confirms or declines an age-restricted line, audited, and the line it blocks reaches
-`Tendering` once 1.4.8 builds it, through the command 1.4.11 adds. `1.6.3` is closed: its seed comparison landed against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
+`Tendering` once 1.4.8 builds it, through the command 1.4.11 adds. `1.4.5` is **partially delivered** too: a manual
+line discount, refused above the line's value and above the actor's cap unless a manager approves it,
+audited either way. The caps themselves, 5% for a cashier and 15% for a shift lead, reach the shipped
+grid in its second half. `1.6.3` is closed: its seed comparison landed against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
 `authorize`, `ApprovalHandle` and `EscalationPolicy` are complete in `pos-domain`, with the two
 compile-fail proofs that a token cannot be forged or substituted across capabilities. Its
 persistence half now stores, validates, reloads and one-use consumes a handle through a

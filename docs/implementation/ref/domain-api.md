@@ -1573,7 +1573,7 @@ pub struct CartLine {
     pub unit: UnitOfMeasure,
     pub is_weighed: bool,
     pub tax_category_id: TaxCategoryId,
-    pub discounts: Vec<LineDiscount>,
+    pub discounts: Vec<LineDiscount>,   // as delivered at 1.4.5: `discount: Option<LineDiscount>`, §6.1
     pub price_override: Option<PriceOverride>,
     pub min_age: Option<u8>,            // captured, so a catalogue edit mid-cart cannot clear the gate
     pub age_confirmed: bool,
@@ -1677,8 +1677,38 @@ pub fn check_age_confirmed(cart: &Cart)             -> Result<(), CartError>;
 /// `AgeConfirmationNotPending`.
 pub fn confirm_age(cart: Cart, line_id: SaleLineId, confirmed: bool, actor: UserId,
                    at: Timestamp)                   -> Result<(Cart, AuditIntent), CartError>;
-pub fn apply_line_discount(cart: Cart, line: SaleLineId, d: DiscountRequest,
-                           auth: &Authorized<cap::DiscountManual>)
+/// As delivered at 1.4.5, from `pricing.rs`:
+///   pub enum DiscountKind { Percent(Percent), Amount(Money) }
+///   pub struct DiscountReason(pub String);             // a configured code
+///   pub struct DiscountRequest { pub kind: DiscountKind, pub reason: DiscountReason }
+///   pub enum DiscountCap { Unlimited, AtMost(Percent) } // merchant decisions 3.1–3.3
+///   pub struct LineDiscount { pub kind: DiscountKind, pub reason: DiscountReason,
+///                             pub by: UserId, pub approver: Option<UserId> }
+///   impl LineDiscount { pub fn amount_off(&self, gross: Money, rule: RoundingRule)
+///                                                     -> Result<Money, MoneyError>; }
+///   pub fn exceeds_value(kind: DiscountKind, unit_price: Money, qty: Qty) -> bool;
+///   impl DiscountCap { pub fn admits(self, kind: DiscountKind, unit_price: Money,
+///                                    qty: Qty) -> bool; }
+/// A line keeps its discount as asked, `CartLine.discount: Option<LineDiscount>`:
+/// at most one, which another replaces and a zero clears, so two within the cap
+/// never add up past it. A share is turned into money when the cart is priced
+/// (§6.2), so it keeps its share if the quantity changes; an amount off fixes the
+/// quantity until cleared (`AmountDiscountFixesQuantity`). `exceeds_value` (E.19)
+/// and `admits` compare with the line's exact value, so they hold under every
+/// rounding rule. The signature gains three arguments this section's did not
+/// have: the actor's `limit`, which the shell resolves from their grant and
+/// never from the request; the store's `rule`, which states the amount a share
+/// takes now for the intent and the binding; and the `approval` an above-cap
+/// discount needs, bound to this actor, line (`entity_id`), amount and reason,
+/// checked at `auth.at()`. The intent is `discount.manual` on the `sale_line`,
+/// its reason the request's (the handle's, which must be equal), and its payload
+/// carries `amount_minor`, as `approval_consumption`'s trigger requires.
+/// `BasketDiscount`, `DiscountAttribution` and `apply_basket_discount` are
+/// 1.4.6's, where a basket discount is first divided among the lines.
+pub fn apply_line_discount(cart: Cart, line: SaleLineId, request: DiscountRequest,
+                           limit: DiscountCap, rule: RoundingRule,
+                           auth: &Authorized<cap::DiscountManual>,
+                           approval: Option<&ApprovalHandle>)
                                                     -> Result<(Cart, AuditIntent), CartError>;
 pub fn apply_basket_discount(cart: Cart, d: DiscountRequest,
                            auth: &Authorized<cap::DiscountManual>)
@@ -1814,6 +1844,13 @@ pub enum CartError {
     #[error("sale {0} was parked on another register")]        ParkedOnAnotherRegister(SaleId), // 1.4.4
     #[error("sale {0} was parked {parked} and this till is {till}")] // "live" or "in training mode"
                                                                TrainingModeMismatch(SaleId, bool), // 1.4.4
+    #[error("discount {0} is above the cap {1} and needs a manager's approval")]
+                                                               DiscountAboveCap(String, String), // 1.4.5
+    #[error("discount {0} is negative")]                       NegativeDiscount(String), // 1.4.5
+    #[error("line {0} has an amount off; clear the discount to change its quantity")]
+                                                               AmountDiscountFixesQuantity(SaleLineId), // 1.4.5
+    #[error("the approval was given for {0}, not {1}")]        ApprovalReasonMismatch(String, String), // 1.4.5
+    #[error(transparent)] Permission(#[from] PermissionError),  // 1.4.5: an approval that does not match
     #[error(transparent)] Tax(#[from] TaxError),
     #[error(transparent)] Money(#[from] MoneyError),
 }
@@ -3312,8 +3349,10 @@ The diagram omits two modules that the tree at the top of this file lists. `cata
 depends on it. `tax` also depends on the pure `Timestamp` value in `time`, because
 `TaxRateRule.valid_from` and `valid_to` are effective-dated; that is a value dependency, never
 permission to read a clock. `pricing` sits between `money` and `cart`, and depends on `permissions`
-for the `Authorized<C>` arguments its override and discount functions take. None adds a cycle, and
-`just acyclic` is what establishes that rather than this diagram.
+for the `Authorized<C>` arguments its override and discount functions take. As delivered at 1.4.5
+it depends on `money` and `ids` only: a function that takes a cart and an `Authorized<C>` is a cart
+transition and lives in `cart`, which reads `pricing` for the values and checks those transitions
+use. None adds a cycle, and `just acyclic` is what establishes that rather than this diagram.
 
 Arrows point one way. `money` depends on nothing but `rust_decimal`. Nothing depends on `receipt`. A
 cycle here is a design error, and `scripts/check-domain-acyclic.py` — `just acyclic`, in `just lint`
