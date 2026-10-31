@@ -1569,12 +1569,13 @@ pub struct CartLine {
     pub name_snapshot: String,          // I-5: copied at capture, never re-read
     pub unit_price: Money,              // I-5
     pub price_origin: PriceOrigin,      // §4.2 — where that number came from
+    pub max_price: Option<Money>,       // as delivered at 1.4.7: the ceiling on unit_price (E.71)
     pub qty: Qty,
     pub unit: UnitOfMeasure,
     pub is_weighed: bool,
     pub tax_category_id: TaxCategoryId,
     pub discounts: Vec<LineDiscount>,   // as delivered at 1.4.5: `discount: Option<LineDiscount>`, §6.1
-    pub price_override: Option<PriceOverride>,
+    pub price_override: Option<PriceOverride>, // 1.4.7: `price()` is what the line charges
     pub min_age: Option<u8>,            // captured, so a catalogue edit mid-cart cannot clear the gate
     pub age_confirmed: bool,
     pub label: Option<DerivedWeight>,   // §4.3 — advisory stock basis, never money
@@ -1648,11 +1649,15 @@ impl AddLine {
 /// As delivered at 1.4.3: `AddLine` derives `Serialize` but not `Deserialize`,
 /// because `PriceSource` has none, so no request from the screen carries a
 /// price into a line (`tests/ui/add_line_cannot_be_deserialized.rs`). It has no
-/// `max_price` (the ceiling is checked when a price changes, 1.4.7) and no
 /// `age_confirmed` (an operator confirms, 1.4.3b, never the request that adds
-/// the line). `from_scan` makes a price label one `Package` at the label's
-/// price, with the derived weight as `label`, and refuses a lookup that is not
-/// one product as `ScanNotOneProduct`; `department` is 1.4.12's.
+/// the line). `max_price` arrived at 1.4.7, from the product the constructors
+/// read: the ceiling on the line's unit price, which `add_line` holds and the
+/// line keeps for `override_price`. A weighed product's price label carries
+/// none, because its one package is of a weight the till does not know and no
+/// ceiling per kilogram compares with it. `from_scan` makes a price label one
+/// `Package` at the label's price, with the derived weight as `label`, and
+/// refuses a lookup that is not one product as `ScanNotOneProduct`;
+/// `department` is 1.4.12's.
 /// `VoidReason` is a configured code: `pub struct VoidReason(pub String);`.
 
 pub fn open(id: SaleId, ctx: &CartContext) -> Cart;
@@ -1662,7 +1667,9 @@ pub fn open(id: SaleId, ctx: &CartContext) -> Cart;
 /// an indivisible unit (§6.3), and a price in another currency. An inactive
 /// product (E.38) is refused by `AddLine`'s constructors. An age-restricted line
 /// (E.69) goes in **blocked** and `check_age_confirmed` refuses the cart until
-/// 1.4.3b's `confirm_age` (as delivered at 1.4.3).
+/// 1.4.3b's `confirm_age` (as delivered at 1.4.3). A price above the line's
+/// `max_price` is `AboveMaxPrice`, which nothing admits (E.71, 1.4.7): the
+/// catalogue save refuses the same price, so a label is where it can arise.
 pub fn add_line(cart: Cart, req: AddLine)          -> Result<Cart, CartError>;
 /// Refuses zero, a fraction of an indivisible unit, a price label's line (one
 /// package; another is another scan) and a department line (1.4.12).
@@ -1743,9 +1750,36 @@ pub fn apply_basket_discount(cart: Cart, request: DiscountRequest, limit: Discou
                                                     -> Result<(Cart, AuditIntent), CartError>;
 pub fn discount_attributions(cart: &Cart, rule: RoundingRule)
                                                     -> Result<Vec<DiscountAttribution>, CartError>;
+/// As delivered at 1.4.7, from `pricing.rs` and `catalog.rs`:
+///   pub enum OverrideReason { DisplayedPrice, Code(String) } // the code is its identity
+///   pub struct PriceOverride { pub to: Money, pub reason: OverrideReason,
+///                              pub by: UserId, pub approver: Option<UserId> }
+///   pub struct LabelReprint { pub product_id: ProductId, pub cause: ReprintCause }
+///   pub enum ReprintCause { DisplayedPriceOverride }  // label_reprint_queue.cause
+/// and `StockPosition::cost_basis(&self) -> Option<Money>` (§12), `None` when no
+/// cost was ever recorded, so an unknown cost is never read as a zero one. The
+/// line keeps the price it was captured at and gains
+/// `price_override: Option<PriceOverride>`; `CartLine::price()` is what it
+/// charges, and every value a discount or the basket is measured against is that
+/// price times the quantity. Another override replaces this one and one back to
+/// the captured price clears it. The signature gains `unit_cost`, the product's
+/// cost from the stock ledger, and returns the label to reprint. Three limits,
+/// the last two the owner's (29 October 2026, merchant decision 3.4): the
+/// ministry ceiling is a hard block, approved or not (E.71); a price below the
+/// captured one may not go below cost, and a product with no recorded cost may
+/// not be lowered at all, while the captured price or more is never refused; and
+/// a `displayed_price` override wins over that floor, only ever lowers the price,
+/// and returns a `LabelReprint` (E.70). The intent is `price.override` on the
+/// `sale_line`, its reason the code, and its payload carries `amount_minor` (the
+/// new price, which an escalated handle binds), the captured and previous prices,
+/// the floor and the ceiling it was held to. A price label is
+/// `LabelPriceNotOverridable` (it is the price displayed on the package), a
+/// department line is 1.4.12's, and a line with an amount off is
+/// `AmountDiscountFixesPrice` until it is cleared. A lower price clears an amount
+/// off the basket, as any lower basket value does.
 pub fn override_price(cart: Cart, line: SaleLineId, to: Money, reason: OverrideReason,
-                      auth: &Authorized<cap::PriceOverride>)
-                                                    -> Result<(Cart, AuditIntent), CartError>;
+                      unit_cost: Option<Money>, auth: &Authorized<cap::PriceOverride>)
+                              -> Result<(Cart, AuditIntent, Option<LabelReprint>), CartError>;
 /// A non-catalogue line for goods with no SKU (§6.5). The ONLY transition that
 /// accepts an operator-entered amount, and it is capability-gated, capped,
 /// audited, and reported beside price overrides — which is exactly what
@@ -1894,6 +1928,14 @@ pub enum CartError {
                                                                AmountDiscountFixesQuantity(SaleLineId), // 1.4.5
     #[error("the approval was given for {0}, not {1}")]        ApprovalReasonMismatch(String, String), // 1.4.5
     #[error("discount {0} exceeds the basket's value")]        DiscountExceedsBasket(String), // 1.4.6
+    #[error("line {0} has an amount off; clear the discount to change its price")]
+                                                               AmountDiscountFixesPrice(SaleLineId), // 1.4.7
+    #[error("line {0} is priced by its label; weigh and label it again to change its price")]
+                                                               LabelPriceNotOverridable(SaleLineId), // 1.4.7
+    #[error("a displayed price of {0} is not below the {1} the line charges")]
+                                                               DisplayedPriceNotLower(String, String), // 1.4.7
+    #[error("{0} has no recorded cost, so its price cannot be lowered to {1}")]
+                                                               NoRecordedCost(ProductId, String), // 1.4.7
     #[error(transparent)] Permission(#[from] PermissionError),  // 1.4.5: an approval that does not match
     #[error(transparent)] Tax(#[from] TaxError),
     #[error(transparent)] Money(#[from] MoneyError),
@@ -3206,6 +3248,10 @@ impl StockPosition {
     /// Nothing on hand, no cost basis — estimated by definition. The defaults
     /// `0006`'s projection trigger reads for a product with no cache row.
     pub fn unstocked(currency: Currency) -> StockPosition;
+    /// Added at 1.4.7: the cost a price override's floor is held to, the WAC,
+    /// or `None` when no cost was ever recorded (a WAC of zero marked
+    /// estimated), so an unknown cost never puts the floor at nothing.
+    pub fn cost_basis(&self) -> Option<Money>;
 }
 
 /// A movement a caller asks the ledger to record. A cost is required on an

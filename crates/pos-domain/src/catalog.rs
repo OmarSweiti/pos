@@ -481,6 +481,26 @@ pub struct Barcode {
     pub pack_qty: Qty,
 }
 
+/// A shelf label to print again: one row of the back office's worklist,
+/// `label_reprint_queue`'s product and cause (J.3, 4.6.2). Price display is
+/// inspected in Jordan, so a label that showed the wrong price is printed
+/// again rather than left to be noticed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LabelReprint {
+    pub product_id: ProductId,
+    pub cause: ReprintCause,
+}
+
+/// Why a label is printed again: `label_reprint_queue.cause`. A price change
+/// and a new product join it when 4.1.3 first produces them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReprintCause {
+    /// The shelf showed less than the till charged, and the customer was
+    /// charged the shelf's price (E.70, 1.4.7).
+    DisplayedPriceOverride,
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]

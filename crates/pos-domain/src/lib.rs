@@ -35,9 +35,9 @@ pub use audit::{
 pub use cart::{Cart, CartContext, CartError, CartLine, ParkedCart, Sale};
 pub use catalog::{
     Barcode, BarcodeKind, CatalogError, DerivedWeight, EmbeddedBarcodeRule, EmbeddedValue,
-    MatchedOn, ParsedScan, PriceOrigin, PriceSource, Product, ProductHit, RegulatedKind,
-    RegulatedSaleForm, SaleForm, ScanError, ScanLookup, UnitOfMeasure, claiming_rule,
-    ean13_checksum_ok, parse_scan, parse_scan_bytes, resolve_scan,
+    LabelReprint, MatchedOn, ParsedScan, PriceOrigin, PriceSource, Product, ProductHit,
+    RegulatedKind, RegulatedSaleForm, ReprintCause, SaleForm, ScanError, ScanLookup, UnitOfMeasure,
+    claiming_rule, ean13_checksum_ok, parse_scan, parse_scan_bytes, resolve_scan,
 };
 pub use ids::{
     ApprovalId, CategoryId, CustomerId, IdSource, OrgId, ProductId, PromotionId, RegisterId,
@@ -52,7 +52,8 @@ pub use permissions::{
 };
 pub use pricing::{
     BasketDiscount, DiscountAttribution, DiscountCap, DiscountKind, DiscountReason,
-    DiscountRequest, DiscountSource, LineDiscount, PricingError, ProrationLine, prorate,
+    DiscountRequest, DiscountSource, LineDiscount, OverrideReason, PriceOverride, PricingError,
+    ProrationLine, prorate,
 };
 pub use receipt::{
     BuyerBlock, DocKind, FiscalBlock, FooterBlock, Language, LoyaltyBlock, MerchantBlock,
