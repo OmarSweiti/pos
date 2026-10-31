@@ -16,6 +16,7 @@
 //! value nothing checks.
 
 use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -39,7 +40,10 @@ use crate::pricing::{
     DiscountSource, LineDiscount, OverrideReason, PriceOverride, PricingError, ProrationLine,
     exceeds_basket, exceeds_value, prorate,
 };
-use crate::tax::{SupplyDestination, SupplyTaxContext, TaxError};
+use crate::tax::{
+    LineTax, PriceMode, StoreTaxProfile, SupplyDestination, SupplyTaxContext, TaxComponent,
+    TaxError, TaxSummaryRow, compute_line_tax, summarize_tax,
+};
 use crate::time::Timestamp;
 
 /// A sale, in the one state it is in.
@@ -1035,6 +1039,166 @@ pub fn discount_attributions(
     Ok(attributions)
 }
 
+/// What a store's lines are priced under (1.4.9): its price mode (merchant
+/// decision 2.4, `store.price_mode`), its tax profile (1.3.8: `Unregistered`
+/// where `store.gst_profile` says so, otherwise `store.tax_profile`), and the
+/// rounding rule its approved tax computation policy pins. None of the three
+/// has a default, so a setting the shell failed to read cannot become a
+/// plausible one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PricingSettings {
+    pub price_mode: PriceMode,
+    pub profile: StoreTaxProfile,
+    pub rule: RoundingRule,
+}
+
+/// The tax components a store's pack charges on each tax category on the
+/// sale's business date: `pos_db::tax_pack::TaxPackRepository::components_for`
+/// for every category the cart holds (1.3.7). The pack is already the store's
+/// profile's and already dated, so pricing chooses nothing among them.
+pub type TaxBands = BTreeMap<TaxCategoryId, Vec<TaxComponent>>;
+
+/// A cart in money (§6.2): every line priced, and the receipt's totals.
+///
+/// `total` is the sum of the lines' totals, and equals `subtotal` less
+/// `discount_total`, plus `tax_total` where prices exclude tax. Where they
+/// include it, the tax is already inside every line's total. It is what the
+/// customer owes before any cash rounding, which a final cash tender adds
+/// (1.5.3, 1.4.8).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PricedCart {
+    pub lines: Vec<PricedLine>,
+    /// Every line's gross before its discounts.
+    pub subtotal: Money,
+    /// Every discount attributed to a line, line and basket alike.
+    pub discount_total: Money,
+    /// The receipt's tax rows, from the lines' own results (1.3.6).
+    pub tax_summary: Vec<TaxSummaryRow>,
+    pub tax_total: Money,
+    pub total: Money,
+    pub currency: Currency,
+}
+
+/// One line in money (§6.2).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PricedLine {
+    pub line_id: SaleLineId,
+    /// What the line charges a unit, [`CartLine::price`], times its quantity,
+    /// rounded once by the store's rule: an overridden line at the price it
+    /// charges.
+    pub gross_before_discount: Money,
+    /// The line's own discount, then its share of the basket's, exactly as
+    /// [`discount_attributions`] divides them.
+    pub discount_attributions: Vec<DiscountAttribution>,
+    /// What the tax is computed on: the gross less its discounts. Where prices
+    /// include tax this amount contains it, and where they exclude it this is
+    /// the net.
+    pub taxable: Money,
+    pub tax: LineTax,
+    /// What the line adds to the total, `tax.gross`: the taxable amount where
+    /// prices include tax, and the taxable amount plus its tax where they
+    /// exclude it.
+    pub line_total: Money,
+}
+
+/// The one function that turns a cart into money (1.4.9, §6.2): the sole
+/// source of every number on the receipt and in the fiscal document, never
+/// recomputed elsewhere.
+///
+/// Each line is priced on its own. Its gross is [`CartLine::price`] times its
+/// quantity, rounded once by the store's rule, so an overridden line is priced
+/// at the price it charges. Its discounts are [`discount_attributions`],
+/// read rather than divided again, so the receipt and the fiscal document
+/// share one division of the basket. Its tax is [`compute_line_tax`] on what
+/// is left, under the store's price mode, with the components the store's pack
+/// charges on its category. The summary is [`summarize_tax`] over the lines'
+/// own results. Nothing depends on where a line sits: a line's price and tax are
+/// its own, and the basket's division is decided by what the lines are
+/// (1.4.6), so the same items in any order cost the same (E.19b).
+///
+/// A store not registered for GST charges no tax and needs no band. A discount
+/// of everything is a sale of nothing, priced at zero (E.18).
+///
+/// # Errors
+///
+/// - [`CartError::DuplicateLineId`]: two lines with one id, which no division
+///   or sale row could tell apart.
+/// - [`CartError::TaxBandMissing`]: a registered store with no components for
+///   a line's tax category. It is refused, never sold at a familiar rate.
+/// - [`CartError::NegativeLine`]: a line worth less than nothing after its
+///   discounts (E.19), which the discount transitions keep from arising.
+/// - [`CartError::DiscountExceedsBasket`]: a basket discount the lines can no
+///   longer carry, as for [`discount_attributions`].
+/// - [`CartError::Tax`]: what [`compute_line_tax`] and [`summarize_tax`]
+///   refuse, such as a supply that is not ordinary domestic retail.
+/// - [`CartError::Money`]: an amount in another currency, or an overflow.
+pub fn price_cart(
+    cart: &Cart,
+    bands: &TaxBands,
+    settings: &PricingSettings,
+) -> Result<PricedCart, CartError> {
+    let (currency, rule) = (cart.currency, settings.rule);
+    let mut seen = BTreeSet::new();
+    if let Some(twice) = cart.lines.iter().find(|l| !seen.insert(l.id)) {
+        return Err(CartError::DuplicateLineId(twice.id));
+    }
+    let mut attributions: BTreeMap<SaleLineId, Vec<DiscountAttribution>> = BTreeMap::new();
+    for a in discount_attributions(cart, rule)? {
+        attributions.entry(a.line_id).or_default().push(a);
+    }
+    let zero = Money::zero(currency);
+    let (mut subtotal, mut discount_total, mut tax_total, mut total) = (zero, zero, zero, zero);
+    let mut lines = Vec::with_capacity(cart.lines.len());
+    for line in &cart.lines {
+        let gross = line.price().mul_qty(line.qty, rule)?;
+        let own = attributions.remove(&line.id).unwrap_or_default();
+        let off = Money::sum(own.iter().map(|a| a.amount), currency)?;
+        let taxable = gross.checked_sub(off)?;
+        if taxable.is_negative() {
+            return Err(CartError::NegativeLine);
+        }
+        let components = if settings.profile == StoreTaxProfile::Unregistered {
+            &[][..]
+        } else {
+            bands
+                .get(&line.tax_category_id)
+                .ok_or(CartError::TaxBandMissing(line.tax_category_id))?
+                .as_slice()
+        };
+        let tax = compute_line_tax(
+            taxable,
+            line.qty,
+            settings.price_mode,
+            components,
+            settings.profile,
+            &cart.supply,
+            rule,
+        )?;
+        subtotal = subtotal.checked_add(gross)?;
+        discount_total = discount_total.checked_add(off)?;
+        tax_total = tax_total.checked_add(tax.tax_total)?;
+        total = total.checked_add(tax.gross)?;
+        lines.push(PricedLine {
+            line_id: line.id,
+            gross_before_discount: gross,
+            discount_attributions: own,
+            taxable,
+            line_total: tax.gross,
+            tax,
+        });
+    }
+    let taxes: Vec<LineTax> = lines.iter().map(|l| l.tax.clone()).collect();
+    Ok(PricedCart {
+        tax_summary: summarize_tax(&taxes)?,
+        lines,
+        subtotal,
+        discount_total,
+        tax_total,
+        total,
+        currency,
+    })
+}
+
 /// What the basket is worth: each line at its price, overridden or not, priced
 /// under `rule`, less its own discount.
 fn basket_value(cart: &Cart, rule: RoundingRule) -> Result<Money, CartError> {
@@ -1284,6 +1448,13 @@ pub enum CartError {
     /// decision, 29 October 2026).
     #[error("{0} has no recorded cost, so its price cannot be lowered to {1}")]
     NoRecordedCost(ProductId, String),
+    /// Added at 1.4.9: the store's pack charges nothing the register holds on
+    /// this tax category. An unconfigured band fails closed.
+    #[error("no tax band is configured for category {0}")]
+    TaxBandMissing(TaxCategoryId),
+    /// Added at 1.4.9: two lines carry this id.
+    #[error("line {0} appears twice in the cart")]
+    DuplicateLineId(SaleLineId),
     /// Added at 1.4.5: the approval's reason, then the request's. The audit
     /// row repeats the handle's reason, so the two must be one.
     #[error("the approval was given for {0}, not {1}")]
@@ -3811,6 +3982,536 @@ mod tests {
                     prop_assert!(line.price().minor() <= c.minor());
                 }
             }
+        }
+    }
+
+    // ── pricing the cart (1.4.9) ────────────────────────────────────────
+
+    use crate::tax::{TaxBase, TaxBasis, TaxTreatment};
+
+    /// The standard band `product()` sells in, and two untaxed ones.
+    fn band(n: u8) -> TaxCategoryId {
+        TaxCategoryId::from_uuid(id(0x12 + u128::from(n)))
+    }
+
+    fn gst(treatment: TaxTreatment, ppm: i64) -> Vec<TaxComponent> {
+        vec![TaxComponent {
+            code: "GST".to_owned(),
+            treatment,
+            basis: TaxBasis::Percentage {
+                rate: Percent::from_ppm(ppm),
+            },
+            sequence: 1,
+            base: TaxBase::LineNet,
+            is_inclusive_capable: true,
+        }]
+    }
+
+    /// A synthetic pack: 16% standard, zero-rated, exempt.
+    fn bands() -> TaxBands {
+        TaxBands::from([
+            (band(0), gst(TaxTreatment::Standard, 160_000)),
+            (band(1), gst(TaxTreatment::Zero, 0)),
+            (band(2), gst(TaxTreatment::Exempt, 0)),
+        ])
+    }
+
+    fn store(price_mode: PriceMode) -> PricingSettings {
+        PricingSettings {
+            price_mode,
+            profile: StoreTaxProfile::Standard,
+            rule: RULE,
+        }
+    }
+
+    fn priced(cart: &Cart, price_mode: PriceMode) -> PricedCart {
+        price_cart(cart, &bands(), &store(price_mode)).unwrap()
+    }
+
+    fn minors(priced: &PricedCart) -> [i64; 4] {
+        [
+            priced.subtotal.minor(),
+            priced.discount_total.minor(),
+            priced.tax_total.minor(),
+            priced.total.minor(),
+        ]
+    }
+
+    #[test]
+    fn a_line_is_priced_in_the_store_s_price_mode() {
+        // Two teas at 1.250 under 16%. Inclusive: 2.500 holds its tax, the net
+        // 2.500 / 1.16 = 2.15517… rounded once to 2.155, and the tax 0.345 is
+        // what is left, so the two add back to the shelf's price.
+        let inclusive = priced(&two_teas(), PriceMode::Inclusive);
+        let line = inclusive.lines.first().unwrap();
+        assert_eq!(
+            (line.gross_before_discount, line.taxable, line.line_total),
+            (jod(2_500), jod(2_500), jod(2_500))
+        );
+        assert_eq!((line.tax.net, line.tax.tax_total), (jod(2_155), jod(345)));
+        assert_eq!(minors(&inclusive), [2_500, 0, 345, 2_500]);
+        // Exclusive: 2.500 is the net and the tax goes on top.
+        let exclusive = priced(&two_teas(), PriceMode::Exclusive);
+        assert_eq!(
+            (exclusive.lines.first().unwrap().tax.net, exclusive.total),
+            (jod(2_500), jod(2_900))
+        );
+        assert_eq!(minors(&exclusive), [2_500, 0, 400, 2_900]);
+        // One row on the receipt, from the line's own result.
+        let row = inclusive.tax_summary.first().unwrap();
+        assert_eq!(inclusive.tax_summary.len(), 1);
+        assert_eq!(
+            (row.net, row.tax, row.gross),
+            (jod(2_155), jod(345), jod(2_500))
+        );
+        assert_eq!(inclusive.currency, Currency::JOD);
+    }
+
+    #[test]
+    fn discounts_come_off_before_tax() {
+        // Teas 2.500 and packs 3.750; the cashier's 5% off the teas (0.125),
+        // then the manager's 10% off a basket worth 6.125: 0.613, divided
+        // 0.238 and 0.375, the leftover fil to the teas' larger remainder.
+        let (cart, _) = discount(basket(), pct(50_000)).unwrap();
+        let (cart, _) = by_manager(cart, pct(100_000)).unwrap();
+        let exclusive = priced(&cart, PriceMode::Exclusive);
+        let shares: Vec<Vec<i64>> = exclusive
+            .lines
+            .iter()
+            .map(|l| {
+                l.discount_attributions
+                    .iter()
+                    .map(|a| a.amount.minor())
+                    .collect()
+            })
+            .collect();
+        assert_eq!(shares, vec![vec![125, 238], vec![375]]);
+        // They are the attributions 1.4.6 makes, line by line.
+        let flat: Vec<DiscountAttribution> = exclusive
+            .lines
+            .iter()
+            .flat_map(|l| l.discount_attributions.clone())
+            .collect();
+        let mut expected = discount_attributions(&cart, RULE).unwrap();
+        expected.sort_by_key(|a| (a.line_id, a.source == DiscountSource::ManualBasket));
+        assert_eq!(flat, expected);
+        // Tax is charged on what is left: 2.137 and 3.375 at 16%.
+        let taxed: Vec<[i64; 3]> = exclusive
+            .lines
+            .iter()
+            .map(|l| {
+                [
+                    l.taxable.minor(),
+                    l.tax.tax_total.minor(),
+                    l.line_total.minor(),
+                ]
+            })
+            .collect();
+        assert_eq!(taxed, vec![[2_137, 342, 2_479], [3_375, 540, 3_915]]);
+        // 6.250 − 0.738 + 0.882 = 6.394.
+        assert_eq!(minors(&exclusive), [6_250, 738, 882, 6_394]);
+        // Inclusive: the customer pays what is left, its tax inside it.
+        let inclusive = priced(&cart, PriceMode::Inclusive);
+        assert_eq!(inclusive.total, jod(2_137 + 3_375));
+    }
+
+    #[test]
+    fn an_overridden_line_is_priced_at_the_price_it_charges() {
+        let (cart, ..) = reprice(two_teas(), 1_000, code("damaged_pack"), Some(900)).unwrap();
+        let inclusive = priced(&cart, PriceMode::Inclusive);
+        let line = inclusive.lines.first().unwrap();
+        assert_eq!(cart.lines.first().unwrap().unit_price, jod(1_250));
+        assert_eq!(
+            (line.gross_before_discount, line.discount_attributions.len()),
+            (jod(2_000), 0)
+        );
+        assert_eq!(minors(&inclusive), [2_000, 0, 276, 2_000]);
+    }
+
+    #[test]
+    fn a_receipt_of_three_rates_has_a_row_for_each() {
+        let mut cart = two_teas();
+        for (n, untaxed) in [(2, 1), (3, 2)] {
+            let mut item = product(0x20 + n, UnitOfMeasure::Each);
+            item.tax_category_id = band(untaxed);
+            cart = add(cart, n, &item, 1_000).unwrap();
+        }
+        let exclusive = priced(&cart, PriceMode::Exclusive);
+        let rows: Vec<(TaxTreatment, i64, i64)> = exclusive
+            .tax_summary
+            .iter()
+            .map(|r| (r.treatment, r.net.minor(), r.tax.minor()))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (TaxTreatment::Standard, 2_500, 400),
+                (TaxTreatment::Zero, 1_250, 0),
+                (TaxTreatment::Exempt, 1_250, 0),
+            ]
+        );
+        assert_eq!(minors(&exclusive), [5_000, 0, 400, 5_400]);
+    }
+
+    #[test]
+    fn a_line_without_its_tax_band_is_refused_by_name() {
+        let mut partial = bands();
+        partial.remove(&band(0));
+        assert_eq!(
+            price_cart(&two_teas(), &partial, &store(PriceMode::Inclusive)),
+            Err(CartError::TaxBandMissing(band(0)))
+        );
+        // A store not registered for GST charges none and needs no band.
+        for price_mode in [PriceMode::Inclusive, PriceMode::Exclusive] {
+            let unregistered = PricingSettings {
+                profile: StoreTaxProfile::Unregistered,
+                ..store(price_mode)
+            };
+            let untaxed = price_cart(&two_teas(), &TaxBands::new(), &unregistered).unwrap();
+            assert_eq!(minors(&untaxed), [2_500, 0, 0, 2_500]);
+            assert!(untaxed.tax_summary.is_empty());
+        }
+        // A supply that is not ordinary domestic retail is the tax engine's
+        // to refuse, and it is refused here as there.
+        let mut export = two_teas();
+        export.supply.destination = SupplyDestination::Export;
+        assert_eq!(
+            price_cart(&export, &bands(), &store(PriceMode::Inclusive)),
+            Err(CartError::Tax(TaxError::SupplyDestinationRefused(
+                SupplyDestination::Export
+            )))
+        );
+    }
+
+    #[test]
+    fn an_empty_cart_prices_to_nothing() {
+        let nothing = priced(&building(), PriceMode::Inclusive);
+        assert!(nothing.lines.is_empty() && nothing.tax_summary.is_empty());
+        assert_eq!(minors(&nothing), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn a_cart_holding_one_line_id_twice_is_refused() {
+        let mut cart = two_teas();
+        let again = cart.lines.first().unwrap().clone();
+        cart.lines.push(again);
+        assert_eq!(
+            price_cart(&cart, &bands(), &store(PriceMode::Inclusive)),
+            Err(CartError::DuplicateLineId(line_id(1)))
+        );
+    }
+
+    /// One line a cashier might ring up, and what is done to it.
+    #[derive(Debug, Clone)]
+    struct Scan {
+        product: u8,
+        price: i64,
+        weighed: bool,
+        milli: i64,
+        band: u8,
+        override_to: Option<i64>,
+        /// A share in ppm, or an amount as that share of the line's value.
+        discount: Option<(bool, i64)>,
+    }
+
+    fn scans() -> impl Strategy<Value = Vec<Scan>> {
+        let scan = (
+            (0u8..3, prop_oneof![3 => 0i64..=20, 1 => 0i64..=20_000]),
+            (any::<bool>(), 1i64..=3_000, 1i64..=5, 0u8..3),
+            proptest::option::of(prop_oneof![3 => 0i64..=20, 1 => 0i64..=20_000]),
+            proptest::option::of((any::<bool>(), 0i64..=1_000_000)),
+        )
+            .prop_map(
+                |((product, price), (weighed, grams, units, band), override_to, discount)| Scan {
+                    product,
+                    price,
+                    weighed,
+                    milli: if weighed { grams } else { units * 1_000 },
+                    band,
+                    override_to,
+                    discount,
+                },
+            );
+        proptest::collection::vec(scan, 0..=8)
+    }
+
+    fn modes() -> impl Strategy<Value = PriceMode> {
+        prop_oneof![Just(PriceMode::Inclusive), Just(PriceMode::Exclusive)]
+    }
+
+    fn profiles() -> impl Strategy<Value = StoreTaxProfile> {
+        prop_oneof![
+            3 => Just(StoreTaxProfile::Standard),
+            1 => Just(StoreTaxProfile::Unregistered),
+        ]
+    }
+
+    /// A discount asked as `share`: a percentage, or that share of `value` as
+    /// an amount, which is then within the value by construction.
+    fn asked((percent, share): (bool, i64), value: i64) -> DiscountKind {
+        if percent {
+            pct(share)
+        } else {
+            off(i64::try_from(i128::from(value) * i128::from(share) / 1_000_000).unwrap())
+        }
+    }
+
+    /// A manager's discount of `kind` off the whole basket, under the store's
+    /// `rule`: the rule the basket is measured by when it is priced.
+    fn basket_off_under(
+        cart: Cart,
+        kind: DiscountKind,
+        rule: RoundingRule,
+    ) -> Result<Cart, CartError> {
+        apply_basket_discount(
+            cart,
+            ask(kind, "loyal_customer"),
+            DiscountCap::Unlimited,
+            rule,
+            &proof(manager(), Role::Manager, moment()),
+            None,
+        )
+        .map(|r| r.0)
+    }
+
+    /// The cart those scans ring up through the transitions themselves, under
+    /// the store's `rule`, with any basket discount last. A step a transition
+    /// refuses is left out, as the till would leave it out.
+    fn ring(scans: &[Scan], basket: Option<(bool, i64)>, rule: RoundingRule) -> Cart {
+        let mut cart = building();
+        for (n, scan) in (1u128..).zip(scans) {
+            let mut item = product(
+                0x30 + u128::from(scan.product),
+                if scan.weighed {
+                    UnitOfMeasure::Kilogram
+                } else {
+                    UnitOfMeasure::Each
+                },
+            );
+            item.unit_price = jod(scan.price);
+            item.tax_category_id = band(scan.band);
+            let Ok(next) = add(cart.clone(), n, &item, scan.milli) else {
+                continue;
+            };
+            cart = next;
+            if let Some(to) = scan.override_to
+                && let Ok((next, ..)) = override_price(
+                    cart.clone(),
+                    line_id(n),
+                    jod(to),
+                    code("damaged_pack"),
+                    Some(jod(0)),
+                    &proof_of(shift_lead(), Role::ShiftLead, moment()),
+                )
+            {
+                cart = next;
+            }
+            if let Some(share) = scan.discount {
+                let value = cart
+                    .lines
+                    .last()
+                    .unwrap()
+                    .price()
+                    .mul_qty(Qty::from_milli(scan.milli), RoundingRule::Floor)
+                    .unwrap()
+                    .minor();
+                if let Ok((next, _)) = apply_line_discount(
+                    cart.clone(),
+                    line_id(n),
+                    ask(asked(share, value), "loyal_customer"),
+                    DiscountCap::Unlimited,
+                    rule,
+                    &proof(manager(), Role::Manager, moment()),
+                    None,
+                ) {
+                    cart = next;
+                }
+            }
+        }
+        if let Some(share) = basket {
+            let value = basket_value(&cart, rule).unwrap().minor();
+            if let Ok(next) = basket_off_under(cart.clone(), asked(share, value), rule) {
+                cart = next;
+            }
+        }
+        cart
+    }
+
+    /// What a priced line is, apart from where it sits and the id it was
+    /// given, for comparing two orders of one basket.
+    fn described(cart: &Cart, priced: &PricedCart) -> Vec<String> {
+        let mut all: Vec<String> = cart
+            .lines
+            .iter()
+            .zip(&priced.lines)
+            .map(|(line, p)| {
+                let mut shares: Vec<(String, i64)> = p
+                    .discount_attributions
+                    .iter()
+                    .map(|a| (format!("{:?}", a.source), a.amount.minor()))
+                    .collect();
+                shares.sort();
+                format!(
+                    "{:?} {:?} {} {} {} {:?} {:?} | {} {:?} {} {:?} {}",
+                    line.tax_category_id,
+                    line.product_id,
+                    line.unit_price.minor(),
+                    line.price().minor(),
+                    line.qty.milli(),
+                    line.discount.as_ref().map(|d| d.kind),
+                    line.price_override.as_ref().map(|o| o.to.minor()),
+                    p.gross_before_discount.minor(),
+                    shares,
+                    p.taxable.minor(),
+                    p.tax,
+                    p.line_total.minor(),
+                )
+            })
+            .collect();
+        all.sort();
+        all
+    }
+
+    proptest! {
+        #![proptest_config(domain_proptest_config())]
+
+        /// The master identity, for every cart the transitions ring up: the
+        /// total is the sum of the lines' totals, and equals the subtotal less
+        /// the discounts, plus the tax where prices exclude it. Each line is its
+        /// gross less exactly its own attributions, taxed on the rest; the
+        /// receipt's tax rows add up to the tax; and every such cart can be
+        /// priced, whatever the price mode, rule or registration.
+        #[test]
+        fn prop_total_equals_lines_minus_discounts_plus_tax(
+            scans in scans(),
+            basket in proptest::option::of((any::<bool>(), 0i64..=1_000_000)),
+            price_mode in modes(),
+            rule in rules(),
+            profile in profiles(),
+        ) {
+            let cart = ring(&scans, basket, rule);
+            let settings = PricingSettings { price_mode, profile, rule };
+            let priced = price_cart(&cart, &bands(), &settings).unwrap();
+            let sum = |f: &dyn Fn(&PricedLine) -> Money| {
+                Money::sum(priced.lines.iter().map(f), JOD).unwrap()
+            };
+            prop_assert_eq!(priced.total, sum(&|l| l.line_total));
+            prop_assert_eq!(priced.subtotal, sum(&|l| l.gross_before_discount));
+            prop_assert_eq!(priced.tax_total, sum(&|l| l.tax.tax_total));
+            prop_assert_eq!(
+                priced.discount_total,
+                Money::sum(
+                    priced.lines.iter().flat_map(|l| l.discount_attributions.iter().map(|a| a.amount)),
+                    JOD
+                )
+                .unwrap()
+            );
+            let on_top = match price_mode {
+                PriceMode::Exclusive => priced.tax_total,
+                PriceMode::Inclusive => jod(0),
+            };
+            prop_assert_eq!(
+                priced.total,
+                priced
+                    .subtotal
+                    .checked_sub(priced.discount_total)
+                    .unwrap()
+                    .checked_add(on_top)
+                    .unwrap()
+            );
+            prop_assert_eq!(
+                priced.tax_total,
+                Money::sum(priced.tax_summary.iter().map(|r| r.tax), JOD).unwrap()
+            );
+            prop_assert_eq!(priced.lines.len(), cart.lines.len());
+            for (line, p) in cart.lines.iter().zip(&priced.lines) {
+                prop_assert_eq!(p.line_id, line.id);
+                prop_assert_eq!(p.gross_before_discount, line.price().mul_qty(line.qty, rule).unwrap());
+                let off = Money::sum(p.discount_attributions.iter().map(|a| a.amount), JOD).unwrap();
+                prop_assert_eq!(p.taxable, p.gross_before_discount.checked_sub(off).unwrap());
+                prop_assert!(!p.taxable.is_negative());
+                prop_assert_eq!(p.line_total, p.tax.gross);
+                let expected_total = match price_mode {
+                    PriceMode::Exclusive => p.taxable.checked_add(p.tax.tax_total).unwrap(),
+                    PriceMode::Inclusive => p.taxable,
+                };
+                prop_assert_eq!(p.line_total, expected_total);
+                prop_assert!(p.discount_attributions.iter().all(|a| a.line_id == line.id));
+            }
+        }
+
+        /// The same cart priced twice, or read back from the form a parked
+        /// cart is stored in, prices to byte-identical output.
+        #[test]
+        fn prop_price_cart_is_deterministic(
+            scans in scans(),
+            basket in proptest::option::of((any::<bool>(), 0i64..=1_000_000)),
+            price_mode in modes(),
+            rule in rules(),
+        ) {
+            let cart = ring(&scans, basket, rule);
+            let settings = PricingSettings { price_mode, profile: StoreTaxProfile::Standard, rule };
+            let once = serde_json::to_string(&price_cart(&cart, &bands(), &settings).unwrap()).unwrap();
+            let twice = serde_json::to_string(&price_cart(&cart, &bands(), &settings).unwrap()).unwrap();
+            let stored: Cart = serde_json::from_str(&serde_json::to_string(&cart).unwrap()).unwrap();
+            let restored = serde_json::to_string(&price_cart(&stored, &bands(), &settings).unwrap()).unwrap();
+            prop_assert_eq!(&once, &twice);
+            prop_assert_eq!(&once, &restored);
+        }
+
+        /// E.19b: the same basket scanned in any order, its ids minted afresh
+        /// in that order, costs the same: the same total, subtotal, discounts
+        /// and tax, the same receipt rows, and the same lines priced the same.
+        #[test]
+        fn prop_price_cart_is_invariant_under_line_reordering(
+            scans in scans(),
+            basket in proptest::option::of((any::<bool>(), 0i64..=1_000_000)),
+            price_mode in modes(),
+            rule in rules(),
+            order in proptest::collection::vec(any::<proptest::sample::Index>(), 8),
+        ) {
+            let cart = ring(&scans, basket, rule);
+            let mut shuffled = cart.clone();
+            for (i, pick) in (0..shuffled.lines.len()).rev().zip(&order) {
+                let j = pick.index(i + 1);
+                shuffled.lines.swap(i, j);
+            }
+            for (n, line) in (0x500u128..).zip(shuffled.lines.iter_mut()) {
+                line.id = line_id(n);
+            }
+            let settings = PricingSettings { price_mode, profile: StoreTaxProfile::Standard, rule };
+            let (a, b) = (
+                price_cart(&cart, &bands(), &settings).unwrap(),
+                price_cart(&shuffled, &bands(), &settings).unwrap(),
+            );
+            prop_assert_eq!(minors(&a), minors(&b));
+            prop_assert_eq!(&a.tax_summary, &b.tax_summary);
+            prop_assert_eq!(described(&cart, &a), described(&shuffled, &b));
+        }
+
+        /// E.18: a basket discounted by everything it is worth is a lawful
+        /// sale of nothing. It prices without error to a total, a tax and
+        /// every line of zero, whether the discount was asked as all of the
+        /// basket or as its whole value.
+        #[test]
+        fn prop_zero_total_cart_is_valid(
+            scans in scans(),
+            as_share in any::<bool>(),
+            price_mode in modes(),
+            rule in rules(),
+        ) {
+            let mut cart = ring(&scans, None, rule);
+            if !cart.lines.is_empty() {
+                let value = basket_value(&cart, rule).unwrap().minor();
+                let all = if as_share { pct(1_000_000) } else { off(value) };
+                cart = basket_off_under(cart, all, rule).unwrap();
+            }
+            let settings = PricingSettings { price_mode, profile: StoreTaxProfile::Standard, rule };
+            let priced = price_cart(&cart, &bands(), &settings).unwrap();
+            prop_assert_eq!(priced.total, jod(0));
+            prop_assert_eq!(priced.tax_total, jod(0));
+            prop_assert_eq!(priced.discount_total, priced.subtotal);
+            prop_assert!(priced.lines.iter().all(|l| l.line_total.is_zero() && l.taxable.is_zero()));
         }
     }
 }
