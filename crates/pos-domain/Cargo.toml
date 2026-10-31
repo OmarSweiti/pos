@@ -47,3 +47,14 @@ pos-test-support.workspace = true
 # pinned in rust-toolchain.toml — regenerate it with TRYBUILD=overwrite when that
 # pin moves, and read the diff rather than accepting it.
 trybuild.workspace = true
+# The cart-recompute benchmark (1.4.9): `cargo bench -p pos-domain --bench
+# price_cart` times `price_cart` over 200 lines, and `cargo test -p pos-domain
+# --bench price_cart` prices them once. Bench-only, and a dev-dependency never
+# reaches the register binary, so the purity check's normal-edge tree is
+# untouched.
+criterion.workspace = true
+
+# criterion supplies its own `main`, so the bench opts out of libtest's.
+[[bench]]
+name = "price_cart"
+harness = false

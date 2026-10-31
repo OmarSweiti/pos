@@ -32,7 +32,10 @@ pub use audit::{
     AuditError, AuditIntent, CanonicalAuditEntry, ChainAnchor, ChainVerdict, canonical_bytes,
     chain_hash, check_payload, verify_chain,
 };
-pub use cart::{Cart, CartContext, CartError, CartLine, ParkedCart, Sale};
+pub use cart::{
+    Cart, CartContext, CartError, CartLine, ParkedCart, PricedCart, PricedLine, PricingSettings,
+    Sale, TaxBands,
+};
 pub use catalog::{
     Barcode, BarcodeKind, CatalogError, DerivedWeight, EmbeddedBarcodeRule, EmbeddedValue,
     LabelReprint, MatchedOn, ParsedScan, PriceOrigin, PriceSource, Product, ProductHit,

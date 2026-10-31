@@ -3333,6 +3333,7 @@ name = "pos-domain"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "criterion",
  "pos-test-support",
  "proptest",
  "rust_decimal",
