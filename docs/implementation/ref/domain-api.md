@@ -1837,12 +1837,22 @@ pub fn void_sale(sale: Sale, reason: VoidReason,
 /// The ONE function that turns a cart into money. Pure, deterministic,
 /// and the only source of every number on the receipt AND in the fiscal
 /// document — never recomputed separately (master plan B.2).
+/// As delivered at 1.4.9: the components come in per tax category, already
+/// the store's pack on the business date, and nothing is resolved by instant.
 pub fn price_cart(
     cart: &Cart,
-    tax_rules: &[TaxRateRule],
+    bands: &TaxBands,
     settings: &PricingSettings,
-    now: Timestamp,
 ) -> Result<PricedCart, CartError>;
+
+/// As delivered at 1.4.9. None of the three has a default.
+pub struct PricingSettings {
+    pub price_mode: PriceMode,      // store.price_mode, merchant decision 2.4
+    pub profile: StoreTaxProfile,   // Unregistered where gst_profile says so, else tax_profile (1.3.8)
+    pub rule: RoundingRule,         // the store's approved tax computation policy
+}
+/// `TaxPackRepository::components_for`, once per category the cart holds (1.3.7).
+pub type TaxBands = BTreeMap<TaxCategoryId, Vec<TaxComponent>>;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PricedCart {
@@ -1865,6 +1875,22 @@ pub struct PricedLine {
     pub line_total: Money,
 }
 ```
+
+> **As delivered at 1.4.9.** Each line is priced on its own: its gross is `CartLine::price()` times
+> its quantity, rounded once by the store's rule, so an overridden line is priced at the price it
+> charges and carries no allowance for the difference. How a reduction from the captured price is
+> shown on the fiscal document is 2.7.3's, beside the rest of that document, and
+> `sale_line_discount.source` still admits `price_override` for it. Its attributions are
+> `discount_attributions(cart, rule)`, read rather than divided again, and its tax is
+> `compute_line_tax` on the gross less them. `line_total` is `tax.gross`, so `total` is the sum of the
+> lines, and equals `subtotal − discount_total`, plus `tax_total` where prices exclude tax.
+> `tax_summary` is `summarize_tax` over the lines' own results. The signature differs from the one
+> above in two ways. **The components arrive per tax category**, as `TaxBands`, because 1.3.7's
+> `components_for` already filters the store's pack by business date, which is what `0005`'s
+> completion gate holds a finished line to; `TaxRateRule` and `now` would have resolved the same
+> rows a second way. **`PricingSettings` is the store's three settings**, none with a default. A
+> store not registered for GST needs no band and charges no tax. A registered store with no band for
+> a line's category is `TaxBandMissing`, and a cart holding one line id twice is `DuplicateLineId`.
 
 `DiscountAttribution` is not an optimisation. Campaign cost reporting (master plan C.9) and JoFotara's per-line discount requirement (correction **C-2**, as revised in [`00-master-plan.md`](../00-master-plan.md) §4a) both read it. A basket discount that has not been attributed to lines cannot be turned into a fiscal document at all.
 
@@ -1936,6 +1962,8 @@ pub enum CartError {
                                                                DisplayedPriceNotLower(String, String), // 1.4.7
     #[error("{0} has no recorded cost, so its price cannot be lowered to {1}")]
                                                                NoRecordedCost(ProductId, String), // 1.4.7
+    #[error("no tax band is configured for category {0}")]    TaxBandMissing(TaxCategoryId), // 1.4.9
+    #[error("line {0} appears twice in the cart")]             DuplicateLineId(SaleLineId), // 1.4.9
     #[error(transparent)] Permission(#[from] PermissionError),  // 1.4.5: an approval that does not match
     #[error(transparent)] Tax(#[from] TaxError),
     #[error(transparent)] Money(#[from] MoneyError),
