@@ -4201,6 +4201,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_line_worth_less_than_nothing_is_refused() {
+        // No transition leaves a line discounted past its value (E.19); a
+        // stored cart that says otherwise is refused, not priced below zero.
+        let mut cart = two_teas();
+        if let Some(line) = cart.lines.first_mut() {
+            line.discount = Some(LineDiscount {
+                kind: off(2_501),
+                reason: DiscountReason("loyal_customer".to_owned()),
+                by: manager(),
+                approver: None,
+            });
+        }
+        assert_eq!(
+            price_cart(&cart, &bands(), &store(PriceMode::Exclusive)),
+            Err(CartError::NegativeLine)
+        );
+    }
+
     /// One line a cashier might ring up, and what is done to it.
     #[derive(Debug, Clone)]
     struct Scan {
