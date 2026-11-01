@@ -1681,7 +1681,18 @@ pub fn add_tender(t: Tendering, tender: Tender) -> Result<Tendering, CartError> 
 }
 
 /// The sale without tender `id`, which the cashier took in error or the
-/// customer withdrew (E.15).
+/// customer withdrew (E.15), and the audit intent that records it under
+/// `tender.remove` (1.4.10).
+///
+/// Taking back a tender that was collected reverses money, so it takes the
+/// proof of `sale.create`, as `tender_remove` requires, and it is audited.
+/// Cash taken, its tender removed and the sale then emptied line by line is
+/// how a sale leaves the drawer with nothing on record; the intent is the
+/// record. It names the sale, and in its payload the tender, its kind, amount
+/// and provider reference, and what is owed once it is gone. `tender_remove`
+/// takes no approval (`ref/ipc-contract.md` §3), and no handle could be
+/// consumed against this intent: its action is the act's own verb, not a
+/// capability.
 ///
 /// The tenders left are taken again in their order, so which one is final and
 /// what it rounds is decided again, exactly as if the removed one had never
@@ -1695,7 +1706,11 @@ pub fn add_tender(t: Tendering, tender: Tender) -> Result<Tendering, CartError> 
 ///   unable to stand: a final cash tender of nothing where something is owed
 ///   again, or cash now short of the rounded amount it would be asked for.
 ///   That tender is removed first.
-pub fn remove_tender(t: Tendering, id: TenderId) -> Result<Tendering, CartError> {
+pub fn remove_tender(
+    t: Tendering,
+    id: TenderId,
+    auth: &Authorized<cap::SaleCreate>,
+) -> Result<(Tendering, AuditIntent), CartError> {
     let Tendering {
         cart,
         priced,
@@ -1703,9 +1718,12 @@ pub fn remove_tender(t: Tendering, id: TenderId) -> Result<Tendering, CartError>
         tenders,
         ..
     } = t;
-    if !tenders.iter().any(|taken| taken.id == id) {
-        return Err(CartError::TenderNotFound(id));
-    }
+    let removed = tenders
+        .iter()
+        .find(|taken| taken.id == id)
+        .cloned()
+        .ok_or(CartError::TenderNotFound(id))?;
+    let sale = cart.id;
     let unpaid = Tendering {
         cart,
         priced,
@@ -1713,10 +1731,29 @@ pub fn remove_tender(t: Tendering, id: TenderId) -> Result<Tendering, CartError>
         tenders: Vec::new(),
         cash_rounding: None,
     };
-    tenders
+    let rest = tenders
         .into_iter()
         .filter(|taken| taken.id != id)
-        .try_fold(unpaid, add_tender)
+        .try_fold(unpaid, add_tender)?;
+    let intent = AuditIntent {
+        actor: auth.actor(),
+        approver: auth.approver(),
+        approval: auth.approval(),
+        action: "tender.remove",
+        entity: "sale",
+        entity_id: sale.as_uuid(),
+        reason: None,
+        payload: json!({
+            "tender_id": removed.id.as_uuid().to_string(),
+            "type_code": removed.type_code,
+            "amount_minor": removed.amount.minor(),
+            "currency": removed.amount.currency().code(),
+            "psp_ref": removed.psp_ref,
+            "remaining_minor": remaining_due(&rest)?.minor(),
+        }),
+        at: auth.at(),
+    };
+    Ok((rest, intent))
 }
 
 /// The paid sale, being finalized (1.8.3).
@@ -5167,6 +5204,16 @@ mod tests {
         add_tender(t, tender(n, code, minor))
     }
 
+    /// The cashier's proof of `sale.create`, which taking a tender back needs.
+    fn till_proof() -> Authorized<cap::SaleCreate> {
+        proof_of::<cap::SaleCreate>(cashier(), Role::Cashier, moment())
+    }
+
+    /// `t` without tender `id`, taken back by the cashier.
+    fn take_back(t: Tendering, id: TenderId) -> Result<Tendering, CartError> {
+        remove_tender(t, id, &till_proof()).map(|(rest, _)| rest)
+    }
+
     fn effects() -> FinalizeEffects {
         FinalizeEffects {
             receipt_number: "SYNTH-R1-000001".to_owned(),
@@ -5390,19 +5437,19 @@ mod tests {
         )
         .unwrap();
         assert!(is_settled(&paid));
-        let no_card = remove_tender(paid.clone(), tender_id(1)).unwrap();
+        let no_card = take_back(paid.clone(), tender_id(1)).unwrap();
         assert_eq!(no_card.tenders(), &[tender(2, "cash", 620)]);
         assert_eq!(
             (no_card.cash_rounding(), remaining_due(&no_card)),
             (None, Ok(jod(627)))
         );
-        let no_cash = remove_tender(paid.clone(), tender_id(2)).unwrap();
+        let no_cash = take_back(paid.clone(), tender_id(2)).unwrap();
         assert_eq!(
             (no_cash.cash_rounding(), remaining_due(&no_cash)),
             (None, Ok(jod(623)))
         );
         assert_eq!(
-            remove_tender(paid, tender_id(9)).unwrap_err(),
+            take_back(paid, tender_id(9)).unwrap_err(),
             CartError::TenderNotFound(tender_id(9))
         );
         let to_nothing = [(1, "card", 1_000), (2, "card", 243), (3, "cash", 0)]
@@ -5413,12 +5460,12 @@ mod tests {
             .unwrap();
         assert!(is_settled(&to_nothing));
         assert_eq!(
-            remove_tender(to_nothing.clone(), tender_id(1)).unwrap_err(),
+            take_back(to_nothing.clone(), tender_id(1)).unwrap_err(),
             CartError::NonPositiveTender("0.000".to_owned())
         );
-        let without = remove_tender(to_nothing, tender_id(3)).unwrap();
+        let without = take_back(to_nothing, tender_id(3)).unwrap();
         assert_eq!(
-            remove_tender(without, tender_id(1)).map(|t| t.tenders().len()),
+            take_back(without, tender_id(1)).map(|t| t.tenders().len()),
             Ok(1)
         );
     }
@@ -5433,7 +5480,7 @@ mod tests {
             back_to_building(t.clone()).unwrap_err(),
             CartError::TenderCollected(1)
         );
-        let t = remove_tender(t, tender_id(1)).unwrap();
+        let t = take_back(t, tender_id(1)).unwrap();
         assert_eq!(back_to_building(t), Ok(cart));
     }
 
@@ -5763,7 +5810,7 @@ mod tests {
                 let Some(id) = t.tenders().get(at % t.tenders().len().max(1)).map(|x| x.id) else {
                     return Err(None);
                 };
-                remove_tender(t, id).map(Sale::Tendering)
+                take_back(t, id).map(Sale::Tendering)
             }
             (Sale::Tendering(t), Op::BeginFinalize) => begin_finalize(t).map(Sale::Finalizing),
             (Sale::Finalizing(f), Op::Complete) => complete(f, effects()).map(Sale::Complete),
@@ -5933,5 +5980,40 @@ mod tests {
             prop_assert_eq!(&read_back, &done);
             prop_assert_eq!(serde_json::to_string(&read_back).unwrap(), stored);
         }
+    }
+
+    // ── the transition list (1.4.10) ────────────────────────────────────
+
+    /// Taking a tender back is audited with the tender, what it was worth,
+    /// its provider reference, and what is owed once it is gone.
+    #[test]
+    fn taking_a_tender_back_is_audited_with_what_it_was() {
+        let mut card = tender(1, "card", 624);
+        card.psp_ref = Some("SYNTH-psp-1".to_owned());
+        let t = add_tender(paying(one_item(1_247), qirsh()), card).unwrap();
+        let t = pay(t, 2, "cash", 300).unwrap();
+        let (rest, intent) = remove_tender(t, tender_id(1), &till_proof()).unwrap();
+        assert_eq!(rest.tenders(), &[tender(2, "cash", 300)]);
+        assert_eq!(
+            (intent.action, intent.entity, intent.entity_id),
+            ("tender.remove", "sale", id(1))
+        );
+        assert_eq!(
+            (intent.actor, intent.approver, intent.approval, intent.at),
+            (cashier(), None, None, moment())
+        );
+        assert_eq!(intent.reason, None);
+        assert_eq!(
+            intent.payload,
+            json!({
+                "tender_id": tender_id(1).as_uuid().to_string(),
+                "type_code": "card",
+                "amount_minor": 624,
+                "currency": "JOD",
+                "psp_ref": "SYNTH-psp-1",
+                "remaining_minor": 947,
+            })
+        );
+        check_payload(&intent.payload).unwrap();
     }
 }
