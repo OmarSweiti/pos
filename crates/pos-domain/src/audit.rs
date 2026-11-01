@@ -60,11 +60,12 @@
 //! a value under a sensitive field name — `audit_log.payload`'s own DDL says
 //! "NEVER PII or card data" and [`ref/security-compliance.md`] §6 owns the
 //! canonical registry of those names. This module deliberately does **not**
-//! restate that list: microstep 1.6.8 defines `SENSITIVE_FIELD_RULES` once and
-//! every scrubber, assertion and fixture iterates it, and a second
-//! hand-maintained copy here is exactly how the two come to disagree. Nothing in
-//! this file logs, and no error it returns carries a payload value, an id or a
-//! hash input.
+//! restate that list: it reads [`crate::sensitive::SENSITIVE_FIELD_RULES`],
+//! the one registry every scrubber and assertion iterates (1.6.8), and
+//! [`check_payload`] refuses a payload with a member under any name it lists,
+//! at any depth. A second hand-maintained copy here is exactly how the two
+//! would come to disagree. Nothing in this file logs, and no error it returns
+//! carries a payload value, an id or a hash input.
 //!
 //! # Purity
 //!
@@ -79,6 +80,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::ids::{ApprovalId, RegisterId, UserId};
+use crate::sensitive::SENSITIVE_FIELD_RULES;
 use crate::time::Timestamp;
 
 /// The domain tag bound into every audit digest.
@@ -140,6 +142,14 @@ pub enum AuditError {
     PayloadNestedTooDeeply {
         /// [`MAX_PAYLOAD_DEPTH`], restated so the message is self-contained.
         limit: usize,
+    },
+    /// A member named by [`SENSITIVE_FIELD_RULES`] (1.6.8). A hash-chained row
+    /// can never be erased, so a value under a never-log name never reaches
+    /// one; an audit entry names a customer by id.
+    #[error("audit payload at {pointer} is named as a never-log field")]
+    PayloadCarriesSensitiveField {
+        /// RFC 6901 pointer to the member: its name, never its value.
+        pointer: String,
     },
 }
 
@@ -474,24 +484,33 @@ pub fn verify_chain<'a>(
 /// it before appending an audit row, and a refusal is a bug in the caller that
 /// built the payload rather than a runtime condition to recover from.
 ///
-/// Two refusals, both from [`ref/security-compliance.md`] §4's canonical
+/// Three refusals. Two are from [`ref/security-compliance.md`] §4's canonical
 /// serialization: a number that is not an integer, and nesting deeper than
-/// [`MAX_PAYLOAD_DEPTH`]. The walk is iterative rather than recursive, so the
-/// checker itself cannot be the thing that overflows, and it descends in
-/// canonical document order so a payload with two faults always names the same
-/// one.
+/// [`MAX_PAYLOAD_DEPTH`]. The third is the audit-payload guard (§6, 1.6.8): a
+/// member named by [`SENSITIVE_FIELD_RULES`] at any depth, because a hash
+/// chain is append-only and a value that reached it can never be erased. The
+/// walk is iterative rather than recursive, so the checker itself cannot be
+/// the thing that overflows, and it descends in canonical document order so a
+/// payload with two faults always names the same one.
 ///
 /// # Errors
 ///
-/// [`AuditError::PayloadNumberIsNotAnInteger`] and
-/// [`AuditError::PayloadNestedTooDeeply`].
+/// [`AuditError::PayloadNumberIsNotAnInteger`],
+/// [`AuditError::PayloadNestedTooDeeply`] and
+/// [`AuditError::PayloadCarriesSensitiveField`].
 ///
 /// [`ref/security-compliance.md`]: ../../../docs/implementation/ref/security-compliance.md
 pub fn check_payload(payload: &Value) -> Result<(), AuditError> {
-    // (value, depth, pointer to it). Depth 1 is the payload itself.
-    let mut pending: Vec<(&Value, usize, String)> = vec![(payload, 1, String::new())];
+    // (value, depth, pointer to it, whether its own name is a sensitive one).
+    // Depth 1 is the payload itself. A sensitive name is a fault of the member
+    // it names, found when that member comes off the stack, so it keeps its
+    // place in canonical order among the other faults.
+    let mut pending: Vec<(&Value, usize, String, bool)> = vec![(payload, 1, String::new(), false)];
 
-    while let Some((value, depth, pointer)) = pending.pop() {
+    while let Some((value, depth, pointer, sensitive)) = pending.pop() {
+        if sensitive {
+            return Err(AuditError::PayloadCarriesSensitiveField { pointer });
+        }
         if depth > MAX_PAYLOAD_DEPTH {
             return Err(AuditError::PayloadNestedTooDeeply {
                 limit: MAX_PAYLOAD_DEPTH,
@@ -515,7 +534,12 @@ pub fn check_payload(payload: &Value) -> Result<(), AuditError> {
             // whichever one the traversal happened to reach.
             Value::Array(items) => {
                 for (index, item) in items.iter().enumerate().rev() {
-                    pending.push((item, depth.saturating_add(1), format!("{pointer}/{index}")));
+                    pending.push((
+                        item,
+                        depth.saturating_add(1),
+                        format!("{pointer}/{index}"),
+                        false,
+                    ));
                 }
             }
             Value::Object(members) => {
@@ -526,6 +550,7 @@ pub fn check_payload(payload: &Value) -> Result<(), AuditError> {
                         member,
                         depth.saturating_add(1),
                         format!("{pointer}/{}", escape_json_pointer(key)),
+                        SENSITIVE_FIELD_RULES.matches(key),
                     ));
                 }
             }
@@ -1165,6 +1190,58 @@ mod tests {
             allowed = Value::Array(vec![allowed]);
         }
         assert_eq!(check_payload(&allowed), Ok(()));
+    }
+
+    /// The audit-payload guard (1.6.8): a member under any name the never-log
+    /// registry lists is refused at any depth, in any spelling, and the
+    /// refusal names its place, never its value. Generated from the registry,
+    /// so a name added there is refused here without another line.
+    #[test]
+    fn a_payload_naming_a_never_log_field_is_refused() {
+        use crate::sensitive::SENSITIVE_FIELD_RULES;
+        let refused = |pointer: &str| {
+            Err(AuditError::PayloadCarriesSensitiveField {
+                pointer: pointer.to_owned(),
+            })
+        };
+        for name in SENSITIVE_FIELD_RULES.names {
+            assert_eq!(
+                check_payload(&json!({ "sale_id": "s", *name: "SYNTH-value" })),
+                refused(&format!("/{name}")),
+                "{name}"
+            );
+        }
+        for suffix in SENSITIVE_FIELD_RULES.suffixes {
+            let key = format!("device{suffix}");
+            assert_eq!(
+                check_payload(&json!({ "lines": [{ key.clone(): 1 }] })),
+                refused(&format!("/lines/0/{key}")),
+                "{suffix}"
+            );
+        }
+        assert_eq!(
+            check_payload(&json!({ "customer": { "cardNumber": "x" } })),
+            refused("/customer/cardNumber")
+        );
+        assert_eq!(
+            check_payload(&json!({ "old_password_at": "x" })),
+            refused("/old_password_at")
+        );
+        // Its place in canonical order among other faults is kept.
+        assert_eq!(
+            check_payload(&json!({ "z_token": "x", "a": 0.5 })),
+            Err(AuditError::PayloadNumberIsNotAnInteger {
+                pointer: "/a".to_owned(),
+            }),
+        );
+        // The refusal carries the name's place, never the value.
+        let shown = format!("{:?}", check_payload(&json!({ "phone": "0790000000" })));
+        assert!(!shown.contains("0790000000"), "{shown}");
+        // What an audit entry should carry instead, a customer by id, passes.
+        assert_eq!(
+            check_payload(&json!({ "customer_id": "c", "masked_pan": "**** 1234" })),
+            Ok(())
+        );
     }
 
     // ── the properties ──────────────────────────────────────────────────────

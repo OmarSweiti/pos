@@ -57,6 +57,7 @@ crates/pos-domain/src/
 ├── receipt.rs       ReceiptModel (render input)        [1.7.x]
 ├── permissions.rs   capabilities, Authorized<C>, ApprovalHandle [1.6.x]
 ├── audit.rs         hash-chain construction            [1.6.x]
+├── sensitive.rs     the never-log registry             [1.6.8]
 ├── refund.rs        refundable balances, credit docs   [2.3.x]
 ├── shift.rs         shift lifecycle, over/short, Z     [2.4.x]
 ├── stock.rs         ledger kinds, on-hand, WAC         [1.10.x, 4.2.x]
@@ -3035,6 +3036,8 @@ pub enum AuditError {
     PayloadNumberIsNotAnInteger { pointer: String },   // RFC 6901; never a value
     #[error("audit payload nests deeper than the {limit}-level canonical limit")]
     PayloadNestedTooDeeply { limit: usize },
+    #[error("audit payload at {pointer} is named as a never-log field")]
+    PayloadCarriesSensitiveField { pointer: String }, // 1.6.8; the name, never the value
 }
 
 pub fn check_payload(payload: &serde_json::Value) -> Result<(), AuditError>;
@@ -3598,6 +3601,9 @@ for the `Authorized<C>` arguments its override and discount functions take. As d
 it depends on `money` and `ids` only: a function that takes a cart and an `Authorized<C>` is a cart
 transition and lives in `cart`, which reads `pricing` for the values and checks those transitions
 use. None adds a cycle, and `just acyclic` is what establishes that rather than this diagram.
+`sensitive` (1.6.8) depends on nothing, and `audit` reads it: the audit-payload guard refuses a
+member under any name in `SENSITIVE_FIELD_RULES`, the same registry the terminal's log scrubber
+reads (`ref/security-compliance.md` §6).
 
 Arrows point one way. `money` depends on nothing but `rust_decimal`. Nothing depends on `receipt`. A
 cycle here is a design error, and `scripts/check-domain-acyclic.py` — `just acyclic`, in `just lint`
