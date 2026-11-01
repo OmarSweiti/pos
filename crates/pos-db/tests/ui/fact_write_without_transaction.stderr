@@ -1,0 +1,31 @@
+error[E0308]: mismatched types
+  --> tests/ui/fact_write_without_transaction.rs:12:47
+   |
+12 |     let _ = AuditRepository::new(conn).append(conn, register, Uuid::nil(), intent);
+   |                                        ------ ^^^^ expected `&Transaction<'_>`, found `&Connection`
+   |                                        |
+   |                                        arguments to this method are incorrect
+   |
+   = note: expected reference `&Transaction<'_>`
+              found reference `&Connection`
+note: method defined here
+  --> src/repo/audit.rs
+   |
+   |     pub fn append(
+   |            ^^^^^^
+
+error[E0308]: mismatched types
+  --> tests/ui/fact_write_without_transaction.rs:20:54
+   |
+20 |     let _ = OutboxRepository::new(conn).write_commit(conn, envelope, members);
+   |                                         ------------ ^^^^ expected `&Transaction<'_>`, found `&Connection`
+   |                                         |
+   |                                         arguments to this method are incorrect
+   |
+   = note: expected reference `&Transaction<'_>`
+              found reference `&Connection`
+note: method defined here
+  --> src/repo/outbox.rs
+   |
+   |     pub fn write_commit(
+   |            ^^^^^^^^^^^^

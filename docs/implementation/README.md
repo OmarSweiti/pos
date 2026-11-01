@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **65 of 121 executable microsteps fully complete (~54%)**: `1.1.0`
+Phase 1 has **66 of 121 executable microsteps fully complete (~55%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -156,7 +156,10 @@ only when settled, voided only before any money is taken, and never changed once
 compiler; every one that reverses money returns its audit intent, a collected tender taken back
 included), and `1.8.0` (the storage-engine gate: every open reads SQLite's and SQLCipher's versions
 from the engine and refuses an unreviewed one before WAL; the build without the WAL-reset fix opens
-in single-connection mode; and the minimums are pinned to the digest of the passage that sourced them).
+in single-connection mode; and the minimums are pinned to the digest of the passage that sourced them),
+and `1.8.1` (transaction discipline held by a test: every shipped write takes the caller's
+transaction, none begins or ends one of its own but the migration runner, and a fact write handed
+only a connection does not compile).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
