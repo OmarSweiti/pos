@@ -33,8 +33,8 @@
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
-use super::{BarcodeKind, Product};
-use crate::ids::{ProductId, TaxCategoryId};
+use super::{BarcodeKind, Department, Product};
+use crate::ids::{CategoryId, ProductId, TaxCategoryId};
 use crate::money::{Currency, Money, Qty, RoundingRule};
 
 /// The length of an EAN-13, the only layout a scale label is read in.
@@ -296,9 +296,14 @@ pub enum PriceOrigin {
         rule_prefix: String,
         raw_code: String,
     },
-    /// §6.5, and only §6.5: the cart's ordinary path refuses it.
+    /// §6.5, and only §6.5: the cart's ordinary path refuses it. As
+    /// delivered at 1.4.12 it names the department the amount was typed
+    /// against, and the code that was scanned, when one was, so the line keeps
+    /// what a report of typed amounts reads.
     Department {
+        department_id: CategoryId,
         tax_category_id: TaxCategoryId,
+        scanned_code: Option<String>,
     },
 }
 
@@ -331,11 +336,20 @@ impl PriceSource {
 
     /// The one constructor that takes an amount. The cart's ordinary
     /// `add_line` refuses its origin; only the capability-gated, capped and
-    /// audited department sale accepts it (§6.5).
-    pub fn from_department(amount: Money, tax_category_id: TaxCategoryId) -> PriceSource {
+    /// audited department sale accepts it (§6.5). The tax category is the
+    /// department's own, so the two cannot disagree.
+    pub fn from_department(
+        amount: Money,
+        department: &Department,
+        scanned_code: Option<String>,
+    ) -> PriceSource {
         PriceSource {
             amount,
-            origin: PriceOrigin::Department { tax_category_id },
+            origin: PriceOrigin::Department {
+                department_id: department.id,
+                tax_category_id: department.tax_category_id,
+                scanned_code,
+            },
         }
     }
 

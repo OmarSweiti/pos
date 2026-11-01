@@ -40,10 +40,11 @@ pub use cart::{
     is_settled, remaining_due,
 };
 pub use catalog::{
-    Barcode, BarcodeKind, CatalogError, DerivedWeight, EmbeddedBarcodeRule, EmbeddedValue,
-    LabelReprint, MatchedOn, ParsedScan, PriceOrigin, PriceSource, Product, ProductHit,
-    RegulatedKind, RegulatedSaleForm, ReprintCause, SaleForm, ScanError, ScanLookup, UnitOfMeasure,
-    claiming_rule, ean13_checksum_ok, parse_scan, parse_scan_bytes, resolve_scan,
+    Barcode, BarcodeKind, CatalogError, Department, DepartmentPolicy, DerivedWeight,
+    EmbeddedBarcodeRule, EmbeddedValue, LabelReprint, MatchedOn, ParsedScan, PriceOrigin,
+    PriceSource, Product, ProductHit, RegulatedKind, RegulatedSaleForm, ReprintCause, SaleForm,
+    ScanError, ScanLookup, UnitOfMeasure, claiming_rule, ean13_checksum_ok, parse_scan,
+    parse_scan_bytes, resolve_scan,
 };
 pub use ids::{
     ApprovalId, CategoryId, CustomerId, IdSource, OrgId, ProductId, PromotionId, RegisterId,

@@ -31,11 +31,12 @@ use serde_json::json;
 
 use crate::audit::AuditIntent;
 use crate::catalog::{
-    DerivedWeight, LabelReprint, PriceOrigin, PriceSource, Product, ProductHit, ReprintCause,
-    ScanLookup, UnitOfMeasure,
+    Department, DepartmentPolicy, DerivedWeight, LabelReprint, PriceOrigin, PriceSource, Product,
+    ProductHit, ReprintCause, ScanLookup, UnitOfMeasure,
 };
 use crate::ids::{
-    CustomerId, ProductId, RegisterId, SaleId, SaleLineId, ShiftId, TaxCategoryId, TenderId, UserId,
+    CategoryId, CustomerId, ProductId, RegisterId, SaleId, SaleLineId, ShiftId, TaxCategoryId,
+    TenderId, UserId,
 };
 use crate::money::{Currency, Money, MoneyError, Qty, RoundingRule};
 use crate::permissions::{
@@ -336,6 +337,43 @@ impl AddLine {
             | ScanLookup::Unknown { .. } => Err(CartError::ScanNotOneProduct),
         }
     }
+
+    /// One item of goods with no product, sold through `department` at the
+    /// `amount` a person typed, with the code that was scanned, if one was
+    /// (`ref/domain-api.md` §6.5, 1.4.12).
+    ///
+    /// It has no product, so it moves no stock. It is quantity one, with the
+    /// department's tax category and its name, which the receipt prints. Its
+    /// price is the department's [`PriceSource`], which [`add_line`] refuses:
+    /// only [`add_department_line`], capped, audited and gated by
+    /// `sale.department`, takes it.
+    ///
+    /// # Errors
+    ///
+    /// [`CartError::DepartmentInactive`] for a department not in use.
+    pub fn department(
+        line_id: SaleLineId,
+        department: &Department,
+        amount: Money,
+        scanned_code: Option<String>,
+    ) -> Result<AddLine, CartError> {
+        if !department.is_active {
+            return Err(CartError::DepartmentInactive(department.id));
+        }
+        Ok(AddLine {
+            line_id,
+            product_id: None,
+            name_snapshot: department.name_ar.clone(),
+            price: PriceSource::from_department(amount, department, scanned_code),
+            max_price: None,
+            qty: Qty::ONE,
+            unit: UnitOfMeasure::Each,
+            is_weighed: false,
+            tax_category_id: department.tax_category_id,
+            min_age: None,
+            label: None,
+        })
+    }
 }
 
 /// The configured reason a line was voided. A code from the store's list, never
@@ -407,6 +445,160 @@ pub fn add_line(cart: Cart, req: AddLine) -> Result<Cart, CartError> {
         label: req.label,
     });
     Ok(cart)
+}
+
+/// `cart` with one more line, of goods that have no product, at the amount a
+/// person typed, and the audit intent that records it under `sale.department`
+/// (`ref/domain-api.md` §6.5, 1.4.12).
+///
+/// The only transition that takes an amount a person typed, so it is gated,
+/// capped and always audited. `req` is what [`AddLine::department`] makes:
+/// no product, quantity one, and the department's price and tax category. The
+/// line moves no stock. `sale.department` is the cashier's by default, so an
+/// unknown barcode with no manager at the till does not stop the queue.
+///
+/// Two limits are the store's [`DepartmentPolicy`]:
+///
+/// - **No line passes `max_line_amount`**, approved or not.
+/// - **Above `escalate_above`, the line needs `approval`.** The approval is a
+///   handle a manager issued for this actor, bound to this sale (`entity_id`)
+///   and this amount (`amount_minor`), and valid at `auth.at()`. The intent then
+///   names its approver, its id and the reason it was given for. Below the
+///   threshold none is needed and none is consumed.
+///
+/// The intent is `sale.department` on the `sale`, the entity a handle is
+/// bound to. Its payload carries the line, the department, the tax category,
+/// the amount, the scanned code and the two limits it was held to. It is an
+/// amount a person typed, so a report of typed amounts reads it beside price
+/// overrides.
+///
+/// # Errors
+///
+/// - [`CartError::NotADepartmentLine`]: a line that is not what
+///   [`AddLine::department`] makes, such as one with a product, another price,
+///   a quantity other than one, an age, a label or a ceiling.
+/// - [`CartError::Money`]: an amount in another currency than the cart's, or
+///   limits that cannot be compared with it.
+/// - [`CartError::DepartmentAmountNotPositive`]: an amount of nothing or
+///   less, which sells nothing.
+/// - [`CartError::DepartmentAmountAboveCap`]: above the cap.
+/// - [`CartError::DepartmentNeedsApproval`]: above the threshold, with no
+///   approval.
+/// - [`CartError::Permission`]: an approval given for another actor, sale or
+///   amount, or no longer valid.
+pub fn add_department_line(
+    cart: Cart,
+    req: AddLine,
+    policy: &DepartmentPolicy,
+    auth: &Authorized<cap::DepartmentSale>,
+    approval: Option<&ApprovalHandle>,
+) -> Result<(Cart, AuditIntent), CartError> {
+    let mut cart = cart;
+    let (department_id, scanned_code) = match req.price.origin() {
+        PriceOrigin::Department {
+            department_id,
+            tax_category_id,
+            scanned_code,
+        } if *tax_category_id == req.tax_category_id
+            && req.product_id.is_none()
+            && req.qty == Qty::ONE
+            && req.unit == UnitOfMeasure::Each
+            && !req.is_weighed
+            && req.min_age.is_none()
+            && req.label.is_none()
+            && req.max_price.is_none() =>
+        {
+            (*department_id, scanned_code.clone())
+        }
+        PriceOrigin::Department { .. }
+        | PriceOrigin::Catalog { .. }
+        | PriceOrigin::Label { .. } => {
+            return Err(CartError::NotADepartmentLine(req.line_id));
+        }
+    };
+    let amount = req.price.amount();
+    if amount.currency() != cart.currency {
+        return Err(
+            MoneyError::CurrencyMismatch(cart.currency.code(), amount.currency().code()).into(),
+        );
+    }
+    if amount.is_negative() || amount.is_zero() {
+        return Err(CartError::DepartmentAmountNotPositive(
+            amount.format_exact(),
+        ));
+    }
+    let cap_amount = policy.max_line_amount;
+    if amount.checked_cmp(cap_amount)? == Ordering::Greater {
+        return Err(CartError::DepartmentAmountAboveCap(
+            amount.format_exact(),
+            cap_amount.format_exact(),
+        ));
+    }
+    let above = match policy.escalate_above {
+        Some(threshold) if amount.checked_cmp(threshold)? == Ordering::Greater => Some(threshold),
+        Some(_) | None => None,
+    };
+    let (approver, approval_id, reason) = if let Some(threshold) = above {
+        let Some(handle) = approval else {
+            return Err(CartError::DepartmentNeedsApproval(
+                amount.format_exact(),
+                threshold.format_exact(),
+            ));
+        };
+        let binding = ApprovalBinding {
+            entity_id: cart.id.as_uuid(),
+            amount_minor: amount.minor(),
+            content_hash: None,
+        };
+        handle.matches::<cap::DepartmentSale>(auth.actor(), &binding, auth.at())?;
+        (
+            Some(handle.approver()),
+            Some(handle.id()),
+            Some(handle.reason().to_owned()),
+        )
+    } else {
+        (auth.approver(), auth.approval(), None)
+    };
+    let line = req.line_id;
+    let tax_category_id = req.tax_category_id;
+    cart.lines.push(CartLine {
+        id: line,
+        product_id: None,
+        name_snapshot: req.name_snapshot,
+        unit_price: amount,
+        price_origin: req.price.origin().clone(),
+        max_price: None,
+        qty: Qty::ONE,
+        unit: UnitOfMeasure::Each,
+        is_weighed: false,
+        tax_category_id,
+        discount: None,
+        price_override: None,
+        min_age: None,
+        age_confirmed: false,
+        label: None,
+    });
+    let intent = AuditIntent {
+        actor: auth.actor(),
+        approver,
+        approval: approval_id,
+        action: cap::DepartmentSale::NAME,
+        entity: "sale",
+        entity_id: cart.id.as_uuid(),
+        reason,
+        payload: json!({
+            "line_id": line.as_uuid().to_string(),
+            "department_id": department_id.as_uuid().to_string(),
+            "tax_category_id": tax_category_id.as_uuid().to_string(),
+            "amount_minor": amount.minor(),
+            "currency": amount.currency().code(),
+            "scanned_code": scanned_code,
+            "max_line_minor": cap_amount.minor(),
+            "escalate_above_minor": policy.escalate_above.map(Money::minor),
+        }),
+        at: auth.at(),
+    };
+    Ok((cart, intent))
 }
 
 /// `cart` with line `line`'s quantity set to `qty`.
@@ -2079,6 +2271,19 @@ pub enum CartError {
     /// Added at 1.4.8.
     #[error("sale {0} is void")]
     SaleIsVoided(SaleId),
+    /// Added at 1.4.12: a department not in use.
+    #[error("department {0} is not in use")]
+    DepartmentInactive(CategoryId),
+    /// Added at 1.4.12: a line that is not what `AddLine::department` makes.
+    #[error("line {0} is not a department line")]
+    NotADepartmentLine(SaleLineId),
+    /// Added at 1.4.12: the amount, rendered.
+    #[error("a department sale of {0} sells nothing")]
+    DepartmentAmountNotPositive(String),
+    /// Added at 1.4.12: the amount and the threshold above which a manager
+    /// approves it, rendered.
+    #[error("department sale of {0} is above {1} and needs a manager's approval")]
+    DepartmentNeedsApproval(String, String),
     /// Added at 1.4.5: the approval's reason, then the request's. The audit
     /// row repeats the handle's reason, so the two must be one.
     #[error("the approval was given for {0}, not {1}")]
@@ -2365,7 +2570,7 @@ mod tests {
         // into an ordinary line to undercut the catalogue, it is refused: a
         // deliberate change of price is an override (1.4.7), audited.
         let mut undercut = honest.clone();
-        undercut.price = PriceSource::from_department(jod(100), item.tax_category_id);
+        undercut.price = PriceSource::from_department(jod(100), &produce(), None);
         assert_eq!(
             add_line(building(), undercut),
             Err(CartError::DepartmentPriceOutsideDepartmentSale)
@@ -2887,7 +3092,9 @@ mod tests {
                 }
             }),
             uuids().prop_map(|u| PriceOrigin::Department {
-                tax_category_id: TaxCategoryId::from_uuid(u)
+                department_id: CategoryId::from_uuid(u),
+                tax_category_id: TaxCategoryId::from_uuid(u),
+                scanned_code: None,
             }),
         ];
         let discount = proptest::option::of(
@@ -4417,7 +4624,9 @@ mod tests {
         if let Some(line) = department.lines.first_mut() {
             line.product_id = None;
             line.price_origin = PriceOrigin::Department {
+                department_id: produce().id,
                 tax_category_id: line.tax_category_id,
+                scanned_code: None,
             };
         }
         assert_eq!(
@@ -6022,6 +6231,7 @@ mod tests {
     enum Transition {
         Open,
         AddLine,
+        AddDepartmentLine,
         SetQty,
         VoidLine,
         ConfirmAge,
@@ -6062,9 +6272,10 @@ mod tests {
     ];
 
     impl Transition {
-        const ALL: [Transition; 17] = [
+        const ALL: [Transition; 18] = [
             Transition::Open,
             Transition::AddLine,
+            Transition::AddDepartmentLine,
             Transition::SetQty,
             Transition::VoidLine,
             Transition::ConfirmAge,
@@ -6099,6 +6310,20 @@ mod tests {
                 Transition::AddLine => {
                     let _: fn(Cart, AddLine) -> Result<Cart, CartError> = add_line;
                     ("add_line", Duty::Unaudited)
+                }
+                // An amount a person typed, capped and escalated (1.4.12).
+                Transition::AddDepartmentLine => {
+                    let _: fn(
+                        Cart,
+                        AddLine,
+                        &DepartmentPolicy,
+                        &Authorized<cap::DepartmentSale>,
+                        Option<&ApprovalHandle>,
+                    ) -> Result<(Cart, AuditIntent), CartError> = add_department_line;
+                    (
+                        "add_department_line",
+                        Duty::Privileged(cap::DepartmentSale::NAME, cap::DepartmentSale::NAME),
+                    )
                 }
                 // A lower quantity before any money is taken; `cart_set_qty`
                 // is a base sale command, and an amount off fixes it (1.4.5).
@@ -6256,6 +6481,11 @@ mod tests {
                 | Transition::AddTender
                 | Transition::BeginFinalize
                 | Transition::Complete => return None,
+                Transition::AddDepartmentLine => {
+                    sell(two_teas(), department_line(2, 2_500, Some(SCANNED)), None)
+                        .unwrap()
+                        .1
+                }
                 Transition::VoidLine => {
                     void_line(
                         two_teas(),
@@ -6342,6 +6572,7 @@ mod tests {
         assert_eq!(
             privileged,
             [
+                ("add_department_line", "sale.department", "sale.department"),
                 ("apply_line_discount", "discount.manual", "discount.manual"),
                 (
                     "apply_basket_discount",
@@ -6353,5 +6584,335 @@ mod tests {
                 ("void_sale", "sale.void", "sale.void"),
             ]
         );
+    }
+
+    // ── the department sale (1.4.12) ────────────────────────────────────
+
+    /// A department in the zero-rated band, so its line is taxed by its own
+    /// category and never by the standard one every product here sells in.
+    fn produce() -> Department {
+        Department {
+            id: CategoryId::from_uuid(id(0x60)),
+            name_ar: "قسم اصطناعي".to_owned(),
+            name_en: Some("SYNTH department".to_owned()),
+            tax_category_id: band(1),
+            is_active: true,
+        }
+    }
+
+    /// Up to 10.000 a line, and a manager's approval above 5.000.
+    fn department_policy() -> DepartmentPolicy {
+        DepartmentPolicy {
+            max_line_amount: jod(10_000),
+            escalate_above: Some(jod(5_000)),
+        }
+    }
+
+    const SCANNED: &str = "SYNTH-0000000000017";
+
+    fn department_line(n: u128, minor: i64, code: Option<&str>) -> AddLine {
+        AddLine::department(line_id(n), &produce(), jod(minor), code.map(str::to_owned)).unwrap()
+    }
+
+    /// The cashier sells `minor` through the department, with `approval`.
+    fn sell(
+        cart: Cart,
+        req: AddLine,
+        approval: Option<&ApprovalHandle>,
+    ) -> Result<(Cart, AuditIntent), CartError> {
+        add_department_line(
+            cart,
+            req,
+            &department_policy(),
+            &proof_of::<cap::DepartmentSale>(cashier(), Role::Cashier, moment()),
+            approval,
+        )
+    }
+
+    /// A manager's approval for the cashier's department sale, bound to
+    /// `entity` and `amount_minor`.
+    fn department_approval(entity: Uuid, amount_minor: i64) -> ApprovalHandle {
+        let handle = ApprovalId::from_uuid(id(0x703));
+        ApprovalHandle::issue(
+            handle,
+            cashier(),
+            &proof_of::<cap::DepartmentSale>(manager(), Role::Manager, moment()),
+            &ApprovalBinding {
+                entity_id: entity,
+                amount_minor,
+                content_hash: None,
+            },
+            "unknown_barcode".to_owned(),
+            moment(),
+            120_000,
+            *handle.as_uuid().as_bytes(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn department_line_carries_its_department_tax_category() {
+        let (cart, _) = sell(two_teas(), department_line(2, 2_500, Some(SCANNED)), None).unwrap();
+        let line = cart.lines.get(1).unwrap();
+        assert_eq!(
+            (line.product_id, line.qty, line.unit, line.tax_category_id),
+            (None, Qty::ONE, UnitOfMeasure::Each, band(1))
+        );
+        assert_ne!(
+            line.tax_category_id,
+            cart.lines.first().unwrap().tax_category_id
+        );
+        assert_eq!(
+            (line.name_snapshot.as_str(), line.unit_price),
+            ("قسم اصطناعي", jod(2_500))
+        );
+        assert_eq!(
+            line.price_origin,
+            PriceOrigin::Department {
+                department_id: produce().id,
+                tax_category_id: band(1),
+                scanned_code: Some(SCANNED.to_owned()),
+            }
+        );
+        // Priced, it is taxed in its own band: zero-rated, beside the teas'
+        // standard rate, each on its own receipt row.
+        let priced = price_cart(&cart, &bands(), &store(PriceMode::Exclusive)).unwrap();
+        let department = priced.lines.get(1).unwrap();
+        assert_eq!(
+            (
+                department.taxable,
+                department.tax.tax_total,
+                department.line_total
+            ),
+            (jod(2_500), jod(0), jod(2_500))
+        );
+        assert_eq!(priced.tax_summary.len(), 2);
+        // A line whose tax category is not its department's is not one.
+        let mut retaxed = department_line(2, 2_500, None);
+        retaxed.tax_category_id = band(0);
+        assert_eq!(
+            sell(two_teas(), retaxed, None).unwrap_err(),
+            CartError::NotADepartmentLine(line_id(2))
+        );
+    }
+
+    /// No product, so the stock ledger, which moves a product, has nothing to
+    /// move; and nothing about it can be weighed, labelled or counted again.
+    #[test]
+    fn department_line_is_marked_non_stock() {
+        let (cart, _) = sell(two_teas(), department_line(2, 2_500, None), None).unwrap();
+        let (teas, department) = (cart.lines.first().unwrap(), cart.lines.get(1).unwrap());
+        assert!(teas.product_id.is_some());
+        assert_eq!(
+            (
+                department.product_id,
+                department.is_weighed,
+                department.label.as_ref()
+            ),
+            (None, false, None)
+        );
+        assert!(matches!(
+            department.price_origin,
+            PriceOrigin::Department { .. }
+        ));
+        assert_eq!(
+            set_qty(cart.clone(), line_id(2), Qty::from_milli(2_000)).unwrap_err(),
+            CartError::DepartmentPriceOutsideDepartmentSale
+        );
+        assert_eq!(
+            override_price(
+                cart,
+                line_id(2),
+                jod(1_000),
+                code("damaged_pack"),
+                None,
+                &proof_of::<cap::PriceOverride>(shift_lead(), Role::ShiftLead, moment()),
+            )
+            .map(|_| ()),
+            Err(CartError::DepartmentPriceOutsideDepartmentSale)
+        );
+    }
+
+    #[test]
+    fn department_line_is_always_audited() {
+        for code in [Some(SCANNED), None] {
+            let (_, intent) = sell(two_teas(), department_line(2, 2_500, code), None).unwrap();
+            assert_eq!(
+                (intent.action, intent.entity, intent.entity_id),
+                ("sale.department", "sale", id(1))
+            );
+            assert_eq!(
+                (intent.actor, intent.approver, intent.approval, intent.at),
+                (cashier(), None, None, moment())
+            );
+            assert_eq!(intent.reason, None);
+            assert_eq!(
+                intent.payload,
+                json!({
+                    "line_id": line_id(2).as_uuid().to_string(),
+                    "department_id": produce().id.as_uuid().to_string(),
+                    "tax_category_id": band(1).as_uuid().to_string(),
+                    "amount_minor": 2_500,
+                    "currency": "JOD",
+                    "scanned_code": code,
+                    "max_line_minor": 10_000,
+                    "escalate_above_minor": 5_000,
+                })
+            );
+            check_payload(&intent.payload).unwrap();
+        }
+    }
+
+    /// No line passes the cap, approved or not.
+    #[test]
+    fn department_above_cap_is_refused() {
+        let approved = department_approval(id(1), 10_001);
+        assert_eq!(
+            sell(
+                two_teas(),
+                department_line(2, 10_001, None),
+                Some(&approved)
+            )
+            .unwrap_err(),
+            CartError::DepartmentAmountAboveCap("10.001".to_owned(), "10.000".to_owned())
+        );
+        let at_the_cap = department_approval(id(1), 10_000);
+        let (cart, _) = sell(
+            two_teas(),
+            department_line(2, 10_000, None),
+            Some(&at_the_cap),
+        )
+        .unwrap();
+        assert_eq!(cart.lines.get(1).unwrap().unit_price, jod(10_000));
+    }
+
+    #[test]
+    fn department_above_escalation_threshold_requires_approval() {
+        assert_eq!(
+            sell(two_teas(), department_line(2, 5_001, None), None).unwrap_err(),
+            CartError::DepartmentNeedsApproval("5.001".to_owned(), "5.000".to_owned())
+        );
+        // At the threshold, none is needed and none is consumed.
+        let (_, intent) = sell(two_teas(), department_line(2, 5_000, None), None).unwrap();
+        assert_eq!((intent.approver, intent.approval), (None, None));
+        // Above it, a manager's handle for this sale and this amount.
+        let handle = department_approval(id(1), 5_001);
+        let (_, intent) = sell(two_teas(), department_line(2, 5_001, None), Some(&handle)).unwrap();
+        assert_eq!(
+            (intent.approver, intent.approval, intent.reason.as_deref()),
+            (Some(manager()), Some(handle.id()), Some("unknown_barcode"))
+        );
+        // The audit row the database consumes the handle against names the
+        // sale and the amount the handle was bound to.
+        assert_eq!(intent.entity_id, id(1));
+        assert_eq!(intent.payload.get("amount_minor"), Some(&json!(5_001)));
+        // A handle for another amount or another sale approves nothing.
+        assert_eq!(
+            sell(
+                two_teas(),
+                department_line(2, 5_001, None),
+                Some(&department_approval(id(1), 6_000))
+            )
+            .unwrap_err(),
+            CartError::Permission(PermissionError::ApprovalAmountMismatch(
+                "6000".to_owned(),
+                "5001".to_owned()
+            ))
+        );
+        assert_eq!(
+            sell(
+                two_teas(),
+                department_line(2, 5_001, None),
+                Some(&department_approval(line_id(2).as_uuid(), 5_001))
+            )
+            .unwrap_err(),
+            CartError::Permission(PermissionError::ApprovalEntityMismatch(
+                line_id(2).as_uuid(),
+                id(1)
+            ))
+        );
+        // A discount's approval is not a department sale's.
+        assert!(matches!(
+            sell(
+                two_teas(),
+                department_line(2, 5_001, None),
+                Some(&approval_for(id(1), 5_001, "unknown_barcode"))
+            ),
+            Err(CartError::Permission(
+                PermissionError::ApprovalCapabilityMismatch(..)
+            ))
+        ));
+    }
+
+    /// The ordinary path never takes a typed amount.
+    #[test]
+    fn add_line_refuses_a_department_price_source() {
+        assert_eq!(
+            add_line(two_teas(), department_line(2, 2_500, None)),
+            Err(CartError::DepartmentPriceOutsideDepartmentSale)
+        );
+    }
+
+    #[test]
+    fn a_department_sale_is_refused_by_name() {
+        let mut closed = produce();
+        closed.is_active = false;
+        assert_eq!(
+            AddLine::department(line_id(2), &closed, jod(2_500), None).unwrap_err(),
+            CartError::DepartmentInactive(produce().id)
+        );
+        for nothing in [0, -10] {
+            assert_eq!(
+                sell(two_teas(), department_line(2, nothing, None), None).unwrap_err(),
+                CartError::DepartmentAmountNotPositive(jod(nothing).format_exact())
+            );
+        }
+        let dollars = AddLine::department(
+            line_id(2),
+            &produce(),
+            Money::from_minor(100, Currency::USD),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            sell(two_teas(), dollars, None).unwrap_err(),
+            CartError::Money(MoneyError::CurrencyMismatch("JOD", "USD"))
+        );
+        let product_line =
+            AddLine::from_product(line_id(2), &product(0x21, UnitOfMeasure::Each), Qty::ONE)
+                .unwrap();
+        assert_eq!(
+            sell(two_teas(), product_line, None).unwrap_err(),
+            CartError::NotADepartmentLine(line_id(2))
+        );
+        // Each thing `AddLine::department` fixes, changed on its own, makes the
+        // line something a department sale is not.
+        type Change = fn(&mut AddLine);
+        let changes: [(&str, Change); 8] = [
+            ("a product", |l| {
+                l.product_id = Some(ProductId::from_uuid(id(0x21)))
+            }),
+            ("three of it", |l| l.qty = Qty::from_milli(3_000)),
+            ("weighed", |l| l.is_weighed = true),
+            ("by the kilogram", |l| l.unit = UnitOfMeasure::Kilogram),
+            ("an age", |l| l.min_age = Some(18)),
+            ("a ceiling", |l| l.max_price = Some(jod(9_000))),
+            ("another tax category", |l| l.tax_category_id = band(0)),
+            ("a label", |l| {
+                l.label = Some(DerivedWeight {
+                    qty: Qty::from_milli(500),
+                    catalog_unit_price: jod(5_000),
+                });
+            }),
+        ];
+        for (what, change) in changes {
+            let mut line = department_line(2, 2_500, None);
+            change(&mut line);
+            assert_eq!(
+                sell(two_teas(), line, None).unwrap_err(),
+                CartError::NotADepartmentLine(line_id(2)),
+                "{what}"
+            );
+        }
     }
 }
