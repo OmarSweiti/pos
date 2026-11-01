@@ -57,6 +57,9 @@ pos-db = { path = ".", features = ["fixtures"] }
 # The search benchmark (1.2.7): `cargo bench -p pos-db --bench search` times
 # it, and `cargo test -p pos-db --bench search` runs each query once.
 criterion.workspace = true
+# The compile-fail lane (1.8.1): a fact write handed only a connection must not
+# compile. Already the workspace's, for `pos-domain`'s own lane.
+trybuild.workspace = true
 
 # criterion supplies its own `main`, so the bench opts out of libtest's.
 [[bench]]

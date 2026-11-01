@@ -16,6 +16,14 @@
 //! This module arrived with microstep 1.8.9, the outbox writer, because the
 //! commit-manifest writer is scheduled before any repository that appends a
 //! fact.
+//!
+//! **The second rule is held, not trusted (1.8.1).**
+//! `tests/repository_transaction_api.rs` reads this crate's own source and
+//! fails on any shipped function that writes a row without taking a
+//! `Transaction`, and on any that begins, commits or rolls one back itself;
+//! the migration runner, which owns one transaction per file, is the one
+//! exception. Its compile-fail fixture proves a fact write handed only a
+//! `&Connection` does not compile.
 
 pub mod approval;
 pub mod audit;
