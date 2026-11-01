@@ -26,6 +26,8 @@ blake3.workspace = true
 rusqlite.workspace = true
 keyring.workspace = true
 getrandom.workspace = true
+# Staff PINs are hashed with Argon2id under a reviewed profile (1.6.2).
+argon2.workspace = true
 # Repositories return owned domain values. The capability grid this crate's
 # migration seeds also remains declared once in `pos_domain::permissions`.
 pos-domain.workspace = true
