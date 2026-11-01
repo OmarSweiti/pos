@@ -90,7 +90,7 @@ getrandom = "0.4"
 # Argon2id for staff PINs (1.6.2). No `rand` feature: the salt comes from the
 # same OS source as the database key, through `getrandom`. `zeroize` wipes the
 # hasher's working memory when it is done with a PIN.
-argon2 = { version = "0.5", default-features = false, features = ["alloc", "password-hash", "zeroize"] }
+argon2 = { version = "0.6", default-features = false, features = ["alloc", "password-hash", "zeroize"] }
 keyring  = "4"
 dotenvy = "0.15"
 sqlx = { version = "0.9", default-features = false, features = [
