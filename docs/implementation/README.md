@@ -196,7 +196,10 @@ operator confirms or declines an age-restricted line, audited, and since 1.4.8 t
 reaches `Tendering` only once confirmed; what remains is the command 1.4.11 adds. `1.4.12` is
 **partially delivered**: its domain half sells goods with no product through a department, capped,
 escalated above a threshold and always audited; its terminal half needs 1.4.11's command file and a
-department that can be stored, which #330 asks about. `1.6.3` is closed: its seed comparison landed against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
+department that can be stored, which #330 asks about. Group 1.6's `1.6.2` is **partially delivered**:
+PINs are hashed under a reviewed Argon2id profile, wrong PINs wait longer and then lock a user out
+until a manager releases them, as the owner decided, and the count survives a restart; the reset
+command waits for the database to reach the terminal. `1.6.3` is closed: its seed comparison landed against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
 `authorize`, `ApprovalHandle` and `EscalationPolicy` are complete in `pos-domain`, with the two
 compile-fail proofs that a token cannot be forged or substituted across capabilities. Its
 persistence half now stores, validates, reloads and one-use consumes a handle through a

@@ -221,6 +221,7 @@ Print this. Sit with the merchant. Fill it in. Date it. A decision made by a dev
 | 9.4 | Role names in Arabic | cashier / shift lead / manager / owner | | `role.name_ar` | 1.6.3 |
 | 9.5 | **Manager PIN length** — longer than a cashier's? | **6** | | `setting auth.manager_pin_length` | 1.6.2 |
 | 9.6 | Is a second factor available at the counter for high-value refunds, user administration and recovery? ⚖ | **no** — manager PIN + audited reason + exception report | | `setting auth.second_factor` | 1.6.2 |
+| 9.7 | Wrong PINs: when does a register make a user wait, when does it lock them out, and who releases a lockout? | **3 free; then 30 s, doubling, to 15 min; locked at the 10th in a row until a manager releases** | **the default**, adopted by the owner (1 November 2026). A correct PIN resets the count. A manager account is released only by another manager or the owner, audited, as `security-compliance.md` §5 requires. The count is kept per user and per register, so a restart clears none of it. | `pos_db::auth::ATTEMPT_POLICY` | 1.6.2 |
 
 > Explain 9.3 to the merchant plainly: a terminated employee's PIN keeps working on an offline register until it reconnects or the window expires. Shortening the window increases safety and increases the chance a legitimate cashier is locked out during an outage. **It is their call, and they should make it knowingly.** The window is enforced by a server-signed lease plus trusted-time state (3.7.3), not by the device clock — an unenforced window is a disclosure, not a control.
 >
