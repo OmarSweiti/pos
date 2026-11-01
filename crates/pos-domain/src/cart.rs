@@ -5772,6 +5772,18 @@ mod tests {
         next.map_err(Some)
     }
 
+    /// `cart`, or one item where it has no line. A cart with no line is no sale
+    /// (`NothingToTender`), and a case is not thrown away for being one: a
+    /// property that discards cases aborts once the discards pass proptest's
+    /// limit, which a raised case count reaches.
+    fn sellable(cart: Cart) -> Cart {
+        if cart.lines.is_empty() {
+            one_item(1_247)
+        } else {
+            cart
+        }
+    }
+
     /// The walk's sale taken through a checkout that completes, from
     /// whatever state the walk left it in.
     fn checkout(
@@ -5818,8 +5830,7 @@ mod tests {
             policy in policies(),
             plan in proptest::collection::vec(takes(), 0..=6),
         ) {
-            let cart = ring(&scans, None, rule);
-            prop_assume!(!cart.lines.is_empty());
+            let cart = sellable(ring(&scans, None, rule));
             let settings = PricingSettings { price_mode, profile: StoreTaxProfile::Standard, rule };
             let mut t = begin_tender(cart, &bands(), &settings, policy).unwrap();
             for (n, take) in (1u128..).zip(&plan) {
@@ -5861,8 +5872,7 @@ mod tests {
             policy in policies(),
             plan in proptest::collection::vec(takes(), 0..=6),
         ) {
-            let cart = ring(&scans, None, rule);
-            prop_assume!(!cart.lines.is_empty());
+            let cart = sellable(ring(&scans, None, rule));
             let settings = PricingSettings {
                 price_mode: PriceMode::Inclusive,
                 profile: StoreTaxProfile::Standard,
