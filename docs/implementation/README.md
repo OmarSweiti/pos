@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **61 of 121 executable microsteps fully complete (~50%)**: `1.1.0`
+Phase 1 has **63 of 121 executable microsteps fully complete (~52%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -146,9 +146,12 @@ lead — in the shipped role grid), `1.4.6` (a discount on the whole basket, div
 lines to the fil by largest remainder, the tie decided by what a line is and never where it sits),
 `1.4.7` (a price override, never below the product's cost unless the shelf showed that price,
 never above a ministry ceiling whoever approved it, audited either way, with the shelf's label sent
-to be printed again), and `1.4.9` (`price_cart`, the one function that turns a cart into money: each
+to be printed again), `1.4.9` (`price_cart`, the one function that turns a cart into money: each
 line at the price it charges, less its discounts, taxed under the store's price mode, the same in any
-scan order, with its 200-line benchmark).
+scan order, with its 200-line benchmark), and `1.4.8` with `1.5.2` (paying for a sale — priced by the
+transition that begins payment, so it is never paid against another cart's total; split across any
+tenders, with only the cash tender that settles it rounded, and change from cash alone; completed
+only when settled, voided only before any money is taken, and never changed once complete).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
@@ -181,8 +184,8 @@ the 50 ms limit, which fires the risk-register trigger in [`00-master-plan.md`](
 §6; what to do about it is the owner's decision, and the microstep's note records the measurement.
 `1.2.8`, the scan-parser fuzz target, has landed with `just fuzz`, so every microstep of group 1.2
 has begun; `1.2.0` is its one partial step, waiting on milestone 5.8. Group 1.4's `1.4.3b` is **partially delivered**: an
-operator confirms or declines an age-restricted line, audited, and the line it blocks reaches
-`Tendering` once 1.4.8 builds it, through the command 1.4.11 adds. `1.6.3` is closed: its seed comparison landed against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
+operator confirms or declines an age-restricted line, audited, and since 1.4.8 the line it blocks
+reaches `Tendering` only once confirmed; what remains is the command 1.4.11 adds. `1.6.3` is closed: its seed comparison landed against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
 `authorize`, `ApprovalHandle` and `EscalationPolicy` are complete in `pos-domain`, with the two
 compile-fail proofs that a token cannot be forged or substituted across capabilities. Its
 persistence half now stores, validates, reloads and one-use consumes a handle through a

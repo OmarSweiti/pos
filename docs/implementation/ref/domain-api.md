@@ -1610,6 +1610,22 @@ pub struct CartLine {
 > `remaining_due`, `change_due` and `is_settled` beside it, so `cart` depends on `tender` and `tender`
 > stays the vocabulary below it — the arrow between them in §15 reverses when 1.4.8 makes it true.
 
+> **As delivered at 1.4.8.** The enum is complete, and the cycle is resolved as recorded: `Tendering`
+> lives here with 1.5.2's three functions beside it, `cart` reads `tender`, and §15's arrow points
+> from `tender` to `cart`. `Tendering`, `Finalizing`, `CompletedSale` and `VoidedSale` keep their
+> fields private and are read through methods, so each is made only by its transition or read back
+> from its stored form. A sale is paid against the prices `begin_tender` worked out for its own cart,
+> and nothing changes a completed sale (`tests/ui/a_completed_sale_cannot_be_reopened.rs`).
+>
+> ```rust
+> pub struct Finalizing(Tendering);                    // `tendering(&self) -> &Tendering`
+> pub struct FinalizeEffects { pub receipt_number: String, pub business_date: BusinessDate,
+>                              pub completed_at: Timestamp }   // what finalize supplies, 1.8.3
+> pub struct CompletedSale { /* cart, priced, tenders, cash_rounding, change, receipt_number,
+>                               business_date, completed_at: each read by a method */ }
+> pub struct VoidedSale { /* cart, reason, by, approver, voided_at: each read by a method */ }
+> ```
+
 ### 6.1 Transitions — [1.4.3 … 1.4.8]
 
 Every one is a free function taking the state by value and returning the next state or an error. No method mutates in place; no transition is reachable from the wrong state because the wrong state is a different type.
@@ -1811,13 +1827,37 @@ pub struct ParkedCart(Cart);                         // `cart(&self) -> &Cart` r
 pub fn park(cart: Cart)                              -> Result<ParkedCart, CartError>;
 pub fn resume(parked: ParkedCart, till: &CartContext) -> Result<Cart, CartError>;
 
-pub fn begin_tender(cart: Cart, priced: PricedCart)  -> Result<Tendering, CartError>;
+/// As delivered at 1.4.8. `begin_tender` prices the cart itself. This section
+/// had it take a `PricedCart` the caller computed, which nothing tied to the
+/// cart. It also fixes the store's `CashRoundingPolicy` (§7) for the sale, and
+/// `add_tender` asks every tender under it. It refuses an empty cart
+/// (`NothingToTender`), an age not yet confirmed, and a cash step that is not
+/// positive. A cart worth nothing is settled with no tender (E.18).
+pub fn begin_tender(cart: Cart, bands: &TaxBands, settings: &PricingSettings,
+                    cash_policy: CashRoundingPolicy)  -> Result<Tendering, CartError>;
 pub fn back_to_building(t: Tendering)                -> Result<Cart, CartError>; // only if no tender collected
+/// A tender's kind is the standard grid's for its code (§7.1). Cash is asked
+/// for the remainder at the coin step. Covering that, it is final and its
+/// `CashRounding` is the sale's; short of the exact remainder, it is partial
+/// and exact; between the two, it is `Underpaid`. A cash tender of nothing is
+/// accepted only as the final one. Any other kind is final at exactly the
+/// remainder, and `OvertenderNotCash` above it. A tender arrives `Collected`,
+/// and a settled sale takes none (`AlreadySettled`).
 pub fn add_tender(t: Tendering, tender: Tender)      -> Result<Tendering, CartError>;
+/// The remaining tenders are taken again in their order, so which one is final
+/// is decided again. A tender the removal leaves unable to stand is refused
+/// until it is removed first.
 pub fn remove_tender(t: Tendering, id: TenderId)     -> Result<Tendering, CartError>;
 pub fn begin_finalize(t: Tendering)                  -> Result<Finalizing, CartError>;
+/// Checks settlement again, because a finalizing sale is also read back from
+/// storage after a power cut (§6.6).
 pub fn complete(f: Finalizing, effects: FinalizeEffects) -> Result<CompletedSale, CartError>;
 
+/// As delivered at 1.4.8. A sale may be voided while it is being built,
+/// parked, or paid for with no tender taken. `TendersToReverse`,
+/// `FinalizeBegun`, `SaleIsComplete` and `SaleIsVoided` refuse the rest. The
+/// intent is `sale.void` on the `sale`, and its payload is the stage, the line
+/// count and, once payment had begun, the total.
 pub fn void_sale(sale: Sale, reason: VoidReason,
                  auth: &Authorized<cap::SaleVoid>)
                                                      -> Result<(VoidedSale, AuditIntent), CartError>;
@@ -1964,6 +2004,16 @@ pub enum CartError {
                                                                NoRecordedCost(ProductId, String), // 1.4.7
     #[error("no tax band is configured for category {0}")]    TaxBandMissing(TaxCategoryId), // 1.4.9
     #[error("line {0} appears twice in the cart")]             DuplicateLineId(SaleLineId), // 1.4.9
+    #[error("an empty cart cannot be paid for")]               NothingToTender,       // 1.4.8
+    #[error("no tender type {0}")]                             UnknownTenderType(String), // 1.4.8
+    #[error("tender {0} has not been collected")]              TenderNotCollected(TenderId), // 1.4.8
+    #[error("tender {0} is already on the sale")]              DuplicateTenderId(TenderId), // 1.4.8
+    #[error("sale {0} is already paid for")]                   AlreadySettled(SaleId), // 1.4.8
+    #[error("a tender of {0} pays nothing toward what is owed")] NonPositiveTender(String), // 1.4.8
+    #[error("no tender {0}")]                                  TenderNotFound(TenderId), // 1.4.8
+    #[error("cannot void the sale: {0} tender(s) collected")]  TendersToReverse(usize), // 1.4.8
+    #[error("sale {0} has begun finalizing and can only complete")] FinalizeBegun(SaleId), // 1.4.8
+    #[error("sale {0} is void")]                               SaleIsVoided(SaleId),  // 1.4.8
     #[error(transparent)] Permission(#[from] PermissionError),  // 1.4.5: an approval that does not match
     #[error(transparent)] Tax(#[from] TaxError),
     #[error(transparent)] Money(#[from] MoneyError),
@@ -2149,14 +2199,31 @@ pub enum TenderState {
     Reversed,
 }
 
+/// As delivered at 1.4.8, in `cart.rs` (§6). The fields are private and read
+/// through methods (`cart()`, `priced()`, `cash_policy()`, `tenders()`,
+/// `cash_rounding()`), so only `begin_tender` pairs a cart with its prices,
+/// and it holds the sale's `CashRoundingPolicy`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Tendering {
-    pub cart: Cart,
-    pub priced: PricedCart,
-    pub tenders: Vec<Tender>,
-    pub cash_rounding: Option<CashRounding>,
+    cart: Cart,
+    priced: PricedCart,
+    cash_policy: CashRoundingPolicy,
+    tenders: Vec<Tender>,
+    cash_rounding: Option<CashRounding>,
 }
 
+/// As delivered at 1.4.8: the store's coin step and direction for the sale
+/// (merchant decisions 2.1–2.2), read from `tax_computation_policy`. #231
+/// asks whether they belong there or on the store; this type reads the same
+/// either way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CashRoundingPolicy { pub step_minor: i64, pub direction: RoundingDirection }
+
+/// As delivered with 1.4.8 (1.5.2), in `cart.rs`. `remaining_due` is the
+/// total, plus the final cash tender's adjustment once one has made it, less
+/// everything collected, and never below nothing. `change_due` is what is
+/// collected beyond that, and never below nothing. `is_settled` is a remainder
+/// of nothing.
 pub fn remaining_due(t: &Tendering) -> Result<Money, MoneyError>;
 pub fn change_due(t: &Tendering)    -> Result<Money, MoneyError>;
 pub fn is_settled(t: &Tendering)    -> bool;
@@ -3454,13 +3521,18 @@ Properties: `prop_promotions_never_increase_total`, `prop_promotion_proration_co
 ## 15 · Module dependency rule
 
 ```
-money ─┬─→ tax ──┬─→ cart ──┬─→ tender ──→ receipt
-       │         │          ├─→ refund
-       │         │          └─→ promo
+money ─┬─→ tax ──┬─→ cart ──┬─→ receipt
+       │         │    ↑     ├─→ refund
+       ├─→ tender ────┘     └─→ promo
        ├─→ stock │
        └─→ ids ──┴─→ time
                      permissions ──→ audit
 ```
+
+As delivered at 1.4.8, `tender` points into `cart`, where this diagram first had the arrow the other
+way: `Sale` holds the payment stage, so `cart` reads `tender`'s vocabulary and `tender` reads nothing
+of `cart` (§6). `receipt` sits after `cart`, whose `CompletedSale` 1.8.3's `build_receipt_model`
+reads.
 
 The diagram omits two modules that the tree at the top of this file lists. `catalog` sits beside
 `tax` — it depends on `money` (since `Product` carries its price, §4.1) and on `ids`, and `cart`
