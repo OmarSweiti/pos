@@ -306,6 +306,21 @@ mod tests {
         assert_eq!(kept, before);
     }
 
+    /// `init` makes the layer the process's logger, at `INFO` and above, and
+    /// a second call changes nothing. Each test runs in its own process under
+    /// nextest, so this is the only test that installs a global default.
+    #[test]
+    fn init_installs_the_layer_as_the_global_default() {
+        init();
+        init();
+        assert!(tracing::dispatcher::has_been_set());
+        tracing::dispatcher::get_default(|dispatch| {
+            assert!(dispatch.is::<ScrubbingLayer>());
+        });
+        assert!(tracing::enabled!(tracing::Level::INFO));
+        assert!(!tracing::enabled!(tracing::Level::DEBUG));
+    }
+
     fn jod(minor: i64) -> Money {
         Money::from_minor(minor, Currency::JOD)
     }
