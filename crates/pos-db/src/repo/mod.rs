@@ -35,3 +35,4 @@ pub mod role;
 pub mod sequence;
 pub mod stock;
 pub mod trade_scale;
+pub mod user;

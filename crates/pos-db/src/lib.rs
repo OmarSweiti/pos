@@ -5,6 +5,7 @@ use rusqlite::Connection;
 use std::path::Path;
 use std::time::Duration;
 
+pub mod auth;
 #[cfg(feature = "fixtures")]
 pub mod fixtures;
 pub mod key;
@@ -54,6 +55,10 @@ pub enum DbError {
     },
     #[error("refusing to open: {engine} reports a version this build cannot read ({found:?})")]
     StorageVersionUnparseable { engine: &'static str, found: String },
+    #[error(transparent)]
+    Auth(#[from] auth::AuthError),
+    #[error("stored sign-in state is unusable: {reason}")]
+    AuthStateInvalid { reason: &'static str },
     #[error(
         "a {scope_kind}-scoped sequence cannot number a {kind} document: \
          migration 0005 pairs receipt and zreport with a register, and \

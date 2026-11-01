@@ -87,6 +87,10 @@ blake3 = "1.8"
 # The OS CSPRNG, for the SQLCipher key. Not `rand`: this needs one call and no
 # distributions, and a key generator should have the shortest path to the OS.
 getrandom = "0.4"
+# Argon2id for staff PINs (1.6.2). No `rand` feature: the salt comes from the
+# same OS source as the database key, through `getrandom`. `zeroize` wipes the
+# hasher's working memory when it is done with a PIN.
+argon2 = { version = "0.5", default-features = false, features = ["alloc", "password-hash", "zeroize"] }
 keyring  = "4"
 dotenvy = "0.15"
 sqlx = { version = "0.9", default-features = false, features = [
@@ -154,3 +158,13 @@ trybuild = "1"
 # empty feature 0.8 does not read. A budget is judged by `just bench-gate`, not
 # by this crate's report.
 criterion = { version = "0.8", default-features = false }
+
+# Argon2id at the reviewed PIN profile (1.6.2) takes over a second per hash
+# unoptimized, which would make every test that hashes a PIN a slow one.
+# Optimizing only the hashing crates leaves the profile, and every other
+# crate's debug build, exactly as they were.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3

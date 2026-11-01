@@ -416,6 +416,13 @@ The second factor is a hardware and cost decision, not a code decision, and it i
 
 **Tests:** `argon2_parameters_match_the_reviewed_profile` · `failed_attempt_state_survives_restart` · `manager_reset_retires_old_hash_and_audits`. The reset fixture also refuses a short manager PIN and proves that only the audited manager path clears lockout.
 
+> **As delivered at 1.6.2, the `pos-db` half.**
+>
+> - **The profile.** `pos_db::auth::PIN_PROFILE`, version 1, is RFC 9106 §4's second recommended option: Argon2id with three passes over 64 MiB in four lanes, a 128-bit salt from the OS and a 256-bit tag. The test reads the parameters back out of the PHC string, never times it, and a hash below the profile is flagged for a rehash at its owner's next correct PIN. 5.8.2 re-tunes the profile on the reference register to the 200–350 ms band, and the `pin_verify` benchmark is what it measures.
+> - **Attempt limiting.** It follows the owner's answer to merchant decision 9.7 (1 November 2026): three wrong PINs free; then 30 s, doubling, to 15 minutes; locked at the tenth in a row until a manager releases. The count is kept per user and per register in `auth_attempt_state`. A lockout is the count reaching ten, so `locked_until_at` stays empty: no timeout releases it.
+> - **Manager PINs.** A manager account's PIN is at least six digits, and a manager account is any one holding a `refund.` capability, `settings.edit`, `user.admin` or `zreport.run` (`pos_db::auth::minimum_pin_digits`). A PIN is ASCII digits only, so the screen sends the digits a keypad shows as Western ones.
+> - **Still open.** The second-factor item above, whose default stands. The reset command and its audit row are the terminal's, and 1.6.2's `Full-step status:` marker carries them.
+
 ### The offline authorization lease
 
 The plan promised a 72-hour bound on offline authority and gave it no state and no algorithm. A naïve implementation compares an expiry against the device clock, which a cashier can change, and forgets everything on reboot.
