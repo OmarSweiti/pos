@@ -501,6 +501,38 @@ pub enum ReprintCause {
     DisplayedPriceOverride,
 }
 
+/// A sellable bucket with a tax category, for goods that have no product: the
+/// unknown barcode at 22:00 with no manager to add it (`ref/domain-api.md`
+/// §6.5, 1.4.12).
+///
+/// It is not a product. It has no SKU, no barcode and no stock, and a sale
+/// through it moves none. It is a `category`, in the same id space, carrying a
+/// tax category, so there is no untaxed department and no department without
+/// one. That is the whole difference between a department sale and an
+/// open-price line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Department {
+    pub id: CategoryId,
+    /// What the receipt prints, so a customer's proof of purchase describes
+    /// what they bought rather than "unknown item".
+    pub name_ar: String,
+    pub name_en: Option<String>,
+    pub tax_category_id: TaxCategoryId,
+    pub is_active: bool,
+}
+
+/// How far a department sale may go: the store's setting (1.4.12).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DepartmentPolicy {
+    /// The most one department line may be, approved or not. A department
+    /// sale is an amount a person typed, so it is capped low by default and
+    /// raised deliberately.
+    pub max_line_amount: Money,
+    /// Above this, the line needs a manager's approval, bound to the sale and
+    /// the amount. `None`: no escalation below the cap.
+    pub escalate_above: Option<Money>,
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
