@@ -3104,6 +3104,9 @@ Properties: `prop_chain_detects_any_single_entry_mutation` ·
 `golden_canonical_bytes_are_stable`.
 The identity mutation varies `register_id`, `seq` and `id`; each must return `Broken`, which the old
 canonical input did not give.
+The payload guard's never-log rule (1.6.8): `a_payload_naming_a_never_log_field_is_refused` ·
+`prop_a_never_log_name_is_refused_wherever_it_nests`, which puts a listed name, in either spelling,
+anywhere in a payload the guard otherwise accepts and expects the refusal to point at it.
 
 > ⚠️ **Residual risk, disclosed.** Entries written after the last anchor — at most one shift's worth,
 > or one backup interval — remain deletable without detection on a register whose database key the

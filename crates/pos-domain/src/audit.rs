@@ -1461,6 +1461,116 @@ mod tests {
             })
     }
 
+    /// Names no rule lists, so a payload built from them alone passes.
+    const INNOCENT_KEYS: [&str; 8] = [
+        "sale_id",
+        "amount_minor",
+        "lines",
+        "qty_milli",
+        "reason",
+        "masked_pan",
+        "scheme",
+        "pinned",
+    ];
+
+    /// An object of innocent names holding integers, strings, booleans and
+    /// nulls, in objects and arrays a few levels deep.
+    fn innocent_payloads() -> impl Strategy<Value = Value> {
+        let leaf = prop_oneof![
+            Just(Value::Null),
+            any::<bool>().prop_map(Value::from),
+            any::<i64>().prop_map(Value::from),
+            "[a-z0-9 ]{0,8}".prop_map(Value::from),
+        ];
+        leaf.prop_recursive(4, 32, 4, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..4).prop_map(Value::Array),
+                prop::collection::btree_map(
+                    prop::sample::select(INNOCENT_KEYS.to_vec()),
+                    inner,
+                    0..4
+                )
+                .prop_map(|members| {
+                    Value::Object(
+                        members
+                            .into_iter()
+                            .map(|(name, member)| (name.to_owned(), member))
+                            .collect(),
+                    )
+                }),
+            ]
+        })
+        .prop_map(|value| match value {
+            Value::Object(_) => value,
+            other => json!({ "lines": other }),
+        })
+    }
+
+    /// Every exact name, a name under each suffix, and a name containing
+    /// each substring the registry lists.
+    fn never_log_names() -> impl Strategy<Value = String> {
+        let rules = crate::sensitive::SENSITIVE_FIELD_RULES;
+        let names = rules.names.iter().map(|name| (*name).to_owned());
+        let suffixed = rules
+            .suffixes
+            .iter()
+            .map(|suffix| format!("device{suffix}"));
+        let containing = rules.contains.iter().map(|part| format!("old_{part}_at"));
+        prop::sample::select(names.chain(suffixed).chain(containing).collect::<Vec<_>>())
+    }
+
+    /// `snake_case` as `camelCase`, the webview's spelling.
+    fn camel(snake: &str) -> String {
+        let mut words = snake.split('_');
+        let first = words.next().unwrap_or_default().to_owned();
+        words.fold(first, |mut out, word| {
+            let mut letters = word.chars();
+            if let Some(initial) = letters.next() {
+                out.push(initial.to_ascii_uppercase());
+                out.extend(letters);
+            }
+            out
+        })
+    }
+
+    /// `here` with a member `key` added in the container `turns` leads to, and
+    /// the RFC 6901 pointer to that member. Each turn picks a nested container
+    /// to step into; a turn with none to pick ends the walk where it is.
+    fn insert_at(here: &mut Value, turns: &[usize], key: &str, member: Value) -> String {
+        let nested = |value: &Value| value.is_object() || value.is_array();
+        match here {
+            Value::Object(members) => {
+                let count = members.values().filter(|value| nested(value)).count();
+                if let (Some((turn, rest)), true) = (turns.split_first(), count > 0) {
+                    let picked = members
+                        .iter_mut()
+                        .filter(|(_, value)| nested(value))
+                        .nth(turn % count);
+                    if let Some((name, child)) = picked {
+                        return format!("/{name}{}", insert_at(child, rest, key, member));
+                    }
+                }
+                members.insert(key.to_owned(), member);
+                format!("/{key}")
+            }
+            Value::Array(items) => {
+                if let (Some((turn, rest)), false) = (turns.split_first(), items.is_empty()) {
+                    let index = turn % items.len();
+                    if let Some(child) = items.get_mut(index).filter(|child| nested(child)) {
+                        return format!("/{index}{}", insert_at(child, rest, key, member));
+                    }
+                }
+                let index = items.len();
+                items.push(json!({ key: member }));
+                format!("/{index}/{key}")
+            }
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {
+                *here = json!({ key: member });
+                format!("/{key}")
+            }
+        }
+    }
+
     proptest! {
         // One shared configuration for every property in this crate: 4,096
         // cases, the repository's recorded seed, and a minimized failing case
@@ -1559,6 +1669,32 @@ mod tests {
                 .expect("the strategy bounds both positions");
 
             prop_assert_eq!(verify(REGISTER, &swapped, anchor), ChainVerdict::Broken { at_seq });
+        }
+
+        /// A value under a never-log name never reaches the chain: put one in
+        /// any spelling, anywhere in a payload the guard otherwise accepts, and
+        /// the guard refuses it and points at where it is. Without it, the same
+        /// payload passes.
+        #[test]
+        fn prop_a_never_log_name_is_refused_wherever_it_nests(
+            payload in innocent_payloads(),
+            turns in prop::collection::vec(any::<usize>(), 0..5),
+            name in never_log_names(),
+            camel_cased in any::<bool>(),
+            secret in prop_oneof![
+                "[a-z0-9]{1,8}".prop_map(Value::from),
+                any::<i64>().prop_map(Value::from),
+                Just(json!({ "inner": 1 })),
+            ],
+        ) {
+            prop_assert_eq!(check_payload(&payload), Ok(()));
+            let key = if camel_cased { camel(&name) } else { name };
+            let mut carrying = payload;
+            let pointer = insert_at(&mut carrying, &turns, &key, secret);
+            prop_assert_eq!(
+                check_payload(&carrying),
+                Err(AuditError::PayloadCarriesSensitiveField { pointer })
+            );
         }
     }
 }
