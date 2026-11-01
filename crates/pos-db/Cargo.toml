@@ -67,3 +67,9 @@ trybuild.workspace = true
 [[bench]]
 name = "search"
 harness = false
+
+# PIN verification (1.6.2): `cargo bench -p pos-db --bench pin_verify` times it,
+# and `cargo test -p pos-db --bench pin_verify` runs it once.
+[[bench]]
+name = "pin_verify"
+harness = false
