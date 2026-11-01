@@ -20,3 +20,11 @@ fn a_cart_being_built_cannot_be_resumed() {
     let cases = trybuild::TestCases::new();
     cases.compile_fail("tests/ui/parked_cart_is_its_own_state.rs");
 }
+
+/// A completed sale is immutable (I-4, microstep 1.4.8): no transition takes
+/// one, and nothing it holds can be reached to change.
+#[test]
+fn a_completed_sale_cannot_be_reopened() {
+    let cases = trybuild::TestCases::new();
+    cases.compile_fail("tests/ui/a_completed_sale_cannot_be_reopened.rs");
+}
