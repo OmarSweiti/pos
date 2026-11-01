@@ -38,6 +38,12 @@ rusqlite.workspace = true
 blake3.workspace = true
 # Ids arrive as `Uuid` from an `IdSource` and are written as their bytes.
 uuid.workspace = true
+# Every log line passes through the scrubbing layer (1.6.8). Both are already
+# the workspace's.
+tracing.workspace = true
+tracing-subscriber.workspace = true
+# A failure's trace id is random, from the same OS source as the database key.
+getrandom.workspace = true
 thiserror.workspace = true
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
