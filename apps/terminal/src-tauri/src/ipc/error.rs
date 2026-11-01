@@ -3,7 +3,7 @@
 //!
 //! The webview gets a code to branch on, a key to translate, at most a
 //! **static** detail, and a trace id. It never gets the source error. A SQL
-//! error carrying a bound value, a provider's failure body or a panic message
+//! error naming the schema, a provider's failure body or a panic message
 //! would otherwise reach the screen, the screenshot a cashier sends, and the
 //! JavaScript crash reporter, none of which the log scrubber sees. `detail`
 //! is a `&'static str`, so building one from a source error does not compile.
@@ -106,15 +106,12 @@ mod tests {
         }
     }
 
-    /// A database refusal whose message carries a bound value reaches the
-    /// scrubbed log under the trace id, and the webview receives only the code,
-    /// the key, a static detail and the same trace id.
+    /// A database refusal, which names the table and column it broke on,
+    /// reaches the scrubbed log under the trace id, and the webview receives
+    /// only the code, the key, a static detail and the same trace id.
     #[test]
     fn ipc_errors_carry_no_source_detail_in_release() {
-        let bound = "SYNTH-bound-value-0790000000";
-        let source = io::Error::other(format!(
-            "UNIQUE constraint failed: customer.phone = {bound}"
-        ));
+        let source = io::Error::other("UNIQUE constraint failed: customer.phone");
         let sink = Captured::default();
         let subscriber = tracing_subscriber::registry().with(ScrubbingLayer::new(sink.clone()));
         let failure = tracing::subscriber::with_default(subscriber, || {
@@ -122,8 +119,8 @@ mod tests {
                 .with_detail("a customer with that phone already exists")
         });
         let sent = serde_json::to_value(&failure).unwrap();
-        assert!(!sent.to_string().contains(bound), "{sent}");
         assert!(!sent.to_string().contains("UNIQUE"), "{sent}");
+        assert!(!sent.to_string().contains("customer.phone"), "{sent}");
         assert_eq!(
             sent,
             serde_json::json!({
@@ -135,7 +132,10 @@ mod tests {
         );
         let log = String::from_utf8(sink.0.lock().unwrap().clone()).unwrap();
         assert!(log.contains(&failure.trace_id.to_string()), "{log}");
-        assert!(log.contains("UNIQUE constraint failed"), "{log}");
+        assert!(
+            log.contains("UNIQUE constraint failed: customer.phone"),
+            "{log}"
+        );
     }
 
     /// Two failures are two trace ids, each a valid random id.
