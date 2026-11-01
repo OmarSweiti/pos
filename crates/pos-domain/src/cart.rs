@@ -1681,7 +1681,18 @@ pub fn add_tender(t: Tendering, tender: Tender) -> Result<Tendering, CartError> 
 }
 
 /// The sale without tender `id`, which the cashier took in error or the
-/// customer withdrew (E.15).
+/// customer withdrew (E.15), and the audit intent that records it under
+/// `tender.remove` (1.4.10).
+///
+/// Taking back a tender that was collected reverses money, so it takes the
+/// proof of `sale.create`, as `tender_remove` requires, and it is audited.
+/// Cash taken, its tender removed and the sale then emptied line by line is
+/// how a sale leaves the drawer with nothing on record; the intent is the
+/// record. It names the sale, and in its payload the tender, its kind, amount
+/// and provider reference, and what is owed once it is gone. `tender_remove`
+/// takes no approval (`ref/ipc-contract.md` §3), and no handle could be
+/// consumed against this intent: its action is the act's own verb, not a
+/// capability.
 ///
 /// The tenders left are taken again in their order, so which one is final and
 /// what it rounds is decided again, exactly as if the removed one had never
@@ -1695,7 +1706,11 @@ pub fn add_tender(t: Tendering, tender: Tender) -> Result<Tendering, CartError> 
 ///   unable to stand: a final cash tender of nothing where something is owed
 ///   again, or cash now short of the rounded amount it would be asked for.
 ///   That tender is removed first.
-pub fn remove_tender(t: Tendering, id: TenderId) -> Result<Tendering, CartError> {
+pub fn remove_tender(
+    t: Tendering,
+    id: TenderId,
+    auth: &Authorized<cap::SaleCreate>,
+) -> Result<(Tendering, AuditIntent), CartError> {
     let Tendering {
         cart,
         priced,
@@ -1703,9 +1718,12 @@ pub fn remove_tender(t: Tendering, id: TenderId) -> Result<Tendering, CartError>
         tenders,
         ..
     } = t;
-    if !tenders.iter().any(|taken| taken.id == id) {
-        return Err(CartError::TenderNotFound(id));
-    }
+    let removed = tenders
+        .iter()
+        .find(|taken| taken.id == id)
+        .cloned()
+        .ok_or(CartError::TenderNotFound(id))?;
+    let sale = cart.id;
     let unpaid = Tendering {
         cart,
         priced,
@@ -1713,10 +1731,29 @@ pub fn remove_tender(t: Tendering, id: TenderId) -> Result<Tendering, CartError>
         tenders: Vec::new(),
         cash_rounding: None,
     };
-    tenders
+    let rest = tenders
         .into_iter()
         .filter(|taken| taken.id != id)
-        .try_fold(unpaid, add_tender)
+        .try_fold(unpaid, add_tender)?;
+    let intent = AuditIntent {
+        actor: auth.actor(),
+        approver: auth.approver(),
+        approval: auth.approval(),
+        action: "tender.remove",
+        entity: "sale",
+        entity_id: sale.as_uuid(),
+        reason: None,
+        payload: json!({
+            "tender_id": removed.id.as_uuid().to_string(),
+            "type_code": removed.type_code,
+            "amount_minor": removed.amount.minor(),
+            "currency": removed.amount.currency().code(),
+            "psp_ref": removed.psp_ref,
+            "remaining_minor": remaining_due(&rest)?.minor(),
+        }),
+        at: auth.at(),
+    };
+    Ok((rest, intent))
 }
 
 /// The paid sale, being finalized (1.8.3).
@@ -5167,6 +5204,16 @@ mod tests {
         add_tender(t, tender(n, code, minor))
     }
 
+    /// The cashier's proof of `sale.create`, which taking a tender back needs.
+    fn till_proof() -> Authorized<cap::SaleCreate> {
+        proof_of::<cap::SaleCreate>(cashier(), Role::Cashier, moment())
+    }
+
+    /// `t` without tender `id`, taken back by the cashier.
+    fn take_back(t: Tendering, id: TenderId) -> Result<Tendering, CartError> {
+        remove_tender(t, id, &till_proof()).map(|(rest, _)| rest)
+    }
+
     fn effects() -> FinalizeEffects {
         FinalizeEffects {
             receipt_number: "SYNTH-R1-000001".to_owned(),
@@ -5390,19 +5437,19 @@ mod tests {
         )
         .unwrap();
         assert!(is_settled(&paid));
-        let no_card = remove_tender(paid.clone(), tender_id(1)).unwrap();
+        let no_card = take_back(paid.clone(), tender_id(1)).unwrap();
         assert_eq!(no_card.tenders(), &[tender(2, "cash", 620)]);
         assert_eq!(
             (no_card.cash_rounding(), remaining_due(&no_card)),
             (None, Ok(jod(627)))
         );
-        let no_cash = remove_tender(paid.clone(), tender_id(2)).unwrap();
+        let no_cash = take_back(paid.clone(), tender_id(2)).unwrap();
         assert_eq!(
             (no_cash.cash_rounding(), remaining_due(&no_cash)),
             (None, Ok(jod(623)))
         );
         assert_eq!(
-            remove_tender(paid, tender_id(9)).unwrap_err(),
+            take_back(paid, tender_id(9)).unwrap_err(),
             CartError::TenderNotFound(tender_id(9))
         );
         let to_nothing = [(1, "card", 1_000), (2, "card", 243), (3, "cash", 0)]
@@ -5413,12 +5460,12 @@ mod tests {
             .unwrap();
         assert!(is_settled(&to_nothing));
         assert_eq!(
-            remove_tender(to_nothing.clone(), tender_id(1)).unwrap_err(),
+            take_back(to_nothing.clone(), tender_id(1)).unwrap_err(),
             CartError::NonPositiveTender("0.000".to_owned())
         );
-        let without = remove_tender(to_nothing, tender_id(3)).unwrap();
+        let without = take_back(to_nothing, tender_id(3)).unwrap();
         assert_eq!(
-            remove_tender(without, tender_id(1)).map(|t| t.tenders().len()),
+            take_back(without, tender_id(1)).map(|t| t.tenders().len()),
             Ok(1)
         );
     }
@@ -5433,7 +5480,7 @@ mod tests {
             back_to_building(t.clone()).unwrap_err(),
             CartError::TenderCollected(1)
         );
-        let t = remove_tender(t, tender_id(1)).unwrap();
+        let t = take_back(t, tender_id(1)).unwrap();
         assert_eq!(back_to_building(t), Ok(cart));
     }
 
@@ -5763,7 +5810,7 @@ mod tests {
                 let Some(id) = t.tenders().get(at % t.tenders().len().max(1)).map(|x| x.id) else {
                     return Err(None);
                 };
-                remove_tender(t, id).map(Sale::Tendering)
+                take_back(t, id).map(Sale::Tendering)
             }
             (Sale::Tendering(t), Op::BeginFinalize) => begin_finalize(t).map(Sale::Finalizing),
             (Sale::Finalizing(f), Op::Complete) => complete(f, effects()).map(Sale::Complete),
@@ -5933,5 +5980,378 @@ mod tests {
             prop_assert_eq!(&read_back, &done);
             prop_assert_eq!(serde_json::to_string(&read_back).unwrap(), stored);
         }
+    }
+
+    // ── the transition list (1.4.10) ────────────────────────────────────
+
+    /// Taking a tender back is audited with the tender, what it was worth,
+    /// its provider reference, and what is owed once it is gone.
+    #[test]
+    fn taking_a_tender_back_is_audited_with_what_it_was() {
+        let mut card = tender(1, "card", 624);
+        card.psp_ref = Some("SYNTH-psp-1".to_owned());
+        let t = add_tender(paying(one_item(1_247), qirsh()), card).unwrap();
+        let t = pay(t, 2, "cash", 300).unwrap();
+        let (rest, intent) = remove_tender(t, tender_id(1), &till_proof()).unwrap();
+        assert_eq!(rest.tenders(), &[tender(2, "cash", 300)]);
+        assert_eq!(
+            (intent.action, intent.entity, intent.entity_id),
+            ("tender.remove", "sale", id(1))
+        );
+        assert_eq!(
+            (intent.actor, intent.approver, intent.approval, intent.at),
+            (cashier(), None, None, moment())
+        );
+        assert_eq!(intent.reason, None);
+        assert_eq!(
+            intent.payload,
+            json!({
+                "tender_id": tender_id(1).as_uuid().to_string(),
+                "type_code": "card",
+                "amount_minor": 624,
+                "currency": "JOD",
+                "psp_ref": "SYNTH-psp-1",
+                "remaining_minor": 947,
+            })
+        );
+        check_payload(&intent.payload).unwrap();
+    }
+
+    /// Every transition this module exports, one variant each.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Transition {
+        Open,
+        AddLine,
+        SetQty,
+        VoidLine,
+        ConfirmAge,
+        ApplyLineDiscount,
+        ApplyBasketDiscount,
+        OverridePrice,
+        Park,
+        Resume,
+        BeginTender,
+        BackToBuilding,
+        AddTender,
+        RemoveTender,
+        BeginFinalize,
+        Complete,
+        VoidSale,
+    }
+
+    /// What a transition owes the audit log.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Duty {
+        /// It reverses money, or does what a role may be refused: it takes the
+        /// proof of this capability and returns an intent under this action.
+        Privileged(&'static str, &'static str),
+        /// It names who did it, under this action, with no money reversed.
+        Audited(&'static str),
+        /// Nothing a report of who did what reads, and nothing reversed.
+        Unaudited,
+    }
+
+    /// The module's functions that read a state and change none.
+    const READS: [&str; 6] = [
+        "discount_attributions",
+        "price_cart",
+        "check_age_confirmed",
+        "remaining_due",
+        "change_due",
+        "is_settled",
+    ];
+
+    impl Transition {
+        const ALL: [Transition; 17] = [
+            Transition::Open,
+            Transition::AddLine,
+            Transition::SetQty,
+            Transition::VoidLine,
+            Transition::ConfirmAge,
+            Transition::ApplyLineDiscount,
+            Transition::ApplyBasketDiscount,
+            Transition::OverridePrice,
+            Transition::Park,
+            Transition::Resume,
+            Transition::BeginTender,
+            Transition::BackToBuilding,
+            Transition::AddTender,
+            Transition::RemoveTender,
+            Transition::BeginFinalize,
+            Transition::Complete,
+            Transition::VoidSale,
+        ];
+
+        /// The transition's duty, checked by the compiler. Each arm binds the
+        /// function to the exact signature its duty requires: a privileged one
+        /// takes its capability's proof and returns an intent, an audited one
+        /// returns an intent, and an unaudited one returns none. A transition
+        /// that changes its duty no longer compiles here, and a new variant
+        /// does not compile until it is given one.
+        // Each arm spells a transition's whole signature out; that is the check.
+        #[allow(clippy::type_complexity)]
+        fn duty(self) -> (&'static str, Duty) {
+            match self {
+                Transition::Open => {
+                    let _: fn(SaleId, &CartContext) -> Cart = open;
+                    ("open", Duty::Unaudited)
+                }
+                Transition::AddLine => {
+                    let _: fn(Cart, AddLine) -> Result<Cart, CartError> = add_line;
+                    ("add_line", Duty::Unaudited)
+                }
+                // A lower quantity before any money is taken; `cart_set_qty`
+                // is a base sale command, and an amount off fixes it (1.4.5).
+                Transition::SetQty => {
+                    let _: fn(Cart, SaleLineId, Qty) -> Result<Cart, CartError> = set_qty;
+                    ("set_qty", Duty::Unaudited)
+                }
+                // `line.void`, which the shell checks for `cart_void_line`. A
+                // line is voided only while no money is taken, so it reverses
+                // none, and the intent names the cashier.
+                Transition::VoidLine => {
+                    let _: fn(
+                        Cart,
+                        SaleLineId,
+                        VoidReason,
+                        UserId,
+                        Timestamp,
+                    ) -> Result<(Cart, AuditIntent), CartError> = void_line;
+                    ("void_line", Duty::Audited(cap::LineVoid::NAME))
+                }
+                // `age.decline` when declined (1.4.3b).
+                Transition::ConfirmAge => {
+                    let _: fn(
+                        Cart,
+                        SaleLineId,
+                        bool,
+                        UserId,
+                        Timestamp,
+                    ) -> Result<(Cart, AuditIntent), CartError> = confirm_age;
+                    ("confirm_age", Duty::Audited("age.confirm"))
+                }
+                Transition::ApplyLineDiscount => {
+                    let _: fn(
+                        Cart,
+                        SaleLineId,
+                        DiscountRequest,
+                        DiscountCap,
+                        RoundingRule,
+                        &Authorized<cap::DiscountManual>,
+                        Option<&ApprovalHandle>,
+                    ) -> Result<(Cart, AuditIntent), CartError> = apply_line_discount;
+                    (
+                        "apply_line_discount",
+                        Duty::Privileged(cap::DiscountManual::NAME, cap::DiscountManual::NAME),
+                    )
+                }
+                Transition::ApplyBasketDiscount => {
+                    let _: fn(
+                        Cart,
+                        DiscountRequest,
+                        DiscountCap,
+                        RoundingRule,
+                        &Authorized<cap::DiscountManual>,
+                        Option<&ApprovalHandle>,
+                    ) -> Result<(Cart, AuditIntent), CartError> = apply_basket_discount;
+                    (
+                        "apply_basket_discount",
+                        Duty::Privileged(cap::DiscountManual::NAME, cap::DiscountManual::NAME),
+                    )
+                }
+                Transition::OverridePrice => {
+                    let _: fn(
+                        Cart,
+                        SaleLineId,
+                        Money,
+                        OverrideReason,
+                        Option<Money>,
+                        &Authorized<cap::PriceOverride>,
+                    )
+                        -> Result<(Cart, AuditIntent, Option<LabelReprint>), CartError> =
+                        override_price;
+                    (
+                        "override_price",
+                        Duty::Privileged(cap::PriceOverride::NAME, cap::PriceOverride::NAME),
+                    )
+                }
+                Transition::Park => {
+                    let _: fn(Cart) -> Result<ParkedCart, CartError> = park;
+                    ("park", Duty::Unaudited)
+                }
+                Transition::Resume => {
+                    let _: fn(ParkedCart, &CartContext) -> Result<Cart, CartError> = resume;
+                    ("resume", Duty::Unaudited)
+                }
+                Transition::BeginTender => {
+                    let _: fn(
+                        Cart,
+                        &TaxBands,
+                        &PricingSettings,
+                        CashRoundingPolicy,
+                    ) -> Result<Tendering, CartError> = begin_tender;
+                    ("begin_tender", Duty::Unaudited)
+                }
+                // Only while no tender is taken, so nothing is reversed.
+                Transition::BackToBuilding => {
+                    let _: fn(Tendering) -> Result<Cart, CartError> = back_to_building;
+                    ("back_to_building", Duty::Unaudited)
+                }
+                Transition::AddTender => {
+                    let _: fn(Tendering, Tender) -> Result<Tendering, CartError> = add_tender;
+                    ("add_tender", Duty::Unaudited)
+                }
+                // A collected tender taken back: `tender_remove` is
+                // `sale.create`'s, and audited.
+                Transition::RemoveTender => {
+                    let _: fn(
+                        Tendering,
+                        TenderId,
+                        &Authorized<cap::SaleCreate>,
+                    ) -> Result<(Tendering, AuditIntent), CartError> = remove_tender;
+                    (
+                        "remove_tender",
+                        Duty::Privileged(cap::SaleCreate::NAME, "tender.remove"),
+                    )
+                }
+                Transition::BeginFinalize => {
+                    let _: fn(Tendering) -> Result<Finalizing, CartError> = begin_finalize;
+                    ("begin_finalize", Duty::Unaudited)
+                }
+                // The completed sale is itself the record, and reverses
+                // nothing. What the finalize command audits beside it, with
+                // the drawer it opens, is 1.8.3's.
+                Transition::Complete => {
+                    let _: fn(Finalizing, FinalizeEffects) -> Result<CompletedSale, CartError> =
+                        complete;
+                    ("complete", Duty::Unaudited)
+                }
+                Transition::VoidSale => {
+                    let _: fn(
+                        Sale,
+                        VoidReason,
+                        &Authorized<cap::SaleVoid>,
+                    ) -> Result<(VoidedSale, AuditIntent), CartError> = void_sale;
+                    (
+                        "void_sale",
+                        Duty::Privileged(cap::SaleVoid::NAME, cap::SaleVoid::NAME),
+                    )
+                }
+            }
+        }
+
+        /// The intent the transition returns when it is run on an ordinary
+        /// sale, by the role the grid gives it; `None` for one that returns
+        /// none, by its signature.
+        fn intent(self) -> Option<AuditIntent> {
+            let why = |code: &str| VoidReason(code.to_owned());
+            Some(match self {
+                Transition::Open
+                | Transition::AddLine
+                | Transition::SetQty
+                | Transition::Park
+                | Transition::Resume
+                | Transition::BeginTender
+                | Transition::BackToBuilding
+                | Transition::AddTender
+                | Transition::BeginFinalize
+                | Transition::Complete => return None,
+                Transition::VoidLine => {
+                    void_line(
+                        two_teas(),
+                        line_id(1),
+                        why("scanned_twice"),
+                        cashier(),
+                        moment(),
+                    )
+                    .unwrap()
+                    .1
+                }
+                Transition::ConfirmAge => {
+                    confirm_age(with_tobacco(), line_id(2), true, operator(), moment())
+                        .unwrap()
+                        .1
+                }
+                Transition::ApplyLineDiscount => discount(two_teas(), pct(50_000)).unwrap().1,
+                Transition::ApplyBasketDiscount => by_manager(basket(), pct(100_000)).unwrap().1,
+                Transition::OverridePrice => {
+                    override_price(
+                        two_teas(),
+                        line_id(1),
+                        jod(1_000),
+                        code("damaged_pack"),
+                        Some(jod(900)),
+                        &proof_of::<cap::PriceOverride>(shift_lead(), Role::ShiftLead, moment()),
+                    )
+                    .unwrap()
+                    .1
+                }
+                Transition::RemoveTender => {
+                    let t = pay(paying(one_item(1_247), qirsh()), 1, "card", 500).unwrap();
+                    remove_tender(t, tender_id(1), &till_proof()).unwrap().1
+                }
+                Transition::VoidSale => {
+                    let lead = proof_of::<cap::SaleVoid>(shift_lead(), Role::ShiftLead, moment());
+                    void_sale(Sale::Building(two_teas()), why("customer_left"), &lead)
+                        .unwrap()
+                        .1
+                }
+            })
+        }
+    }
+
+    /// 1.4.10: every cart transition is in one list with its audit duty, which
+    /// the compiler checks against its signature, and every one that reverses
+    /// money or is audited returns an intent under its action, at the moment
+    /// its actor acted, with a payload the chain can hash. A public function
+    /// of this module that is not in the list fails here.
+    #[test]
+    fn every_privileged_transition_returns_an_audit_intent() {
+        let source = include_str!("cart.rs");
+        let module = source.split("\n#[cfg(test)]\n").next().unwrap();
+        let exported: BTreeSet<&str> = module
+            .lines()
+            .filter_map(|l| l.strip_prefix("pub fn "))
+            .filter_map(|rest| rest.split(['(', '<']).next())
+            .collect();
+        let listed: BTreeSet<&str> = Transition::ALL
+            .iter()
+            .map(|t| t.duty().0)
+            .chain(READS)
+            .collect();
+        assert_eq!(exported, listed);
+        assert_eq!(listed.len(), Transition::ALL.len() + READS.len());
+
+        let mut privileged = Vec::new();
+        for t in Transition::ALL {
+            let (name, duty) = t.duty();
+            let intent = t.intent();
+            match duty {
+                Duty::Unaudited => assert_eq!(intent, None, "{name}"),
+                Duty::Audited(action) | Duty::Privileged(_, action) => {
+                    let intent = intent.unwrap();
+                    assert_eq!(intent.action, action, "{name}");
+                    assert_eq!(intent.at, moment(), "{name}");
+                    check_payload(&intent.payload).unwrap();
+                    if let Duty::Privileged(capability, _) = duty {
+                        privileged.push((name, capability, action));
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            privileged,
+            [
+                ("apply_line_discount", "discount.manual", "discount.manual"),
+                (
+                    "apply_basket_discount",
+                    "discount.manual",
+                    "discount.manual"
+                ),
+                ("override_price", "price.override", "price.override"),
+                ("remove_tender", "sale.create", "tender.remove"),
+                ("void_sale", "sale.void", "sale.void"),
+            ]
+        );
     }
 }

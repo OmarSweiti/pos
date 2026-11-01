@@ -170,7 +170,9 @@ pub struct AuditIntent {
     pub approval: Option<ApprovalId>,
     /// `"sale.void"`, `"price.override"` — the capability spelling, which is
     /// what `approval_consumption`'s trigger compares against
-    /// `approval_handle.capability`.
+    /// `approval_handle.capability`. Where the capability a command needs is
+    /// the base `sale.create` and names nothing about the act, it is the act's
+    /// own verb instead: `"age.confirm"`, `"tender.remove"` (1.4.10).
     pub action: &'static str,
     /// The table the action happened to: `"sale"`, `"shift"`, `"user"`.
     pub entity: &'static str,

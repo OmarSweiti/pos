@@ -1846,8 +1846,13 @@ pub fn back_to_building(t: Tendering)                -> Result<Cart, CartError>;
 pub fn add_tender(t: Tendering, tender: Tender)      -> Result<Tendering, CartError>;
 /// The remaining tenders are taken again in their order, so which one is final
 /// is decided again. A tender the removal leaves unable to stand is refused
-/// until it is removed first.
-pub fn remove_tender(t: Tendering, id: TenderId)     -> Result<Tendering, CartError>;
+/// until it is removed first. As delivered at 1.4.10: taking back a collected
+/// tender reverses money, so it takes `sale.create`'s proof, as `tender_remove`
+/// requires, and returns a `tender.remove` intent on the `sale`. Its payload is
+/// the tender, its kind, amount and provider reference, and what is owed once
+/// it is gone.
+pub fn remove_tender(t: Tendering, id: TenderId, auth: &Authorized<cap::SaleCreate>)
+                                                     -> Result<(Tendering, AuditIntent), CartError>;
 pub fn begin_finalize(t: Tendering)                  -> Result<Finalizing, CartError>;
 /// Checks settlement again, because a finalizing sale is also read back from
 /// storage after a power cut (§6.6).
@@ -1864,6 +1869,20 @@ pub fn void_sale(sale: Sale, reason: VoidReason,
 ```
 
 > **`AuditIntent`.** A pure domain function cannot write an audit row — that is I/O. It returns the *intent*: actor, approver, action, entity, and a canonical payload. The shell writes it inside the same transaction as the effect. This is how "every ✓ that reverses money writes the audit log" (master plan C.10) becomes structural rather than remembered.
+
+> **As delivered at 1.4.10.** Every cart transition is in one list with its duty, and
+> `every_privileged_transition_returns_an_audit_intent` holds the list to the module. Five transitions
+> reverse money or do what a role may be refused. Each takes its capability's proof and returns an intent:
+> `apply_line_discount` and `apply_basket_discount` (`discount.manual`), `override_price`
+> (`price.override`), `void_sale` (`sale.void`), and `remove_tender`. `remove_tender`'s capability is
+> `sale.create` and its action is its own verb, `tender.remove`, because the base capability names nothing
+> about the act. Two more name who acted and reverse no money: `void_line` (`line.void`, checked by the
+> shell, since a line is voided only while no tender is taken) and `confirm_age` (`age.confirm` or
+> `age.decline`). The other ten return none. `complete` is one of them: the completed sale is itself the
+> record. What `sale_finalize`'s audit row records beside it, with the drawer it opens, is 1.8.3's. In the
+> list, each transition is bound to the exact signature its duty requires, so one that stops taking its
+> proof or returning its intent does not compile. A public function of `cart` missing from the list
+> fails the test.
 
 > **`set_supply_context` has no IPC command in v1.** The transition exists so the engine and its tests
 > can express an export or a free-zone supply, and the register always sends `Domestic`. Exposing it
