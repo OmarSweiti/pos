@@ -5,15 +5,21 @@
 //! compile. Every transition is a free function that takes a state by value
 //! and returns the next one or a [`CartError`]; nothing mutates in place.
 //!
-//! As delivered at 1.4.1, the machine holds the states whose data exists: a
+//! As delivered at 1.4.1, the machine held the states whose data existed: a
 //! cart being built and a parked one, which is its own type since 1.4.4 so
-//! that only a parked cart can be resumed. Each later state arrives with the
-//! transition that reaches it (tendering, finalizing, complete and voided at
-//! 1.4.8), and each later field of a cart or a line with the step that gives
-//! it meaning: a line's manual discount at 1.4.5, a basket's at 1.4.6, a price
+//! that only a parked cart can be resumed. Each later state arrived with the
+//! transition that reaches it, and 1.4.8 completed the machine: a sale being
+//! paid for, one being finalized, a completed sale and a voided one. Each
+//! later field of a cart or a line arrives with the step that gives it
+//! meaning: a line's manual discount at 1.4.5, a basket's at 1.4.6, a price
 //! override and the ministry ceiling at 1.4.7, and a promotion group when
 //! promotions are first captured. A field added before its rule would be a
 //! value nothing checks.
+//!
+//! The payment stage lives here and not in `tender`, because `Sale` holds it:
+//! `cart` reads `tender`'s vocabulary, and `tender` reads nothing of `cart`
+//! (§15). 1.5.2's `remaining_due`, `change_due` and `is_settled` sit beside it
+//! for the same reason.
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
@@ -29,7 +35,7 @@ use crate::catalog::{
     ScanLookup, UnitOfMeasure,
 };
 use crate::ids::{
-    CustomerId, ProductId, RegisterId, SaleId, SaleLineId, ShiftId, TaxCategoryId, UserId,
+    CustomerId, ProductId, RegisterId, SaleId, SaleLineId, ShiftId, TaxCategoryId, TenderId, UserId,
 };
 use crate::money::{Currency, Money, MoneyError, Qty, RoundingRule};
 use crate::permissions::{
@@ -44,16 +50,28 @@ use crate::tax::{
     LineTax, PriceMode, StoreTaxProfile, SupplyDestination, SupplyTaxContext, TaxComponent,
     TaxError, TaxSummaryRow, compute_line_tax, summarize_tax,
 };
-use crate::time::Timestamp;
+use crate::tender::{
+    CashRounding, CashRoundingPolicy, Tender, final_tender_rounding, standard_tender_type,
+};
+use crate::time::{BusinessDate, Timestamp};
 
 /// A sale, in the one state it is in.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Sale {
     /// Lines are being added, changed or removed.
     Building(Cart),
+    /// Priced, and being paid for (1.4.8).
+    Tendering(Tendering),
+    /// Paid for, and being written as one fact graph (1.4.8, 1.8.3).
+    Finalizing(Finalizing),
+    /// Completed. Nothing changes it again (I-4); a correction is a new
+    /// document.
+    Complete(CompletedSale),
     /// Set aside by the cashier to serve someone else, and resumed later
     /// (1.4.4).
     Parked(ParkedCart),
+    /// Abandoned before it completed, by someone allowed to (1.4.8).
+    Voided(VoidedSale),
 }
 
 /// What a cart is opened with: the register, the shift, the cashier and the
@@ -1332,6 +1350,543 @@ pub fn resume(parked: ParkedCart, till: &CartContext) -> Result<Cart, CartError>
     Ok(cart)
 }
 
+/// A sale being paid for: its cart, priced once, the store's cash-rounding
+/// policy, and the tenders collected so far (1.4.8, §7).
+///
+/// Only [`begin_tender`] makes one, and it prices the cart itself, so a sale
+/// is always paid against its own cart's prices. The fields are read through
+/// methods for the same reason: a cart paired with another cart's prices
+/// would be paid against the wrong total. The rounding is made by the tender
+/// that settles the sale, so a sale carries at most one (E.14).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Tendering {
+    cart: Cart,
+    priced: PricedCart,
+    cash_policy: CashRoundingPolicy,
+    tenders: Vec<Tender>,
+    cash_rounding: Option<CashRounding>,
+}
+
+impl Tendering {
+    /// The cart, exactly as it was when payment began.
+    #[must_use]
+    pub fn cart(&self) -> &Cart {
+        &self.cart
+    }
+
+    /// The cart's prices, which every tender is measured against.
+    #[must_use]
+    pub fn priced(&self) -> &PricedCart {
+        &self.priced
+    }
+
+    /// The step and direction the final cash tender is rounded by.
+    #[must_use]
+    pub fn cash_policy(&self) -> CashRoundingPolicy {
+        self.cash_policy
+    }
+
+    /// The tenders collected, in the order they were taken.
+    #[must_use]
+    pub fn tenders(&self) -> &[Tender] {
+        &self.tenders
+    }
+
+    /// The rounding the final cash tender made, once one has settled the
+    /// sale; `None` before, or when the sale was settled by another kind.
+    #[must_use]
+    pub fn cash_rounding(&self) -> Option<CashRounding> {
+        self.cash_rounding
+    }
+}
+
+/// A sale paid for and being finalized: written, with its receipt number,
+/// as one fact graph in one transaction (1.8.3).
+///
+/// Its own type, so a sale whose finalize has begun takes no more tenders
+/// and is never voided: it completes, or after a power cut it replays under
+/// the same idempotency key (1.8.4). Only [`begin_finalize`] makes one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Finalizing(Tendering);
+
+impl Finalizing {
+    /// The settled sale being finalized.
+    #[must_use]
+    pub fn tendering(&self) -> &Tendering {
+        &self.0
+    }
+}
+
+/// What finalizing gives a sale that the domain cannot make for itself
+/// (1.8.3): the receipt number its register's counter spent in the finalize
+/// transaction, the business date of its shift, and the moment it completed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FinalizeEffects {
+    pub receipt_number: String,
+    pub business_date: BusinessDate,
+    pub completed_at: Timestamp,
+}
+
+/// A completed sale (I-4).
+///
+/// No transition takes one, and its fields are read through methods, so
+/// nothing changes it once it exists: a correction is a new document, a
+/// refund or a credit note, never an edit. [`void_sale`] refuses it, because
+/// a void is only ever before completion. Reports, refunds and the receipt
+/// read the lines it captured (I-5) and the prices it was paid against.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompletedSale {
+    cart: Cart,
+    priced: PricedCart,
+    tenders: Vec<Tender>,
+    cash_rounding: Option<CashRounding>,
+    change: Money,
+    receipt_number: String,
+    business_date: BusinessDate,
+    completed_at: Timestamp,
+}
+
+impl CompletedSale {
+    /// The cart as it was sold: its lines, buyer, supply and training flag.
+    #[must_use]
+    pub fn cart(&self) -> &Cart {
+        &self.cart
+    }
+
+    /// The prices it was paid against: every number on its receipt.
+    #[must_use]
+    pub fn priced(&self) -> &PricedCart {
+        &self.priced
+    }
+
+    /// The tenders that paid for it, in the order they were taken.
+    #[must_use]
+    pub fn tenders(&self) -> &[Tender] {
+        &self.tenders
+    }
+
+    /// The final cash tender's rounding, which `sale.rounding_adj_minor`
+    /// records; `None` when another kind settled the sale.
+    #[must_use]
+    pub fn cash_rounding(&self) -> Option<CashRounding> {
+        self.cash_rounding
+    }
+
+    /// The change handed back, which only a tender that gives change
+    /// produces.
+    #[must_use]
+    pub fn change(&self) -> Money {
+        self.change
+    }
+
+    #[must_use]
+    pub fn receipt_number(&self) -> &str {
+        &self.receipt_number
+    }
+
+    #[must_use]
+    pub fn business_date(&self) -> BusinessDate {
+        self.business_date
+    }
+
+    #[must_use]
+    pub fn completed_at(&self) -> Timestamp {
+        self.completed_at
+    }
+}
+
+/// A sale abandoned before it completed (master plan C.5).
+///
+/// It keeps the cart as it was, why it was voided, who did it and who
+/// approved it, which is what a report of voids by user reads. Nothing
+/// changes it, and nothing resumes it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VoidedSale {
+    cart: Cart,
+    reason: VoidReason,
+    by: UserId,
+    approver: Option<UserId>,
+    voided_at: Timestamp,
+}
+
+impl VoidedSale {
+    /// The cart as it was when the sale was voided.
+    #[must_use]
+    pub fn cart(&self) -> &Cart {
+        &self.cart
+    }
+
+    #[must_use]
+    pub fn reason(&self) -> &VoidReason {
+        &self.reason
+    }
+
+    #[must_use]
+    pub fn by(&self) -> UserId {
+        self.by
+    }
+
+    #[must_use]
+    pub fn approver(&self) -> Option<UserId> {
+        self.approver
+    }
+
+    #[must_use]
+    pub fn voided_at(&self) -> Timestamp {
+        self.voided_at
+    }
+}
+
+/// `cart`, priced, ready to be paid for (1.4.8).
+///
+/// `begin_tender` prices the cart itself, with the store's tax bands and
+/// settings (§6.2), so the prices a sale is paid against are always its own
+/// cart's: a priced cart handed in beside the cart could have been another's.
+/// Every age on the cart must have been confirmed (1.4.3b). The store's
+/// cash-rounding policy is fixed here, so every tender of the sale is asked
+/// under the same one. A cart worth nothing is a lawful sale and is paid by no
+/// tender at all (E.18).
+///
+/// # Errors
+///
+/// - [`CartError::NothingToTender`]: a cart with no line, which is no sale.
+/// - [`CartError::AgeConfirmationRequired`]: a line whose age is not yet
+///   confirmed.
+/// - [`CartError::Money`]: a cash step that is not positive. It is refused for
+///   every sale, so a policy that cannot round fails the first sale and not
+///   the first cash one, as [`final_tender_rounding`] does.
+/// - Whatever [`price_cart`] refuses.
+pub fn begin_tender(
+    cart: Cart,
+    bands: &TaxBands,
+    settings: &PricingSettings,
+    cash_policy: CashRoundingPolicy,
+) -> Result<Tendering, CartError> {
+    if cart.lines.is_empty() {
+        return Err(CartError::NothingToTender);
+    }
+    check_age_confirmed(&cart)?;
+    if cash_policy.step_minor <= 0 {
+        return Err(MoneyError::InvalidStep(cash_policy.step_minor).into());
+    }
+    let priced = price_cart(&cart, bands, settings)?;
+    Ok(Tendering {
+        cart,
+        priced,
+        cash_policy,
+        tenders: Vec::new(),
+        cash_rounding: None,
+    })
+}
+
+/// The cart being built again, to add or change a line before any money is
+/// taken (blueprint §8).
+///
+/// Its prices are left behind, because a changed cart is priced again when
+/// payment begins again.
+///
+/// # Errors
+///
+/// [`CartError::TenderCollected`]: a tender has been taken. Changing the cart
+/// under it would change what that tender was paying for; it is removed
+/// first, and a card's is reversed with the provider (E.15).
+pub fn back_to_building(t: Tendering) -> Result<Cart, CartError> {
+    if !t.tenders.is_empty() {
+        return Err(CartError::TenderCollected(t.tenders.len()));
+    }
+    Ok(t.cart)
+}
+
+/// The sale with one more tender collected (1.4.8, master plan C.4).
+///
+/// Split tender is the model, so a sale takes tenders until what they settle
+/// covers what is due. Whether a tender settles the sale is decided here,
+/// against what the tenders before it left (1.5.3):
+///
+/// - A tender of a kind that counts drawer cash is asked for the remainder
+///   rounded to the store's coin step ([`final_tender_rounding`]). Covering
+///   that, it is **final**, and its [`CashRounding`] is what the sale keeps.
+///   Short of the exact remainder, it is a partial cash tender, applied
+///   exactly, and the next tender is asked again. So a sale carries at most one
+///   rounding, and never rounds a card (E.14). Where the rounded remainder is
+///   nothing, a final cash tender of nothing is accepted and the adjustment
+///   alone settles the sale.
+/// - Any other kind is asked for the exact remainder. Paying all of it, it is
+///   final; paying less, it is partial.
+///
+/// Only a kind that gives change may pay more than it is asked for (C.4), and
+/// the difference is [`change_due`]. The kind is the standard grid's for the
+/// tender's code (1.5.1); whether this store has that kind enabled is the
+/// store's row state, which the shell checks. A tender arrives collected: a
+/// card's unknown outcome is resolved with the terminal first (E.20), and a
+/// pending one is Phase 2's (E.65).
+///
+/// # Errors
+///
+/// - [`CartError::UnknownTenderType`]: a code the grid does not know.
+/// - [`CartError::TenderNotCollected`]: a tender with no money behind it yet.
+/// - [`CartError::DuplicateTenderId`]: a tender already on the sale.
+/// - [`CartError::Money`]: an amount in another currency than the sale's, or
+///   tenders adding up past what can be counted.
+/// - [`CartError::AlreadySettled`]: nothing is owed.
+/// - [`CartError::NonPositiveTender`]: an amount below nothing, or nothing
+///   where something is owed.
+/// - [`CartError::OvertenderNotCash`]: more than is asked, from a kind that
+///   gives no change.
+/// - [`CartError::Underpaid`]: cash that covers the exact remainder but not
+///   the rounded amount it was asked for, which would leave the sale neither
+///   settled nor owed anything a coin can pay.
+pub fn add_tender(t: Tendering, tender: Tender) -> Result<Tendering, CartError> {
+    let mut t = t;
+    let kind = standard_tender_type(&tender.type_code)
+        .ok_or_else(|| CartError::UnknownTenderType(tender.type_code.clone()))?;
+    if !tender.state.is_collected() {
+        return Err(CartError::TenderNotCollected(tender.id));
+    }
+    if t.tenders.iter().any(|taken| taken.id == tender.id) {
+        return Err(CartError::DuplicateTenderId(tender.id));
+    }
+    let amount = tender.amount;
+    collected(&t)?.checked_add(amount)?;
+    let remaining = remaining_due(&t)?;
+    if remaining.is_zero() {
+        return Err(CartError::AlreadySettled(t.cart.id));
+    }
+    if amount.is_negative() {
+        return Err(CartError::NonPositiveTender(amount.format_exact()));
+    }
+    let asked = final_tender_rounding(
+        &kind,
+        remaining,
+        t.cash_policy.step_minor,
+        t.cash_policy.direction,
+    )?;
+    let settles_at = asked.map_or(remaining, |rounding| rounding.rounded);
+    if amount.checked_cmp(settles_at)? != Ordering::Less {
+        if amount != settles_at && !kind.allows_change {
+            return Err(CartError::OvertenderNotCash);
+        }
+        t.cash_rounding = asked;
+    } else if amount.checked_cmp(remaining)? != Ordering::Less {
+        return Err(CartError::Underpaid(
+            amount.format_exact(),
+            settles_at.format_exact(),
+        ));
+    } else if amount.is_zero() {
+        return Err(CartError::NonPositiveTender(amount.format_exact()));
+    }
+    t.tenders.push(tender);
+    Ok(t)
+}
+
+/// The sale without tender `id`, which the cashier took in error or the
+/// customer withdrew (E.15).
+///
+/// The tenders left are taken again in their order, so which one is final and
+/// what it rounds is decided again, exactly as if the removed one had never
+/// been taken. A card tender is reversed with the provider before it is
+/// removed; that is the shell's (E.15).
+///
+/// # Errors
+///
+/// - [`CartError::TenderNotFound`].
+/// - Whatever [`add_tender`] refuses of a later tender the removal leaves
+///   unable to stand: a final cash tender of nothing where something is owed
+///   again, or cash now short of the rounded amount it would be asked for.
+///   That tender is removed first.
+pub fn remove_tender(t: Tendering, id: TenderId) -> Result<Tendering, CartError> {
+    let Tendering {
+        cart,
+        priced,
+        cash_policy,
+        tenders,
+        ..
+    } = t;
+    if !tenders.iter().any(|taken| taken.id == id) {
+        return Err(CartError::TenderNotFound(id));
+    }
+    let unpaid = Tendering {
+        cart,
+        priced,
+        cash_policy,
+        tenders: Vec::new(),
+        cash_rounding: None,
+    };
+    tenders
+        .into_iter()
+        .filter(|taken| taken.id != id)
+        .try_fold(unpaid, add_tender)
+}
+
+/// The paid sale, being finalized (1.8.3).
+///
+/// # Errors
+///
+/// [`CartError::Underpaid`]: what the tenders settle is less than is due.
+pub fn begin_finalize(t: Tendering) -> Result<Finalizing, CartError> {
+    check_settled(&t)?;
+    Ok(Finalizing(t))
+}
+
+/// The completed sale, with what its finalize transaction gave it (1.8.3).
+///
+/// The change is fixed here, from the tenders as they stand. Nothing changes
+/// the sale once it exists (I-4).
+///
+/// # Errors
+///
+/// [`CartError::Underpaid`]: what the tenders settle is less than is due.
+/// [`begin_finalize`] already refuses that, and a sale is checked again here
+/// because a finalizing sale is also read back from storage after a power cut
+/// (1.8.4), and an unpaid sale must never complete.
+pub fn complete(f: Finalizing, effects: FinalizeEffects) -> Result<CompletedSale, CartError> {
+    let Finalizing(t) = f;
+    check_settled(&t)?;
+    let change = change_due(&t)?;
+    let FinalizeEffects {
+        receipt_number,
+        business_date,
+        completed_at,
+    } = effects;
+    Ok(CompletedSale {
+        cart: t.cart,
+        priced: t.priced,
+        tenders: t.tenders,
+        cash_rounding: t.cash_rounding,
+        change,
+        receipt_number,
+        business_date,
+        completed_at,
+    })
+}
+
+/// `sale` voided before it completed, and the audit intent that records it
+/// under `sale.void` (master plan C.5).
+///
+/// A sale being built, a parked one, or one being paid for with no tender yet
+/// taken may be voided, by whoever holds `sale.void`: the shift lead and the
+/// manager, never the cashier. Where the merchant's policy escalates it,
+/// `auth` carries the approver, whose handle is bound to this sale
+/// (`entity_id`). The intent's payload names the stage the sale was voided
+/// from, which is the tell a report of voids looks for, and the total it was
+/// priced at once payment had begun.
+///
+/// # Errors
+///
+/// - [`CartError::TendersToReverse`]: tenders have been taken. Voiding the
+///   sale would leave collected money attached to no document; each is
+///   removed first, and a card's is reversed with the provider (E.15).
+/// - [`CartError::FinalizeBegun`]: finalizing has begun, and the sale
+///   completes or replays (1.8.4).
+/// - [`CartError::SaleIsComplete`]: a completed sale is never voided (I-4).
+///   It is refunded, by a new document.
+/// - [`CartError::SaleIsVoided`]: the sale is already void.
+pub fn void_sale(
+    sale: Sale,
+    reason: VoidReason,
+    auth: &Authorized<cap::SaleVoid>,
+) -> Result<(VoidedSale, AuditIntent), CartError> {
+    let (cart, stage, priced_total) = match sale {
+        Sale::Building(cart) => (cart, "building", None),
+        Sale::Parked(ParkedCart(cart)) => (cart, "parked", None),
+        Sale::Tendering(t) if t.tenders.is_empty() => (t.cart, "tendering", Some(t.priced.total)),
+        Sale::Tendering(t) => return Err(CartError::TendersToReverse(t.tenders.len())),
+        Sale::Finalizing(Finalizing(t)) => return Err(CartError::FinalizeBegun(t.cart.id)),
+        Sale::Complete(_) => return Err(CartError::SaleIsComplete),
+        Sale::Voided(voided) => return Err(CartError::SaleIsVoided(voided.cart.id)),
+    };
+    let intent = AuditIntent {
+        actor: auth.actor(),
+        approver: auth.approver(),
+        approval: auth.approval(),
+        action: cap::SaleVoid::NAME,
+        entity: "sale",
+        entity_id: cart.id.as_uuid(),
+        reason: Some(reason.0.clone()),
+        payload: json!({
+            "stage": stage,
+            "line_count": cart.lines.len(),
+            "total_minor": priced_total.map(Money::minor),
+            "currency": cart.currency.code(),
+        }),
+        at: auth.at(),
+    };
+    let voided = VoidedSale {
+        cart,
+        reason,
+        by: auth.actor(),
+        approver: auth.approver(),
+        voided_at: auth.at(),
+    };
+    Ok((voided, intent))
+}
+
+/// What is still owed on `t` (1.5.2): its total, with the final cash tender's
+/// adjustment once one has made it, less everything collected. Never below
+/// nothing: what is paid beyond it is [`change_due`].
+///
+/// # Errors
+///
+/// [`MoneyError`] when the amounts cannot be added up, which [`add_tender`]
+/// refuses before it can arise.
+pub fn remaining_due(t: &Tendering) -> Result<Money, MoneyError> {
+    let left = due(t)?.checked_sub(collected(t)?)?;
+    Ok(if left.is_negative() {
+        Money::zero(t.cart.currency)
+    } else {
+        left
+    })
+}
+
+/// What the drawer hands back on `t` (1.5.2): everything collected beyond what
+/// is due. Never below nothing, and only a tender that gives change can make
+/// it more, because no other kind may pay more than it is asked for.
+///
+/// # Errors
+///
+/// As [`remaining_due`].
+pub fn change_due(t: &Tendering) -> Result<Money, MoneyError> {
+    let over = collected(t)?.checked_sub(due(t)?)?;
+    Ok(if over.is_negative() {
+        Money::zero(t.cart.currency)
+    } else {
+        over
+    })
+}
+
+/// Whether the tenders on `t` cover what is due (1.5.2), so the sale may be
+/// finalized. A sale worth nothing is settled by no tender (E.18).
+#[must_use]
+pub fn is_settled(t: &Tendering) -> bool {
+    remaining_due(t).is_ok_and(Money::is_zero)
+}
+
+/// The total, with the final cash tender's adjustment once one has made it.
+fn due(t: &Tendering) -> Result<Money, MoneyError> {
+    match t.cash_rounding {
+        Some(rounding) => t.priced.total.checked_add(rounding.adjustment),
+        None => Ok(t.priced.total),
+    }
+}
+
+/// Every tender's amount, added up.
+fn collected(t: &Tendering) -> Result<Money, MoneyError> {
+    Money::sum(t.tenders.iter().map(|taken| taken.amount), t.cart.currency)
+}
+
+/// `Ok` when `t` is settled, and otherwise the refusal naming what was
+/// collected and what is due.
+fn check_settled(t: &Tendering) -> Result<(), CartError> {
+    if is_settled(t) {
+        return Ok(());
+    }
+    Err(CartError::Underpaid(
+        collected(t)?.format_exact(),
+        due(t)?.format_exact(),
+    ))
+}
+
 /// How a cart's training mode reads in [`CartError::TrainingModeMismatch`].
 fn training_mode(is_training: bool) -> &'static str {
     if is_training {
@@ -1455,6 +2010,38 @@ pub enum CartError {
     /// Added at 1.4.9: two lines carry this id.
     #[error("line {0} appears twice in the cart")]
     DuplicateLineId(SaleLineId),
+    /// Added at 1.4.8: a cart with no line is no sale to pay for.
+    #[error("an empty cart cannot be paid for")]
+    NothingToTender,
+    /// Added at 1.4.8: a tender code the standard grid does not know, whose
+    /// drawer, change and refund behaviour would all be guesses.
+    #[error("no tender type {0}")]
+    UnknownTenderType(String),
+    /// Added at 1.4.8: a tender with no money behind it yet.
+    #[error("tender {0} has not been collected")]
+    TenderNotCollected(TenderId),
+    /// Added at 1.4.8: this tender is already on the sale.
+    #[error("tender {0} is already on the sale")]
+    DuplicateTenderId(TenderId),
+    /// Added at 1.4.8: nothing is owed on the sale.
+    #[error("sale {0} is already paid for")]
+    AlreadySettled(SaleId),
+    /// Added at 1.4.8: the amount, rendered.
+    #[error("a tender of {0} pays nothing toward what is owed")]
+    NonPositiveTender(String),
+    /// Added at 1.4.8.
+    #[error("no tender {0}")]
+    TenderNotFound(TenderId),
+    /// Added at 1.4.8: how many tenders were taken, each to be removed, and a
+    /// card's reversed, before the sale is voided.
+    #[error("cannot void the sale: {0} tender(s) collected")]
+    TendersToReverse(usize),
+    /// Added at 1.4.8: a sale whose finalize has begun completes or replays.
+    #[error("sale {0} has begun finalizing and can only complete")]
+    FinalizeBegun(SaleId),
+    /// Added at 1.4.8.
+    #[error("sale {0} is void")]
+    SaleIsVoided(SaleId),
     /// Added at 1.4.5: the approval's reason, then the request's. The audit
     /// row repeats the handle's reason, so the two must be one.
     #[error("the approval was given for {0}, not {1}")]
@@ -2197,7 +2784,7 @@ mod tests {
             let rendered = serde_json::to_string(&Sale::Building(cart)).unwrap();
             let back = match serde_json::from_str::<Sale>(&rendered).unwrap() {
                 Sale::Building(back) => Some(back),
-                Sale::Parked(_) => None,
+                _ => None,
             };
             cart = back.expect("a building cart renders as a building cart");
             let line = cart.lines.iter().find(|l| l.id == line_id(2)).unwrap();
@@ -2465,7 +3052,7 @@ mod tests {
             let stored = serde_json::to_string(&Sale::Parked(parked.clone())).unwrap();
             let restored = match serde_json::from_str::<Sale>(&stored).unwrap() {
                 Sale::Parked(restored) => Some(restored),
-                Sale::Building(_) => None,
+                _ => None,
             };
             prop_assert_eq!(restored.as_ref(), Some(&parked));
             let resumed = resume(parked, &till);
@@ -4531,6 +5118,810 @@ mod tests {
             prop_assert_eq!(priced.tax_total, jod(0));
             prop_assert_eq!(priced.discount_total, priced.subtotal);
             prop_assert!(priced.lines.iter().all(|l| l.line_total.is_zero() && l.taxable.is_zero()));
+        }
+    }
+
+    // ── paying for the sale (1.4.8, 1.5.2) ──────────────────────────────
+
+    use crate::money::RoundingDirection;
+    use crate::tender::{TenderState, compute_cash_rounding, standard_tender_types};
+
+    /// The provisional policy: one qirsh, to the nearest (merchant decisions
+    /// 2.1–2.2).
+    fn qirsh() -> CashRoundingPolicy {
+        CashRoundingPolicy {
+            step_minor: 10,
+            direction: RoundingDirection::Nearest,
+        }
+    }
+
+    /// One item at `price_minor`, in the standard band.
+    fn one_item(price_minor: i64) -> Cart {
+        let mut item = product(0x40, UnitOfMeasure::Each);
+        item.unit_price = jod(price_minor);
+        add(building(), 1, &item, 1_000).unwrap()
+    }
+
+    /// `cart` being paid for, priced with tax included, under `policy`.
+    fn paying(cart: Cart, policy: CashRoundingPolicy) -> Tendering {
+        begin_tender(cart, &bands(), &store(PriceMode::Inclusive), policy).unwrap()
+    }
+
+    fn tender_id(n: u128) -> TenderId {
+        TenderId::from_uuid(id(0x900 + n))
+    }
+
+    fn tender(n: u128, code: &str, minor: i64) -> Tender {
+        Tender {
+            id: tender_id(n),
+            type_code: code.to_owned(),
+            amount: jod(minor),
+            psp_ref: None,
+            masked_pan: None,
+            scheme: None,
+            state: TenderState::Collected,
+        }
+    }
+
+    fn pay(t: Tendering, n: u128, code: &str, minor: i64) -> Result<Tendering, CartError> {
+        add_tender(t, tender(n, code, minor))
+    }
+
+    fn effects() -> FinalizeEffects {
+        FinalizeEffects {
+            receipt_number: "SYNTH-R1-000001".to_owned(),
+            business_date: BusinessDate::new(2001, 1, 1).unwrap(),
+            completed_at: moment(),
+        }
+    }
+
+    fn the_sale() -> SaleId {
+        SaleId::from_uuid(id(1))
+    }
+
+    /// 1.4.3b's second half: a sealed pack of tobacco reaches tendering only
+    /// once an operator has confirmed the customer's age, and the intent that
+    /// confirmation returned names them.
+    #[test]
+    fn a_sealed_pack_reaches_tendering_only_once_its_age_is_confirmed() {
+        let refused = begin_tender(
+            with_tobacco(),
+            &bands(),
+            &store(PriceMode::Inclusive),
+            qirsh(),
+        );
+        assert_eq!(
+            refused.unwrap_err(),
+            CartError::AgeConfirmationRequired(tobacco().id)
+        );
+        let (cart, intent) =
+            confirm_age(with_tobacco(), line_id(2), true, operator(), moment()).unwrap();
+        assert_eq!((intent.action, intent.actor), ("age.confirm", operator()));
+        let t = paying(cart.clone(), qirsh());
+        assert_eq!(t.cart(), &cart);
+        assert!(t.tenders().is_empty());
+    }
+
+    /// Payment begins at the cart's own prices, which `begin_tender` works out
+    /// itself, under one cash policy for the whole sale.
+    #[test]
+    fn payment_begins_at_the_cart_s_own_prices() {
+        let cart = one_item(1_247);
+        let t = paying(cart.clone(), qirsh());
+        assert_eq!(t.priced(), &priced(&cart, PriceMode::Inclusive));
+        assert_eq!(t.priced().total, jod(1_247));
+        assert_eq!(t.cash_policy(), qirsh());
+        assert_eq!(t.cash_rounding(), None);
+        assert_eq!(
+            (remaining_due(&t), change_due(&t), is_settled(&t)),
+            (Ok(jod(1_247)), Ok(jod(0)), false)
+        );
+        let inclusive = store(PriceMode::Inclusive);
+        assert_eq!(
+            begin_tender(building(), &bands(), &inclusive, qirsh()).unwrap_err(),
+            CartError::NothingToTender
+        );
+        assert_eq!(
+            begin_tender(cart.clone(), &TaxBands::new(), &inclusive, qirsh()).unwrap_err(),
+            CartError::TaxBandMissing(band(0))
+        );
+        let flat = CashRoundingPolicy {
+            step_minor: 0,
+            ..qirsh()
+        };
+        assert_eq!(
+            begin_tender(cart, &bands(), &inclusive, flat).unwrap_err(),
+            CartError::Money(MoneyError::InvalidStep(0))
+        );
+    }
+
+    /// E.14, the half 1.5.3 left here: a partial cash tender is taken exactly,
+    /// a card is charged exactly, and only the cash tender that settles the
+    /// sale is rounded, once. Nothing more is taken from a settled sale.
+    #[test]
+    fn only_the_cash_tender_that_settles_the_sale_is_rounded() {
+        let t = pay(paying(one_item(1_247), qirsh()), 1, "cash", 500).unwrap();
+        assert_eq!((t.cash_rounding(), remaining_due(&t)), (None, Ok(jod(747))));
+        let t = pay(t, 2, "card", 124).unwrap();
+        assert_eq!((t.cash_rounding(), remaining_due(&t)), (None, Ok(jod(623))));
+        let t = pay(t, 3, "cash", 620).unwrap();
+        assert_eq!(
+            t.cash_rounding(),
+            Some(CashRounding {
+                original: jod(623),
+                rounded: jod(620),
+                adjustment: jod(-3),
+            })
+        );
+        assert!(is_settled(&t));
+        assert_eq!(
+            (remaining_due(&t), change_due(&t)),
+            (Ok(jod(0)), Ok(jod(0)))
+        );
+        assert_eq!(
+            pay(t, 4, "cash", 10).unwrap_err(),
+            CartError::AlreadySettled(the_sale())
+        );
+    }
+
+    /// C.4: only cash gives change. Every other kind is charged at most what
+    /// is owed, and settles at exactly that, unrounded.
+    #[test]
+    fn overtender_only_allowed_for_cash() {
+        for kind in standard_tender_types() {
+            let t = paying(one_item(1_247), qirsh());
+            if kind.code == "cash" {
+                let paid = pay(t, 1, &kind.code, 2_000).unwrap();
+                assert_eq!(paid.cash_rounding().map(|r| r.rounded), Some(jod(1_250)));
+                assert_eq!(change_due(&paid), Ok(jod(750)));
+                continue;
+            }
+            assert_eq!(
+                pay(t.clone(), 1, &kind.code, 1_248).unwrap_err(),
+                CartError::OvertenderNotCash,
+                "{}",
+                kind.code
+            );
+            let paid = pay(t, 1, &kind.code, 1_247).unwrap();
+            assert!(is_settled(&paid), "{}", kind.code);
+            assert_eq!(
+                (paid.cash_rounding(), change_due(&paid)),
+                (None, Ok(jod(0)))
+            );
+        }
+    }
+
+    /// Cash that covers the exact remainder but not the coin step it is asked
+    /// at would leave the sale neither settled nor owing anything a coin can
+    /// pay, so it is refused.
+    #[test]
+    fn cash_short_of_its_rounded_amount_is_refused() {
+        let up = CashRoundingPolicy {
+            step_minor: 10,
+            direction: RoundingDirection::Up,
+        };
+        let t = paying(one_item(1_241), up);
+        for short in [1_241, 1_249] {
+            assert_eq!(
+                pay(t.clone(), 1, "cash", short).unwrap_err(),
+                CartError::Underpaid(jod(short).format_exact(), "1.250".to_owned())
+            );
+        }
+        let t = pay(t, 1, "cash", 1_250).unwrap();
+        assert_eq!(t.cash_rounding().map(|r| r.adjustment), Some(jod(9)));
+        assert!(is_settled(&t));
+    }
+
+    /// A remainder under half a qirsh is asked as nothing, so a final cash
+    /// tender of nothing settles the sale by its adjustment alone. A tender of
+    /// nothing is refused wherever something is owed.
+    #[test]
+    fn an_empty_final_cash_tender_settles_by_its_adjustment_alone() {
+        let t = pay(paying(one_item(1_247), qirsh()), 1, "card", 1_243).unwrap();
+        assert_eq!(
+            pay(t.clone(), 2, "card", 0).unwrap_err(),
+            CartError::NonPositiveTender("0.000".to_owned())
+        );
+        let t = pay(t, 2, "cash", 0).unwrap();
+        assert_eq!(
+            t.cash_rounding(),
+            Some(CashRounding {
+                original: jod(4),
+                rounded: jod(0),
+                adjustment: jod(-4),
+            })
+        );
+        assert!(is_settled(&t));
+        let owing = pay(paying(one_item(1_247), qirsh()), 1, "card", 1_240).unwrap();
+        assert_eq!(
+            pay(owing, 2, "cash", 0).unwrap_err(),
+            CartError::NonPositiveTender("0.000".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_tender_is_refused_by_name() {
+        let t = pay(paying(one_item(1_247), qirsh()), 1, "card", 100).unwrap();
+        let refused = |tender: Tender| add_tender(t.clone(), tender).unwrap_err();
+        assert_eq!(
+            refused(tender(2, "gift_card", 100)),
+            CartError::UnknownTenderType("gift_card".to_owned())
+        );
+        for state in [
+            TenderState::Pending,
+            TenderState::Unknown,
+            TenderState::Failed,
+            TenderState::Reversed,
+        ] {
+            let mut card = tender(2, "card", 100);
+            card.state = state;
+            assert_eq!(refused(card), CartError::TenderNotCollected(tender_id(2)));
+        }
+        assert_eq!(
+            refused(tender(1, "card", 100)),
+            CartError::DuplicateTenderId(tender_id(1))
+        );
+        let mut dollars = tender(2, "card", 100);
+        dollars.amount = Money::from_minor(100, Currency::USD);
+        assert_eq!(
+            refused(dollars),
+            CartError::Money(MoneyError::CurrencyMismatch("JOD", "USD"))
+        );
+        assert_eq!(
+            refused(tender(2, "cash", -10)),
+            CartError::NonPositiveTender("-0.010".to_owned())
+        );
+        assert_eq!(
+            refused(tender(2, "cash", i64::MAX)),
+            CartError::Money(MoneyError::Overflow)
+        );
+    }
+
+    /// The tenders left after a removal are taken again in their order, so
+    /// which one settles the sale, and what it rounds, is decided again. One
+    /// the removal leaves unable to stand is refused until it goes first.
+    #[test]
+    fn a_removed_tender_leaves_the_rest_decided_again() {
+        let paid = pay(
+            pay(paying(one_item(1_247), qirsh()), 1, "card", 624).unwrap(),
+            2,
+            "cash",
+            620,
+        )
+        .unwrap();
+        assert!(is_settled(&paid));
+        let no_card = remove_tender(paid.clone(), tender_id(1)).unwrap();
+        assert_eq!(no_card.tenders(), &[tender(2, "cash", 620)]);
+        assert_eq!(
+            (no_card.cash_rounding(), remaining_due(&no_card)),
+            (None, Ok(jod(627)))
+        );
+        let no_cash = remove_tender(paid.clone(), tender_id(2)).unwrap();
+        assert_eq!(
+            (no_cash.cash_rounding(), remaining_due(&no_cash)),
+            (None, Ok(jod(623)))
+        );
+        assert_eq!(
+            remove_tender(paid, tender_id(9)).unwrap_err(),
+            CartError::TenderNotFound(tender_id(9))
+        );
+        let to_nothing = [(1, "card", 1_000), (2, "card", 243), (3, "cash", 0)]
+            .into_iter()
+            .try_fold(paying(one_item(1_247), qirsh()), |t, (n, code, minor)| {
+                pay(t, n, code, minor)
+            })
+            .unwrap();
+        assert!(is_settled(&to_nothing));
+        assert_eq!(
+            remove_tender(to_nothing.clone(), tender_id(1)).unwrap_err(),
+            CartError::NonPositiveTender("0.000".to_owned())
+        );
+        let without = remove_tender(to_nothing, tender_id(3)).unwrap();
+        assert_eq!(
+            remove_tender(without, tender_id(1)).map(|t| t.tenders().len()),
+            Ok(1)
+        );
+    }
+
+    #[test]
+    fn back_to_building_denied_after_first_tender() {
+        let cart = one_item(1_247);
+        let t = paying(cart.clone(), qirsh());
+        assert_eq!(back_to_building(t.clone()), Ok(cart.clone()));
+        let t = pay(t, 1, "card", 500).unwrap();
+        assert_eq!(
+            back_to_building(t.clone()).unwrap_err(),
+            CartError::TenderCollected(1)
+        );
+        let t = remove_tender(t, tender_id(1)).unwrap();
+        assert_eq!(back_to_building(t), Ok(cart));
+    }
+
+    #[test]
+    fn complete_requires_settled() {
+        let t = pay(paying(one_item(1_247), qirsh()), 1, "cash", 500).unwrap();
+        let underpaid = CartError::Underpaid("0.500".to_owned(), "1.247".to_owned());
+        assert_eq!(begin_finalize(t.clone()).unwrap_err(), underpaid);
+        // A finalizing sale is also read back from storage after a power cut
+        // (1.8.4), so completing one checks again.
+        assert_eq!(
+            complete(Finalizing(t.clone()), effects()).unwrap_err(),
+            underpaid
+        );
+        let t = pay(t, 2, "cash", 1_000).unwrap();
+        let finalizing = begin_finalize(t.clone()).unwrap();
+        assert_eq!(finalizing.tendering(), &t);
+        let done = complete(finalizing, effects()).unwrap();
+        assert_eq!(
+            (done.cart(), done.priced(), done.tenders()),
+            (t.cart(), t.priced(), t.tenders())
+        );
+        assert_eq!(done.cash_rounding().map(|r| r.rounded), Some(jod(750)));
+        assert_eq!(done.change(), jod(250));
+        assert_eq!(
+            (
+                done.receipt_number(),
+                done.business_date(),
+                done.completed_at()
+            ),
+            (
+                "SYNTH-R1-000001",
+                BusinessDate::new(2001, 1, 1).unwrap(),
+                moment()
+            )
+        );
+    }
+
+    /// E.18: a sale worth nothing is settled by no tender, takes none, and
+    /// completes.
+    #[test]
+    fn a_sale_worth_nothing_completes_with_no_tender() {
+        let free = basket_off_under(one_item(1_247), pct(1_000_000), RULE).unwrap();
+        let t = paying(free, qirsh());
+        assert!(is_settled(&t));
+        assert_eq!(
+            pay(t.clone(), 1, "cash", 0).unwrap_err(),
+            CartError::AlreadySettled(the_sale())
+        );
+        let done = complete(begin_finalize(t).unwrap(), effects()).unwrap();
+        assert_eq!((done.priced().total, done.change()), (jod(0), jod(0)));
+        assert!(done.tenders().is_empty());
+    }
+
+    /// Master plan C.5: a sale is voided only before it completes and before
+    /// any money is taken, by whoever holds `sale.void`, and the void is
+    /// audited with the stage it was voided from.
+    #[test]
+    fn a_sale_is_voided_only_before_it_completes_and_is_audited() {
+        let lead = || proof_of::<cap::SaleVoid>(shift_lead(), Role::ShiftLead, moment());
+        let why = || VoidReason("customer_left".to_owned());
+        let cart = one_item(1_247);
+        let t = paying(cart.clone(), qirsh());
+        for (sale, stage, total) in [
+            (Sale::Building(cart.clone()), "building", None),
+            (Sale::Parked(park(cart.clone()).unwrap()), "parked", None),
+            (Sale::Tendering(t.clone()), "tendering", Some(1_247)),
+        ] {
+            let (voided, intent) = void_sale(sale, why(), &lead()).unwrap();
+            assert_eq!(voided.cart(), &cart);
+            assert_eq!(
+                (
+                    voided.reason(),
+                    voided.by(),
+                    voided.approver(),
+                    voided.voided_at()
+                ),
+                (&why(), shift_lead(), None, moment())
+            );
+            assert_eq!(
+                (intent.action, intent.entity, intent.entity_id),
+                ("sale.void", "sale", id(1))
+            );
+            assert_eq!(
+                (intent.actor, intent.approver, intent.reason.as_deref()),
+                (shift_lead(), None, Some("customer_left"))
+            );
+            assert_eq!(
+                intent.payload,
+                json!({"stage": stage, "line_count": 1, "total_minor": total, "currency": "JOD"})
+            );
+            check_payload(&intent.payload).unwrap();
+        }
+        let paid = pay(t, 1, "card", 1_247).unwrap();
+        assert_eq!(
+            void_sale(Sale::Tendering(paid.clone()), why(), &lead()).unwrap_err(),
+            CartError::TendersToReverse(1)
+        );
+        let finalizing = begin_finalize(paid).unwrap();
+        assert_eq!(
+            void_sale(Sale::Finalizing(finalizing.clone()), why(), &lead()).unwrap_err(),
+            CartError::FinalizeBegun(the_sale())
+        );
+        let done = complete(finalizing, effects()).unwrap();
+        assert_eq!(
+            void_sale(Sale::Complete(done), why(), &lead()).unwrap_err(),
+            CartError::SaleIsComplete
+        );
+        let (voided, _) = void_sale(Sale::Building(cart), why(), &lead()).unwrap();
+        assert_eq!(
+            void_sale(Sale::Voided(voided), why(), &lead()).unwrap_err(),
+            CartError::SaleIsVoided(the_sale())
+        );
+    }
+
+    /// A cashier holds no `sale.void`. Where the merchant escalates it, the
+    /// void names the approver and the approval bound to this sale.
+    #[test]
+    fn a_void_needs_the_grant_and_names_its_approver() {
+        let sale = ApprovalBinding {
+            entity_id: id(1),
+            amount_minor: 0,
+            content_hash: None,
+        };
+        let cashier_tries = authorize::<cap::SaleVoid>(
+            cashier(),
+            &GrantSet::of_role(Role::Cashier),
+            None,
+            &sale,
+            &EscalationPolicy::empty(),
+            moment(),
+        );
+        assert!(cashier_tries.is_err());
+        let handle = ApprovalId::from_uuid(id(0x702));
+        let approval = ApprovalHandle::issue(
+            handle,
+            shift_lead(),
+            &proof_of::<cap::SaleVoid>(manager(), Role::Manager, moment()),
+            &sale,
+            "customer_left".to_owned(),
+            moment(),
+            120_000,
+            *handle.as_uuid().as_bytes(),
+        )
+        .unwrap();
+        let escalated = authorize::<cap::SaleVoid>(
+            shift_lead(),
+            &GrantSet::of_role(Role::ShiftLead),
+            Some(&approval),
+            &sale,
+            &EscalationPolicy::empty().with_escalation::<cap::SaleVoid>(),
+            moment(),
+        )
+        .unwrap();
+        let (voided, intent) = void_sale(
+            Sale::Building(one_item(1_247)),
+            VoidReason("customer_left".to_owned()),
+            &escalated,
+        )
+        .unwrap();
+        assert_eq!(voided.approver(), Some(manager()));
+        assert_eq!(
+            (intent.approver, intent.approval),
+            (Some(manager()), Some(handle))
+        );
+    }
+
+    /// A tender a cashier might take: its kind, as a row of the standard grid,
+    /// and how much of what it is asked for it pays, in parts per million.
+    #[derive(Debug, Clone)]
+    struct Take {
+        kind: usize,
+        share: i64,
+    }
+
+    fn takes() -> impl Strategy<Value = Take> {
+        let share = prop_oneof![
+            2 => Just(1_000_000i64),
+            3 => 0i64..=1_000_000,
+            1 => 1_000_000i64..=3_000_000,
+        ];
+        (0usize..6, share).prop_map(|(kind, share)| Take { kind, share })
+    }
+
+    fn policies() -> impl Strategy<Value = CashRoundingPolicy> {
+        (
+            prop_oneof![Just(1i64), Just(5), Just(10), Just(50), Just(100)],
+            prop_oneof![
+                Just(RoundingDirection::Nearest),
+                Just(RoundingDirection::Up),
+                Just(RoundingDirection::Down),
+            ],
+        )
+            .prop_map(|(step_minor, direction)| CashRoundingPolicy {
+                step_minor,
+                direction,
+            })
+    }
+
+    /// `take` as tender `n` on `t`: its share of what its kind is asked for,
+    /// which for cash is the remainder moved to the coin step.
+    fn taken(t: &Tendering, n: u128, take: &Take) -> Tender {
+        let kind = standard_tender_types().swap_remove(take.kind);
+        let remaining = remaining_due(t).unwrap();
+        let policy = t.cash_policy();
+        let asked = if kind.is_cash_counted {
+            compute_cash_rounding(remaining, policy.step_minor, policy.direction)
+                .unwrap()
+                .rounded
+        } else {
+            remaining
+        };
+        let minor = i128::from(asked.minor()) * i128::from(take.share) / 1_000_000;
+        tender(n, &kind.code, i64::try_from(minor).unwrap())
+    }
+
+    /// The refusals a tender a till asked for honestly can still meet.
+    fn refused_honestly(e: &CartError) -> bool {
+        matches!(
+            e,
+            CartError::OvertenderNotCash
+                | CartError::Underpaid(..)
+                | CartError::NonPositiveTender(_)
+                | CartError::AlreadySettled(_)
+        )
+    }
+
+    fn kind_of(tender: &Tender) -> crate::tender::TenderType {
+        standard_tender_type(&tender.type_code).unwrap()
+    }
+
+    /// Everything collected, and what is owed with the one adjustment.
+    fn collected_and_due(t: &Tendering) -> (Money, Money) {
+        let collected = Money::sum(t.tenders().iter().map(|x| x.amount), JOD).unwrap();
+        let adjustment = t.cash_rounding().map_or(jod(0), |r| r.adjustment);
+        (collected, t.priced().total.checked_add(adjustment).unwrap())
+    }
+
+    /// One thing a till might try, whatever state the sale is in.
+    #[derive(Debug, Clone)]
+    enum Op {
+        Add(u8, i64),
+        SetQty(usize, i64),
+        VoidLine(usize),
+        Park,
+        Resume,
+        BeginTender,
+        BackToBuilding,
+        Pay(Take),
+        RemoveTender(usize),
+        BeginFinalize,
+        Complete,
+        Void,
+    }
+
+    fn ops() -> impl Strategy<Value = Vec<Op>> {
+        let op = prop_oneof![
+            (0u8..3, 1i64..=3).prop_map(|(item, units)| Op::Add(item, units)),
+            (0usize..8, 1i64..=3).prop_map(|(at, units)| Op::SetQty(at, units)),
+            (0usize..8).prop_map(Op::VoidLine),
+            Just(Op::Park),
+            Just(Op::Resume),
+            Just(Op::BeginTender),
+            Just(Op::BackToBuilding),
+            takes().prop_map(Op::Pay),
+            (0usize..6).prop_map(Op::RemoveTender),
+            Just(Op::BeginFinalize),
+            Just(Op::Complete),
+            Just(Op::Void),
+        ];
+        proptest::collection::vec(op, 0..=24)
+    }
+
+    /// `op` tried on `sale`, as tender or line `n`: the next state, or why
+    /// not. `Err(None)` is a transition that does not exist from this state,
+    /// which the types refuse before anything runs; `Err(Some(_))` is the
+    /// transition's own refusal.
+    fn attempt(
+        sale: &Sale,
+        op: &Op,
+        n: u128,
+        settings: &PricingSettings,
+        policy: CashRoundingPolicy,
+    ) -> Result<Sale, Option<CartError>> {
+        if let Op::Void = op {
+            let lead = proof_of::<cap::SaleVoid>(shift_lead(), Role::ShiftLead, moment());
+            return void_sale(sale.clone(), VoidReason("customer_left".to_owned()), &lead)
+                .map(|(voided, _)| Sale::Voided(voided))
+                .map_err(Some);
+        }
+        let line_at = |cart: &Cart, at: usize| {
+            cart.lines
+                .get(at % cart.lines.len().max(1))
+                .map(|l| l.id)
+                .ok_or(None)
+        };
+        let next = match (sale.clone(), op) {
+            (Sale::Building(cart), Op::Add(item, units)) => add(
+                cart,
+                n,
+                &product(0x40 + u128::from(*item), UnitOfMeasure::Each),
+                units * 1_000,
+            )
+            .map(Sale::Building),
+            (Sale::Building(cart), Op::SetQty(at, units)) => {
+                let line = line_at(&cart, *at)?;
+                set_qty(cart, line, Qty::from_milli(units * 1_000)).map(Sale::Building)
+            }
+            (Sale::Building(cart), Op::VoidLine(at)) => {
+                let line = line_at(&cart, *at)?;
+                let why = VoidReason("scanned_twice".to_owned());
+                void_line(cart, line, why, cashier(), moment()).map(|(c, _)| Sale::Building(c))
+            }
+            (Sale::Building(cart), Op::Park) => park(cart).map(Sale::Parked),
+            (Sale::Parked(parked), Op::Resume) => {
+                resume(parked, &context(false)).map(Sale::Building)
+            }
+            (Sale::Building(cart), Op::BeginTender) => {
+                begin_tender(cart, &bands(), settings, policy).map(Sale::Tendering)
+            }
+            (Sale::Tendering(t), Op::BackToBuilding) => back_to_building(t).map(Sale::Building),
+            (Sale::Tendering(t), Op::Pay(take)) => {
+                let tender = taken(&t, n, take);
+                add_tender(t, tender).map(Sale::Tendering)
+            }
+            (Sale::Tendering(t), Op::RemoveTender(at)) => {
+                let Some(id) = t.tenders().get(at % t.tenders().len().max(1)).map(|x| x.id) else {
+                    return Err(None);
+                };
+                remove_tender(t, id).map(Sale::Tendering)
+            }
+            (Sale::Tendering(t), Op::BeginFinalize) => begin_finalize(t).map(Sale::Finalizing),
+            (Sale::Finalizing(f), Op::Complete) => complete(f, effects()).map(Sale::Complete),
+            _ => return Err(None),
+        };
+        next.map_err(Some)
+    }
+
+    /// The walk's sale taken through a checkout that completes, from
+    /// whatever state the walk left it in.
+    fn checkout(
+        sale: Sale,
+        settings: &PricingSettings,
+        policy: CashRoundingPolicy,
+    ) -> CompletedSale {
+        let mut sale = sale;
+        loop {
+            sale = match sale {
+                Sale::Complete(done) => return done,
+                Sale::Voided(_) => Sale::Building(building()),
+                Sale::Parked(parked) => Sale::Building(resume(parked, &context(false)).unwrap()),
+                Sale::Building(cart) if cart.lines.is_empty() => Sale::Building(one_item(1_247)),
+                Sale::Building(cart) => {
+                    Sale::Tendering(begin_tender(cart, &bands(), settings, policy).unwrap())
+                }
+                Sale::Tendering(t) if is_settled(&t) => {
+                    Sale::Finalizing(begin_finalize(t).unwrap())
+                }
+                Sale::Tendering(t) => {
+                    let left = remaining_due(&t).unwrap().minor();
+                    Sale::Tendering(pay(t, 0x80, "card", left).unwrap())
+                }
+                Sale::Finalizing(f) => Sale::Complete(complete(f, effects()).unwrap()),
+            };
+        }
+    }
+
+    proptest! {
+        #![proptest_config(domain_proptest_config())]
+
+        /// 1.5.2, C.4: however a sale is split across tenders, of whatever
+        /// kinds and in whatever order, what they come to less the change is
+        /// its total plus its one cash adjustment, exactly. At every step, what
+        /// is collected, less the change, plus what remains, is what is due.
+        /// And E.14's sequencing: the sale carries a rounding exactly when the
+        /// tender that settled it counts drawer cash.
+        #[test]
+        fn prop_split_tender_sums_to_total(
+            scans in scans(),
+            price_mode in modes(),
+            rule in rules(),
+            policy in policies(),
+            plan in proptest::collection::vec(takes(), 0..=6),
+        ) {
+            let cart = ring(&scans, None, rule);
+            prop_assume!(!cart.lines.is_empty());
+            let settings = PricingSettings { price_mode, profile: StoreTaxProfile::Standard, rule };
+            let mut t = begin_tender(cart, &bands(), &settings, policy).unwrap();
+            for (n, take) in (1u128..).zip(&plan) {
+                let tender = taken(&t, n, take);
+                match add_tender(t.clone(), tender) {
+                    Ok(next) => t = next,
+                    Err(refusal) => prop_assert!(refused_honestly(&refusal), "{refusal}"),
+                }
+                let (collected, due) = collected_and_due(&t);
+                prop_assert_eq!(
+                    collected
+                        .checked_sub(change_due(&t).unwrap())
+                        .unwrap()
+                        .checked_add(remaining_due(&t).unwrap())
+                        .unwrap(),
+                    due
+                );
+            }
+            if !is_settled(&t) {
+                let left = remaining_due(&t).unwrap().minor();
+                t = pay(t, 0x80, "card", left).unwrap();
+            }
+            prop_assert!(is_settled(&t));
+            let (collected, due) = collected_and_due(&t);
+            prop_assert_eq!(collected.checked_sub(change_due(&t).unwrap()).unwrap(), due);
+            prop_assert_eq!(
+                t.cash_rounding().is_some(),
+                t.tenders().last().is_some_and(|last| kind_of(last).is_cash_counted)
+            );
+        }
+
+        /// 1.5.2: change is never negative, at any step, and nothing remains
+        /// owed below nothing. Only a kind that gives change ever makes any,
+        /// and only as the tender that settled the sale.
+        #[test]
+        fn prop_change_never_negative(
+            scans in scans(),
+            rule in rules(),
+            policy in policies(),
+            plan in proptest::collection::vec(takes(), 0..=6),
+        ) {
+            let cart = ring(&scans, None, rule);
+            prop_assume!(!cart.lines.is_empty());
+            let settings = PricingSettings {
+                price_mode: PriceMode::Inclusive,
+                profile: StoreTaxProfile::Standard,
+                rule,
+            };
+            let mut t = begin_tender(cart, &bands(), &settings, policy).unwrap();
+            for (n, take) in (1u128..).zip(&plan) {
+                let tender = taken(&t, n, take);
+                if let Ok(next) = add_tender(t.clone(), tender) {
+                    t = next;
+                }
+                let change = change_due(&t).unwrap();
+                prop_assert!(!change.is_negative());
+                prop_assert!(!remaining_due(&t).unwrap().is_negative());
+                if !change.is_zero() {
+                    prop_assert!(is_settled(&t));
+                    prop_assert!(kind_of(t.tenders().last().unwrap()).allows_change);
+                }
+            }
+        }
+
+        /// I-4, by construction: once a sale is complete, nothing a till can
+        /// try changes it. No transition but `void_sale` can even be handed
+        /// one (`tests/ui/a_completed_sale_cannot_be_reopened.rs`), and
+        /// `void_sale` refuses it. A walk tries every transition in any order,
+        /// then a checkout completes the sale, then a second walk tries every
+        /// transition again: each is refused, and the completed sale's stored
+        /// form reads back byte for byte as it was. Along the way, a sale being
+        /// paid for is always paid against its own cart's prices.
+        #[test]
+        fn prop_no_operation_mutates_a_complete_sale(
+            before in ops(),
+            after in ops(),
+            price_mode in modes(),
+            policy in policies(),
+        ) {
+            let settings = PricingSettings { price_mode, profile: StoreTaxProfile::Standard, rule: RULE };
+            let mut sale = Sale::Building(building());
+            for (n, op) in (0x100u128..).zip(&before) {
+                if let Ok(next) = attempt(&sale, op, n, &settings, policy) {
+                    sale = next;
+                }
+                if let Sale::Tendering(t) = &sale {
+                    prop_assert_eq!(t.priced(), &price_cart(t.cart(), &bands(), &settings).unwrap());
+                }
+            }
+            let done = Sale::Complete(checkout(sale, &settings, policy));
+            let stored = serde_json::to_string(&done).unwrap();
+            for (n, op) in (0x200u128..).zip(&after) {
+                let refusal = attempt(&done, op, n, &settings, policy).unwrap_err();
+                match op {
+                    Op::Void => prop_assert_eq!(refusal, Some(CartError::SaleIsComplete)),
+                    _ => prop_assert_eq!(refusal, None),
+                }
+            }
+            prop_assert_eq!(serde_json::to_string(&done).unwrap(), stored.clone());
+            let read_back: Sale = serde_json::from_str(&stored).unwrap();
+            prop_assert_eq!(&read_back, &done);
+            prop_assert_eq!(serde_json::to_string(&read_back).unwrap(), stored);
         }
     }
 }
