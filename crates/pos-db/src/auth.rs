@@ -368,6 +368,77 @@ mod tests {
         assert_eq!(profile_of(&weak).unwrap().version, 0);
     }
 
+    /// Each floor of the profile holds on its own: a hash below it in any one
+    /// parameter, and in that one only, is flagged for a rehash.
+    #[test]
+    fn a_hash_below_the_profile_in_any_one_parameter_is_rehashed() {
+        let p = PIN_PROFILE;
+        let made = |m: u32, t: u32, l: u32, out: usize, salt: &[u8]| {
+            Argon2::new(
+                Algorithm::Argon2id,
+                Version::V0x13,
+                Params::new(m, t, l, Some(out)).unwrap(),
+            )
+            .hash_password(b"1234", &SaltString::encode_b64(salt).unwrap())
+            .unwrap()
+            .to_string()
+        };
+        let full_salt = [9u8; 16];
+        assert_eq!(
+            needs_rehash(&made(
+                p.m_cost_kib,
+                p.t_cost,
+                p.p_cost,
+                p.output_len,
+                &full_salt
+            )),
+            Ok(false)
+        );
+        for (below, hash) in [
+            (
+                "memory",
+                made(
+                    p.m_cost_kib / 2,
+                    p.t_cost,
+                    p.p_cost,
+                    p.output_len,
+                    &full_salt,
+                ),
+            ),
+            (
+                "passes",
+                made(
+                    p.m_cost_kib,
+                    p.t_cost - 1,
+                    p.p_cost,
+                    p.output_len,
+                    &full_salt,
+                ),
+            ),
+            (
+                "lanes",
+                made(
+                    p.m_cost_kib,
+                    p.t_cost,
+                    p.p_cost - 1,
+                    p.output_len,
+                    &full_salt,
+                ),
+            ),
+            (
+                "tag",
+                made(p.m_cost_kib, p.t_cost, p.p_cost, 16, &full_salt),
+            ),
+            (
+                "salt",
+                made(p.m_cost_kib, p.t_cost, p.p_cost, p.output_len, &[9u8; 8]),
+            ),
+        ] {
+            assert_eq!(needs_rehash(&hash), Ok(true), "{below}");
+            assert_eq!(verify_pin("1234", &hash), Ok(true), "{below}");
+        }
+    }
+
     #[test]
     fn a_new_pin_has_the_digits_its_account_needs() {
         assert_eq!(minimum_pin_digits(["sale.create", "line.void"]), 4);
