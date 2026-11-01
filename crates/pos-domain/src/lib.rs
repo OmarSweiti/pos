@@ -25,7 +25,9 @@ pub mod trade_scale;
 // expiry, and reaches for no audit type to do it. `trade_scale` (1.2.4) reads only the
 // pure `Timestamp` and `ClockConfidence` values from `time`. `stock` (1.10.2) reads `money` and
 // `ids`, and the pure `Timestamp` and `BusinessDate` values from `time`. `pricing` (1.4.5) reads `money` and `ids`,
-// and `cart` reads it: §15 puts it between the two. `money`'s external arithmetic dependency is
+// and `cart` reads it: §15 puts it between the two. `cart` reads `tender` since 1.4.8,
+// because `Sale` holds the payment stage, so §15's arrow between them points from
+// `tender` to `cart`. `money`'s external arithmetic dependency is
 // `rust_decimal`; `time` performs only integer calendar arithmetic. `just
 // acyclic` is what establishes the graph, not this comment.
 pub use audit::{
@@ -33,8 +35,9 @@ pub use audit::{
     chain_hash, check_payload, verify_chain,
 };
 pub use cart::{
-    Cart, CartContext, CartError, CartLine, ParkedCart, PricedCart, PricedLine, PricingSettings,
-    Sale, TaxBands,
+    Cart, CartContext, CartError, CartLine, CompletedSale, FinalizeEffects, Finalizing, ParkedCart,
+    PricedCart, PricedLine, PricingSettings, Sale, TaxBands, Tendering, VoidedSale, change_due,
+    is_settled, remaining_due,
 };
 pub use catalog::{
     Barcode, BarcodeKind, CatalogError, DerivedWeight, EmbeddedBarcodeRule, EmbeddedValue,
@@ -72,8 +75,9 @@ pub use tax::{
     ZeroRatingReason, compute_line_tax, resolve_components, summarize_tax,
 };
 pub use tender::{
-    CashRounding, RefundRouting, Tender, TenderState, TenderType, compute_cash_rounding,
-    denominations, final_tender_rounding, standard_tender_type, standard_tender_types,
+    CashRounding, CashRoundingPolicy, RefundRouting, Tender, TenderState, TenderType,
+    compute_cash_rounding, denominations, final_tender_rounding, standard_tender_type,
+    standard_tender_types,
 };
 pub use time::{
     BusinessDate, Clock, ClockAnomaly, ClockConfidence, ClockPolicy, ClockState, DayBoundary,

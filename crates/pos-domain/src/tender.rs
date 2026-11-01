@@ -5,7 +5,9 @@
 //! **cash rounding** (1.5.3) — what the tender that settles a sale is asked
 //! for when the smallest coin cannot make up the fils; and the **denomination
 //! table** (1.5.4) — the notes and coins a cashier counts. `remaining_due`,
-//! `change_due` and `is_settled` are still to come with 1.5.2.
+//! `change_due` and `is_settled` (1.5.2) take a sale being paid for, so they
+//! live in `cart`, beside the state machine that holds it: `cart` reads this
+//! module, and this module reads nothing of `cart`.
 //!
 //! Shape is [`ref/domain-api.md`](../../../docs/implementation/ref/domain-api.md) §7 and the
 //! table is its §7.1.
@@ -316,6 +318,21 @@ pub struct CashRounding {
     /// was owed, positive when for more, and zero when the remainder was
     /// already payable.
     pub adjustment: Money,
+}
+
+/// The coin step and direction a sale's final cash tender is rounded by
+/// (merchant decisions 2.1–2.2), fixed for the whole sale.
+///
+/// Both are columns of the store's `tax_computation_policy` (`0003`), which a
+/// completed sale names by id, so one sale is paid under one policy:
+/// `begin_tender` takes this value and every tender is asked under it (1.4.8).
+/// Whether the values belong on that policy row or on the store is #231's open
+/// question, and this type reads the same either way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CashRoundingPolicy {
+    /// In the sale's own minor units: `10` is one qirsh.
+    pub step_minor: i64,
+    pub direction: RoundingDirection,
 }
 
 /// Round what the earlier tenders left to the store's coin step (master plan

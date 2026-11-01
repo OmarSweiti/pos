@@ -1,0 +1,39 @@
+error[E0308]: mismatched types
+ --> tests/ui/a_completed_sale_cannot_be_reopened.rs:8:24
+  |
+8 |     let _ = add_tender(sale, tender);
+  |             ---------- ^^^^ expected `Tendering`, found `CompletedSale`
+  |             |
+  |             arguments to this function are incorrect
+  |
+note: function defined here
+ --> src/cart.rs
+  |
+  | pub fn add_tender(t: Tendering, tender: Tender) -> Result<Tendering, CartError> {
+  |        ^^^^^^^^^^
+
+error[E0308]: mismatched types
+  --> tests/ui/a_completed_sale_cannot_be_reopened.rs:12:30
+   |
+12 |     let _ = back_to_building(sale);
+   |             ---------------- ^^^^ expected `Tendering`, found `CompletedSale`
+   |             |
+   |             arguments to this function are incorrect
+   |
+note: function defined here
+  --> src/cart.rs
+   |
+   | pub fn back_to_building(t: Tendering) -> Result<Cart, CartError> {
+   |        ^^^^^^^^^^^^^^^^
+
+error[E0616]: field `receipt_number` of struct `CompletedSale` is private
+  --> tests/ui/a_completed_sale_cannot_be_reopened.rs:16:10
+   |
+16 |     sale.receipt_number = String::new();
+   |          ^^^^^^^^^^^^^^ private field
+
+error[E0596]: cannot borrow data in a `&` reference as mutable
+  --> tests/ui/a_completed_sale_cannot_be_reopened.rs:20:5
+   |
+20 |     sale.cart().lines.clear();
+   |     ^^^^^^^^^^^^^^^^^ cannot borrow as mutable
