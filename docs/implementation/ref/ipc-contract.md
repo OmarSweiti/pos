@@ -24,6 +24,12 @@ pub struct IpcError {
 pub type IpcResult<T> = Result<T, IpcError>;
 ```
 
+> **As delivered at 1.6.8**, in `apps/terminal/src-tauri/src/ipc/error.rs`, re-exported from
+> `ipc/mod.rs`. `IpcError::from_source` logs the source error through the scrubbing layer under the
+> trace id and hands the webview only the code. The trace id is random, from the OS. `ts_rs::TS` is not
+> derived yet, because the generator lane in rule 3 does not exist; the first command that returns
+> this type to new screen code adds it.
+
 `detail` used to be `Option<String>`, and a free-form string here defeats the scrubber. The `tracing`
 layer redacts fields by canonical name inside the log pipeline; it cannot touch a value that was
 serialised straight to the webview, and it does not recognise generic keys like `error`, `body` or

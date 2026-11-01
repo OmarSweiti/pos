@@ -60,11 +60,12 @@
 //! a value under a sensitive field name — `audit_log.payload`'s own DDL says
 //! "NEVER PII or card data" and [`ref/security-compliance.md`] §6 owns the
 //! canonical registry of those names. This module deliberately does **not**
-//! restate that list: microstep 1.6.8 defines `SENSITIVE_FIELD_RULES` once and
-//! every scrubber, assertion and fixture iterates it, and a second
-//! hand-maintained copy here is exactly how the two come to disagree. Nothing in
-//! this file logs, and no error it returns carries a payload value, an id or a
-//! hash input.
+//! restate that list: it reads [`crate::sensitive::SENSITIVE_FIELD_RULES`],
+//! the one registry every scrubber and assertion iterates (1.6.8), and
+//! [`check_payload`] refuses a payload with a member under any name it lists,
+//! at any depth. A second hand-maintained copy here is exactly how the two
+//! would come to disagree. Nothing in this file logs, and no error it returns
+//! carries a payload value, an id or a hash input.
 //!
 //! # Purity
 //!
@@ -79,6 +80,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::ids::{ApprovalId, RegisterId, UserId};
+use crate::sensitive::SENSITIVE_FIELD_RULES;
 use crate::time::Timestamp;
 
 /// The domain tag bound into every audit digest.
@@ -140,6 +142,14 @@ pub enum AuditError {
     PayloadNestedTooDeeply {
         /// [`MAX_PAYLOAD_DEPTH`], restated so the message is self-contained.
         limit: usize,
+    },
+    /// A member named by [`SENSITIVE_FIELD_RULES`] (1.6.8). A hash-chained row
+    /// can never be erased, so a value under a never-log name never reaches
+    /// one; an audit entry names a customer by id.
+    #[error("audit payload at {pointer} is named as a never-log field")]
+    PayloadCarriesSensitiveField {
+        /// RFC 6901 pointer to the member: its name, never its value.
+        pointer: String,
     },
 }
 
@@ -474,24 +484,33 @@ pub fn verify_chain<'a>(
 /// it before appending an audit row, and a refusal is a bug in the caller that
 /// built the payload rather than a runtime condition to recover from.
 ///
-/// Two refusals, both from [`ref/security-compliance.md`] §4's canonical
+/// Three refusals. Two are from [`ref/security-compliance.md`] §4's canonical
 /// serialization: a number that is not an integer, and nesting deeper than
-/// [`MAX_PAYLOAD_DEPTH`]. The walk is iterative rather than recursive, so the
-/// checker itself cannot be the thing that overflows, and it descends in
-/// canonical document order so a payload with two faults always names the same
-/// one.
+/// [`MAX_PAYLOAD_DEPTH`]. The third is the audit-payload guard (§6, 1.6.8): a
+/// member named by [`SENSITIVE_FIELD_RULES`] at any depth, because a hash
+/// chain is append-only and a value that reached it can never be erased. The
+/// walk is iterative rather than recursive, so the checker itself cannot be
+/// the thing that overflows, and it descends in canonical document order so a
+/// payload with two faults always names the same one.
 ///
 /// # Errors
 ///
-/// [`AuditError::PayloadNumberIsNotAnInteger`] and
-/// [`AuditError::PayloadNestedTooDeeply`].
+/// [`AuditError::PayloadNumberIsNotAnInteger`],
+/// [`AuditError::PayloadNestedTooDeeply`] and
+/// [`AuditError::PayloadCarriesSensitiveField`].
 ///
 /// [`ref/security-compliance.md`]: ../../../docs/implementation/ref/security-compliance.md
 pub fn check_payload(payload: &Value) -> Result<(), AuditError> {
-    // (value, depth, pointer to it). Depth 1 is the payload itself.
-    let mut pending: Vec<(&Value, usize, String)> = vec![(payload, 1, String::new())];
+    // (value, depth, pointer to it, whether its own name is a sensitive one).
+    // Depth 1 is the payload itself. A sensitive name is a fault of the member
+    // it names, found when that member comes off the stack, so it keeps its
+    // place in canonical order among the other faults.
+    let mut pending: Vec<(&Value, usize, String, bool)> = vec![(payload, 1, String::new(), false)];
 
-    while let Some((value, depth, pointer)) = pending.pop() {
+    while let Some((value, depth, pointer, sensitive)) = pending.pop() {
+        if sensitive {
+            return Err(AuditError::PayloadCarriesSensitiveField { pointer });
+        }
         if depth > MAX_PAYLOAD_DEPTH {
             return Err(AuditError::PayloadNestedTooDeeply {
                 limit: MAX_PAYLOAD_DEPTH,
@@ -515,7 +534,12 @@ pub fn check_payload(payload: &Value) -> Result<(), AuditError> {
             // whichever one the traversal happened to reach.
             Value::Array(items) => {
                 for (index, item) in items.iter().enumerate().rev() {
-                    pending.push((item, depth.saturating_add(1), format!("{pointer}/{index}")));
+                    pending.push((
+                        item,
+                        depth.saturating_add(1),
+                        format!("{pointer}/{index}"),
+                        false,
+                    ));
                 }
             }
             Value::Object(members) => {
@@ -526,6 +550,7 @@ pub fn check_payload(payload: &Value) -> Result<(), AuditError> {
                         member,
                         depth.saturating_add(1),
                         format!("{pointer}/{}", escape_json_pointer(key)),
+                        SENSITIVE_FIELD_RULES.matches(key),
                     ));
                 }
             }
@@ -1167,6 +1192,58 @@ mod tests {
         assert_eq!(check_payload(&allowed), Ok(()));
     }
 
+    /// The audit-payload guard (1.6.8): a member under any name the never-log
+    /// registry lists is refused at any depth, in any spelling, and the
+    /// refusal names its place, never its value. Generated from the registry,
+    /// so a name added there is refused here without another line.
+    #[test]
+    fn a_payload_naming_a_never_log_field_is_refused() {
+        use crate::sensitive::SENSITIVE_FIELD_RULES;
+        let refused = |pointer: &str| {
+            Err(AuditError::PayloadCarriesSensitiveField {
+                pointer: pointer.to_owned(),
+            })
+        };
+        for name in SENSITIVE_FIELD_RULES.names {
+            assert_eq!(
+                check_payload(&json!({ "sale_id": "s", *name: "SYNTH-value" })),
+                refused(&format!("/{name}")),
+                "{name}"
+            );
+        }
+        for suffix in SENSITIVE_FIELD_RULES.suffixes {
+            let key = format!("device{suffix}");
+            assert_eq!(
+                check_payload(&json!({ "lines": [{ key.clone(): 1 }] })),
+                refused(&format!("/lines/0/{key}")),
+                "{suffix}"
+            );
+        }
+        assert_eq!(
+            check_payload(&json!({ "customer": { "cardNumber": "x" } })),
+            refused("/customer/cardNumber")
+        );
+        assert_eq!(
+            check_payload(&json!({ "old_password_at": "x" })),
+            refused("/old_password_at")
+        );
+        // Its place in canonical order among other faults is kept.
+        assert_eq!(
+            check_payload(&json!({ "z_token": "x", "a": 0.5 })),
+            Err(AuditError::PayloadNumberIsNotAnInteger {
+                pointer: "/a".to_owned(),
+            }),
+        );
+        // The refusal carries the name's place, never the value.
+        let shown = format!("{:?}", check_payload(&json!({ "phone": "0790000000" })));
+        assert!(!shown.contains("0790000000"), "{shown}");
+        // What an audit entry should carry instead, a customer by id, passes.
+        assert_eq!(
+            check_payload(&json!({ "customer_id": "c", "masked_pan": "**** 1234" })),
+            Ok(())
+        );
+    }
+
     // ── the properties ──────────────────────────────────────────────────────
 
     /// One entry's variable parts.
@@ -1384,6 +1461,116 @@ mod tests {
             })
     }
 
+    /// Names no rule lists, so a payload built from them alone passes.
+    const INNOCENT_KEYS: [&str; 8] = [
+        "sale_id",
+        "amount_minor",
+        "lines",
+        "qty_milli",
+        "reason",
+        "masked_pan",
+        "scheme",
+        "pinned",
+    ];
+
+    /// An object of innocent names holding integers, strings, booleans and
+    /// nulls, in objects and arrays a few levels deep.
+    fn innocent_payloads() -> impl Strategy<Value = Value> {
+        let leaf = prop_oneof![
+            Just(Value::Null),
+            any::<bool>().prop_map(Value::from),
+            any::<i64>().prop_map(Value::from),
+            "[a-z0-9 ]{0,8}".prop_map(Value::from),
+        ];
+        leaf.prop_recursive(4, 32, 4, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..4).prop_map(Value::Array),
+                prop::collection::btree_map(
+                    prop::sample::select(INNOCENT_KEYS.to_vec()),
+                    inner,
+                    0..4
+                )
+                .prop_map(|members| {
+                    Value::Object(
+                        members
+                            .into_iter()
+                            .map(|(name, member)| (name.to_owned(), member))
+                            .collect(),
+                    )
+                }),
+            ]
+        })
+        .prop_map(|value| match value {
+            Value::Object(_) => value,
+            other => json!({ "lines": other }),
+        })
+    }
+
+    /// Every exact name, a name under each suffix, and a name containing
+    /// each substring the registry lists.
+    fn never_log_names() -> impl Strategy<Value = String> {
+        let rules = crate::sensitive::SENSITIVE_FIELD_RULES;
+        let names = rules.names.iter().map(|name| (*name).to_owned());
+        let suffixed = rules
+            .suffixes
+            .iter()
+            .map(|suffix| format!("device{suffix}"));
+        let containing = rules.contains.iter().map(|part| format!("old_{part}_at"));
+        prop::sample::select(names.chain(suffixed).chain(containing).collect::<Vec<_>>())
+    }
+
+    /// `snake_case` as `camelCase`, the webview's spelling.
+    fn camel(snake: &str) -> String {
+        let mut words = snake.split('_');
+        let first = words.next().unwrap_or_default().to_owned();
+        words.fold(first, |mut out, word| {
+            let mut letters = word.chars();
+            if let Some(initial) = letters.next() {
+                out.push(initial.to_ascii_uppercase());
+                out.extend(letters);
+            }
+            out
+        })
+    }
+
+    /// `here` with a member `key` added in the container `turns` leads to, and
+    /// the RFC 6901 pointer to that member. Each turn picks a nested container
+    /// to step into; a turn with none to pick ends the walk where it is.
+    fn insert_at(here: &mut Value, turns: &[usize], key: &str, member: Value) -> String {
+        let nested = |value: &Value| value.is_object() || value.is_array();
+        match here {
+            Value::Object(members) => {
+                let count = members.values().filter(|value| nested(value)).count();
+                if let (Some((turn, rest)), true) = (turns.split_first(), count > 0) {
+                    let picked = members
+                        .iter_mut()
+                        .filter(|(_, value)| nested(value))
+                        .nth(turn % count);
+                    if let Some((name, child)) = picked {
+                        return format!("/{name}{}", insert_at(child, rest, key, member));
+                    }
+                }
+                members.insert(key.to_owned(), member);
+                format!("/{key}")
+            }
+            Value::Array(items) => {
+                if let (Some((turn, rest)), false) = (turns.split_first(), items.is_empty()) {
+                    let index = turn % items.len();
+                    if let Some(child) = items.get_mut(index).filter(|child| nested(child)) {
+                        return format!("/{index}{}", insert_at(child, rest, key, member));
+                    }
+                }
+                let index = items.len();
+                items.push(json!({ key: member }));
+                format!("/{index}/{key}")
+            }
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {
+                *here = json!({ key: member });
+                format!("/{key}")
+            }
+        }
+    }
+
     proptest! {
         // One shared configuration for every property in this crate: 4,096
         // cases, the repository's recorded seed, and a minimized failing case
@@ -1482,6 +1669,32 @@ mod tests {
                 .expect("the strategy bounds both positions");
 
             prop_assert_eq!(verify(REGISTER, &swapped, anchor), ChainVerdict::Broken { at_seq });
+        }
+
+        /// A value under a never-log name never reaches the chain: put one in
+        /// any spelling, anywhere in a payload the guard otherwise accepts, and
+        /// the guard refuses it and points at where it is. Without it, the same
+        /// payload passes.
+        #[test]
+        fn prop_a_never_log_name_is_refused_wherever_it_nests(
+            payload in innocent_payloads(),
+            turns in prop::collection::vec(any::<usize>(), 0..5),
+            name in never_log_names(),
+            camel_cased in any::<bool>(),
+            secret in prop_oneof![
+                "[a-z0-9]{1,8}".prop_map(Value::from),
+                any::<i64>().prop_map(Value::from),
+                Just(json!({ "inner": 1 })),
+            ],
+        ) {
+            prop_assert_eq!(check_payload(&payload), Ok(()));
+            let key = if camel_cased { camel(&name) } else { name };
+            let mut carrying = payload;
+            let pointer = insert_at(&mut carrying, &turns, &key, secret);
+            prop_assert_eq!(
+                check_payload(&carrying),
+                Err(AuditError::PayloadCarriesSensitiveField { pointer })
+            );
         }
     }
 }

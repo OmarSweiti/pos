@@ -5065,6 +5065,7 @@ name = "terminal"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "getrandom 0.4.3",
  "jiff",
  "pos-db",
  "pos-domain",
@@ -5076,6 +5077,8 @@ dependencies = [
  "tauri-build",
  "tempfile",
  "thiserror 2.0.21",
+ "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

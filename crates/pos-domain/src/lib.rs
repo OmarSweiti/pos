@@ -9,6 +9,7 @@ pub mod money;
 pub mod permissions;
 pub mod pricing;
 pub mod receipt;
+pub mod sensitive;
 pub mod stock;
 pub mod tax;
 pub mod tender;
@@ -67,6 +68,7 @@ pub use receipt::{
     ReceiptDiscount, ReceiptError, ReceiptHeader, ReceiptLine, ReceiptLocale, ReceiptModel,
     ReceiptTender, ReceiptTotals, TextDirection, Watermark,
 };
+pub use sensitive::{SENSITIVE_FIELD_RULES, SensitiveFieldRules};
 pub use stock::{
     IncomingCost, NewStockEvent, StockError, StockEvent, StockEventKind, StockPosition, StockSource,
 };
