@@ -1081,6 +1081,10 @@ pub enum PriceOrigin {
     Label      { rule_prefix: String, raw_code: String },
     Department { tax_category_id: TaxCategoryId },        // §6.5, and only §6.5
 }
+// As delivered at 1.4.12, the department origin also names the department the
+// amount was typed against and the code scanned, if one was:
+//   Department { department_id: CategoryId, tax_category_id: TaxCategoryId,
+//                scanned_code: Option<String> }
 
 impl PriceSource {
     /// Takes no amount. That is the entire point.
@@ -1096,6 +1100,10 @@ impl PriceSource {
     /// function requires `Authorized<cap::DepartmentSale>` and returns an
     /// `AuditIntent` (§6.5).
     pub fn from_department(amount: Money, tax_category_id: TaxCategoryId) -> PriceSource;
+    // As delivered at 1.4.12 it takes the department itself, so the tax
+    // category cannot disagree with it:
+    //   pub fn from_department(amount: Money, department: &Department,
+    //                          scanned_code: Option<String>) -> PriceSource;
 
     pub fn amount(&self) -> Money;
     pub fn origin(&self) -> &PriceOrigin;
@@ -1800,8 +1808,13 @@ pub fn override_price(cart: Cart, line: SaleLineId, to: Money, reason: OverrideR
 /// accepts an operator-entered amount, and it is capability-gated, capped,
 /// audited, and reported beside price overrides — which is exactly what
 /// `add_line`'s old optional price was not.
+/// As delivered at 1.4.12 it takes the `approval` a line above the threshold
+/// needs, as the discounts do (1.4.5), bound to the sale and the amount and
+/// checked at `auth.at()` for `auth.actor()`. The phase file's `actor` and `now`
+/// are the proof's. The intent is `sale.department` on the `sale`. See §6.5.
 pub fn add_department_line(cart: Cart, req: AddLine, policy: &DepartmentPolicy,
-                           auth: &Authorized<cap::DepartmentSale>)
+                           auth: &Authorized<cap::DepartmentSale>,
+                           approval: Option<&ApprovalHandle>)
                                                     -> Result<(Cart, AuditIntent), CartError>;
 
 pub fn attach_customer(cart: Cart, c: CustomerId)   -> Result<Cart, CartError>;
@@ -2033,6 +2046,11 @@ pub enum CartError {
     #[error("cannot void the sale: {0} tender(s) collected")]  TendersToReverse(usize), // 1.4.8
     #[error("sale {0} has begun finalizing and can only complete")] FinalizeBegun(SaleId), // 1.4.8
     #[error("sale {0} is void")]                               SaleIsVoided(SaleId),  // 1.4.8
+    #[error("department {0} is not in use")]                   DepartmentInactive(CategoryId), // 1.4.12
+    #[error("line {0} is not a department line")]             NotADepartmentLine(SaleLineId), // 1.4.12
+    #[error("a department sale of {0} sells nothing")]         DepartmentAmountNotPositive(String), // 1.4.12
+    #[error("department sale of {0} is above {1} and needs a manager's approval")]
+                                                               DepartmentNeedsApproval(String, String), // 1.4.12
     #[error(transparent)] Permission(#[from] PermissionError),  // 1.4.5: an approval that does not match
     #[error(transparent)] Tax(#[from] TaxError),
     #[error(transparent)] Money(#[from] MoneyError),
@@ -2115,6 +2133,24 @@ Tests: `department_line_carries_its_department_tax_category` · `department_line
 `department_line_is_always_audited` · `department_above_cap_is_refused` ·
 `department_above_escalation_threshold_requires_approval` ·
 `queue_never_stalls_on_unknown_code` (E.39, E.83).
+
+> **As delivered at 1.4.12, the domain half.** `Department` and `DepartmentPolicy` are as above,
+> with `Eq` derived. `AddLine::department` makes the one line a department sale may be: no product,
+> quantity one, `Each`, the department's tax category and its Arabic name, and no ceiling, age or label.
+> It refuses an inactive department as `DepartmentInactive`. Its price is
+> `PriceSource::from_department(amount, department, scanned_code)`, whose origin keeps the department
+> and the scanned code on the line (§4.2). `add_department_line` refuses anything else as
+> `NotADepartmentLine`, an amount of nothing or less as `DepartmentAmountNotPositive`, an amount above
+> `max_line_amount` as `DepartmentAmountAboveCap` whatever approval comes with it, and an amount above
+> `escalate_above` with no approval as `DepartmentNeedsApproval`. With an approval, the line goes in
+> only when the handle is the department sale's, for this actor, this sale and this amount. Every line
+> returns its intent, `sale.department` on the `sale`. That is the entity a handle is bound to, and
+> its reason is the handle's when one was consumed. Its payload is the line, the department, the tax
+> category, the amount, the scanned code and both limits, and it joins 1.4.10's list as privileged.
+> `department_line_writes_no_stock_event` is 1.8.3's, where stock is written; this step's
+> `department_line_is_marked_non_stock` holds the domain's half. **Nothing stores a department yet.**
+> `category` has no tax category or department flag, and `sale_line.product_id` is `NOT NULL`. #330
+> asks how they should change before 1.4.11 lists departments and 1.8.3 writes one.
 
 ### 6.6 The in-flight sale — [1.8.4]
 
