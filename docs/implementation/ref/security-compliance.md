@@ -510,7 +510,7 @@ A `tracing` layer that redacts, at any nesting depth, fields named: `pin`, `pin_
 
 It sits in front of **every** sink: stdout, file, and Sentry.
 
-**This list is a registry, not prose.** It lives once, as a `pub const` in the scrubbing module, and everything that needs it derives from it: the layer, the parameterized tests, the audit-payload assertion in §2, the diagnostic bundle filter, and the entry in `.claude/rules/security.md`. It was written out by hand in three places and the Phase-1 microstep's copy was already short by five fields — `card_number`, `buyer_name`, `token`, `password`, `entitlement` — which is a scrubber that passes its own test and leaks a card number.
+**This list is a registry, not prose.** It lives once, as a `pub const` (as delivered at 1.6.8, `pos_domain::sensitive::SENSITIVE_FIELD_RULES`, because the audit-payload guard in `pos-domain` must read it too), and everything that needs it derives from it: the layer, the parameterized tests, the audit-payload assertion in §2, the diagnostic bundle filter, and the entry in `.claude/rules/security.md`. It was written out by hand in three places and the Phase-1 microstep's copy was already short by five fields — `card_number`, `buyer_name`, `token`, `password`, `entitlement` — which is a scrubber that passes its own test and leaks a card number.
 
 **Three channels the layer cannot reach**, each needing its own control:
 
