@@ -10,6 +10,7 @@ pub mod fixtures;
 pub mod key;
 pub mod repo;
 pub mod search;
+pub mod storage_version;
 pub mod tax_pack;
 pub mod tax_policy;
 
@@ -42,6 +43,17 @@ pub enum DbError {
     JournalModeRefused { found: String },
     #[error("refusing to open a register database with foreign keys disabled")]
     ForeignKeysRefused,
+    #[error(
+        "refusing to open on {engine} {found}: this build is reviewed for {engine} \
+         {minimum} or later (microstep 1.8.0)"
+    )]
+    UnsupportedStorageVersion {
+        engine: &'static str,
+        found: String,
+        minimum: String,
+    },
+    #[error("refusing to open: {engine} reports a version this build cannot read ({found:?})")]
+    StorageVersionUnparseable { engine: &'static str, found: String },
     #[error(
         "a {scope_kind}-scoped sequence cannot number a {kind} document: \
          migration 0005 pairs receipt and zreport with a register, and \
@@ -251,7 +263,28 @@ const MIGRATIONS: &[&str] = &[
 pub const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 
 /// Open (or create) an encrypted database and bring it to the latest schema.
+///
+/// The storage engine is held to [`storage_version::STORAGE_POLICY`] before
+/// anything else is set on the connection (1.8.0). Today's build opens in
+/// single-connection mode: no second source connection may be opened beside
+/// this one until the engine carries the WAL-reset fix (#244).
 pub fn open(path: &Path, key: &str) -> Result<Connection, DbError> {
+    open_checked(
+        path,
+        key,
+        &storage_version::STORAGE_POLICY,
+        storage_version::reported_versions,
+    )
+}
+
+/// [`open`], with the policy and the version reader as arguments, so a test can
+/// put an engine no build here produces to the same open.
+pub(crate) fn open_checked(
+    path: &Path,
+    key: &str,
+    policy: &storage_version::StorageVersionPolicy,
+    report: fn(&Connection) -> Result<storage_version::ReportedVersions, DbError>,
+) -> Result<Connection, DbError> {
     let conn = Connection::open(path)?;
 
     // SQLCipher: the key pragma MUST be the first statement on the connection.
@@ -260,6 +293,10 @@ pub fn open(path: &Path, key: &str) -> Result<Connection, DbError> {
     // Touch the schema now so a wrong key fails HERE, loudly, not mid-sale.
     conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
         .map_err(|_| DbError::BadKey)?;
+
+    // The engine, before WAL: an unreviewed SQLite or SQLCipher is refused while
+    // the file is still in the journal mode it was found in (1.8.0).
+    storage_version::storage_verdict(&report(&conn)?, policy)?;
 
     // Durability + concurrency settings for a register (blueprint appendix: WAL).
     //
