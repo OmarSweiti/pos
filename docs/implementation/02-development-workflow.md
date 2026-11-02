@@ -1412,7 +1412,10 @@ git commit -m "chore(repo): rust 1.98.0                                     [—
 This unpublished application promises the compiler it tests; it does not advertise a separate,
 untested MSRV. The structural policy requires `rust-version` to equal the pinned toolchain. Apply
 the same discipline to `packageManager` and to the exact Node/Node-types contract anchored in
-`.nvmrc`.
+`.nvmrc`. When the runtime moves, `@types/node` moves with it in the same change: the override in
+`pnpm-workspace.yaml` and both apps' `package.json`, to the typings release that describes the new
+runtime. Dependabot proposes no `@types/node` update, because it cannot move that override, so a
+bump it opened could never pass `just node-version-check` (#347).
 
 **Dependency review** is wired locally and in CI. It is deliberately not in `just pre-push`
 because advisory databases change independently of the proposed code:
