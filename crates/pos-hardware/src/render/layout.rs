@@ -1800,4 +1800,78 @@ mod tests {
         assert_eq!(px_to_units(24, 24, 1_000), 1_000);
         assert_eq!(px_to_units(24, 0, 1_000), 0);
     }
+
+    /// The receipt vocabulary, shaped. Each line covers one thing a shaper can
+    /// get wrong on a receipt: joining, the lam-alef ligature, a diacritic, the
+    /// Arabic comma, digits and Latin inside an Arabic line and the reverse,
+    /// and both weights.
+    const VOCABULARY: [(&str, Weight, bool); 16] = [
+        ("بيع", Weight::Regular, true),
+        ("الإجمالي", Weight::Bold, true),
+        ("لا يوجد", Weight::Regular, true),
+        ("ضريبة المبيعات 16%", Weight::Regular, true),
+        ("المبلغ المستحق 2.166 دينار", Weight::Bold, true),
+        ("نقدًا", Weight::Regular, true),
+        ("شاي اصطناعي", Weight::Regular, true),
+        ("نقد، بطاقة", Weight::Regular, true),
+        ("الباقي", Weight::Bold, true),
+        ("بيع Cola", Weight::Regular, true),
+        ("Total", Weight::Regular, false),
+        ("Total", Weight::Bold, false),
+        ("Receipt No. R-0001-000042", Weight::Regular, false),
+        ("Cola 330ml × 2", Weight::Regular, false),
+        ("SKU-12 بيع", Weight::Regular, false),
+        ("JOD 1.250", Weight::Bold, false),
+    ];
+
+    /// Every glyph id and position of a shaped line, folded into one number
+    /// (FNV-1a over the pairs, in visual order).
+    fn fingerprint(line: &ShapedLine) -> u64 {
+        line.glyphs
+            .iter()
+            .fold(0xcbf2_9ce4_8422_2325_u64, |hash, glyph| {
+                let hash = (hash ^ u64::from(glyph.glyph_id)).wrapping_mul(0x0100_0000_01b3);
+                (hash ^ u64::from(glyph.x_units.cast_unsigned())).wrapping_mul(0x0100_0000_01b3)
+            })
+    }
+
+    /// What harfrust 0.13.3 made of [`VOCABULARY`], line by line: the width,
+    /// the glyph count and the [`fingerprint`]. Generated on `development`
+    /// before the move to 0.15, which changed the shaping API and must not
+    /// change one glyph or one position of a receipt.
+    const VOCABULARY_UNDER_HARFRUST_0_13: [(i32, usize, u64); 16] = [
+        (1135, 3, 0xd9710f0cc0a58be4),
+        (3103, 6, 0x6ef2b62b5e275949),
+        (2622, 6, 0x11323ad6dca1053f),
+        (8046, 17, 0x9688b71ebeea9d57),
+        (11302, 26, 0xdd225f01b17e3b66),
+        (1450, 5, 0x1062129440445fc7),
+        (5492, 11, 0x96039f767fa9f87d),
+        (3873, 10, 0x0aabda9f2178db2b),
+        (1926, 5, 0xc7509f1af52005ea),
+        (3358, 8, 0x09981dd92971a2d4),
+        (2224, 5, 0xee2261acf3976e72),
+        (2332, 5, 0xfb739bc9bcec9705),
+        (12809, 25, 0xf9d2d7c7de7fedfa),
+        (6840, 14, 0x68954349e823bbef),
+        (4863, 10, 0x9ef3c2e8cbff1cb3),
+        (4916, 9, 0x2f1dcdb1b4f36fd9),
+    ];
+
+    /// Every line of the receipt vocabulary shapes to the glyphs and positions
+    /// harfrust 0.13 gave it. A later shaper that moves one mark or one advance
+    /// fails here, and names the line, before a receipt prints differently.
+    #[test]
+    fn the_receipt_vocabulary_shapes_as_it_did_under_harfrust_0_13() {
+        let faces = Faces::load().unwrap();
+        for ((text, weight, rtl), expected) in VOCABULARY.iter().zip(VOCABULARY_UNDER_HARFRUST_0_13)
+        {
+            let line = shape_line(&faces, text, *weight, *rtl).unwrap();
+            assert_eq!(
+                (line.width_units, line.glyphs.len(), fingerprint(&line)),
+                expected,
+                "{text}"
+            );
+        }
+    }
 }
