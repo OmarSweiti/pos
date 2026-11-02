@@ -129,7 +129,7 @@ harfrust = "0.15"
 # `harfrust` above is already built on. So this is not a second dependency
 # family, it is the same one: `skrifa` and `harfrust` share `read-fonts`, and
 # adding it costs two crates.
-skrifa = "0.47"
+skrifa = "0.49"
 # The Unicode Bidirectional Algorithm, for the Latin SKU and the Western digits
 # that sit inside an Arabic line. This is the "+ bidi" half of the phase file's
 # diagram; a shaper works one direction at a time and does not reorder.
