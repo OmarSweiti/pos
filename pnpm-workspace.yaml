@@ -22,4 +22,4 @@ engineStrict: true
 # Keep every optional peer chosen by Vite/Vitest on the runtime's declaration
 # major, including workspace packages that do not import Node APIs themselves.
 overrides:
-  "@types/node": 24.13.3
+  "@types/node": 24.19.2
