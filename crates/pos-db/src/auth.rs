@@ -27,7 +27,8 @@
 //! A PIN and a PHC string are on the never-log list (`pin`, `pin_hash`).
 //! No error here carries either, nor any part of one.
 
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::password_hash::phc::{Output, PasswordHash};
+use argon2::password_hash::{Error as HashError, PasswordHasher, PasswordVerifier};
 use argon2::{Algorithm, Argon2, Params, Version};
 use pos_domain::Timestamp;
 
@@ -144,9 +145,8 @@ fn hasher() -> Result<Argon2<'static>, AuthError> {
 pub fn hash_pin(pin: &str) -> Result<String, AuthError> {
     let mut salt = [0u8; 16];
     getrandom::fill(&mut salt).map_err(|_| AuthError::Hashing("the OS supplied no salt"))?;
-    let salt = SaltString::encode_b64(&salt).map_err(|_| AuthError::Hashing("salt"))?;
     hasher()?
-        .hash_password(pin.as_bytes(), &salt)
+        .hash_password_with_salt(pin.as_bytes(), &salt)
         .map(|hash| hash.to_string())
         .map_err(|_| AuthError::Hashing("the hasher refused the PIN"))
 }
@@ -164,12 +164,12 @@ pub fn verify_pin(pin: &str, hash: &str) -> Result<bool, AuthError> {
     let parsed = argon2id(hash)?;
     match Argon2::default().verify_password(pin.as_bytes(), &parsed) {
         Ok(()) => Ok(true),
-        Err(argon2::password_hash::Error::Password) => Ok(false),
+        Err(HashError::PasswordInvalid) => Ok(false),
         Err(_) => Err(AuthError::UnreadableHash),
     }
 }
 
-fn argon2id(hash: &str) -> Result<PasswordHash<'_>, AuthError> {
+fn argon2id(hash: &str) -> Result<PasswordHash, AuthError> {
     let parsed = PasswordHash::new(hash).map_err(|_| AuthError::UnreadableHash)?;
     if parsed.algorithm != Algorithm::Argon2id.ident() {
         return Err(AuthError::NotArgon2id);
@@ -192,14 +192,8 @@ pub fn profile_of(hash: &str) -> Result<PinHashProfile, AuthError> {
         m_cost_kib: params.m_cost(),
         t_cost: params.t_cost(),
         p_cost: params.p_cost(),
-        output_len: parsed.hash.map_or(0, |h| h.len()),
-        salt_len: parsed
-            .salt
-            .and_then(|s| {
-                let mut buf = [0u8; 64];
-                s.decode_b64(&mut buf).ok().map(<[u8]>::len)
-            })
-            .unwrap_or(0),
+        output_len: parsed.hash.as_ref().map_or(0, Output::len),
+        salt_len: parsed.salt.as_ref().map_or(0, |salt| salt.len()),
     };
     let reviewed = PinHashProfile {
         version: 0,
@@ -360,7 +354,7 @@ mod tests {
             Version::V0x13,
             Params::new(19_456, 2, 1, Some(32)).unwrap(),
         )
-        .hash_password(b"1234", &SaltString::encode_b64(&[7u8; 16]).unwrap())
+        .hash_password_with_salt(b"1234", &[7u8; 16])
         .unwrap()
         .to_string();
         assert_eq!(verify_pin("1234", &weak), Ok(true));
@@ -379,7 +373,7 @@ mod tests {
                 Version::V0x13,
                 Params::new(m, t, l, Some(out)).unwrap(),
             )
-            .hash_password(b"1234", &SaltString::encode_b64(salt).unwrap())
+            .hash_password_with_salt(b"1234", salt)
             .unwrap()
             .to_string()
         };
