@@ -609,7 +609,9 @@ fn verify_against(
     // `try_from` rather than `as usize`, which would wrap -1 to a huge number and
     // silently skip every migration.
     let applied = usize::try_from(found).map_err(|_| DbError::SchemaVersionInvalid { found })?;
-    let Some(expected) = shapes.get(applied).filter(|_| applied <= supported) else {
+    // `shapes` runs from no migration to all of them, so a version past its
+    // end was written by a newer build.
+    let Some(expected) = shapes.get(applied) else {
         return Err(DbError::SchemaTooNew { found, supported });
     };
 

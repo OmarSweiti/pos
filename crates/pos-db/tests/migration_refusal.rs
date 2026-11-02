@@ -291,6 +291,16 @@ fn a_file_at_every_earlier_version_migrates_through_the_check() {
             .applied(),
         migrations().len()
     );
+    // The engine makes objects of its own, which no migration creates: an
+    // `ANALYZE` writes `sqlite_stat1`. They are not the schema's difference.
+    new_file.execute_batch("ANALYZE;").unwrap();
+    assert!(
+        schema(&new_file)
+            .iter()
+            .any(|(_, name, _)| name == "sqlite_stat1")
+    );
+    drop(new_file);
+    drop(pos_db::open(&fresh, KEY).expect("an analysed file still opens"));
     for step in 0..migrations().len() {
         let path = dir.path().join(format!("at-{step}.db"));
         drop(built(&path, step));
@@ -299,4 +309,30 @@ fn a_file_at_every_earlier_version_migrates_through_the_check() {
         assert_eq!(user_version(&conn), SCHEMA_VERSION, "from {step}");
         assert_eq!(schema(&conn), full, "from {step}");
     }
+}
+
+/// An append-only trigger weakened under its own name rather than dropped: the
+/// name is still there and its definition is not the version's. That is
+/// refused too, as altered, because the definition is what keeps the rows
+/// append-only, not the name.
+#[test]
+fn a_trigger_redefined_under_its_own_name_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("weakened.db");
+    drop(pos_db::open(&path, KEY).unwrap());
+    raw(&path)
+        .execute_batch(
+            "DROP TRIGGER audit_log_no_update;
+             CREATE TRIGGER audit_log_no_update BEFORE UPDATE ON audit_log BEGIN SELECT 1; END;",
+        )
+        .unwrap();
+    assert_eq!(
+        refused(&path),
+        Named {
+            recorded: SCHEMA_VERSION,
+            missing: Vec::new(),
+            unexpected: Vec::new(),
+            altered: vec!["trigger audit_log_no_update".to_owned()],
+        }
+    );
 }
