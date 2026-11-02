@@ -66,7 +66,7 @@ CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 PG_MAJOR = 18
 PG_IMAGE = (
     "postgres:18-alpine@sha256:"
-    "77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873"
+    "10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5"
 )
 PGDATA = f"/var/lib/postgresql/{PG_MAJOR}/docker"
 PG_VOLUME_ROOT = "/var/lib/postgresql"
