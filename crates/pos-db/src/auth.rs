@@ -433,6 +433,46 @@ mod tests {
         }
     }
 
+    /// `hash_pin`'s hasher and salt encoding as #337 shipped them on argon2
+    /// 0.5.3, run with a fixed synthetic salt in place of the OS's, over the
+    /// synthetic PIN `1234`: once under [`PIN_PROFILE`], once under a weaker
+    /// profile. Made by 0.5.3 itself, and pinned so that no later version of
+    /// the hashing crates can change what a stored hash means unnoticed.
+    const PROFILE_HASH_FROM_ARGON2_0_5: &str = "$argon2id$v=19$m=65536,t=3,p=4$WlpaWlpaWlpaWlpaWlpaWg$H6Mg4R7TMpPqBMzsAx+cZ02f1KLa/mvNeCgX+EK2fm0";
+    const WEAK_HASH_FROM_ARGON2_0_5: &str = "$argon2id$v=19$m=19456,t=2,p=1$BwcHBwcHBwcHBwcHBwcHBw$zNuiYOu21hGgqQNHY39hLRXRViWyhpO1sMStSUJ2iAc";
+
+    /// A hash stored by an earlier build of the hashing crates still verifies,
+    /// still reads back as the profile, and a weaker one is still flagged for
+    /// a rehash. A register's staff must never be locked out by an upgrade.
+    /// The assertions name no hash, so a failure prints none.
+    #[test]
+    fn a_pin_hash_stored_under_argon2_0_5_still_verifies() {
+        let stored = PROFILE_HASH_FROM_ARGON2_0_5;
+        assert!(verify_pin("1234", stored) == Ok(true), "the stored PIN");
+        assert!(verify_pin("1235", stored) == Ok(false), "a wrong PIN");
+        assert!(profile_of(stored) == Ok(PIN_PROFILE), "its profile");
+        assert!(needs_rehash(stored) == Ok(false), "no rehash");
+        let weak = WEAK_HASH_FROM_ARGON2_0_5;
+        assert!(verify_pin("1234", weak) == Ok(true), "the weak hash's PIN");
+        assert!(needs_rehash(weak) == Ok(true), "the weak hash's rehash");
+    }
+
+    /// Given the same salt, today's hasher writes byte for byte the PHC string
+    /// argon2 0.5.3 wrote: the same algorithm, version, parameters, salt
+    /// encoding and tag.
+    #[test]
+    fn the_profile_hashes_to_its_known_answer() {
+        let today = hasher()
+            .unwrap()
+            .hash_password_with_salt(b"1234", &[0x5A; 16])
+            .unwrap()
+            .to_string();
+        assert!(
+            today == PROFILE_HASH_FROM_ARGON2_0_5,
+            "the profile no longer hashes to its known answer"
+        );
+    }
+
     #[test]
     fn a_new_pin_has_the_digits_its_account_needs() {
         assert_eq!(minimum_pin_digits(["sale.create", "line.void"]), 4);
