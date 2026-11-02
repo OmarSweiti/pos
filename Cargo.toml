@@ -119,7 +119,11 @@ sqlx = { version = "0.9", default-features = false, features = [
 # would be permanent debt for the sake of one afternoon. Measured before the
 # swap: harfrust returns the *identical* glyph ids, advances and mark offsets
 # for the pinned Arabic word, and is 13 crates against rustybuzz's 20.
-harfrust = "0.13"
+# 0.15 changed the shaping API and no glyph: it shapes the receipt vocabulary
+# exactly as 0.13 did, which `the_receipt_vocabulary_shapes_as_it_did_under_harfrust_0_13`
+# holds every later version to. It also shares `skrifa`'s `read-fonts`, one
+# copy rather than two.
+harfrust = "0.15"
 # Metrics and glyph outlines. `harfrust` shapes and does not draw.
 #
 # `ttf-parser` was the first choice here, for symmetry with what `rustybuzz`
