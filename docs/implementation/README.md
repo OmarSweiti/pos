@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **67 of 121 executable microsteps fully complete (~55%)**: `1.1.0`
+Phase 1 has **68 of 121 executable microsteps fully complete (~56%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -161,7 +161,10 @@ and `1.8.1` (transaction discipline held by a test: every shipped write takes th
 transaction, none begins or ends one of its own but the migration runner, and a fact write handed
 only a connection does not compile), and `1.6.8` (the never-log registry, one constant read by the
 log scrubber and by the audit-payload guard alike; every log line scrubbed by field name at any depth;
-and a command's error that hands the webview a code, never its source).
+and a command's error that hands the webview a code, never its source), and `1.6.7` (the IPC command
+registry — every command the shell registers named once, for the handler and for the walk; each one
+proving a capability or saying why it proves none; and every approval a command takes bound to one
+entity, one amount and its reason, with the department sale's threshold held at its boundary).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on

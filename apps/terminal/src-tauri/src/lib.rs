@@ -20,6 +20,12 @@ fn split_tender(total_minor: i64, parts: u32) -> IpcResult<Vec<i64>> {
         .map_err(|e| IpcError::from_source("money_split_failed", "error.money.split", &e))
 }
 
+// Every command the webview can invoke, named once: the handler `run` installs
+// and the list the IPC contract test walks are both made from this list
+// (`ipc::registry`, 1.6.7). A command added here needs its row in
+// `ipc::registry::COMMANDS`.
+ipc::registry::commands![split_tender];
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Every log line passes through the scrubber, before anything can log.
@@ -28,7 +34,7 @@ pub fn run() {
     // unrecoverable and must be loud (conventions §4 exempts main/run).
     #[allow(clippy::expect_used)]
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![split_tender])
+        .invoke_handler(invoke_handler())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
