@@ -984,7 +984,7 @@ on their worst day.
 | **Clock moved backwards** (E.6) | `sudo date -v-2H` (macOS), then sell | an audit anomaly is recorded; timestamps never decrease; sequences unaffected |
 | **Day boundary** (E.7) | open a shift at 00:30 local, cutover 04:00 | the shift, its sales and its Z all carry **yesterday's** business date |
 | **Disk full** (E.5) | fill a small disk image and point the DB at it | new sales are blocked with an alarm, and nothing is half-written |
-| **Half-migrated database** (E.58) | set `PRAGMA user_version` above `MIGRATIONS.len()` | the app refuses to start and says why — it does not guess |
+| **Half-migrated database** (E.58) | on a copy, set `PRAGMA user_version` one below the version it records (a step whose version did not commit), or one above it while still within `MIGRATIONS.len()` (a version whose step did not) | the app refuses to start with `SchemaShapeMismatch`, naming each object that differs, and the file is untouched — it does not guess. Above `MIGRATIONS.len()` it is `SchemaTooNew`, a newer build's file |
 | **Backup and restore** (G-1) | take a backup, `just db-local-reset`, restore | every sale is still there, byte-identical |
 | **Two registers, last unit** (E.12) | two instances offline, both sell the last unit | both sales stand; stock goes negative and is flagged |
 

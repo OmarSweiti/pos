@@ -293,6 +293,8 @@ This line read "microstep 5.4.4" until 1.6.6 landed, and both the other two site
 
 Reproducing a break for a drill requires suspending the append-only triggers on a **copy** of the database, because the triggers correctly refuse the edit. That is the only sanctioned way to produce a tampered state, and it is what an investigator would do too.
 
+Since 1.8.1b a trigger suspended and left suspended is itself visible. The copy's schema is no longer the one its version creates, so it no longer opens as a register, and `verify-audit` reads it anyway and names the missing trigger on its schema line. It counts that as evidence, exit 1, even where every chain agrees. A drill that restores the trigger after the edit reproduces a break in the rows alone.
+
 ---
 
 ## 5 · Permission enforcement (gap G-6)
