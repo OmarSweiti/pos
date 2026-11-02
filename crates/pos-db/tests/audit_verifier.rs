@@ -216,17 +216,47 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// Rewrite a copy, with the append-only trigger named by `trigger` removed.
+/// Rewrite a copy's rows past the append-only trigger named by `trigger`, then
+/// put the trigger back exactly as it was.
 ///
 /// The `DROP` is the simulation: an attacker holding the file holds the whole
 /// schema too, and a chain that could only be defeated by someone unable to
-/// drop a trigger would not be worth hashing.
+/// drop a trigger would not be worth hashing. A careful one restores it after,
+/// leaving a schema identical to its version's (1.8.1b), so what the verifier
+/// has to find is in the rows alone. [`drop_trigger`] is the careless one.
 fn tamper(copy: &Path, trigger: &str, statements: &[&str]) {
+    let connection =
+        pos_db::open(copy, KEY).expect("the copy must open like any register database");
+    let definition: String = connection
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?1",
+            [trigger],
+            |row| row.get(0),
+        )
+        .expect("the trigger being suspended exists");
+    connection
+        .execute_batch(&format!("DROP TRIGGER {trigger};"))
+        .expect("a copy is where a trigger may be dropped; the original refuses the write itself");
+    for statement in statements {
+        connection.execute(statement, []).unwrap_or_else(|error| {
+            panic!("the tamper statement must apply: {statement}: {error}")
+        });
+    }
+    connection
+        .execute_batch(&definition)
+        .expect("the trigger goes back exactly as it was");
+    connection
+        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+        .expect("the rewritten copy must be on disk before the verifier opens it");
+}
+
+/// Rewrite a copy's rows past `trigger`, and leave the trigger dropped.
+fn drop_trigger(copy: &Path, trigger: &str, statements: &[&str]) {
     let connection =
         pos_db::open(copy, KEY).expect("the copy must open like any register database");
     connection
         .execute_batch(&format!("DROP TRIGGER {trigger};"))
-        .expect("a copy is where a trigger may be dropped; the original refuses the write itself");
+        .expect("a copy is where a trigger may be dropped");
     for statement in statements {
         connection.execute(statement, []).unwrap_or_else(|error| {
             panic!("the tamper statement must apply: {statement}: {error}")
@@ -353,6 +383,66 @@ fn verifier_reports_the_first_broken_sequence() {
 
     // And the untouched original still verifies, so the tamper is the copy's.
     assert_eq!(verify(evidence.path()).code, 0);
+}
+
+/// 1.8.1b. A copy whose trigger was dropped and left dropped no longer opens as
+/// a register (`pos_db::open` refuses a schema that is not its version's), and
+/// the verifier still reads it: the schema line names the missing trigger, the
+/// chain is walked as found, and the run is evidence even where no row changed.
+/// The owner's decision on #357.
+#[test]
+fn a_copy_whose_schema_is_not_its_versions_is_read_and_named() {
+    let (evidence, _) = Evidence::chain("careless.db", 4);
+    let untouched = evidence.beside("careless-no-row.db");
+    drop_trigger(&untouched, "audit_log_no_update", &[]);
+    let edited = evidence.beside("careless-edited.db");
+    drop_trigger(
+        &edited,
+        "audit_log_no_update",
+        &["UPDATE audit_log SET reason = 'edited' WHERE seq = 3"],
+    );
+
+    // The register refuses both, by name and untouched.
+    for copy in [&untouched, &edited] {
+        let refused = pos_db::open(copy, KEY).expect_err("a register never runs on such a file");
+        assert!(
+            matches!(&refused, pos_db::DbError::SchemaShapeMismatch { missing, unexpected, altered, .. }
+                if missing == &["trigger audit_log_no_update".to_owned()]
+                    && unexpected.is_empty() && altered.is_empty()),
+            "{refused:?}"
+        );
+    }
+
+    // No row changed: every chain agrees, and the schema alone is the evidence.
+    let run = verify(&untouched);
+    assert_eq!(run.code, 1, "{}{}", run.out, run.err);
+    assert!(run.says("schema      DIFFERS from version"), "{}", run.out);
+    assert!(
+        run.says("missing     trigger audit_log_no_update"),
+        "{}",
+        run.out
+    );
+    assert!(
+        run.says("INTACT"),
+        "the chain is still walked:\n{}",
+        run.out
+    );
+    assert!(run.says("summary: TAMPERED (exit 1)"), "{}", run.out);
+
+    // An edited row is still named, beside the schema.
+    let run = verify(&edited);
+    assert_eq!(run.code, 1, "{}{}", run.out, run.err);
+    assert!(
+        run.says("missing     trigger audit_log_no_update"),
+        "{}",
+        run.out
+    );
+    assert!(run.says("BROKEN at seq 3"), "{}", run.out);
+
+    // And a copy left as the application wrote it says so.
+    let run = verify(evidence.path());
+    assert_eq!(run.code, 0, "{}{}", run.out, run.err);
+    assert!(run.says("as this build creates it"), "{}", run.out);
 }
 
 /// **What a careless version of this test would miss.** Delete the newest rows,

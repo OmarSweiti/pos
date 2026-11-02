@@ -2,7 +2,10 @@
 //! Owns: connection setup, key handling, migrations. (Blueprint §2, §7)
 
 use rusqlite::Connection;
+use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 pub mod auth;
@@ -32,6 +35,25 @@ pub enum DbError {
     SchemaTooNew { found: i64, supported: usize },
     #[error("database reports an impossible schema version ({found})")]
     SchemaVersionInvalid { found: i64 },
+    /// The file's schema is not the one its recorded version creates (E.58).
+    /// Each list names objects as `<type> <name>`, such as
+    /// `trigger audit_log_no_update`.
+    #[error(
+        "refusing to open: this file records schema version {recorded}, but its schema is \
+         not that version's ({}). A migration was interrupted, or the schema was changed \
+         outside this application, and which one cannot be known from here; nothing is \
+         repaired or migrated. Restore the last verified backup",
+        shape_difference(.missing, .unexpected, .altered)
+    )]
+    SchemaShapeMismatch {
+        recorded: i64,
+        /// Objects the recorded version creates that the file lacks.
+        missing: Vec<String>,
+        /// Objects the file holds that the recorded version does not create.
+        unexpected: Vec<String>,
+        /// Objects both hold, defined differently.
+        altered: Vec<String>,
+    },
     #[error(
         "refusing to open a register database with synchronous={found}: a completed \
          sale must survive a power cut, which requires synchronous=FULL (2)"
@@ -267,13 +289,94 @@ const MIGRATIONS: &[&str] = &[
 /// carries, and what `PRAGMA user_version` reads after a successful open.
 pub const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 
+/// The migrations this build carries, in the order the runner applies them.
+#[must_use]
+pub fn migrations() -> &'static [&'static str] {
+    MIGRATIONS
+}
+
+/// A schema version a file was checked at: how many migrations it records as
+/// applied, and whose schema it holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SchemaVersion(usize);
+
+impl SchemaVersion {
+    /// The number of migrations applied.
+    #[must_use]
+    pub const fn applied(self) -> usize {
+        self.0
+    }
+}
+
+/// Check that the file's schema is the one its recorded version creates
+/// (microstep 1.8.1b, E.58).
+///
+/// The recorded version is `PRAGMA user_version`, which the runner updates in
+/// the same transaction as each migration. The schema expected at that
+/// version is derived from `migrations` themselves, replayed in memory with
+/// the runner's per-file transactions, and compared object by object: every
+/// table, index, trigger and view, by type, name, table and definition.
+/// SQLite's own `sqlite_` objects are left out, because the engine creates
+/// some on its own, such as `sqlite_stat1` after an `ANALYZE`.
+///
+/// It never decides which half of an interrupted step committed. A file whose
+/// schema is ahead of its version and one whose version is ahead of its schema
+/// are refused alike, because business writes against either can make the
+/// next migration destroy facts.
+///
+/// # Errors
+///
+/// - [`DbError::SchemaShapeMismatch`]: the schema is not the recorded
+///   version's, naming every object that differs.
+/// - [`DbError::SchemaTooNew`]: a version above `migrations.len()`, written by
+///   a newer build.
+/// - [`DbError::SchemaVersionInvalid`]: a negative version.
+/// - [`DbError::Sqlite`]: the schema cannot be read, or `migrations` cannot be
+///   replayed.
+pub fn verify_runtime_schema(
+    conn: &Connection,
+    migrations: &[&str],
+) -> Result<SchemaVersion, DbError> {
+    verify_against(conn, &expected_shapes(migrations)?, migrations.len())
+}
+
 /// Open (or create) an encrypted database and bring it to the latest schema.
 ///
 /// The storage engine is held to [`storage_version::STORAGE_POLICY`] before
 /// anything else is set on the connection (1.8.0). Today's build opens in
 /// single-connection mode: no second source connection may be opened beside
 /// this one until the engine carries the WAL-reset fix (#244).
+///
+/// The schema is checked by [`verify_runtime_schema`] before the first
+/// migration and after each one, and a file whose schema is not its recorded
+/// version's is refused untouched, as [`DbError::SchemaShapeMismatch`].
 pub fn open(path: &Path, key: &str) -> Result<Connection, DbError> {
+    let (conn, schema) = open_checked(
+        path,
+        key,
+        &storage_version::STORAGE_POLICY,
+        storage_version::reported_versions,
+    )?;
+    schema?;
+    Ok(conn)
+}
+
+/// Open a database to read as evidence, whatever its schema turned out to be.
+///
+/// Every check [`open`] makes is made, and a file whose schema is its
+/// recorded version's is migrated forward as [`open`] would. A file whose
+/// schema is not is returned as found, unmigrated, with the
+/// [`DbError::SchemaShapeMismatch`] that names the difference beside it. Only
+/// the forensic `verify-audit` uses this: a register never runs on such a
+/// file, and an investigator must still be able to read one.
+///
+/// # Errors
+///
+/// Everything [`open`] refuses except a schema that differs from its version.
+pub fn open_for_inspection(
+    path: &Path,
+    key: &str,
+) -> Result<(Connection, Result<SchemaVersion, DbError>), DbError> {
     open_checked(
         path,
         key,
@@ -283,13 +386,15 @@ pub fn open(path: &Path, key: &str) -> Result<Connection, DbError> {
 }
 
 /// [`open`], with the policy and the version reader as arguments, so a test can
-/// put an engine no build here produces to the same open.
+/// put an engine no build here produces to the same open. It returns a
+/// schema that differs from its version beside the connection, which [`open`]
+/// refuses and [`open_for_inspection`] reports.
 pub(crate) fn open_checked(
     path: &Path,
     key: &str,
     policy: &storage_version::StorageVersionPolicy,
     report: fn(&Connection) -> Result<storage_version::ReportedVersions, DbError>,
-) -> Result<Connection, DbError> {
+) -> Result<(Connection, Result<SchemaVersion, DbError>), DbError> {
     let conn = Connection::open(path)?;
 
     // SQLCipher: the key pragma MUST be the first statement on the connection.
@@ -350,8 +455,11 @@ pub(crate) fn open_checked(
 
     assert_fts5(&conn)?;
 
-    migrate(&conn)?;
-    Ok(conn)
+    match migrate(&conn) {
+        Ok(version) => Ok((conn, Ok(version))),
+        Err(mismatch @ DbError::SchemaShapeMismatch { .. }) => Ok((conn, Err(mismatch))),
+        Err(error) => Err(error),
+    }
 }
 
 /// The compile option FTS5 is built in under.
@@ -395,9 +503,105 @@ fn fts5_verdict(compile_options_found: i64) -> Result<(), DbError> {
     Ok(())
 }
 
-fn migrate(conn: &Connection) -> Result<(), DbError> {
+/// Bring the file to [`SCHEMA_VERSION`], checking its schema before the first
+/// migration and after every one (1.8.1b).
+///
+/// A file that fails the first check is left exactly as it was found: no
+/// migration runs on a schema whose version it does not hold.
+fn migrate(conn: &Connection) -> Result<SchemaVersion, DbError> {
+    let shapes = expected_shapes(MIGRATIONS)?;
+    let mut version = verify_against(conn, &shapes, MIGRATIONS.len())?;
+
+    for (idx, sql) in MIGRATIONS.iter().enumerate().skip(version.applied()) {
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch(sql)?;
+        tx.pragma_update(None, "user_version", (idx + 1) as i64)?;
+        tx.commit()?;
+        version = verify_against(conn, &shapes, MIGRATIONS.len())?;
+    }
+    Ok(version)
+}
+
+/// One object of a schema, as `sqlite_master` describes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SchemaObject {
+    kind: String,
+    name: String,
+    table: String,
+    sql: Option<String>,
+}
+
+impl SchemaObject {
+    /// How a refusal names it: `trigger audit_log_no_update`.
+    fn label(&self) -> String {
+        format!("{} {}", self.kind, self.name)
+    }
+}
+
+/// The objects of one schema, keyed by type and name.
+type Shape = BTreeMap<(String, String), SchemaObject>;
+
+/// The shapes of this build's own chain, derived once per process.
+static RUNTIME_SHAPES: OnceLock<Vec<Shape>> = OnceLock::new();
+
+/// The schema each version of `migrations` creates, from no migration to all
+/// of them: element `n` is the shape after the first `n`.
+fn expected_shapes(migrations: &[&str]) -> Result<Cow<'static, [Shape]>, DbError> {
+    if std::ptr::eq(migrations, MIGRATIONS) {
+        if let Some(shapes) = RUNTIME_SHAPES.get() {
+            return Ok(Cow::Borrowed(shapes));
+        }
+        let shapes = replay(migrations)?;
+        return Ok(Cow::Borrowed(RUNTIME_SHAPES.get_or_init(|| shapes)));
+    }
+    replay(migrations).map(Cow::Owned)
+}
+
+/// Apply `migrations` to an empty in-memory database the way the runner
+/// does, one transaction per file, and read the schema after each.
+fn replay(migrations: &[&str]) -> Result<Vec<Shape>, DbError> {
+    let conn = Connection::open_in_memory()?;
+    conn.pragma_update(None, "foreign_keys", true)?;
+    let mut shapes = Vec::with_capacity(migrations.len() + 1);
+    shapes.push(shape_of(&conn)?);
+    for sql in migrations {
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch(sql)?;
+        tx.commit()?;
+        shapes.push(shape_of(&conn)?);
+    }
+    Ok(shapes)
+}
+
+/// The main schema's objects, leaving out SQLite's own.
+fn shape_of(conn: &Connection) -> Result<Shape, DbError> {
+    let mut statement = conn.prepare(
+        "SELECT type, name, tbl_name, sql FROM main.sqlite_master
+          WHERE name NOT LIKE 'sqlite\\_%' ESCAPE '\\'",
+    )?;
+    let objects = statement.query_map([], |row| {
+        Ok(SchemaObject {
+            kind: row.get(0)?,
+            name: row.get(1)?,
+            table: row.get(2)?,
+            sql: row.get(3)?,
+        })
+    })?;
+    let mut shape = Shape::new();
+    for object in objects {
+        let object = object?;
+        shape.insert((object.kind.clone(), object.name.clone()), object);
+    }
+    Ok(shape)
+}
+
+/// The version the file records, held to the shape `shapes` says it creates.
+fn verify_against(
+    conn: &Connection,
+    shapes: &[Shape],
+    supported: usize,
+) -> Result<SchemaVersion, DbError> {
     let found: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-    let supported = MIGRATIONS.len();
 
     // Conventions §9.5 (E.58): refuse a database this build cannot account for,
     // and say why. A counter above `supported` was written by a newer build whose
@@ -405,17 +609,57 @@ fn migrate(conn: &Connection) -> Result<(), DbError> {
     // `try_from` rather than `as usize`, which would wrap -1 to a huge number and
     // silently skip every migration.
     let applied = usize::try_from(found).map_err(|_| DbError::SchemaVersionInvalid { found })?;
-    if applied > supported {
+    // `shapes` runs from no migration to all of them, so a version past its
+    // end was written by a newer build.
+    let Some(expected) = shapes.get(applied) else {
         return Err(DbError::SchemaTooNew { found, supported });
-    }
+    };
 
-    for (idx, sql) in MIGRATIONS.iter().enumerate().skip(applied) {
-        let tx = conn.unchecked_transaction()?;
-        tx.execute_batch(sql)?;
-        tx.pragma_update(None, "user_version", (idx + 1) as i64)?;
-        tx.commit()?;
+    let actual = shape_of(conn)?;
+    let missing: Vec<String> = expected
+        .iter()
+        .filter(|(key, _)| !actual.contains_key(*key))
+        .map(|(_, object)| object.label())
+        .collect();
+    let unexpected: Vec<String> = actual
+        .iter()
+        .filter(|(key, _)| !expected.contains_key(*key))
+        .map(|(_, object)| object.label())
+        .collect();
+    let altered: Vec<String> = expected
+        .iter()
+        .filter(|(key, object)| actual.get(*key).is_some_and(|found| found != *object))
+        .map(|(_, object)| object.label())
+        .collect();
+    if missing.is_empty() && unexpected.is_empty() && altered.is_empty() {
+        Ok(SchemaVersion(applied))
+    } else {
+        Err(DbError::SchemaShapeMismatch {
+            recorded: found,
+            missing,
+            unexpected,
+            altered,
+        })
     }
-    Ok(())
+}
+
+/// A refusal's summary of a schema difference: each list's size and its
+/// first object.
+fn shape_difference(missing: &[String], unexpected: &[String], altered: &[String]) -> String {
+    [
+        ("missing", missing),
+        ("unexpected", unexpected),
+        ("altered", altered),
+    ]
+    .iter()
+    .filter_map(|(what, objects)| {
+        objects.first().map(|first| match objects.len() {
+            1 => format!("{what}: {first}"),
+            n => format!("{n} {what}, first {first}"),
+        })
+    })
+    .collect::<Vec<_>>()
+    .join("; ")
 }
 
 #[cfg(test)]

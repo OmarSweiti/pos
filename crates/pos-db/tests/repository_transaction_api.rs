@@ -27,10 +27,12 @@ mod repository_transaction_api {
     /// build that ships enables (`fixtures_feature.rs` holds that).
     const DEV_ONLY: &str = "fixtures";
 
-    /// The one function allowed to begin and end transactions of its own: the
+    /// The functions allowed to begin and end transactions of their own: the
     /// migration runner, which applies each file in a transaction of its own
-    /// and records the version with it.
-    const OWNS_ITS_TRANSACTIONS: (&str, &str) = ("lib.rs", "migrate");
+    /// and records the version with it, and its replay (1.8.1b), which applies
+    /// the same files the same way to an in-memory database it owns, never a
+    /// register's, to learn the schema each version creates.
+    const OWNS_ITS_TRANSACTIONS: [(&str, &str); 2] = [("lib.rs", "migrate"), ("lib.rs", "replay")];
 
     /// One function of the crate's source: where it is, what it takes, and
     /// what its body says once comments are taken out.
@@ -303,7 +305,7 @@ mod repository_transaction_api {
         let controlling: Vec<String> = all
             .iter()
             .filter(|f| controls_a_transaction(&f.body))
-            .filter(|f| (f.file.as_str(), f.name.as_str()) != OWNS_ITS_TRANSACTIONS)
+            .filter(|f| !OWNS_ITS_TRANSACTIONS.contains(&(f.file.as_str(), f.name.as_str())))
             .map(|f| format!("{}:{} {}", f.file, f.line, f.name))
             .collect();
         assert!(
@@ -329,13 +331,14 @@ mod repository_transaction_api {
             assert!(names.iter().any(|n| n == known), "{known} was not found");
         }
         assert!(writers.len() >= 15, "only {} writers found", writers.len());
-        assert!(
-            all.iter().any(
-                |f| (f.file.as_str(), f.name.as_str()) == OWNS_ITS_TRANSACTIONS
-                    && controls_a_transaction(&f.body)
-            ),
-            "the migration runner was not found owning its transactions"
-        );
+        for owner in OWNS_ITS_TRANSACTIONS {
+            assert!(
+                all.iter()
+                    .any(|f| (f.file.as_str(), f.name.as_str()) == owner
+                        && controls_a_transaction(&f.body)),
+                "{owner:?} was not found owning its transactions"
+            );
+        }
     }
 
     /// The scan's two questions, put to source that answers them each way.

@@ -278,26 +278,17 @@ mod clock {
         // "something is wrong with the clock" to "nothing is wrong with it",
         // which is the failure mode worth a hard error. The CHECK is bypassed
         // deliberately here — the point is what `load` does with a value it
-        // does not know, not whether today's schema can hold one.
+        // does not know, not whether today's schema can hold one. It is
+        // bypassed for the one write rather than edited out of the table: a
+        // schema that is not its version's no longer opens (1.8.1b).
         conn.execute_batch(
-            "PRAGMA writable_schema = ON;
-             UPDATE sqlite_schema
-                SET sql = replace(sql, '''monotonic_reset''', '''monotonic_reset'',''leaped''')
-              WHERE type = 'table' AND name = 'trusted_time_state';
-             PRAGMA writable_schema = OFF;",
+            "PRAGMA ignore_check_constraints = ON;
+             UPDATE trusted_time_state SET anomaly_kind = 'leaped', anomaly_by_ms = NULL;
+             PRAGMA ignore_check_constraints = OFF;",
         )
         .unwrap();
-        drop(conn);
 
-        let reopened = open(&dir.path().join("newer-build.db"));
-        reopened
-            .execute(
-                "UPDATE trusted_time_state SET anomaly_kind = 'leaped', anomaly_by_ms = NULL",
-                [],
-            )
-            .unwrap();
-
-        let error = ClockRepository::new(&reopened)
+        let error = ClockRepository::new(&conn)
             .load(&REGISTER)
             .expect_err("an unreadable anomaly must not read as the absence of one");
         assert!(
