@@ -105,6 +105,11 @@ pub enum RenderError {
     /// The page came out larger than a raster can address.
     #[error("the rendered page is {height_px} dots tall, past the {limit_px} limit")]
     PageTooTall { height_px: u32, limit_px: u32 },
+    /// The shaper refused a run of text. It cannot for any run the layout
+    /// builds, so this reports a broken invariant rather than a receipt to
+    /// retry, and the page is refused rather than printed with a line missing.
+    #[error("a run of receipt text could not be shaped")]
+    Unshapable,
 }
 
 /// The body text size, in dots per em, on every paper.

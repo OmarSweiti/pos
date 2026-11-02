@@ -24,7 +24,7 @@
 //! only arithmetic available — and it is what makes 1.7.5's byte-stable
 //! goldens possible.
 
-use harfrust::{Direction, FontRef, ShapeOptions, ShaperData, UnicodeBuffer};
+use harfrust::{Buffer, Direction, Font as ShapingFont, ShapeOptions, ShaperFont, shape};
 use pos_domain::receipt::{ReceiptModel, TextDirection};
 use skrifa::prelude::{LocationRef, Size};
 use skrifa::{FontRef as OutlineFont, MetadataProvider};
@@ -115,10 +115,10 @@ struct ShapedLine {
 pub(crate) struct Faces<'a> {
     regular: OutlineFont<'a>,
     bold: OutlineFont<'a>,
-    regular_font: FontRef<'a>,
-    bold_font: FontRef<'a>,
-    regular_shaper: ShaperData,
-    bold_shaper: ShaperData,
+    /// The shaper's view of each face. A `harfrust` font keeps its own
+    /// prepared layout tables, built on first use and reused by every shape.
+    regular_font: ShapingFont,
+    bold_font: ShapingFont,
     /// Design units per em. Both faces are the same family and agree; the
     /// regular one is the reference and `the_two_faces_agree_on_units_per_em`
     /// holds that.
@@ -134,12 +134,10 @@ impl<'a> Faces<'a> {
             .map_err(|_| RenderError::FontUnreadable("regular"))?;
         let bold = OutlineFont::from_index(font::BOLD, 0)
             .map_err(|_| RenderError::FontUnreadable("bold"))?;
-        let regular_font = FontRef::from_index(font::REGULAR, 0)
-            .map_err(|_| RenderError::FontUnreadable("regular"))?;
+        let regular_font =
+            ShapingFont::new(font::REGULAR, 0).ok_or(RenderError::FontUnreadable("regular"))?;
         let bold_font =
-            FontRef::from_index(font::BOLD, 0).map_err(|_| RenderError::FontUnreadable("bold"))?;
-        let regular_shaper = ShaperData::new(&regular_font);
-        let bold_shaper = ShaperData::new(&bold_font);
+            ShapingFont::new(font::BOLD, 0).ok_or(RenderError::FontUnreadable("bold"))?;
 
         // Unscaled metrics are design units, and this pipeline works in design
         // units until the very last step — so the casts below truncate nothing
@@ -154,8 +152,6 @@ impl<'a> Faces<'a> {
             bold,
             regular_font,
             bold_font,
-            regular_shaper,
-            bold_shaper,
             units_per_em,
             ascender_units,
             descender_units,
@@ -172,10 +168,10 @@ impl<'a> Faces<'a> {
     }
 
     /// The shaping source for one weight.
-    fn shaper(&self, weight: Weight) -> (&ShaperData, &FontRef<'a>) {
+    const fn shaping_font(&self, weight: Weight) -> &ShapingFont {
         match weight {
-            Weight::Regular => (&self.regular_shaper, &self.regular_font),
-            Weight::Bold => (&self.bold_shaper, &self.bold_font),
+            Weight::Regular => &self.regular_font,
+            Weight::Bold => &self.bold_font,
         }
     }
 
@@ -228,15 +224,28 @@ const fn units_to_px(units: i32, px_per_em: i32, units_per_em: i32) -> i32 {
 /// shaped on its own, in its own direction, and the runs are laid down in the
 /// visual order [`unicode_bidi`] returns — which is the whole algorithm, and
 /// the reason a shaper alone is not enough.
-fn shape_line(faces: &Faces<'_>, text: &str, weight: Weight, base_rtl: bool) -> ShapedLine {
+///
+/// # Errors
+///
+/// [`RenderError::Unshapable`] if the shaper refuses a run. It refuses only a
+/// buffer already shaped, one with no direction, or one that does not match a
+/// prepared plan, and every run here is a fresh buffer with its direction set
+/// and no plan. The refusal is still carried rather than unwrapped: a page with
+/// a line silently missing is a receipt that says less than the sale did.
+fn shape_line(
+    faces: &Faces<'_>,
+    text: &str,
+    weight: Weight,
+    base_rtl: bool,
+) -> Result<ShapedLine, RenderError> {
     let mut glyphs = Vec::new();
     let mut pen = 0;
 
     if text.is_empty() {
-        return ShapedLine {
+        return Ok(ShapedLine {
             glyphs,
             width_units: 0,
-        };
+        });
     }
 
     let base = if base_rtl { Level::rtl() } else { Level::ltr() };
@@ -254,7 +263,7 @@ fn shape_line(faces: &Faces<'_>, text: &str, weight: Weight, base_rtl: bool) -> 
             };
             let rtl = level.is_rtl();
 
-            let mut buffer = UnicodeBuffer::new();
+            let mut buffer = Buffer::new();
             buffer.push_str(slice);
             buffer.set_direction(if rtl {
                 Direction::RightToLeft
@@ -268,16 +277,14 @@ fn shape_line(faces: &Faces<'_>, text: &str, weight: Weight, base_rtl: bool) -> 
             // move off `rustybuzz`, which guessed on its own and so hid the
             // requirement.
             buffer.guess_segment_properties();
-            let (data, font) = faces.shaper(weight);
-            let shaped = data
-                .shaper(font)
-                .build()
-                .shape(buffer, ShapeOptions::default());
+            let font = ShaperFont::new(faces.shaping_font(weight));
+            shape(&font, &mut buffer, ShapeOptions::default())
+                .map_err(|_| RenderError::Unshapable)?;
 
-            for (info, position) in shaped
+            for (info, position) in buffer
                 .glyph_infos()
                 .iter()
-                .zip(shaped.glyph_positions().iter())
+                .zip(buffer.glyph_positions().iter())
             {
                 // `glyph_id` is a `u32` in the shaping API and a `u16` in every
                 // font format. A value past `u16` cannot come from a parsed
@@ -295,10 +302,10 @@ fn shape_line(faces: &Faces<'_>, text: &str, weight: Weight, base_rtl: bool) -> 
         }
     }
 
-    ShapedLine {
+    Ok(ShapedLine {
         glyphs,
         width_units: pen,
-    }
+    })
 }
 
 /// Greedy word wrap, measured in font units.
@@ -324,18 +331,18 @@ fn wrap(
     weight: Weight,
     base_rtl: bool,
     max_units: i32,
-) -> Vec<String> {
+) -> Result<Vec<String>, RenderError> {
     if text.trim().is_empty() {
-        return vec![String::new()];
+        return Ok(vec![String::new()]);
     }
 
-    let space = shape_line(faces, " ", weight, base_rtl).width_units;
+    let space = shape_line(faces, " ", weight, base_rtl)?.width_units;
     let mut lines: Vec<String> = Vec::new();
     let mut current = String::new();
     let mut current_units = 0;
 
     for word in text.split(' ').filter(|w| !w.is_empty()) {
-        for (piece, piece_units) in split_to_fit(faces, word, weight, base_rtl, max_units) {
+        for (piece, piece_units) in split_to_fit(faces, word, weight, base_rtl, max_units)? {
             let joined = if current.is_empty() {
                 piece_units
             } else {
@@ -363,7 +370,7 @@ fn wrap(
     if lines.is_empty() {
         lines.push(String::new());
     }
-    lines
+    Ok(lines)
 }
 
 /// Break one word into pieces that each fit the measure.
@@ -382,10 +389,10 @@ fn split_to_fit(
     weight: Weight,
     base_rtl: bool,
     max_units: i32,
-) -> Vec<(String, i32)> {
-    let whole = shape_line(faces, word, weight, base_rtl).width_units;
+) -> Result<Vec<(String, i32)>, RenderError> {
+    let whole = shape_line(faces, word, weight, base_rtl)?.width_units;
     if max_units <= 0 || whole <= max_units {
-        return vec![(word.to_owned(), whole)];
+        return Ok(vec![(word.to_owned(), whole)]);
     }
 
     let mut pieces = Vec::new();
@@ -394,20 +401,20 @@ fn split_to_fit(
     for ch in word.chars() {
         let mut candidate = piece.clone();
         candidate.push(ch);
-        let candidate_units = shape_line(faces, &candidate, weight, base_rtl).width_units;
+        let candidate_units = shape_line(faces, &candidate, weight, base_rtl)?.width_units;
         if piece.is_empty() || candidate_units <= max_units {
             piece = candidate;
             piece_units = candidate_units;
         } else {
             pieces.push((core::mem::take(&mut piece), piece_units));
             piece.push(ch);
-            piece_units = shape_line(faces, &piece, weight, base_rtl).width_units;
+            piece_units = shape_line(faces, &piece, weight, base_rtl)?.width_units;
         }
     }
     if !piece.is_empty() {
         pieces.push((piece, piece_units));
     }
-    pieces
+    Ok(pieces)
 }
 
 /// Where a row's label goes, and the logical lines it is set in.
@@ -439,22 +446,29 @@ fn place_label(
     base_rtl: bool,
     room_units: i32,
     full_units: i32,
-) -> LabelPlacement {
+) -> Result<LabelPlacement, RenderError> {
     if room_units > 0 {
         // The common path, and one shape: almost every label fits beside its
         // amount whole. Shaping is the whole cost of a layout.
-        if shape_line(faces, label, weight, base_rtl).width_units <= room_units {
-            return LabelPlacement::Beside(vec![label.to_owned()]);
+        if shape_line(faces, label, weight, base_rtl)?.width_units <= room_units {
+            return Ok(LabelPlacement::Beside(vec![label.to_owned()]));
         }
-        let every_word_fits = label
-            .split(' ')
-            .filter(|word| !word.is_empty())
-            .all(|word| shape_line(faces, word, weight, base_rtl).width_units <= room_units);
+        let mut every_word_fits = true;
+        for word in label.split(' ').filter(|word| !word.is_empty()) {
+            if shape_line(faces, word, weight, base_rtl)?.width_units > room_units {
+                every_word_fits = false;
+                break;
+            }
+        }
         if every_word_fits {
-            return LabelPlacement::Beside(wrap(faces, label, weight, base_rtl, room_units));
+            return Ok(LabelPlacement::Beside(wrap(
+                faces, label, weight, base_rtl, room_units,
+            )?));
         }
     }
-    LabelPlacement::Above(wrap(faces, label, weight, base_rtl, full_units))
+    Ok(LabelPlacement::Above(wrap(
+        faces, label, weight, base_rtl, full_units,
+    )?))
 }
 
 /// Where a line of `width_px` starts, given the page and its direction.
@@ -500,16 +514,22 @@ struct Page<'a> {
 
 impl Page<'_> {
     /// Add one paragraph, wrapped, at one alignment.
-    fn text(&mut self, text: &str, style: TextStyle, alignment: Alignment) {
+    fn text(
+        &mut self,
+        text: &str,
+        style: TextStyle,
+        alignment: Alignment,
+    ) -> Result<(), RenderError> {
         let max_units = px_to_units(
             self.paper.content_width_px(),
             style.px_per_em,
             self.faces.units_per_em,
         );
-        for logical in wrap(self.faces, text, style.weight, self.rtl, max_units) {
-            let shaped = shape_line(self.faces, &logical, style.weight, self.rtl);
+        for logical in wrap(self.faces, text, style.weight, self.rtl, max_units)? {
+            let shaped = shape_line(self.faces, &logical, style.weight, self.rtl)?;
             self.place(&shaped, style, alignment);
         }
+        Ok(())
     }
 
     /// Add a label and an amount on one row, at opposite ends.
@@ -526,11 +546,11 @@ impl Page<'_> {
     /// opposite ends of a row they do not both fit on, and the two runs print
     /// over each other. Nothing in the references says so because nothing in
     /// the references imagined a label written by a merchant.
-    fn row(&mut self, label: &str, amount: &str, style: TextStyle) {
+    fn row(&mut self, label: &str, amount: &str, style: TextStyle) -> Result<(), RenderError> {
         let content = self.paper.content_width_px();
         let margin = self.paper.margin_px();
 
-        let amount_shaped = shape_line(self.faces, amount, style.weight, self.rtl);
+        let amount_shaped = shape_line(self.faces, amount, style.weight, self.rtl)?;
         let amount_px = units_to_px(
             amount_shaped.width_units,
             style.px_per_em,
@@ -544,9 +564,8 @@ impl Page<'_> {
         // which put a glyph at x=389 on a 384-dot page: the label was being
         // wrapped and the amount never was.
         if amount_px > content {
-            self.text(label, style, Alignment::Start);
-            self.text(amount, style, Alignment::Start);
-            return;
+            self.text(label, style, Alignment::Start)?;
+            return self.text(amount, style, Alignment::Start);
         }
 
         // One em of clear space between the two columns, so they are read as
@@ -573,20 +592,20 @@ impl Page<'_> {
             self.rtl,
             px_to_units(label_room, style.px_per_em, self.faces.units_per_em),
             px_to_units(content, style.px_per_em, self.faces.units_per_em),
-        ) {
+        )? {
             LabelPlacement::Beside(lines) => lines,
             LabelPlacement::Above(lines) => {
                 for logical in &lines {
-                    let shaped = shape_line(self.faces, logical, style.weight, self.rtl);
+                    let shaped = shape_line(self.faces, logical, style.weight, self.rtl)?;
                     self.place(&shaped, style, Alignment::Start);
                 }
                 self.place(&amount_shaped, style, Alignment::End);
-                return;
+                return Ok(());
             }
         };
 
         for (index, logical) in label_lines.iter().enumerate() {
-            let label_shaped = shape_line(self.faces, logical, style.weight, self.rtl);
+            let label_shaped = shape_line(self.faces, logical, style.weight, self.rtl)?;
             let label_px = units_to_px(
                 label_shaped.width_units,
                 style.px_per_em,
@@ -608,6 +627,7 @@ impl Page<'_> {
             });
             self.cursor_y_px += self.faces.line_height_px(style.px_per_em);
         }
+        Ok(())
     }
 
     fn place(&mut self, shaped: &ShapedLine, style: TextStyle, alignment: Alignment) {
@@ -726,13 +746,13 @@ pub(crate) fn lay_out_with(
     };
 
     // ── merchant, legally required (master plan B.6) ────────────────────
-    page.text(&model.merchant.legal_name, strong, Alignment::Center);
-    page.text(&model.merchant.store_name, body, Alignment::Center);
+    page.text(&model.merchant.legal_name, strong, Alignment::Center)?;
+    page.text(&model.merchant.store_name, body, Alignment::Center)?;
     if let Some(address) = &model.merchant.address {
-        page.text(address, body, Alignment::Center);
+        page.text(address, body, Alignment::Center)?;
     }
     if let Some(tin) = &model.merchant.tin {
-        page.text(tin, body, Alignment::Center);
+        page.text(tin, body, Alignment::Center)?;
     }
     page.gap();
 
@@ -743,25 +763,25 @@ pub(crate) fn lay_out_with(
         words::doc_kind(model.doc_kind, language),
         strong,
         Alignment::Center,
-    );
+    )?;
     if let Some(mark) = model.watermark {
-        page.text(words::watermark(mark, language), strong, Alignment::Center);
+        page.text(words::watermark(mark, language), strong, Alignment::Center)?;
     }
 
     // ── the B2B buyer, when a TIN was captured ──────────────────────────
     if let Some(buyer) = &model.buyer {
         page.gap();
         if let Some(name) = &buyer.name {
-            page.row(words::buyer(language), name, body);
+            page.row(words::buyer(language), name, body)?;
         }
-        page.row(words::tax_number(language), &buyer.tin, body);
+        page.row(words::tax_number(language), &buyer.tin, body)?;
     }
 
     // ── header ──────────────────────────────────────────────────────────
     page.gap();
-    page.row(words::receipt_no(language), &model.header.receipt_no, body);
-    page.row(words::register(language), &model.header.register_code, body);
-    page.row(words::cashier(language), &model.header.cashier_name, body);
+    page.row(words::receipt_no(language), &model.header.receipt_no, body)?;
+    page.row(words::register(language), &model.header.register_code, body)?;
+    page.row(words::cashier(language), &model.header.cashier_name, body)?;
     // §2.3 asks for "date & time", and it is the field a customer needs to
     // return goods and an auditor needs to place the document in a period. The
     // business date is not the calendar date of `issued_at` for a sale after
@@ -771,13 +791,13 @@ pub(crate) fn lay_out_with(
         words::issued_at(language),
         &model.header.issued_at.to_iso8601(),
         body,
-    );
-    page.row("", &model.header.business_date.to_string(), body);
+    )?;
+    page.row("", &model.header.business_date.to_string(), body)?;
     page.rule();
 
     // ── lines, each with its allowances beneath it ──────────────────────
     for line in &model.lines {
-        page.text(&line.name, body, Alignment::Start);
+        page.text(&line.name, body, Alignment::Start)?;
         // "qty × unit · line total" (§2.3). The quantity renders through
         // `Qty::format`, which takes `is_weighed` because `0.347 kg` and `2`
         // are different documents; the amounts render through
@@ -790,9 +810,9 @@ pub(crate) fn lay_out_with(
             ),
             &format_amount(&line.line_total),
             body,
-        );
+        )?;
         for discount in &line.discounts {
-            page.row(&discount.label, &format_amount(&discount.amount), body);
+            page.row(&discount.label, &format_amount(&discount.amount), body)?;
         }
     }
     page.rule();
@@ -802,12 +822,12 @@ pub(crate) fn lay_out_with(
         words::subtotal(language),
         &format_amount(&model.totals.subtotal),
         body,
-    );
+    )?;
     page.row(
         words::discount(language),
         &format_amount(&model.totals.discount_total),
         body,
-    );
+    )?;
     // Net, tax and gross per rate — the sales-side evidence the whole tax
     // engine exists for, and the row a bi-monthly return is reconstructed from.
     // All three, not just the tax: a return needs the base it was charged on.
@@ -821,16 +841,16 @@ pub(crate) fn lay_out_with(
                 format_amount(&row.gross)
             ),
             body,
-        );
+        )?;
     }
     if let Some(adjustment) = &model.totals.rounding_adjustment {
-        page.row(words::rounding(language), &format_amount(adjustment), body);
+        page.row(words::rounding(language), &format_amount(adjustment), body)?;
     }
     page.row(
         words::total(language),
         &format_amount(&model.totals.total),
         total,
-    );
+    )?;
     page.rule();
 
     // ── tenders, change, loyalty ────────────────────────────────────────
@@ -840,17 +860,17 @@ pub(crate) fn lay_out_with(
             (Some(pan), None) => format!("{} {pan}", tender.label),
             _ => tender.label.clone(),
         };
-        page.row(&label, &format_amount(&tender.amount), body);
+        page.row(&label, &format_amount(&tender.amount), body)?;
     }
     if let Some(change) = &model.change {
-        page.row(words::change(language), &format_amount(change), body);
+        page.row(words::change(language), &format_amount(change), body)?;
     }
     if let Some(loyalty) = &model.loyalty {
         page.row(
             words::loyalty(language),
             &loyalty.balance_points.to_string(),
             body,
-        );
+        )?;
     }
 
     // ── the fiscal document, once cleared ───────────────────────────────
@@ -861,16 +881,16 @@ pub(crate) fn lay_out_with(
     // persisted so a reprint days later carries the identical QR (E.46).
     if let Some(fiscal) = &model.fiscal {
         page.rule();
-        page.row(words::fiscal(language), &fiscal.uuid, body);
+        page.row(words::fiscal(language), &fiscal.uuid, body)?;
     }
 
     // ── footer ──────────────────────────────────────────────────────────
     page.rule();
     if let Some(policy) = &model.footer.return_policy {
-        page.text(policy, body, Alignment::Center);
+        page.text(policy, body, Alignment::Center)?;
     }
     if let Some(thanks) = &model.footer.thank_you {
-        page.text(thanks, body, Alignment::Center);
+        page.text(thanks, body, Alignment::Center)?;
     }
 
     let height_px = u32::try_from(page.cursor_y_px + paper.margin_px()).unwrap_or(u32::MAX);
@@ -992,8 +1012,8 @@ mod tests {
         // regular renders a total that does not stand out, and 1.7.2 already
         // holds that for the *bytes*; this holds it for the parsed faces the
         // renderer actually draws with.
-        let regular = shape_line(&faces, "Total", Weight::Regular, false);
-        let bold = shape_line(&faces, "Total", Weight::Bold, false);
+        let regular = shape_line(&faces, "Total", Weight::Regular, false).unwrap();
+        let bold = shape_line(&faces, "Total", Weight::Bold, false).unwrap();
         assert!(regular.width_units > 0);
         assert_ne!(regular.width_units, bold.width_units);
     }
@@ -1012,7 +1032,7 @@ mod tests {
     #[test]
     fn the_arabic_glyph_sequence_is_pinned() {
         let faces = faces();
-        let shaped = shape_line(&faces, "بيع", Weight::Regular, true);
+        let shaped = shape_line(&faces, "بيع", Weight::Regular, true).unwrap();
         let placed: Vec<(u16, i32)> = shaped
             .glyphs
             .iter()
@@ -1037,8 +1057,8 @@ mod tests {
     #[test]
     fn a_combining_mark_keeps_its_own_offset() {
         let faces = faces();
-        let plain = shape_line(&faces, "بيع", Weight::Regular, true);
-        let vocalised = shape_line(&faces, "بَيْع", Weight::Regular, true);
+        let plain = shape_line(&faces, "بيع", Weight::Regular, true).unwrap();
+        let vocalised = shape_line(&faces, "بَيْع", Weight::Regular, true).unwrap();
 
         assert_eq!(vocalised.glyphs.len(), plain.glyphs.len() + 2);
         // Marks have no advance, so the word did not get wider.
@@ -1079,13 +1099,13 @@ mod tests {
     fn arabic_joining_uses_contextual_glyphs() {
         let faces = faces();
 
-        let joined = shape_line(&faces, "بيع", Weight::Regular, true);
+        let joined = shape_line(&faces, "بيع", Weight::Regular, true).unwrap();
         assert_eq!(joined.glyphs.len(), 3, "three letters, three glyphs");
 
         let isolated: Vec<u16> = ["ب", "ي", "ع"]
             .iter()
             .map(|letter| {
-                let shaped = shape_line(&faces, letter, Weight::Regular, true);
+                let shaped = shape_line(&faces, letter, Weight::Regular, true).unwrap();
                 shaped.glyphs.first().expect("one glyph").glyph_id
             })
             .collect();
@@ -1118,6 +1138,7 @@ mod tests {
         let faces = faces();
 
         let latin: Vec<u16> = shape_line(&faces, "Cola", Weight::Regular, false)
+            .unwrap()
             .glyphs
             .iter()
             .map(|g| g.glyph_id)
@@ -1125,7 +1146,7 @@ mod tests {
 
         let mut first_latin_index = Vec::new();
         for base_rtl in [true, false] {
-            let line = shape_line(&faces, "بيع Cola", Weight::Regular, base_rtl);
+            let line = shape_line(&faces, "بيع Cola", Weight::Regular, base_rtl).unwrap();
 
             let positions: Vec<i32> = line.glyphs.iter().map(|g| g.x_units).collect();
             assert!(
@@ -1166,10 +1187,10 @@ mod tests {
         let faces = faces();
 
         // The digits alone, left to right — the order they must keep.
-        let alone = shape_line(&faces, "2.166", Weight::Regular, false);
+        let alone = shape_line(&faces, "2.166", Weight::Regular, false).unwrap();
         let alone_ids: Vec<u16> = alone.glyphs.iter().map(|g| g.glyph_id).collect();
 
-        let mixed = shape_line(&faces, "الإجمالي 2.166", Weight::Regular, true);
+        let mixed = shape_line(&faces, "الإجمالي 2.166", Weight::Regular, true).unwrap();
         let mixed_ids: Vec<u16> = mixed.glyphs.iter().map(|g| g.glyph_id).collect();
 
         // The digit run appears somewhere in the line, in its own order,
@@ -1186,10 +1207,10 @@ mod tests {
     fn a_latin_run_inside_arabic_keeps_its_own_direction() {
         let faces = faces();
 
-        let alone = shape_line(&faces, "Cola", Weight::Regular, false);
+        let alone = shape_line(&faces, "Cola", Weight::Regular, false).unwrap();
         let alone_ids: Vec<u16> = alone.glyphs.iter().map(|g| g.glyph_id).collect();
 
-        let mixed = shape_line(&faces, "مشروب Cola بارد", Weight::Regular, true);
+        let mixed = shape_line(&faces, "مشروب Cola بارد", Weight::Regular, true).unwrap();
         let mixed_ids: Vec<u16> = mixed.glyphs.iter().map(|g| g.glyph_id).collect();
 
         assert!(
@@ -1218,17 +1239,21 @@ mod tests {
 
         let short = "خبز عربي";
         assert_eq!(
-            wrap(&faces, short, Weight::Regular, true, max_units).len(),
+            wrap(&faces, short, Weight::Regular, true, max_units)
+                .unwrap()
+                .len(),
             1
         );
 
         let long = "خبز عربي طازج مخبوز على الحجر مع بذور السمسم والحبة السوداء من مخبز الحي";
-        let lines = wrap(&faces, long, Weight::Regular, true, max_units);
+        let lines = wrap(&faces, long, Weight::Regular, true, max_units).unwrap();
         assert!(lines.len() > 1, "a long name must wrap, got {lines:?}");
 
         // Every produced line fits, and nothing was dropped.
         for line in &lines {
-            let width = shape_line(&faces, line, Weight::Regular, true).width_units;
+            let width = shape_line(&faces, line, Weight::Regular, true)
+                .unwrap()
+                .width_units;
             assert!(
                 width <= max_units,
                 "{line:?} is {width} units, over {max_units}"
@@ -1255,11 +1280,13 @@ mod tests {
             faces.units_per_em,
         );
 
-        let pieces = wrap(&faces, uuid, Weight::Regular, false, max);
+        let pieces = wrap(&faces, uuid, Weight::Regular, false, max).unwrap();
         assert!(pieces.len() > 1, "the UUID must break, got {pieces:?}");
         assert_eq!(pieces.concat(), uuid, "breaking lost characters");
         for piece in &pieces {
-            let width = shape_line(&faces, piece, Weight::Regular, false).width_units;
+            let width = shape_line(&faces, piece, Weight::Regular, false)
+                .unwrap()
+                .width_units;
             assert!(width <= max, "{piece:?} is {width} units, over {max}");
         }
     }
@@ -1269,7 +1296,7 @@ mod tests {
     #[test]
     fn a_measure_narrower_than_one_character_still_terminates() {
         let faces = faces();
-        let pieces = wrap(&faces, "ABC", Weight::Regular, false, 1);
+        let pieces = wrap(&faces, "ABC", Weight::Regular, false, 1).unwrap();
         assert_eq!(pieces, vec!["A", "B", "C"]);
     }
 
@@ -1277,14 +1304,19 @@ mod tests {
     fn an_empty_line_still_occupies_its_row() {
         let faces = faces();
         assert_eq!(
-            wrap(&faces, "", Weight::Regular, true, 10_000),
+            wrap(&faces, "", Weight::Regular, true, 10_000).unwrap(),
             vec![String::new()]
         );
         assert_eq!(
-            wrap(&faces, "   ", Weight::Regular, true, 10_000),
+            wrap(&faces, "   ", Weight::Regular, true, 10_000).unwrap(),
             vec![String::new()]
         );
-        assert_eq!(shape_line(&faces, "", Weight::Regular, true).width_units, 0);
+        assert_eq!(
+            shape_line(&faces, "", Weight::Regular, true)
+                .unwrap()
+                .width_units,
+            0
+        );
     }
 
     /// The named test: a totals row puts its label at the logical start and its
@@ -1368,6 +1400,7 @@ mod tests {
     fn page_sets(layout: &Layout, faces: &Faces<'_>, text: &str, weight: Weight) -> bool {
         let rtl = matches!(layout.direction, TextDirection::RightToLeft);
         let needle: Vec<u16> = shape_line(faces, text, weight, rtl)
+            .unwrap()
             .glyphs
             .iter()
             .map(|g| g.glyph_id)
@@ -1583,8 +1616,9 @@ mod tests {
             words::fiscal(Language::Arabic),
             Weight::Regular,
             true,
-        ));
-        let value = ids(&shape_line(&faces, uuid, Weight::Regular, true));
+        )
+        .unwrap());
+        let value = ids(&shape_line(&faces, uuid, Weight::Regular, true).unwrap());
 
         for paper in [PaperWidth::Mm80, PaperWidth::Mm58] {
             let layout = lay_out_with(&faces, &m, paper).expect("lays out");
@@ -1611,7 +1645,7 @@ mod tests {
                 words::loyalty(Language::Arabic),
                 words::fiscal(Language::Arabic),
             ] {
-                let whole = ids(&shape_line(&faces, word, Weight::Regular, true));
+                let whole = ids(&shape_line(&faces, word, Weight::Regular, true).unwrap());
                 assert!(
                     lines.iter().any(|line| line.starts_with(&whole)),
                     "{word} is not whole at the start of any line at {paper:?}"
@@ -1686,7 +1720,7 @@ mod tests {
             for room_px in (-BODY_PX_PER_EM..=PaperWidth::Mm58.content_width_px()).step_by(6) {
                 let room = px_to_units(room_px, BODY_PX_PER_EM, faces.units_per_em);
                 let (LabelPlacement::Beside(lines) | LabelPlacement::Above(lines)) =
-                    place_label(&faces, label, Weight::Regular, true, room, full);
+                    place_label(&faces, label, Weight::Regular, true, room, full).unwrap();
                 let set: Vec<&str> = lines
                     .iter()
                     .flat_map(|line| line.split(' '))
@@ -1765,5 +1799,79 @@ mod tests {
         assert_eq!(units_to_px(1_000, 24, 0), 0);
         assert_eq!(px_to_units(24, 24, 1_000), 1_000);
         assert_eq!(px_to_units(24, 0, 1_000), 0);
+    }
+
+    /// The receipt vocabulary, shaped. Each line covers one thing a shaper can
+    /// get wrong on a receipt: joining, the lam-alef ligature, a diacritic, the
+    /// Arabic comma, digits and Latin inside an Arabic line and the reverse,
+    /// and both weights.
+    const VOCABULARY: [(&str, Weight, bool); 16] = [
+        ("بيع", Weight::Regular, true),
+        ("الإجمالي", Weight::Bold, true),
+        ("لا يوجد", Weight::Regular, true),
+        ("ضريبة المبيعات 16%", Weight::Regular, true),
+        ("المبلغ المستحق 2.166 دينار", Weight::Bold, true),
+        ("نقدًا", Weight::Regular, true),
+        ("شاي اصطناعي", Weight::Regular, true),
+        ("نقد، بطاقة", Weight::Regular, true),
+        ("الباقي", Weight::Bold, true),
+        ("بيع Cola", Weight::Regular, true),
+        ("Total", Weight::Regular, false),
+        ("Total", Weight::Bold, false),
+        ("Receipt No. R-0001-000042", Weight::Regular, false),
+        ("Cola 330ml × 2", Weight::Regular, false),
+        ("SKU-12 بيع", Weight::Regular, false),
+        ("JOD 1.250", Weight::Bold, false),
+    ];
+
+    /// Every glyph id and position of a shaped line, folded into one number
+    /// (FNV-1a over the pairs, in visual order).
+    fn fingerprint(line: &ShapedLine) -> u64 {
+        line.glyphs
+            .iter()
+            .fold(0xcbf2_9ce4_8422_2325_u64, |hash, glyph| {
+                let hash = (hash ^ u64::from(glyph.glyph_id)).wrapping_mul(0x0100_0000_01b3);
+                (hash ^ u64::from(glyph.x_units.cast_unsigned())).wrapping_mul(0x0100_0000_01b3)
+            })
+    }
+
+    /// What harfrust 0.13.3 made of [`VOCABULARY`], line by line: the width,
+    /// the glyph count and the [`fingerprint`]. Generated on `development`
+    /// before the move to 0.15, which changed the shaping API and must not
+    /// change one glyph or one position of a receipt.
+    const VOCABULARY_UNDER_HARFRUST_0_13: [(i32, usize, u64); 16] = [
+        (1135, 3, 0xd9710f0cc0a58be4),
+        (3103, 6, 0x6ef2b62b5e275949),
+        (2622, 6, 0x11323ad6dca1053f),
+        (8046, 17, 0x9688b71ebeea9d57),
+        (11302, 26, 0xdd225f01b17e3b66),
+        (1450, 5, 0x1062129440445fc7),
+        (5492, 11, 0x96039f767fa9f87d),
+        (3873, 10, 0x0aabda9f2178db2b),
+        (1926, 5, 0xc7509f1af52005ea),
+        (3358, 8, 0x09981dd92971a2d4),
+        (2224, 5, 0xee2261acf3976e72),
+        (2332, 5, 0xfb739bc9bcec9705),
+        (12809, 25, 0xf9d2d7c7de7fedfa),
+        (6840, 14, 0x68954349e823bbef),
+        (4863, 10, 0x9ef3c2e8cbff1cb3),
+        (4916, 9, 0x2f1dcdb1b4f36fd9),
+    ];
+
+    /// Every line of the receipt vocabulary shapes to the glyphs and positions
+    /// harfrust 0.13 gave it. A later shaper that moves one mark or one advance
+    /// fails here, and names the line, before a receipt prints differently.
+    #[test]
+    fn the_receipt_vocabulary_shapes_as_it_did_under_harfrust_0_13() {
+        let faces = Faces::load().unwrap();
+        for ((text, weight, rtl), expected) in VOCABULARY.iter().zip(VOCABULARY_UNDER_HARFRUST_0_13)
+        {
+            let line = shape_line(&faces, text, *weight, *rtl).unwrap();
+            assert_eq!(
+                (line.width_units, line.glyphs.len(), fingerprint(&line)),
+                expected,
+                "{text}"
+            );
+        }
     }
 }
