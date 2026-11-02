@@ -374,19 +374,22 @@ The rules that make it a proof rather than a bearer note:
 Every IPC command registers `(name, capability, audited, approval_requirement)`, where
 `approval_requirement` is `Never`, `Always { binding }`, or
 `Conditional { predicate, binding }`. The binding names an entity, an exact amount source and a
-reason source; a non-money effect uses exact zero. Microstep 1.6.7 makes
+reason source; a non-money effect uses exact zero. Since 1.6.7,
 `ipc_commands_all_declare_a_capability`, `every_privileged_command_binds_its_approval`, and
-`conditional_privilege_cannot_cross_threshold_without_approval` walk the registry and generated
-handler list. Until 1.6.7 lands, this is a required contract, not a current CI claim.
+`conditional_privilege_cannot_cross_threshold_without_approval` walk the registry and the
+handler list, which the shell names once, on every pull request. A command that proves no
+capability says why, in the row.
 
 Two things it does **not** cover, each with its own guard:
 
-- **Plugin commands.** The webview's capability file is where an updater or filesystem permission would be granted, and `generate_handler!` never sees it. `webview_cannot_invoke_the_updater_plugin` audits that file against an allowlist, so a default configuration cannot expose install-an-update to JavaScript.
+- **Plugin commands.** The webview's capability file is where an updater or filesystem permission would be granted, and `generate_handler!` never sees it. `webview_cannot_invoke_the_updater_plugin` audits that file against an allowlist, so a default configuration cannot expose install-an-update to JavaScript. Until then the shell registers no plugin, and `ipc_commands_all_declare_a_capability` fails on the first `.plugin(` call, so the step that adds one extends the walk to its commands.
 - **HTTP routes.** The registry protects IPC, and the back office is Axum. See §5a.
 
-**Verify it at 1.6.7** with the committed negative registry fixtures; they add a command without a
-spec and an `Always` entry without a binding and require the named test command to fail. A guard
-whose refusal path has not run is not evidence.
+**Its refusal paths run on every pull request.** `a_registry_fixture_without_a_command_spec_is_refused`
+registers a command with no row, and `a_privileged_fixture_without_a_binding_is_refused` leaves each
+part of an `Always` and a `Conditional` binding open in turn; both require `check` to refuse by name.
+An `Always` entry with no binding at all does not compile. A guard whose refusal path has not run is
+not evidence.
 
 ### Escalation
 

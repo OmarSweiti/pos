@@ -2,7 +2,7 @@
 
 The narrow, typed boundary between the React UI and the Rust core. It is the **only** channel: no `fs`, no `shell`, no `http`, no `updater` plugin is exposed to the webview. The core talks to the world; the webview talks to the core.
 
-**The registry is the security surface.** Every command declares its required capability, whether it audits, and — when it escalates — what an approval is bound to. Microstep 1.6.7 owns the test `ipc_commands_all_declare_a_capability` and its CI wiring; the current tree does not yet enforce this future registry. Hiding a button is UX; the check in the handler is security.
+**The registry is the security surface.** Every command declares its required capability, whether it audits, and — when it escalates — what an approval is bound to. Since 1.6.7, `apps/terminal/src-tauri/tests/ipc_contract.rs` holds the registry to the commands the shell registers on every pull request, in the `rust` job's `cargo nextest run --workspace`. Hiding a button is UX; the check in the handler is security.
 
 ---
 
@@ -69,28 +69,48 @@ Rules:
 ## 2 · The registry
 
 ```rust
-// apps/terminal/src-tauri/src/ipc/registry.rs
+// apps/terminal/src-tauri/src/ipc/registry.rs — as delivered at 1.6.7
 pub struct CommandSpec {
-    pub name: &'static str,
-    /// `None` is deliberate: a lock-screen command, a first-run recovery-code
-    /// provisioning command, or `recovery_restore_backup`, which runs before
-    /// the database that holds the grants can be opened.
-    pub capability: Option<&'static str>,
+    pub name: &'static str,                  // the command's function's name
+    pub access: Access,
     pub audited: bool,
     pub approval_requirement: ApprovalRequirement,
+    pub args: &'static [Arg],                // Rust parameter names; Tauri sends camelCase
 }
 
+pub enum Access {
+    Capability(&'static str),                // as `pos_domain::cap` names it
+    /// Deliberate, and readable as such: a lock-screen command, first-run
+    /// recovery-code provisioning, or `recovery_restore_backup`, which runs
+    /// before the database that holds the grants can be opened.
+    NoCapability { reason: &'static str },
+}
+
+pub struct Arg { pub name: &'static str, pub presence: Presence }   // Arg::required / Arg::optional
+pub enum Presence { Required, Optional }
+
 pub enum ApprovalRequirement {
-    Never,
-    Always { binding: ApprovalBindingSpec },
-    Conditional { predicate: &'static str, binding: ApprovalBindingSpec },
+    Never,                                                   // takes no approval_id
+    Always { binding: ApprovalBindingSpec },                 // takes approval_id
+    Conditional { predicate: ApprovalPredicate,              // takes approval_id?
+                  binding: ApprovalBindingSpec },
+}
+
+/// A closed set: each is a rule the domain evaluates, held at its boundary.
+pub enum ApprovalPredicate {
+    DepartmentAmountAboveEscalation,         // DepartmentPolicy::escalate_above; gates sale.department
 }
 
 pub struct ApprovalBindingSpec {
-    pub entity_field: &'static str,          // "sale_id", "line_id", "preview_id", "shift_id"
+    pub entity: EntityBindingSpec,
     pub amount: AmountBindingSpec,
     pub content: ContentBindingSpec,
     pub reason: ReasonBindingSpec,
+}
+
+pub enum EntityBindingSpec {
+    Argument(&'static str),                  // "line_id", "preview_id", "shift_id", "queue_id"
+    OpenSale,                                // the cart a `cart_*` command acts on
 }
 
 pub enum AmountBindingSpec {
@@ -102,6 +122,7 @@ pub enum AmountBindingSpec {
 pub enum ReasonBindingSpec {
     Argument(&'static str),
     PreparedEffect(&'static str),
+    Approval,                                // the approver's own reason, which the audit row repeats
 }
 
 pub enum ContentBindingSpec {
@@ -109,14 +130,47 @@ pub enum ContentBindingSpec {
     PreparedIntent { table: &'static str, hash_field: &'static str },
 }
 
-pub const COMMANDS: &[CommandSpec] = &[ /* every row of §3 */ ];
+pub const COMMANDS: &[CommandSpec] = &[ /* every command the shell registers, and nothing else */ ];
+
+pub fn check(commands: &[CommandSpec], registered: &[&'static str]) -> Result<(), Vec<RegistryError>>;
 ```
 
-Three tests walk this table, all in `apps/terminal/src-tauri/tests/ipc_contract.rs` [1.6.7]:
-`ipc_commands_all_declare_a_capability`, `every_privileged_command_binds_its_approval`, and
-`conditional_privilege_cannot_cross_threshold_without_approval`. An `Always` or `Conditional`
-entry without an exact entity, amount and reason binding is the reusable bearer proof rule 7 exists
-to prevent; a boolean cannot express the department-sale threshold at all.
+**The registry holds what the shell registers, not the catalogue below.** Each microstep that
+registers a command adds its row in the same change, and `check` refuses a registered command with
+no row as well as a row nothing registers. The commands are named once, in `lib.rs`, through
+`commands![…]`, which makes both `REGISTERED` and the handler `run` installs. So the walk reads
+exactly the list `tauri::generate_handler!` is given.
+
+`check` refuses a capability `pos_domain::cap` does not define, and a `NoCapability` without its
+reason. It refuses an `approval_id` taken other than as the requirement says: required for
+`Always`, optional for `Conditional`, absent for `Never`. A privileged row is refused when it
+proves no capability for the handle to be issued under, or writes no audit entry for the handle to
+be consumed beside. So is a privileged row whose binding leaves a part blank, or binds a part to an
+argument the command does not take or may be called without, and a condition that gates another
+capability's approvals.
+
+Five tests, all in `apps/terminal/src-tauri/tests/ipc_contract.rs` [1.6.7]:
+`ipc_commands_all_declare_a_capability`, `every_privileged_command_binds_its_approval`,
+`conditional_privilege_cannot_cross_threshold_without_approval`,
+`a_registry_fixture_without_a_command_spec_is_refused` and
+`a_privileged_fixture_without_a_binding_is_refused`. An `Always` or `Conditional` entry without an
+exact entity, amount and reason binding is the reusable bearer proof rule 7 exists to prevent; a
+boolean cannot express the department-sale threshold at all.
+
+> **As delivered at 1.6.7, against the sketch this section first held.** The contract's own
+> `Option<&'static str>` capability is `Access`, because a bare `None` reads the same whether it was
+> decided or forgotten. Rows declare `args`, because the conditional-schema refusal needs a schema
+> and rule 3's generator lane does not exist. Nothing compares a declaration with the handler's real
+> signature yet: Tauri parses arguments in order and stops at the first missing one, so that
+> comparison waits for the generated schema 1.4.11's `Done when` reads. The `&'static str`
+> predicate is `ApprovalPredicate`, so a condition is a rule the test drives at its boundary through
+> an exhaustive match. The department sale's is driven through `add_department_line`, because its
+> command waits on #330. `entity_field` is `EntityBindingSpec`, so a bound entity argument is
+> checked against `args`. `ReasonBindingSpec::Approval` is the department sale's reason, which is
+> the approver's, as the audit row's must be (1.4.12). **The walk covers plugins by refusing them**:
+> the shell registers none, and `ipc_commands_all_declare_a_capability` fails on the first
+> `.plugin(`, so the step that adds one extends the walk to its commands. It also fails on a
+> renamed command, which would reach the webview under a name the registry does not hold.
 
 ---
 
