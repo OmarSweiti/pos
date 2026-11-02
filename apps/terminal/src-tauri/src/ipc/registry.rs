@@ -237,7 +237,11 @@ pub enum RegistryError {
     UnexplainedAccess(&'static str),
     /// `approval_id` is not taken the way the requirement needs: required
     /// when `Always`, optional when `Conditional`, absent when `Never`.
-    #[error("{command} takes approval_id as {found:?}, where its requirement needs {expected:?}")]
+    #[error(
+        "{command} declares approval_id {}; its requirement needs it {}",
+        declared(*.found),
+        declared(*.expected)
+    )]
     ApprovalArgument {
         command: &'static str,
         expected: Option<Presence>,
@@ -274,6 +278,15 @@ pub enum RegistryError {
         part: &'static str,
         argument: &'static str,
     },
+}
+
+/// How an argument is declared, in a refusal's words.
+const fn declared(presence: Option<Presence>) -> &'static str {
+    match presence {
+        Some(Presence::Required) => "required",
+        Some(Presence::Optional) => "optional",
+        None => "absent",
+    }
 }
 
 /// Hold `commands` to the commands the handler registers, and each of them to
