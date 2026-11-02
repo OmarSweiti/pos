@@ -49,15 +49,18 @@ updates:
         applies-to: version-updates
         update-types: ["minor"]
     ignore:
-      # @types/node's major must equal the pinned Node runtime major: .nvmrc and
-      # package.json pin the runtime, pnpm-workspace.yaml pins the override, and
-      # scripts/check-node-version.py refuses a mismatch. A major bump here can
-      # never go green, so proposing one only manufactures work that policy must
-      # reject — PR #24 was closed red on four checks for exactly this. The Node
-      # runtime moves deliberately, and the typings follow it in that same change.
-      # Same-major updates are not ignored and still flow normally.
+      # @types/node is part of the Node runtime contract, not a library: .nvmrc
+      # and package.json pin the runtime, pnpm-workspace.yaml pins the typings
+      # with an override, both apps' package.json must equal that override, and
+      # scripts/check-node-version.py and the branch-workflow policy refuse any
+      # disagreement. Dependabot edits package.json but never the pnpm override,
+      # so no update it proposes can go green, at any version. PR #24, a major,
+      # was closed red on four checks. PR #347, a minor (24.13.3 → 24.19.2),
+      # declared one version while installing another, failed three checks,
+      # and stranded the four other bumps in its group. So none is proposed:
+      # the Node runtime moves deliberately, and the typings follow it in that
+      # same change (docs/implementation/02-development-workflow.md §13).
       - dependency-name: "@types/node"
-        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: "/"
