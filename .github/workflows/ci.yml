@@ -81,11 +81,11 @@ jobs:
       # GitHub already scopes a cache written on a pull-request ref so the base
       # branch can never read it, so this is a capacity control and not a security
       # one.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/development' }}
       - name: Install the pinned cargo-nextest release
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: nextest@0.9.143
           fallback: none
@@ -161,11 +161,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.pin.outputs.channel }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/development' }}
       - name: Install the pinned cargo-nextest release
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: nextest@0.9.143
           fallback: none
@@ -217,7 +217,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Install the pinned just release
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: just@1.58.0
           fallback: none
@@ -491,7 +491,7 @@ jobs:
       # the byte-identical `cargo deny check` that justfile:286 runs locally,
       # instead of whatever the upstream tarball happens to be today.
       - name: Install the pinned cargo-deny release
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: cargo-deny@0.20.2
           fallback: none
@@ -627,11 +627,11 @@ jobs:
       # is already full. GitHub scopes a cache written on a pull-request ref so the
       # base branch can never read it, so this is a capacity control and not a
       # security one.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main') }}
       - name: Install the pinned cargo-nextest release
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: nextest@0.9.143
           fallback: none
