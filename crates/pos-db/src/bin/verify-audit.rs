@@ -72,12 +72,24 @@
 //!
 //! # What it does to the file
 //!
-//! It opens through [`pos_db::open`], which is read-write: it sets WAL mode and
-//! applies any migration the file is behind. That is why the usage line says
-//! `<copy>` and why `--help` says so in its own words. No register in the field
-//! is below `0005` today, so the migration path cannot fire yet; the day it
-//! can, what changes is the copy and never the original — which is also what
+//! It opens through [`pos_db::open_for_inspection`], which makes every check
+//! [`pos_db::open`] makes and is read-write: it sets WAL mode and applies any
+//! migration the file is behind. That is why the usage line says `<copy>` and
+//! why `--help` says so in its own words. No register in the field is below
+//! `0005` today, so the migration path cannot fire yet; the day it can, what
+//! changes is the copy and never the original — which is also what
 //! `phase-1:1479`'s drill assumes when it takes a snapshot first.
+//!
+//! # A schema that is not its version's is evidence, not a refusal
+//!
+//! The register refuses a file whose schema is not the one its recorded
+//! version creates (1.8.1b). This tool reads it anyway, because the copy in
+//! front of an investigator is exactly the file someone may have changed, and
+//! the edited row is still worth naming. Such a file is read as found and not
+//! migrated. The report names every missing, unexpected and altered object, and
+//! the run counts as evidence, exit 1, even when every chain agrees. Nothing
+//! here can tell an interrupted migration from an edit, and either way the file
+//! is not what the application left (the owner's decision on #357).
 //!
 //! [`ChainAnchor`]: pos_domain::ChainAnchor
 //! [`verify_chain`]: pos_domain::verify_chain
@@ -107,7 +119,10 @@ OPTIONS
     --database <path>  The database to read. Give it a COPY. This opens the
                        file read-write through the application's own open path,
                        which sets WAL mode and applies any migration the copy
-                       is behind; the original is never touched.
+                       is behind; the original is never touched. A copy whose
+                       schema is not the one its recorded version creates is
+                       read as found, never migrated, and every object that
+                       differs is named in the report.
     --anchor <path>    A JSON anchor taken somewhere the register cannot
                        rewrite — a Z report, a verified backup manifest, or
                        (microstep 5.4.4) the server's last accepted checkpoint.
@@ -144,8 +159,10 @@ EXIT CODES
     0  Every chain this build could read agreed with itself and with the anchor
        supplied. Read the report: with no anchor, 0 says nothing about whether
        the newest rows are all still there.
-    1  Tamper evidence — a chain that disagrees with itself, or a tail deleted
-       below an anchor.
+    1  Tamper evidence — a chain that disagrees with itself, a tail deleted
+       below an anchor, or a schema that is not the one its recorded version
+       creates (an edit, or a migration that was interrupted; either way not
+       what the application left).
     2  The tool could not run: bad arguments, an unreadable anchor, or a
        database that would not open.
     3  Inconclusive — a row this build cannot rebuild, or rows belonging to no
@@ -509,8 +526,8 @@ fn verify(database: &Path, anchor_path: Option<&Path>) -> Verdict {
         Err(error) => return refuse(&format!("no database key: {error}")),
     };
 
-    let connection = match pos_db::open(database, &key) {
-        Ok(connection) => connection,
+    let (connection, schema) = match pos_db::open_for_inspection(database, &key) {
+        Ok(opened) => opened,
         Err(error) => {
             return refuse(&format!("cannot open {}: {error}", database.display()));
         }
@@ -520,6 +537,7 @@ fn verify(database: &Path, anchor_path: Option<&Path>) -> Verdict {
     println!("  database    {}", database.display());
     println!("  key source  {}", describe_key_source(key_source));
     print_anchor(anchor.as_ref());
+    let schema_verdict = report_schema(&schema);
 
     let repository = AuditRepository::new(&connection);
     let found = match repository.registers() {
@@ -532,7 +550,7 @@ fn verify(database: &Path, anchor_path: Option<&Path>) -> Verdict {
         tills.insert(anchor.register);
     }
 
-    let mut verdict = Verdict::Verified;
+    let mut verdict = schema_verdict;
 
     if found.orphan_rows() > 0 {
         println!();
@@ -558,6 +576,45 @@ fn verify(database: &Path, anchor_path: Option<&Path>) -> Verdict {
     println!();
     println!("summary: {} (exit {})", verdict.headline(), verdict.code());
     verdict
+}
+
+/// The schema line: the version the file holds, or every object by which it
+/// differs from the one it records.
+fn report_schema(schema: &Result<pos_db::SchemaVersion, pos_db::DbError>) -> Verdict {
+    match schema {
+        Ok(version) => {
+            println!(
+                "  schema      version {}, as this build creates it",
+                version.applied()
+            );
+            Verdict::Verified
+        }
+        Err(pos_db::DbError::SchemaShapeMismatch {
+            recorded,
+            missing,
+            unexpected,
+            altered,
+        }) => {
+            println!(
+                "  schema      DIFFERS from version {recorded}, the version this file records; \
+                 read as found and not migrated"
+            );
+            for (what, objects) in [
+                ("missing", missing),
+                ("unexpected", unexpected),
+                ("altered", altered),
+            ] {
+                for object in objects {
+                    println!("              {what:<11} {object}");
+                }
+            }
+            Verdict::Tampered
+        }
+        Err(other) => {
+            println!("  schema      could not be checked: {other}");
+            Verdict::CouldNotRun
+        }
+    }
 }
 
 fn report_register(
