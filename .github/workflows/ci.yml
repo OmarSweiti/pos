@@ -31,7 +31,7 @@ jobs:
     # debugging session (phase-0-closeout.md 0.2.1).
     services:
       postgres:
-        image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+        image: postgres:18-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -85,7 +85,7 @@ jobs:
         with:
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/development' }}
       - name: Install the pinned cargo-nextest release
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: nextest@0.9.143
           fallback: none
@@ -165,7 +165,7 @@ jobs:
         with:
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/development' }}
       - name: Install the pinned cargo-nextest release
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: nextest@0.9.143
           fallback: none
@@ -217,7 +217,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Install the pinned just release
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: just@1.58.0
           fallback: none
@@ -491,7 +491,7 @@ jobs:
       # the byte-identical `cargo deny check` that justfile:286 runs locally,
       # instead of whatever the upstream tarball happens to be today.
       - name: Install the pinned cargo-deny release
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: cargo-deny@0.20.2
           fallback: none
@@ -631,7 +631,7 @@ jobs:
         with:
           save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main') }}
       - name: Install the pinned cargo-nextest release
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: nextest@0.9.143
           fallback: none
