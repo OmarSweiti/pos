@@ -31,13 +31,22 @@
 //! [`StockRepository::rebuild_cache`] replays a store's ledger into its cache;
 //! [`StockRepository::on_hand`] and [`StockRepository::negative_stock`] read
 //! the cache.
+//!
+//! The cache is a cache, so it is checked against the ledger rather than
+//! trusted (microstep 1.10.3). [`StockRepository::verify_cache`] compares every
+//! column of every row with a full replay and names each product on which they
+//! differ; [`StockRepository::reconcile_cache`] is the check I-6 asks of startup
+//! and of a periodic sweep, which rebuilds on any difference in the same
+//! transaction as the comparison. The replay is one query, shared by the
+//! rebuild and the comparison, so what is checked is what a rebuild writes.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use pos_domain::{
     Currency, Money, NewStockEvent, ProductId, Qty, RegisterId, StockEvent, StockPosition,
     StockSource, StoreId,
 };
+use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::Value;
 
@@ -163,6 +172,59 @@ impl PreparedStockEvent {
         )
         .to_string()
     }
+}
+
+/// `stock_cache`'s columns, in the order the table declares them: what a
+/// rebuild writes, what the replay selects, and what [`CacheDrift::Differs`]
+/// names.
+const CACHE_COLUMNS: [&str; 10] = [
+    "product_id",
+    "store_id",
+    "on_hand_milli",
+    "wac_minor",
+    "is_wac_estimated",
+    "last_event_register_id",
+    "last_event_seq",
+    "last_event_id",
+    "event_count",
+    "last_event_at",
+];
+
+/// A full replay of one store's ledger (`?1`): one row per product the ledger
+/// moved there, in [`CACHE_COLUMNS`]' order.
+///
+/// On-hand is the sum of the events, which is I-6's definition rather than a
+/// copy of the last event's projection. The WAC, its estimate flag and the
+/// watermark come from each product's last event — the highest `event_seq`,
+/// the register's own sequence and never a clock (I-7).
+const REPLAY: &str = "SELECT t.product_id, t.store_id, t.on_hand, e.wac_after_minor,
+        e.is_wac_estimated, e.register_id, e.event_seq, e.id, t.events, e.occurred_at
+   FROM (SELECT product_id, store_id, SUM(qty_delta_milli) AS on_hand,
+                COUNT(*) AS events, MAX(event_seq) AS last_seq
+           FROM stock_ledger
+          WHERE store_id = ?1
+          GROUP BY product_id, store_id) t
+   JOIN stock_ledger e
+     ON e.product_id = t.product_id AND e.store_id = t.store_id
+    AND e.event_seq = t.last_seq";
+
+/// How one product's row in a store's stock cache departs from a full replay
+/// of the ledger. It names products and columns, never a figure, so an alarm
+/// can carry it as it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CacheDrift {
+    /// The ledger moved the product in the store, and the cache holds no row
+    /// for it, so its on-hand reads as zero.
+    Missing(ProductId),
+    /// The cache holds a row for a product no event in the store's ledger
+    /// moved.
+    Unexplained(ProductId),
+    /// The row differs from the replay in these columns, named as
+    /// `stock_cache` names them and in its order.
+    Differs {
+        product_id: ProductId,
+        columns: Vec<&'static str>,
+    },
 }
 
 /// A product the cache holds below zero in one store (master plan C.7).
@@ -341,12 +403,7 @@ impl<'c> StockRepository<'c> {
     }
 
     /// Replay `store`'s ledger into its cache, inside the caller's transaction,
-    /// and return how many cache rows it wrote.
-    ///
-    /// On-hand is the sum of the events, which is I-6's definition rather than
-    /// a copy of the last event's projection. The WAC, its estimate flag and the
-    /// watermark come from each product's last event — the highest `event_seq`,
-    /// the register's own sequence and never a clock (I-7).
+    /// and return how many cache rows it wrote. The replay is [`REPLAY`].
     ///
     /// # Errors
     ///
@@ -358,34 +415,104 @@ impl<'c> StockRepository<'c> {
     pub fn rebuild_cache(&self, tx: &Transaction<'_>, store: StoreId) -> Result<u64, DbError> {
         let store_id = store.as_uuid();
         let store_bytes = store_id.as_bytes().as_slice();
-        let registers: i64 = tx.query_row(
-            "SELECT COUNT(DISTINCT register_id) FROM stock_ledger WHERE store_id = ?1",
-            [store_bytes],
-            |row| row.get(0),
-        )?;
-        if registers > 1 {
-            return Err(DbError::StockReplayAcrossRegisters);
-        }
+        one_register(tx, store_bytes)?;
         tx.execute("DELETE FROM stock_cache WHERE store_id = ?1", [store_bytes])?;
         let written = tx.execute(
-            "INSERT INTO stock_cache
-               (product_id, store_id, on_hand_milli, wac_minor, is_wac_estimated,
-                last_event_register_id, last_event_seq, last_event_id, event_count,
-                last_event_at)
-             SELECT t.product_id, t.store_id, t.on_hand, e.wac_after_minor,
-                    e.is_wac_estimated, e.register_id, e.event_seq, e.id, t.events,
-                    e.occurred_at
-               FROM (SELECT product_id, store_id, SUM(qty_delta_milli) AS on_hand,
-                            COUNT(*) AS events, MAX(event_seq) AS last_seq
-                       FROM stock_ledger
-                      WHERE store_id = ?1
-                      GROUP BY product_id, store_id) t
-               JOIN stock_ledger e
-                 ON e.product_id = t.product_id AND e.store_id = t.store_id
-                AND e.event_seq = t.last_seq",
+            &format!(
+                "INSERT INTO stock_cache ({}) {REPLAY}",
+                CACHE_COLUMNS.join(", ")
+            ),
             [store_bytes],
         )?;
         Ok(written as u64)
+    }
+
+    /// Compare `store`'s cache with a full replay of its ledger, and return
+    /// each product on which they differ, in product order: nothing when the
+    /// cache is true. Nothing is written.
+    ///
+    /// Both are read through the caller's transaction, so they are read at one
+    /// moment. Every column is compared, the watermark included: the event
+    /// count and the last event's register, sequence, id and instant, beside
+    /// on-hand and the WAC. A cache that missed an update, was restored from an
+    /// older copy or was written to by hand differs in at least one of them.
+    ///
+    /// # Errors
+    ///
+    /// [`DbError::StockReplayAcrossRegisters`] as for [`Self::rebuild_cache`],
+    /// whose replay this is; [`DbError::IdWidthInvalid`] for a product id that
+    /// is not sixteen bytes; and [`DbError::Sqlite`] if a read fails.
+    pub fn verify_cache(
+        &self,
+        tx: &Transaction<'_>,
+        store: StoreId,
+    ) -> Result<Vec<CacheDrift>, DbError> {
+        let store_id = store.as_uuid();
+        let store_bytes = store_id.as_bytes().as_slice();
+        one_register(tx, store_bytes)?;
+        let replayed = rows_by_product(tx, REPLAY, store_bytes)?;
+        let cached = rows_by_product(
+            tx,
+            &format!(
+                "SELECT {} FROM stock_cache WHERE store_id = ?1",
+                CACHE_COLUMNS.join(", ")
+            ),
+            store_bytes,
+        )?;
+        let products: BTreeSet<&Vec<u8>> = replayed.keys().chain(cached.keys()).collect();
+        let mut drift = Vec::new();
+        for product in products {
+            match (cached.get(product), replayed.get(product)) {
+                (None, Some(_)) => {
+                    drift.push(CacheDrift::Missing(product_id(product, "stock_ledger")?));
+                }
+                (Some(_), None) => {
+                    drift.push(CacheDrift::Unexplained(product_id(product, "stock_cache")?));
+                }
+                (Some(cache), Some(replay)) => {
+                    let columns: Vec<&'static str> = CACHE_COLUMNS
+                        .iter()
+                        .zip(cache.iter().zip(replay))
+                        .filter(|(_, (held, replayed))| held != replayed)
+                        .map(|(column, _)| *column)
+                        .collect();
+                    if !columns.is_empty() {
+                        drift.push(CacheDrift::Differs {
+                            product_id: product_id(product, "stock_cache")?,
+                            columns,
+                        });
+                    }
+                }
+                (None, None) => {}
+            }
+        }
+        Ok(drift)
+    }
+
+    /// Verify `store`'s cache and, when it differs from the ledger at all,
+    /// rebuild it, inside the caller's transaction. Returns the difference
+    /// found, which is what an alarm reports; a true cache is left exactly as
+    /// it was, with nothing written.
+    ///
+    /// This is the check I-6 asks of startup and of a periodic sweep. The
+    /// rebuild shares the comparison's transaction, so no event can land
+    /// between what was compared and what is rewritten; and one that fails
+    /// part-way is undone by the caller's rollback, which leaves the old cache
+    /// whole rather than half replaced.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::verify_cache`] and [`Self::rebuild_cache`].
+    pub fn reconcile_cache(
+        &self,
+        tx: &Transaction<'_>,
+        store: StoreId,
+    ) -> Result<Vec<CacheDrift>, DbError> {
+        let drift = self.verify_cache(tx, store)?;
+        if !drift.is_empty() {
+            self.rebuild_cache(tx, store)?;
+        }
+        Ok(drift)
     }
 
     /// The products the cache holds below zero in `store`, by product id.
@@ -478,6 +605,46 @@ fn cached_position(
             is_wac_estimated,
         },
     })
+}
+
+/// Refuse a replay of a store whose ledger holds more than one register's
+/// events, which no owned sequence orders against each other.
+fn one_register(tx: &Transaction<'_>, store: &[u8]) -> Result<(), DbError> {
+    let registers: i64 = tx.query_row(
+        "SELECT COUNT(DISTINCT register_id) FROM stock_ledger WHERE store_id = ?1",
+        [store],
+        |row| row.get(0),
+    )?;
+    if registers > 1 {
+        return Err(DbError::StockReplayAcrossRegisters);
+    }
+    Ok(())
+}
+
+/// The rows `sql` returns for one store, each whole, keyed by its first
+/// column: the product.
+fn rows_by_product(
+    tx: &Transaction<'_>,
+    sql: &str,
+    store: &[u8],
+) -> Result<BTreeMap<Vec<u8>, Vec<SqlValue>>, DbError> {
+    let mut statement = tx.prepare(sql)?;
+    let rows = statement.query_map([store], |row| {
+        let columns = (0..CACHE_COLUMNS.len())
+            .map(|index| row.get::<_, SqlValue>(index))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((row.get::<_, Vec<u8>>(0)?, columns))
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+fn product_id(bytes: &[u8], table: &'static str) -> Result<ProductId, DbError> {
+    let id: [u8; 16] = bytes.try_into().map_err(|_| DbError::IdWidthInvalid {
+        table,
+        column: "product_id",
+        found: bytes.len(),
+    })?;
+    Ok(ProductId::from_uuid(uuid::Uuid::from_bytes(id)))
 }
 
 fn invalid(reason: &str) -> DbError {
