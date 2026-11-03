@@ -3415,9 +3415,9 @@ which is the same guarantee the old "every kind has a term" would have given had
 
 ## 12 · `stock.rs` — ledger and WAC — [1.10.x, 4.2.x]
 
-As delivered at 1.10.2: the event types and the cost-capture rule. `on_hand`, `recompute_wac` and
-`cost_deviation_exceeds` below are still to come — `on_hand` with the cache-rebuild property (1.10.3),
-the other two with receiving (4.2.2, 4.2.3).
+As delivered at 1.10.2: the event types and the cost-capture rule. `on_hand` followed at 1.10.3,
+with the cache-rebuild property. `recompute_wac` and `cost_deviation_exceeds` below are still to
+come, with receiving (4.2.2, 4.2.3).
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -3509,7 +3509,11 @@ pub enum StockError {
     Money(MoneyError),
 }
 
-pub fn on_hand(events: &[StockEvent]) -> Qty;   // = Σ qty_delta — not yet delivered
+/// = Σ qty_delta over one product's events in one store: the definition, not
+/// a copy of any event's projection. Delivered at 1.10.3, refusing a sum beyond
+/// a quantity's range rather than wrapping it; over events captured in order it
+/// is the position the last one left (`prop_on_hand_is_the_position_the_last_event_leaves`).
+pub fn on_hand(events: &[StockEvent]) -> Result<Qty, StockError>;
 
 /// new_wac = (on_hand×wac + qty_in×unit_cost) / (on_hand + qty_in)
 ///
