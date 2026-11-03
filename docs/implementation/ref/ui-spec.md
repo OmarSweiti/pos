@@ -4,6 +4,10 @@
 
 Optimise for a cashier's eight-hour day, not for a screenshot.
 
+This file says what each screen does. How the screens look, which design references and skills
+shape them, and where 3D and motion are allowed is [`ui-design.md`](ui-design.md); where the two
+meet, this file's non-negotiables win.
+
 ---
 
 ## 1 · Non-negotiables
@@ -306,7 +310,9 @@ The harnesses the middle three rungs need are inventoried in [`test-catalog.md`]
 
 ## 9 · Component inventory
 
-`packages/ui/` — shared between terminal and back office where it makes sense.
+`packages/ui/` — shared between terminal and back office where it makes sense. Components start
+from shadcn/ui's copy-in source and are owned here from then on, with the tokens `DESIGN.md` sets
+([`ui-design.md`](ui-design.md) §3 and §7).
 
 ```
 Numpad          on-screen, ≥48 px, decimal-aware per currency exponent
@@ -339,7 +345,7 @@ EmptyState      illustration + the action that resolves it
 
 Two corrections are load-bearing here.
 
-**The measurement runs against the packaged application, not a browser.** Playwright automates the browser engines it bundles; it cannot attach to a Tauri window's WebView2, WKWebView or WebKitGTK. The scan and cold-start budgets are the two that describe what a merchant actually runs, so they are measured through `tauri-driver`, on the harness [`test-catalog.md`](test-catalog.md) inventories — otherwise they are measured against something nobody ships.
+**The measurement runs against the packaged application, not a browser.** Playwright automates the browser engines it bundles; it cannot attach to a Tauri window's WebView2, WKWebView or WebKitGTK. The scan and cold-start budgets are the two that describe what a merchant actually runs, so they are measured through WebDriver, on the harness [`test-catalog.md`](test-catalog.md) inventories — otherwise they are measured against something nobody ships. **Which WebDriver depends on the platform:** `tauri-driver` used directly supports only Windows and Linux on the desktop, while WebdriverIO's Tauri service also covers macOS ([`ui-design.md`](ui-design.md) §5). Playwright still has a job: driving the web build for design review and screenshots.
 
 **"The slowest supported hardware" now has a referent.** It is the lowest row of the register class in the device matrix ([`hardware-and-receipts.md`](hardware-and-receipts.md) §6a). A budget measured on a machine nobody named is a budget that fails randomly and gets disabled within a month.
 

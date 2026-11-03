@@ -1469,6 +1469,8 @@ The CSV columns are exactly `product_id`, `qty_milli` and nullable `unit_cost_mi
 
 *Arabic-first RTL from the first commit. Retrofitting RTL is miserable; scaffolding it is cheap.*
 
+*Designed before it is built.* Every screen from 1.11.4 on is built on the direction, tokens and component foundation that 1.11.3b sets, under [`ref/ui-design.md`](ref/ui-design.md): what a screen does is [`ref/ui-spec.md`](ref/ui-spec.md), and how it looks is that file.
+
 ### 1.11.0 — Register DOM component-test harness
 **Files:** `apps/terminal/package.json` (four test devDependencies) · `pnpm-lock.yaml` (their resolutions) · `apps/terminal/vite.config.ts` (the jsdom environment, its document fixture and the setup file) · `apps/terminal/src/test/setup.ts` (new) · `apps/terminal/src/screens/Sale.test.tsx` (new) · `apps/backoffice/vite.config.ts` (the justifying comment that called the terminal's suite DOM-free) · [`02-development-workflow.md`](02-development-workflow.md) (§4.3's Vitest row and §17's DOM-harness gap) · [`ref/test-catalog.md`](ref/test-catalog.md) (the DOM-harness row) · [`ref/ui-spec.md`](ref/ui-spec.md) (§8's harness paragraph) · [`README.md`](README.md) (implementation frontier) · this file (this microstep's `Files:` line and prose)
 
@@ -1502,6 +1504,19 @@ Extend the existing guard that `just lint` and CI's `web` job run. Ban physical 
 `formatMoney(minor, currency, locale)`, `formatQty(milli, weighed)`, `formatDate(iso, tz, locale)`. Western Arabic digits. Never `toLocaleString` inline. Transaction totals use the currency exponent; a shorter catalogue display is allowed only when exact.
 **Tests:** `formats_jod_at_the_currency_exponent` · `catalog_short_format_refuses_to_hide_fils` · `uses_western_digits_in_arabic_locale`
 **Done when:** `pnpm --filter terminal exec vitest run src/lib/format.test.ts` exits zero for exact JOD fils and Arabic locale digits.
+
+### 1.11.3b — Design direction
+**Files:** `PRODUCT.md` (new), `DESIGN.md` (new), `packages/ui/components.json` (new), `packages/ui/src/tokens.css` (new), `packages/ui/src/components/` (new: the first foundation components), `packages/ui/src/tokens.test.ts` (new), `packages/ui/package.json` and `pnpm-lock.yaml` (the foundation's dependencies, the pinned shadcn CLI, and `@playwright/cli` for design review), `apps/terminal/src/index.css` and `apps/backoffice/src/index.css` (the tokens through Tailwind v4's `@theme`), [`ref/ui-design.md`](ref/ui-design.md) (the chosen direction recorded in §1 and §7)
+
+Choose how the product looks before the first screen is built on it, with the references and skills [`ref/ui-design.md`](ref/ui-design.md) §5 pins, and in its Operate mode.
+
+- **`PRODUCT.md`** records who uses each surface (cashier, shift lead, manager, owner, customer), the scene (Jordanian shops, shop lighting, touch screens, Arabic first) and the constraints of [`ref/ui-spec.md`](ref/ui-spec.md) §1.
+- **Three candidate directions** for the sale screen, drawn from the style registry and real products' systems and run through impeccable's `shape`, are rendered as comps in Arabic and English at the register profiles, and the owner chooses one.
+- **`DESIGN.md`** records the choice: palette with state colours, type scale on the embedded IBM Plex Sans Arabic, spacing, radii, elevation, motion durations, the focus ring, light or dark, and the one signature move. `packages/ui` carries those tokens as CSS variables, and the shadcn/ui foundation is initialised there with `rtl: true` and the primitives chosen.
+- Whether the attract screen and the customer display carry a live 3D scene, and whether it is on by default, is decided here too, within §4's budget.
+
+**Tests:** `design_tokens_match_design_md` · `every_text_token_pair_meets_its_contrast_floor`
+**Done when:** `pnpm --filter @pos/ui exec vitest run src/tokens.test.ts` exits zero, with every token `DESIGN.md` names present in `tokens.css` at its value and every text-on-ground pair at or above its floor (7:1 for TOTAL, amount due and change). The pull request's evidence carries the chosen direction's sale-screen comps in Arabic and English, and impeccable's `critique` and `audit` of them with every P0 and P1 finding answered.
 
 ### 1.11.4 — Lock / PIN screen (D1)
 **Files:** `apps/terminal/src/screens/Lock.tsx`, `apps/terminal/src/screens/Lock.test.tsx` (new)

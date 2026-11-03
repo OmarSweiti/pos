@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **70 of 121 executable microsteps fully complete (~58%)**: `1.1.0`
+Phase 1 has **70 of 122 executable microsteps fully complete (~57%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -280,6 +280,7 @@ docs/implementation/
     ├── ipc-contract.md            every Tauri command
     ├── sync-protocol.md           ownership, chaos, accepted risks
     ├── hardware-and-receipts.md   traits, Arabic raster, emulators and the gate, lab checklist
+    ├── ui-design.md               the look: principles, references, skills, 3D budget
     ├── ui-spec.md                 screens, RTL, keyboard map
     ├── test-catalog.md            95 edge cases → named tests
     ├── security-compliance.md     PDPL · PCI · tenancy · keys · audit chain

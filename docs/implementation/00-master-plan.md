@@ -63,6 +63,7 @@ is superseded, and what is still open — is **§4a** below. Read §4a before ac
 | [`ref/sync-protocol.md`](ref/sync-protocol.md) | ownership classes, push/pull, chaos, accepted risks |
 | [`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) | traits, the Arabic raster pipeline, simulator-first and the qualification gate, the lab checklist |
 | [`ref/ui-spec.md`](ref/ui-spec.md) | screen by screen, RTL mechanics, keyboard map |
+| [`ref/ui-design.md`](ref/ui-design.md) | how the screens look: principles, surfaces, the 3D and motion budget, the design references and skills |
 | [`ref/test-catalog.md`](ref/test-catalog.md) | 95 edge cases → named tests, checked by a script. **The coverage matrix** |
 | [`ref/security-compliance.md`](ref/security-compliance.md) | PDPL, PCI, the audit chain, permissions, tenancy, key custody, secrets |
 | [`ref/merchant-decisions.md`](ref/merchant-decisions.md) | the questionnaire to fill in with the merchant |
@@ -93,7 +94,7 @@ concordance heading while counting its executable `1.1.2a` and `1.1.2b` children
 
 | Phase | Microsteps | Weeks | Implied rate |
 |---|---:|---|---|
-| 1 | 121 | **15–21**, split 1A 8–11 / 1B 7–10 | 5.8–8.1 / week |
+| 1 | 122 | **15–21**, split 1A 8–11 / 1B 7–10 | 5.8–8.1 / week |
 | 2 | 62 | **10–13** | 4.8–6.2 / week |
 | 3 | 45 | **11–14** | 3.2–4.1 / week |
 | 4 | 42 | **9–12** | 3.5–4.7 / week, plus the pilot week |
