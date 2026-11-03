@@ -282,6 +282,28 @@ pub enum DbError {
     SaleEnvelopeMismatch { entity: &'static str },
     #[error("stored sale is malformed: {reason}")]
     StoredSaleInvalid { reason: String },
+    #[error("no shift {0} on this register to date a parked cart by")]
+    ParkedCartShiftUnknown(pos_domain::ShiftId),
+    #[error("cart {0} is already set aside or being worked on")]
+    ParkedCartAlreadyParked(pos_domain::SaleId),
+    #[error("no parked cart {0} on this register")]
+    ParkedCartNotFound(pos_domain::SaleId),
+    #[error("parked cart {0} is already being worked on, and cannot be claimed twice")]
+    ParkedCartClaimed(pos_domain::SaleId),
+    #[error("this session holds no claim on cart {0}")]
+    ParkedCartNotClaimed(pos_domain::SaleId),
+    #[error(
+        "parked cart {id} expired at the end of business day {expires_on}, and can no longer \
+         be resumed"
+    )]
+    ParkedCartExpired {
+        id: pos_domain::SaleId,
+        expires_on: String,
+    },
+    #[error("resume refused: {0}")]
+    ResumeRefused(#[from] pos_domain::CartError),
+    #[error("stored parked cart is malformed: {reason}")]
+    StoredParkedCartInvalid { reason: String },
 }
 
 /// `PRAGMA synchronous = FULL`, as SQLite reports it back. The pragma accepts a
