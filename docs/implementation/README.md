@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **72 of 122 executable microsteps fully complete (~59%)**: `1.1.0`
+Phase 1 has **73 of 122 executable microsteps fully complete (~60%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -177,7 +177,11 @@ with another cashier's basket audited, and expired at the end of its business da
 (the stock cache held to its ledger — after any sequence of events the cache projected one event at a
 time is the full replay and the domain's sum, a rebuild leaves every row byte for byte as it was, and a
 cache that has drifted in any column is found at verification, named product by product, and rebuilt
-in the same transaction, or left whole when the rebuild fails).
+in the same transaction, or left whole when the rebuild fails), and `1.10.4` (negative stock allowed and
+flagged by default — a basket screened before tender, every product it would take below zero named, the
+sale completed and its event recording the position it left — and refused before tender, never at
+finalize, under a store's hard block; with two offline registers both selling the last unit, because
+each can screen only its own ledger).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
@@ -196,7 +200,7 @@ device is bought before it ([`ref/hardware-and-receipts.md`](ref/hardware-and-re
 append-only facts, because every fact graph commits with its delivery envelope and the writer refuses
 to return success on an incomplete one. **`1.9.1`, `1.10.1` and `1.2.5` have landed too**, so the
 migration chain is contiguous to `0007`, and `1.2.3`, the product repository and its search, is
-built on it; the `1.2.4` database half, `1.10.2` and `1.10.3` have landed, so `1.10.4`–`1.10.5` may be built next. `1.2.4` is **complete**: its pure half
+built on it; the `1.2.4` database half and `1.10.2`–`1.10.4` have landed, so `1.10.5` may be built next. `1.2.4` is **complete**: its pure half
 — the scan parser, `PriceSource`, `ScanLookup`, `resolve_scan` and the trade-scale gate — is in
 `pos-domain`, with the compile-fail proof that only the scan handler can make a price-embedded
 lookup. Its database half has landed too: `TradeScaleRepository` reads a scale's current evidence and

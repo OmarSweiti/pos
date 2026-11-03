@@ -29,6 +29,8 @@
 //!   estimated, and a report counts such events rather than showing an unknown
 //!   margin as exact.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{ProductId, SaleId, SaleLineId, StockEventId, StoreId, UserId};
@@ -222,6 +224,11 @@ pub enum StockError {
         .wac.currency().code()
     )]
     WacBlendNotSupported { wac: Money, incoming: Money },
+    /// The store sells nothing it does not have, and a basket would take
+    /// these products below zero (master plan C.7's hard block). Refused
+    /// before tender, never once money has been taken.
+    #[error("the store sells no stock below zero, and {} product(s) would go below it", .0.len())]
+    WouldGoNegative(Vec<Shortfall>),
     #[error(transparent)]
     Money(#[from] MoneyError),
 }
@@ -332,6 +339,77 @@ pub fn on_hand(events: &[StockEvent]) -> Result<Qty, StockError> {
         Qty::ZERO,
         |sum, event| Ok(sum.checked_add(event.qty_delta)?),
     )
+}
+
+/// Whether a store lets a sale take stock below zero — `store.allow_negative_stock`
+/// (master plan C.7, merchant decision 4.1).
+///
+/// The default allows it and flags it loudly. Refusing a sale because the
+/// ledger is wrong punishes the customer at the register for a back-office
+/// error, and until receiving arrives a ledger is wrong more often than not. A
+/// tightly run store may choose the hard block instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NegativeStockPolicy {
+    AllowAndFlag,
+    HardBlock,
+}
+
+/// A product a basket would leave below zero: what is on hand, and how much
+/// of it the basket's lines take between them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Shortfall {
+    pub product_id: ProductId,
+    pub on_hand: Qty,
+    pub taken: Qty,
+}
+
+impl NegativeStockPolicy {
+    /// Screen what a basket takes from stock, before it is tendered.
+    ///
+    /// `taken` is per line, as the stock each line will move: lines of one
+    /// product are summed, so the screen is the same however the basket was
+    /// rung up. `on_hand` holds each product's position; one it does not hold
+    /// has none, as a product never stocked has none. Services move no stock,
+    /// so the caller leaves them out.
+    ///
+    /// Returns every product the basket takes from and would leave below zero,
+    /// in product order — the flag. Selling the last unit leaves zero, which is
+    /// not below it.
+    ///
+    /// # Errors
+    ///
+    /// [`StockError::WouldGoNegative`] under [`NegativeStockPolicy::HardBlock`]
+    /// when the flag is not empty, carrying it; [`StockError::Money`] when a
+    /// sum leaves the range of a quantity.
+    pub fn screen(
+        self,
+        on_hand: &BTreeMap<ProductId, Qty>,
+        taken: &[(ProductId, Qty)],
+    ) -> Result<Vec<Shortfall>, StockError> {
+        let mut basket: BTreeMap<ProductId, Qty> = BTreeMap::new();
+        for &(product_id, qty) in taken {
+            let sum = basket.entry(product_id).or_insert(Qty::ZERO);
+            *sum = sum.checked_add(qty)?;
+        }
+        let mut shortfalls = Vec::new();
+        for (product_id, taken) in basket {
+            let held = on_hand.get(&product_id).copied().unwrap_or(Qty::ZERO);
+            if taken.milli() > 0 && held.checked_sub(taken)?.milli() < 0 {
+                shortfalls.push(Shortfall {
+                    product_id,
+                    on_hand: held,
+                    taken,
+                });
+            }
+        }
+        match self {
+            NegativeStockPolicy::HardBlock if !shortfalls.is_empty() => {
+                Err(StockError::WouldGoNegative(shortfalls))
+            }
+            _ => Ok(shortfalls),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -606,6 +684,68 @@ mod tests {
         );
     }
 
+    fn product(n: u128) -> ProductId {
+        ProductId::from_uuid(Uuid::from_u128(n))
+    }
+
+    #[test]
+    fn a_basket_is_screened_product_by_product() {
+        let on_hand = BTreeMap::from([
+            (product(1), Qty::from_milli(1_000)),
+            (product(2), Qty::from_milli(5_000)),
+        ]);
+        // Two lines of the first product take three units between them; the
+        // last unit of the second leaves zero; a third was never stocked.
+        let taken = [
+            (product(1), Qty::from_milli(1_000)),
+            (product(2), Qty::from_milli(5_000)),
+            (product(3), Qty::from_milli(250)),
+            (product(1), Qty::from_milli(2_000)),
+        ];
+        let flagged = vec![
+            Shortfall {
+                product_id: product(1),
+                on_hand: Qty::from_milli(1_000),
+                taken: Qty::from_milli(3_000),
+            },
+            Shortfall {
+                product_id: product(3),
+                on_hand: Qty::ZERO,
+                taken: Qty::from_milli(250),
+            },
+        ];
+        assert_eq!(
+            NegativeStockPolicy::AllowAndFlag.screen(&on_hand, &taken),
+            Ok(flagged.clone())
+        );
+        assert_eq!(
+            NegativeStockPolicy::HardBlock.screen(&on_hand, &taken),
+            Err(StockError::WouldGoNegative(flagged))
+        );
+        let last_unit = [(product(2), Qty::from_milli(5_000))];
+        assert_eq!(
+            NegativeStockPolicy::HardBlock.screen(&on_hand, &last_unit),
+            Ok(vec![])
+        );
+    }
+
+    #[test]
+    fn stock_already_below_zero_is_flagged_only_when_the_basket_takes_from_it() {
+        let on_hand = BTreeMap::from([(product(1), Qty::from_milli(-2_000))]);
+        assert_eq!(
+            NegativeStockPolicy::HardBlock.screen(&on_hand, &[(product(1), Qty::ZERO)]),
+            Ok(vec![])
+        );
+        assert_eq!(
+            NegativeStockPolicy::HardBlock.screen(&on_hand, &[(product(1), Qty::from_milli(1))]),
+            Err(StockError::WouldGoNegative(vec![Shortfall {
+                product_id: product(1),
+                on_hand: Qty::from_milli(-2_000),
+                taken: Qty::from_milli(1),
+            }]))
+        );
+    }
+
     /// One movement of a sequence: a signed number of units, and the cost an
     /// arrival brings. Outgoing and zero movements bring none.
     fn any_movement() -> impl Strategy<Value = NewStockEvent> {
@@ -690,6 +830,48 @@ mod tests {
         /// summing the ledger and a cache projected one event at a time can
         /// agree at all. A movement the ledger refuses is not an event and
         /// moves nothing.
+        /// A store that allows negative stock never refuses a basket, and
+        /// flags exactly the products whose lines, summed, take more than is
+        /// on hand; a store that blocks it refuses exactly those baskets, and
+        /// names the same products. However the basket was rung up — in any
+        /// order, one line or several — the answer is the same.
+        #[test]
+        fn prop_hard_block_refuses_exactly_what_allow_and_flag_flags(
+            held in prop::collection::btree_map(0u128..6, -5_000i64..5_000, 0..6),
+            lines in prop::collection::vec((0u128..6, 0i64..4_000), 0..10),
+        ) {
+            let on_hand: BTreeMap<ProductId, Qty> =
+                held.iter().map(|(&p, &q)| (product(p), Qty::from_milli(q))).collect();
+            let taken: Vec<(ProductId, Qty)> =
+                lines.iter().map(|&(p, q)| (product(p), Qty::from_milli(q))).collect();
+            // The oracle: sum each product's lines by hand, in product order.
+            let mut sums: BTreeMap<u128, i64> = BTreeMap::new();
+            for &(p, q) in &lines {
+                *sums.entry(p).or_insert(0) += q;
+            }
+            let expected: Vec<Shortfall> = sums
+                .into_iter()
+                .filter(|&(p, t)| t > 0 && held.get(&p).copied().unwrap_or(0) - t < 0)
+                .map(|(p, t)| Shortfall {
+                    product_id: product(p),
+                    on_hand: Qty::from_milli(held.get(&p).copied().unwrap_or(0)),
+                    taken: Qty::from_milli(t),
+                })
+                .collect();
+            prop_assert_eq!(
+                NegativeStockPolicy::AllowAndFlag.screen(&on_hand, &taken),
+                Ok(expected.clone())
+            );
+            let mut reversed = taken.clone();
+            reversed.reverse();
+            let blocked = NegativeStockPolicy::HardBlock.screen(&on_hand, &reversed);
+            if expected.is_empty() {
+                prop_assert_eq!(blocked, Ok(vec![]));
+            } else {
+                prop_assert_eq!(blocked, Err(StockError::WouldGoNegative(expected)));
+            }
+        }
+
         #[test]
         fn prop_on_hand_is_the_position_the_last_event_leaves(
             movements in prop::collection::vec(any_movement(), 0..40),

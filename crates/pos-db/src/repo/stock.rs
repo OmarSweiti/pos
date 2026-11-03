@@ -32,6 +32,13 @@
 //! [`StockRepository::on_hand`] and [`StockRepository::negative_stock`] read
 //! the cache.
 //!
+//! Before a basket is tendered, [`StockRepository::screen_basket`] reads the
+//! store's [`NegativeStockPolicy`] and the cache, and asks the domain which
+//! products the basket would leave below zero (microstep 1.10.4). By default
+//! that is a flag and the sale goes ahead; under the store's hard block it is a
+//! refusal, before any money is taken. Finalize never screens: once a customer
+//! has paid, the sale stands and its stock event records the position it left.
+//!
 //! The cache is a cache, so it is checked against the ledger rather than
 //! trusted (microstep 1.10.3). [`StockRepository::verify_cache`] compares every
 //! column of every row with a full replay and names each product on which they
@@ -43,8 +50,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use pos_domain::{
-    Currency, Money, NewStockEvent, ProductId, Qty, RegisterId, StockEvent, StockPosition,
-    StockSource, StoreId,
+    Currency, Money, NegativeStockPolicy, NewStockEvent, ProductId, Qty, RegisterId, Shortfall,
+    StockEvent, StockPosition, StockSource, StoreId,
 };
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
@@ -402,6 +409,94 @@ impl<'c> StockRepository<'c> {
         Ok(Qty::from_milli(milli.unwrap_or(0)))
     }
 
+    /// The store's negative-stock policy: `store.allow_negative_stock`, 1 to
+    /// allow and flag (the default, merchant decision 4.1) and 0 for the hard
+    /// block.
+    ///
+    /// # Errors
+    ///
+    /// [`DbError::StockStoreUnknown`] for a store the database does not hold,
+    /// and [`DbError::StoredStockRecordInvalid`] for any other stored value:
+    /// `0003` gives the column no `CHECK`, and a policy read as a guess would
+    /// either refuse sales the merchant allowed or allow ones they blocked.
+    pub fn negative_stock_policy(&self, store: StoreId) -> Result<NegativeStockPolicy, DbError> {
+        let allow: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT allow_negative_stock FROM store WHERE id = ?1",
+                [store.as_uuid().as_bytes().as_slice()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match allow {
+            None => Err(DbError::StockStoreUnknown(store)),
+            Some(1) => Ok(NegativeStockPolicy::AllowAndFlag),
+            Some(0) => Ok(NegativeStockPolicy::HardBlock),
+            Some(other) => Err(invalid(&format!(
+                "store {store} has allow_negative_stock {other}"
+            ))),
+        }
+    }
+
+    /// Screen what a basket takes from `store`'s stock, before it is tendered,
+    /// and return the flag: every product it would leave below zero, in product
+    /// order.
+    ///
+    /// `taken` is per line, as the stock each line will move — a scale label's
+    /// line moves the weight its price implies, not its one package. A service
+    /// moves no stock and is never screened. On-hand is read from the cache,
+    /// which 1.10.3's check keeps true. Nothing is written.
+    ///
+    /// The shell screens when a line is added or its quantity changes, and
+    /// again when tender begins, so a hard block refuses the line before any
+    /// money is taken. Finalize never screens: by then the customer has paid,
+    /// and a sale that took stock below zero stands and is flagged (E.12).
+    ///
+    /// # Errors
+    ///
+    /// [`DbError::StockRefused`] with [`pos_domain::StockError::WouldGoNegative`]
+    /// under the store's hard block when the flag is not empty;
+    /// [`DbError::StockStoreUnknown`] and [`DbError::StockProductUnknown`] for a
+    /// store or product the database does not hold; and the errors of
+    /// [`Self::negative_stock_policy`].
+    pub fn screen_basket(
+        &self,
+        store: StoreId,
+        taken: &[(ProductId, Qty)],
+    ) -> Result<Vec<Shortfall>, DbError> {
+        let policy = self.negative_stock_policy(store)?;
+        let mut stocked: BTreeMap<ProductId, Qty> = BTreeMap::new();
+        let mut services: BTreeSet<ProductId> = BTreeSet::new();
+        for &(product, _) in taken {
+            if stocked.contains_key(&product) || services.contains(&product) {
+                continue;
+            }
+            let is_service: Option<bool> = self
+                .conn
+                .query_row(
+                    "SELECT is_service FROM product WHERE id = ?1",
+                    [product.as_uuid().as_bytes().as_slice()],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            match is_service {
+                None => return Err(DbError::StockProductUnknown(product)),
+                Some(true) => {
+                    services.insert(product);
+                }
+                Some(false) => {
+                    stocked.insert(product, self.on_hand(product, store)?);
+                }
+            }
+        }
+        let goods: Vec<(ProductId, Qty)> = taken
+            .iter()
+            .copied()
+            .filter(|(product, _)| !services.contains(product))
+            .collect();
+        Ok(policy.screen(&stocked, &goods)?)
+    }
+
     /// Replay `store`'s ledger into its cache, inside the caller's transaction,
     /// and return how many cache rows it wrote. The replay is [`REPLAY`].
     ///
@@ -666,7 +761,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::fixtures::registered_chain::RegisteredChain;
+    use crate::fixtures::registered_chain::{self, Checkout, RegisteredChain};
     use crate::repo::audit::AuditRepository;
     use crate::repo::outbox::{CommitEnvelope, FactMember, OutboxRepository};
 
@@ -676,6 +771,7 @@ mod tests {
     const OTHER_REGISTER: u128 = 0x02;
     const COLA: u128 = 0x0a;
     const RICE: u128 = 0x0b;
+    const DELIVERY: u128 = 0x0c;
 
     struct Till {
         _dir: tempfile::TempDir,
@@ -1413,5 +1509,286 @@ mod tests {
             Qty::from_milli(-2_000)
         );
         assert_eq!(stock.on_hand(product(0xFF), store(&t)).unwrap(), Qty::ZERO);
+    }
+
+    /// One unit of `what` sold and completed on register `at`, through the
+    /// registered chain's checkout: the sale, its line and its cash tender,
+    /// then the fixture's envelope, the line's stock event at the cache's cost
+    /// basis, the receipt, the audit row and the completion. Nothing screens
+    /// it, as nothing does once a customer has paid.
+    fn sell(t: &Till, slot: u8, at: u128, what: u128) -> Vec<u8> {
+        let base = u128::from(slot) << 8;
+        let (sale, line, tender) = (bytes(base | 1), bytes(base | 2), bytes(base | 3));
+        t.conn
+            .execute(
+                "INSERT INTO sale (id, receipt_number, register_id, status, subtotal_minor,
+                                   tax_minor, total_minor, currency, business_date, completed_at)
+                 VALUES (?1, ?2, ?3, 'parked', 2500, 400, 2900, 'JOD', '2026-08-25', ?4)",
+                params![
+                    &sale,
+                    format!("SYN-{slot:06}"),
+                    bytes(at),
+                    registered_chain::AT
+                ],
+            )
+            .unwrap();
+        t.conn
+            .execute(
+                "INSERT INTO sale_line
+                   (id, sale_id, product_id, qty_milli, unit_price_minor, tax_minor,
+                    total_minor, line_no, name_snapshot, net_minor, tax_category_id)
+                 VALUES (?1, ?2, ?3, 1000, 2500, 400, 2900, 1, 'Synthetic', 2500, ?4)",
+                params![&line, &sale, bytes(what), &t.chain.tax_category],
+            )
+            .unwrap();
+        t.conn
+            .execute(
+                "INSERT INTO sale_tender (id, sale_id, method, amount_minor, change_minor)
+                 VALUES (?1, ?2, 'cash', 2900, 0)",
+                params![&tender, &sale],
+            )
+            .unwrap();
+        Checkout::new(slot, &sale, &bytes(at), &[&line], &[&tender]).seal(&t.conn, &t.chain);
+        sale
+    }
+
+    /// The sale's status, and the position its stock event left.
+    fn sold_at(t: &Till, sale: &[u8]) -> (String, i64) {
+        t.conn
+            .query_row(
+                "SELECT s.status, e.on_hand_after_milli
+                   FROM sale s JOIN stock_ledger e ON e.ref_id = s.id
+                  WHERE s.id = ?1",
+                [sale],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap()
+    }
+
+    fn hard_block(t: &Till) {
+        t.conn
+            .execute(
+                "UPDATE store SET allow_negative_stock = 0 WHERE id = ?1",
+                [&t.chain.store],
+            )
+            .unwrap();
+    }
+
+    fn one(what: u128, milli: i64) -> (ProductId, Qty) {
+        (product(what), Qty::from_milli(milli))
+    }
+
+    /// Merchant decision 4.1 and master plan C.7: by default a basket that
+    /// takes more than is on hand is flagged, not refused. Its sale completes,
+    /// its stock event records the position it left, and the negative-stock
+    /// report lists the product until stock arrives.
+    #[test]
+    fn negative_stock_allowed_by_default_and_flagged() {
+        let t = till();
+        let stock = StockRepository::new(&t.conn);
+        assert_eq!(
+            stock.negative_stock_policy(store(&t)).unwrap(),
+            NegativeStockPolicy::AllowAndFlag
+        );
+        // Two colas arrive; a basket rings up three in two lines, and a bag of
+        // rice nobody has stocked.
+        record(
+            &t,
+            0x10,
+            &[movement(
+                &t,
+                0x100,
+                COLA,
+                StockEventKind::Adjust,
+                2_000,
+                Some(IncomingCost::Observed(jod(380))),
+            )],
+        )
+        .unwrap();
+        let basket = [one(COLA, 1_000), one(RICE, 1_000), one(COLA, 2_000)];
+        assert_eq!(
+            stock.screen_basket(store(&t), &basket).unwrap(),
+            [
+                Shortfall {
+                    product_id: product(COLA),
+                    on_hand: Qty::from_milli(2_000),
+                    taken: Qty::from_milli(3_000),
+                },
+                Shortfall {
+                    product_id: product(RICE),
+                    on_hand: Qty::ZERO,
+                    taken: Qty::from_milli(1_000),
+                },
+            ]
+        );
+
+        // The sales complete, one unit each, and the third takes cola below zero.
+        for slot in [0x11, 0x12] {
+            assert_eq!(sold_at(&t, &sell(&t, slot, REGISTER, COLA)).0, "completed");
+        }
+        let third = sell(&t, 0x13, REGISTER, COLA);
+        assert_eq!(sold_at(&t, &third), ("completed".to_owned(), -1_000));
+        let rice = sell(&t, 0x14, REGISTER, RICE);
+        assert_eq!(sold_at(&t, &rice), ("completed".to_owned(), -1_000));
+        assert_eq!(
+            stock.negative_stock(store(&t)).unwrap(),
+            [
+                NegativeStockRow {
+                    product_id: product(COLA),
+                    on_hand: Qty::from_milli(-1_000),
+                },
+                NegativeStockRow {
+                    product_id: product(RICE),
+                    on_hand: Qty::from_milli(-1_000),
+                },
+            ]
+        );
+        let tx = t.conn.unchecked_transaction().unwrap();
+        assert_eq!(stock.verify_cache(&tx, store(&t)).unwrap(), []);
+    }
+
+    /// A tightly run store's hard block refuses the line that would take stock
+    /// below zero, before any money is taken. The last unit still sells, a
+    /// service is never screened, and a screen writes nothing. Finalize never
+    /// screens: a sale already paid for completes even under the block.
+    #[test]
+    fn hard_block_setting_refuses_the_line() {
+        let t = till();
+        hard_block(&t);
+        t.conn
+            .execute(
+                "INSERT INTO product (id, sku, name, price_minor, currency, is_active,
+                                      tax_category_id, unit, qty_step_milli, is_weighed,
+                                      is_service)
+                 VALUES (?1, 'DELIVERY', 'DELIVERY', 1000, 'JOD', 1, ?2, 'each', 1000, 0, 1)",
+                params![bytes(DELIVERY), &t.chain.tax_category],
+            )
+            .unwrap();
+        record(
+            &t,
+            0x10,
+            &[movement(
+                &t,
+                0x100,
+                COLA,
+                StockEventKind::Adjust,
+                1_000,
+                Some(IncomingCost::Observed(jod(380))),
+            )],
+        )
+        .unwrap();
+        let stock = StockRepository::new(&t.conn);
+        assert_eq!(
+            stock.negative_stock_policy(store(&t)).unwrap(),
+            NegativeStockPolicy::HardBlock
+        );
+        let changes = t.conn.total_changes();
+
+        assert_eq!(
+            stock.screen_basket(store(&t), &[one(COLA, 1_000)]).unwrap(),
+            [],
+            "the last unit leaves zero, which is not below it"
+        );
+        let refused = stock.screen_basket(store(&t), &[one(COLA, 1_000), one(COLA, 1_000)]);
+        assert!(
+            matches!(
+                &refused,
+                Err(DbError::StockRefused(StockError::WouldGoNegative(s)))
+                    if s == &[Shortfall {
+                        product_id: product(COLA),
+                        on_hand: Qty::from_milli(1_000),
+                        taken: Qty::from_milli(2_000),
+                    }]
+            ),
+            "{refused:?}"
+        );
+        assert_eq!(
+            stock
+                .screen_basket(store(&t), &[one(DELIVERY, 5_000), one(COLA, 1_000)])
+                .unwrap(),
+            []
+        );
+        assert!(matches!(
+            stock.screen_basket(store(&t), &[one(0xFF, 1_000)]),
+            Err(DbError::StockProductUnknown(p)) if p == product(0xFF)
+        ));
+        let elsewhere = StoreId::from_uuid(Uuid::from_u128(0xEE));
+        assert!(matches!(
+            stock.screen_basket(elsewhere, &[one(COLA, 1_000)]),
+            Err(DbError::StockStoreUnknown(s)) if s == elsewhere
+        ));
+        assert_eq!(t.conn.total_changes(), changes, "a screen writes nothing");
+
+        // Two sales already paid for: the second takes cola below zero and
+        // completes regardless.
+        sell(&t, 0x11, REGISTER, COLA);
+        assert_eq!(
+            sold_at(&t, &sell(&t, 0x12, REGISTER, COLA)),
+            ("completed".to_owned(), -1_000)
+        );
+        assert_eq!(
+            stock.on_hand(product(COLA), store(&t)).unwrap(),
+            Qty::from_milli(-1_000)
+        );
+
+        // A stored value that is neither is refused by name, never guessed.
+        t.conn
+            .execute(
+                "UPDATE store SET allow_negative_stock = 2 WHERE id = ?1",
+                [&t.chain.store],
+            )
+            .unwrap();
+        assert!(matches!(
+            stock.negative_stock_policy(store(&t)),
+            Err(DbError::StoredStockRecordInvalid { .. })
+        ));
+        assert!(matches!(
+            stock.screen_basket(store(&t), &[one(COLA, 1_000)]),
+            Err(DbError::StoredStockRecordInvalid { .. })
+        ));
+    }
+
+    /// E.12, Phase 1's half. Two registers each hold the last unit in their own
+    /// ledger and sell it while offline. Neither can see the other's sale, so
+    /// neither refuses, not even under the hard block, which can only screen
+    /// what its own register knows. Both sales stand: inventory is a ledger,
+    /// not a lock. The store's stock going negative and flagged where the two
+    /// meet is Phase 3's `both_sales_of_the_last_unit_stand_and_stock_goes_negative_flagged`.
+    #[test]
+    fn two_offline_registers_selling_the_last_unit_both_succeed() {
+        for (at, code, slot) in [(REGISTER, "REG01", 0x20), (OTHER_REGISTER, "REG02", 0x21)] {
+            let t = till();
+            if at != REGISTER {
+                t.chain.add_register(&t.conn, &bytes(at), code);
+            }
+            hard_block(&t);
+            let tx = t.conn.unchecked_transaction().unwrap();
+            write(
+                &t,
+                &tx,
+                0x10,
+                register(at),
+                &[movement(
+                    &t,
+                    0x100,
+                    COLA,
+                    StockEventKind::Adjust,
+                    1_000,
+                    Some(IncomingCost::Observed(jod(380))),
+                )],
+                false,
+            )
+            .unwrap();
+            tx.commit().unwrap();
+            let stock = StockRepository::new(&t.conn);
+            assert_eq!(
+                stock.screen_basket(store(&t), &[one(COLA, 1_000)]).unwrap(),
+                [],
+                "{code} holds the last unit"
+            );
+            let sale = sell(&t, slot, at, COLA);
+            assert_eq!(sold_at(&t, &sale), ("completed".to_owned(), 0), "{code}");
+            assert_eq!(stock.negative_stock(store(&t)).unwrap(), [], "{code}");
+        }
     }
 }
