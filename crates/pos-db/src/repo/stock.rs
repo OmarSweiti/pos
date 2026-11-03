@@ -1712,6 +1712,11 @@ mod tests {
             stock.screen_basket(store(&t), &[one(0xFF, 1_000)]),
             Err(DbError::StockProductUnknown(p)) if p == product(0xFF)
         ));
+        let elsewhere = StoreId::from_uuid(Uuid::from_u128(0xEE));
+        assert!(matches!(
+            stock.screen_basket(elsewhere, &[one(COLA, 1_000)]),
+            Err(DbError::StockStoreUnknown(s)) if s == elsewhere
+        ));
         assert_eq!(t.conn.total_changes(), changes, "a screen writes nothing");
 
         // Two sales already paid for: the second takes cola below zero and
