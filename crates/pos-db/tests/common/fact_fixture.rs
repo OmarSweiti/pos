@@ -332,6 +332,8 @@ fn seed_sales(conn: &Connection) {
             ("receipt_number", text("R-20")),
             ("register_id", blob(3)),
             ("status", text("parked")),
+            ("opened_at", text(FIXED_AT)),
+            ("price_mode", text("inclusive")),
             ("subtotal_minor", Value::Integer(100)),
             ("tax_minor", Value::Integer(0)),
             ("total_minor", Value::Integer(99)),
@@ -369,6 +371,7 @@ fn seed_sales(conn: &Connection) {
             ("method", text("exchange")),
             ("amount_minor", Value::Integer(99)),
             ("change_minor", Value::Integer(0)),
+            ("tender_no", Value::Integer(1)),
         ],
     );
     seed_sale_tax(conn, 23, COMPLETED_LINE_ID, 99);
@@ -495,6 +498,9 @@ fn seed_sale_line(
             ("net_minor", Value::Integer(net_minor)),
             ("tax_category_id", blob(6)),
             ("is_weighed", Value::Integer(0)),
+            ("unit", text("each")),
+            ("price_origin", text("catalog")),
+            ("is_age_confirmed", Value::Integer(0)),
         ],
     );
 }
@@ -854,6 +860,8 @@ fn seed_refunds_and_stored_value(conn: &Connection) {
             ("receipt_number", text("CN-70")),
             ("register_id", blob(3)),
             ("status", text("parked")),
+            ("opened_at", text(FIXED_AT)),
+            ("price_mode", text("inclusive")),
             ("subtotal_minor", Value::Integer(-100)),
             ("tax_minor", Value::Integer(0)),
             ("total_minor", Value::Integer(-99)),
@@ -1406,6 +1414,8 @@ fn seed_promotions(conn: &Connection) {
             ("receipt_number", text("R-130")),
             ("register_id", blob(3)),
             ("status", text("parked")),
+            ("opened_at", text(FIXED_AT)),
+            ("price_mode", text("inclusive")),
             ("subtotal_minor", Value::Integer(100)),
             ("tax_minor", Value::Integer(0)),
             ("total_minor", Value::Integer(95)),
@@ -1442,6 +1452,7 @@ fn seed_promotions(conn: &Connection) {
             ("method", text("exchange")),
             ("amount_minor", Value::Integer(95)),
             ("change_minor", Value::Integer(0)),
+            ("tender_no", Value::Integer(1)),
         ],
     );
     seed_sale_tax(conn, 203, PARKED_LINE_ID, 95);
@@ -1478,6 +1489,8 @@ fn seed_promotions(conn: &Connection) {
             ("receipt_number", text("R-221")),
             ("register_id", blob(3)),
             ("status", text("parked")),
+            ("opened_at", text(FIXED_AT)),
+            ("price_mode", text("inclusive")),
             ("subtotal_minor", Value::Integer(0)),
             ("tax_minor", Value::Integer(0)),
             ("total_minor", Value::Integer(0)),

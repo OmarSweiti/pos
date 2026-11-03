@@ -283,6 +283,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0006_stock_ledger.sql"),
     include_str!("../migrations/0007_search_and_seed.sql"),
     include_str!("../migrations/0008_discount_caps.sql"),
+    include_str!("../migrations/0009_sale_capture.sql"),
 ];
 
 /// The schema version this build understands: the number of migrations it

@@ -91,7 +91,11 @@ fn migration_0008_writes_the_adopted_caps_over_0004_s_cells() {
     let version: i64 = conn
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 8);
+    assert_eq!(
+        version,
+        pos_db::SCHEMA_VERSION,
+        "every migration after v7 ran on open, 0008 among them"
+    );
     assert_eq!(
         cell(&conn, Role::Cashier),
         granted(Some(r#"{"kind":"role_cap","max_percent_ppm":50000}"#))

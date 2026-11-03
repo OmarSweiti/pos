@@ -1,0 +1,30 @@
+-- Mirrors SQLite 0009_sale_capture.sql (conventions §9 rule 4).
+--
+-- This migration creates nothing. As with the 0005 to 0008 mirrors, that is the
+-- finding, recorded here because a committed migration cannot be reopened to
+-- explain itself later.
+--
+-- 0009 adds twenty-nine columns to three tables, five pairs of triggers and one
+-- index: the facts a completed sale captured that the register's schema had no
+-- column for (each line's unit, price origin, ceiling, age gate and label,
+-- each discount and override as it was asked for, the cart's opening, its
+-- price mode, its cash rounding's base and its tenders' order), the rules that
+-- keep each group of them whole, and the gate that a sale completes only with
+-- the ones every sale has.
+--
+-- Every one of them is on a tenant-owned table the server does not have yet:
+-- sale, sale_line and sale_tender. The 0003 mirror deferred all three, and the
+-- 0005 mirror deferred the fourteen sale columns 0005 added, on the shared
+-- multi-tenant decision that ref/schema.md §"Shared multi-tenant decision for
+-- sign-off" records as still awaiting owner sign-off "before the first Phase-3
+-- server migration". Adding columns to tables that do not exist is not an
+-- option, and creating the tables now would omit the org_id UUID NOT NULL
+-- column, the composite tenant foreign keys, forced row-level security and the
+-- owner/application role split.
+--
+-- What this leaves the migration that creates those tables: it carries these
+-- columns with them, in the server's own spelling (UUID for the BLOB user ids,
+-- BOOLEAN for is_age_confirmed, TIMESTAMPTZ for opened_at), with the same
+-- coherence rules as CHECK constraints rather than triggers, since a new table
+-- can declare them. The completion gate lands with them too, over the server's
+-- own insert of a completed sale.
