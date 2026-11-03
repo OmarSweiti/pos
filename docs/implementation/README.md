@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **70 of 122 executable microsteps fully complete (~57%)**: `1.1.0`
+Phase 1 has **71 of 122 executable microsteps fully complete (~58%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -170,7 +170,10 @@ found — on either side of an interrupted step, part-way through one, or writte
 and the forensic verifier still reading such a copy, naming every object that differs), and `1.8.2`
 (the completed sale written as one prepared fact graph inside its envelope and read back field for
 field, with no method that updates or deletes one, and migration `0009` giving every fact the sale
-captured a column of its own).
+captured a column of its own), and `1.8.2b` (a parked basket kept on the register's own disk through
+any restart, claimed by one session when it is resumed, carried through a process death with every
+change made to it, and removed only by the sale it becomes; resumed by whoever holds `sale.resume`,
+with another cashier's basket audited, and expired at the end of its business day).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on

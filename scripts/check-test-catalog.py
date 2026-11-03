@@ -91,7 +91,6 @@ PLANNED: dict[str, tuple[str, ...]] = {
         "a_sale_completes_with_no_printer_and_queues_the_artifact",
         "the_missing_printer_is_an_alarm_not_a_modal",
     ),
-    "1.8.2b": ("parked_carts_survive_restart",),
     "1.8.3": ("finalize_is_atomic_under_injected_failure",),
     "1.8.4": (
         "a_checkout_operation_row_never_outlives_its_commit",
@@ -530,6 +529,7 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "mutating_an_identity_column_breaks_the_chain",
         "narrow_profile_reflows_rather_than_truncates",
         "override_below_floor_is_denied",
+        "parked_carts_survive_restart",
         "price_embedded_line_total_equals_the_label",
         "price_embedded_stock_event_carries_the_derived_weight_flagged_estimated",
         "print_failure_after_finalize_leaves_sale_complete",
