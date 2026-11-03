@@ -74,6 +74,8 @@ struct World {
     item: ProductId,
     tobacco: ProductId,
     cheese: ProductId,
+    /// The price mode every sale here is priced, and written, under.
+    mode: PriceMode,
 }
 
 impl World {
@@ -118,6 +120,15 @@ impl World {
             item,
             tobacco,
             cheese,
+            mode: PriceMode::Inclusive,
+        }
+    }
+
+    /// The same register in a store whose prices exclude tax.
+    fn exclusive() -> World {
+        World {
+            mode: PriceMode::Exclusive,
+            ..World::new()
         }
     }
 
@@ -204,7 +215,7 @@ impl World {
         .into_iter()
         .collect();
         let settings = PricingSettings {
-            price_mode: PriceMode::Inclusive,
+            price_mode: self.mode,
             profile: StoreTaxProfile::Standard,
             rule: policy.rounding_rule(),
         };
@@ -304,9 +315,9 @@ impl World {
     ) -> Result<PreparedSale, DbError> {
         let tx = self.conn.unchecked_transaction().unwrap();
         let ids = SeqIdSource::new(1_788_000_000_000, u16::from(commit));
-        let prepared =
-            self.sales()
-                .prepare(&tx, sale, PriceMode::Inclusive, &[commit; 16], &ids)?;
+        let prepared = self
+            .sales()
+            .prepare(&tx, sale, self.mode, &[commit; 16], &ids)?;
         let sale_id = sale.cart().id.as_uuid();
         let register = sale.cart().register_id;
 
@@ -909,6 +920,51 @@ fn a_sale_the_schema_cannot_hold_exactly_is_refused_before_it_is_written() {
         matches!(&refused, DbError::SaleNotStorable { reason }
                  if reason == "line 1 would not read back as it was captured"),
         "{refused:?}"
+    );
+}
+
+/// The price mode is the one fact of how a sale was priced that the sale does
+/// not carry, so `prepare` is told it. A sale priced with tax added on top
+/// reads back with each line's taxable amount its net, and the same sale
+/// written as if its prices had included tax is refused before it is written,
+/// because its lines would come back taxed on their gross.
+#[test]
+fn a_sale_priced_without_tax_reads_back_under_its_own_price_mode() {
+    let world = World::exclusive();
+    let sale = world.everything();
+    let taxed = sale.priced().lines.first().unwrap();
+    assert_eq!(
+        taxed.taxable, taxed.tax.net,
+        "the fixture is priced exclusive"
+    );
+    assert_ne!(taxed.tax.net, taxed.tax.gross);
+
+    let tx = world.conn.unchecked_transaction().unwrap();
+    let ids = SeqIdSource::new(1_788_000_000_000, 7);
+    let refused = world
+        .sales()
+        .prepare(&tx, &sale, PriceMode::Inclusive, &[0xEC; 16], &ids)
+        .unwrap_err();
+    assert!(
+        matches!(&refused, DbError::SaleNotStorable { reason }
+                 if reason == "line 1's prices would not read back as they were paid"),
+        "{refused:?}"
+    );
+    drop(tx);
+
+    world.finalize(&sale, 0xED, no_sabotage, false).unwrap();
+    let price_mode: String = world
+        .conn
+        .query_row(
+            "SELECT price_mode FROM sale WHERE id = ?1",
+            [sale.cart().id.as_uuid().as_bytes().as_slice()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(price_mode, "exclusive");
+    assert_eq!(
+        world.sales().by_id(sale.cart().id).unwrap().unwrap().sale(),
+        &sale
     );
 }
 
