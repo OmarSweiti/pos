@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **69 of 122 executable microsteps fully complete (~57%)**: `1.1.0`
+Phase 1 has **70 of 122 executable microsteps fully complete (~57%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -167,7 +167,10 @@ proving a capability or saying why it proves none; and every approval a command 
 entity, one amount and its reason, with the department sale's threshold held at its boundary), and `1.8.1b`
 (a file whose schema is not the one its recorded version creates refused by name and left as it was
 found — on either side of an interrupted step, part-way through one, or written by a newer build —
-and the forensic verifier still reading such a copy, naming every object that differs).
+and the forensic verifier still reading such a copy, naming every object that differs), and `1.8.2`
+(the completed sale written as one prepared fact graph inside its envelope and read back field for
+field, with no method that updates or deletes one, and migration `0009` giving every fact the sale
+captured a column of its own).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
@@ -271,7 +274,7 @@ docs/implementation/
 └── ref/
     ├── plan-validation.md         the audit of record + every source
     ├── domain-api.md              every pos-domain type & signature
-    ├── schema.md                  migrations 0002→0013 — authoritative for every migration number
+    ├── schema.md                  migrations 0002→0014 — authoritative for every migration number
     ├── tax-jordan.md              GST as an engine
     ├── fiscal-jofotara.md         the highest-risk component
     ├── ipc-contract.md            every Tauri command

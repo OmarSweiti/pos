@@ -521,11 +521,15 @@ impl Checkout {
             }
         };
 
+        // `0009`'s capture columns ride on the same writes: the cart's opening
+        // and price mode here, each line's unit, origin and age check below,
+        // and each tender's place after them. A sale completes only with them.
         conn.execute(
             "UPDATE sale
-                SET store_id = ?1, shift_id = ?2, tax_computation_policy_id = ?3
-              WHERE id = ?4",
-            params![&chain.store, &shift, &chain.tax_policy, &self.sale],
+                SET store_id = ?1, shift_id = ?2, tax_computation_policy_id = ?3,
+                    opened_at = ?4, price_mode = 'inclusive'
+              WHERE id = ?5",
+            params![&chain.store, &shift, &chain.tax_policy, AT, &self.sale],
         )
         .unwrap();
         // The product's category moves with the line's. A line whose category
@@ -540,9 +544,22 @@ impl Checkout {
                 params![&chain.tax_category, line],
             )
             .unwrap();
+            // The unit is the product's, as a line captured from the catalogue
+            // copies it, and no fixture line carries an age limit.
             conn.execute(
-                "UPDATE sale_line SET tax_category_id = ?1 WHERE id = ?2",
+                "UPDATE sale_line
+                    SET tax_category_id = ?1,
+                        unit = (SELECT unit FROM product WHERE id = sale_line.product_id),
+                        price_origin = 'catalog', is_age_confirmed = 0
+                  WHERE id = ?2",
                 params![&chain.tax_category, line],
+            )
+            .unwrap();
+        }
+        for (place, tender) in (1_i64..).zip(&self.tenders) {
+            conn.execute(
+                "UPDATE sale_tender SET tender_no = ?1 WHERE id = ?2",
+                params![place, tender],
             )
             .unwrap();
         }

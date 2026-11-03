@@ -287,9 +287,9 @@ mod outbox {
             "INSERT INTO sale
                (id, receipt_number, register_id, status, subtotal_minor,
                 tax_minor, total_minor, currency, business_date, completed_at,
-                store_id, shift_id, tax_computation_policy_id)
+                store_id, shift_id, tax_computation_policy_id, opened_at, price_mode)
              VALUES (?1, '000123', ?2, 'parked', 2500, 400, 2900, 'JOD', ?3, ?4,
-                     ?5, ?6, ?7)",
+                     ?5, ?6, ?7, ?4, 'exclusive')",
             params![
                 sale.sale.as_bytes().as_slice(),
                 sale.register.as_bytes().as_slice(),
@@ -305,9 +305,10 @@ mod outbox {
             "INSERT INTO sale_line
                (id, sale_id, product_id, qty_milli, qty_step_milli,
                 unit_price_minor, discount_minor, tax_minor, total_minor,
-                line_no, name_snapshot, net_minor, tax_category_id, is_weighed)
+                line_no, name_snapshot, net_minor, tax_category_id, is_weighed,
+                unit, price_origin, is_age_confirmed)
              VALUES (?1, ?2, ?3, 1000, 1000, 2500, 0, 400, 2900, 1, 'Espresso',
-                     2500, ?4, 0)",
+                     2500, ?4, 0, 'each', 'catalog', 0)",
             params![
                 sale.line.as_bytes().as_slice(),
                 sale.sale.as_bytes().as_slice(),
@@ -317,8 +318,8 @@ mod outbox {
         )
         .unwrap();
         tx.execute(
-            "INSERT INTO sale_tender (id, sale_id, method, amount_minor, change_minor)
-             VALUES (?1, ?2, 'cash', 2900, 0)",
+            "INSERT INTO sale_tender (id, sale_id, method, amount_minor, change_minor, tender_no)
+             VALUES (?1, ?2, 'cash', 2900, 0, 1)",
             params![
                 sale.tender.as_bytes().as_slice(),
                 sale.sale.as_bytes().as_slice(),

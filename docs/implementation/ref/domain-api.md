@@ -1635,6 +1635,30 @@ pub struct CartLine {
 > pub struct VoidedSale { /* cart, reason, by, approver, voided_at: each read by a method */ }
 > ```
 
+> **As delivered at 1.8.2.** A completed sale's stored form is `StoredCompletedSale`, and it is
+> read back through `CompletedSale::restore`, as an approval handle is through
+> `ApprovalHandle::restore` (§8). The record is transport, not proof: its fields are public so
+> `pos_db::repo::sale` can write and read the rows. `restore` checks the structure `complete` made:
+> the prices are this cart's lines', in order and in its currency; a cash rounding adds up; no tender
+> appears twice; the tenders settle what was due; and the change is exactly what they leave over. A
+> record that fails is `StoredSaleInconsistent`, naming what disagrees, or the refusal `complete`
+> would have given (`DuplicateTenderId`, `Underpaid`). That the sale was priced under its store's
+> pack on its day is evidence of the finalize transaction that wrote it, which no stored record can
+> prove. `prop_restore_inverts_to_stored` holds `restore(sale.to_stored()) == sale` for any sale
+> however it was paid.
+>
+> ```rust
+> pub struct StoredCompletedSale {
+>     pub cart: Cart, pub priced: PricedCart, pub tenders: Vec<Tender>,
+>     pub cash_rounding: Option<CashRounding>, pub change: Money,
+>     pub receipt_number: String, pub business_date: BusinessDate, pub completed_at: Timestamp,
+> }
+> impl CompletedSale {
+>     pub fn to_stored(&self) -> StoredCompletedSale;
+>     pub fn restore(stored: StoredCompletedSale) -> Result<CompletedSale, CartError>;
+> }
+> ```
+
 ### 6.1 Transitions — [1.4.3 … 1.4.8]
 
 Every one is a free function taking the state by value and returning the next state or an error. No method mutates in place; no transition is reachable from the wrong state because the wrong state is a different type.
@@ -2052,6 +2076,8 @@ pub enum CartError {
     #[error("a department sale of {0} sells nothing")]         DepartmentAmountNotPositive(String), // 1.4.12
     #[error("department sale of {0} is above {1} and needs a manager's approval")]
                                                                DepartmentNeedsApproval(String, String), // 1.4.12
+    #[error("the stored sale {0} is not one that could have completed: {1}")]
+                                                               StoredSaleInconsistent(SaleId, &'static str), // 1.8.2
     #[error(transparent)] Permission(#[from] PermissionError),  // 1.4.5: an approval that does not match
     #[error(transparent)] Tax(#[from] TaxError),
     #[error(transparent)] Money(#[from] MoneyError),
@@ -2071,6 +2097,7 @@ pub enum CartError {
 | `prop_price_cart_is_invariant_under_line_reordering` | Same inputs, **any** order → same total, same summary rows, same multiset of line values (E.19b) |
 | `prop_discrete_products_never_carry_a_fractional_quantity` | `Each` and `Package` lines are whole units, from every entry path |
 | `prop_park_resume_roundtrip_is_identity` | E.3 |
+| `prop_restore_inverts_to_stored` | A completed sale's stored form restores to that sale, field for field (1.8.2) |
 | `prop_zero_total_cart_is_valid` | E.18 — 100% discount is a legal sale |
 
 The 16 ms recompute budget is a **criterion benchmark** (`benches/price_cart.rs`, microstep 1.4.9),
