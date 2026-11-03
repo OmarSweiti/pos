@@ -110,7 +110,6 @@ PLANNED: dict[str, tuple[str, ...]] = {
         "sale_at_0100_belongs_to_previous_business_date",
     ),
     "1.9.5": ("training_auto_off_at_shift_close",),
-    "1.10.4": ("two_offline_registers_selling_the_last_unit_both_succeed",),
     "1.11.10b": (
         "a_cashier_has_a_path_forward_without_product_edit",
         "a_department_sale_carries_its_own_tax_category_and_audits",
@@ -545,6 +544,7 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "search_survives_every_fts5_metacharacter",
         "tail_deletion_is_detected_against_the_last_anchor",
         "the_effect_and_the_consumption_commit_together_or_not_at_all",
+        "two_offline_registers_selling_the_last_unit_both_succeed",
         "unicode_names_roundtrip_through_db_and_fts",
     }
 )
