@@ -464,7 +464,8 @@ impl World {
         Ok(prepared)
     }
 
-    /// The manager's approval of the basket discount, bound to the sale.
+    /// The manager's approval of the basket discount, bound to the sale. Its
+    /// nonce is derived from the sale's id rather than written as a literal.
     fn approval(&self, sale: Uuid, manager: UserId, commit: u8) -> (ApprovalHandle, Uuid) {
         let binding = ApprovalBinding {
             entity_id: sale,
@@ -490,7 +491,7 @@ impl World {
             "store_promotion".to_owned(),
             at(),
             5 * 60 * 1_000,
-            [commit, 0x0E, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            sale.as_bytes().map(|b| b ^ commit),
         )
         .unwrap();
         (
