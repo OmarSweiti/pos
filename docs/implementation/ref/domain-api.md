@@ -1863,7 +1863,16 @@ pub fn set_supply_context(cart: Cart, supply: SupplyTaxContext) -> Result<Cart, 
 /// read, because a resumed sale began when it was first opened.
 pub struct ParkedCart(Cart);                         // `cart(&self) -> &Cart` reads it
 pub fn park(cart: Cart)                              -> Result<ParkedCart, CartError>;
-pub fn resume(parked: ParkedCart, till: &CartContext) -> Result<Cart, CartError>;
+pub fn resume(parked: ParkedCart, till: &CartContext, auth: &Authorized<cap::SaleResume>)
+                                                     -> Result<(Cart, Option<AuditIntent>), CartError>;
+
+/// As delivered at 1.8.2b. `resume` takes the till cashier's proof of
+/// `sale.resume`: whoever holds it at the cart's own register may resume the
+/// cart, whoever parked it (the owner's decision on #363). A cart parked by
+/// another cashier comes back with a `sale.resume` intent on the `sale`, whose
+/// payload names who parked it (`parked_by`) and its `line_count`; a cashier's
+/// own cart comes back with none. A proof that is not the till's own cashier's
+/// is `ResumedByAnotherThanTheTill`.
 
 /// As delivered at 1.4.8. `begin_tender` prices the cart itself. This section
 /// had it take a `PricedCart` the caller computed, which nothing tied to the
@@ -1921,6 +1930,10 @@ pub fn void_sale(sale: Sale, reason: VoidReason,
 > list, each transition is bound to the exact signature its duty requires, so one that stops taking its
 > proof or returning its intent does not compile. A public function of `cart` missing from the list
 > fails the test.
+>
+> **As delivered at 1.8.2b**, `resume` joins the privileged transitions. It takes `sale.resume`'s
+> proof, which the owner role does not hold, and returns that action's intent only when the cart was
+> parked by another cashier. Its row in the list asserts the intent of exactly that handover.
 
 > **`set_supply_context` has no IPC command in v1.** The transition exists so the engine and its tests
 > can express an export or a free-zone supply, and the register always sends `Domestic`. Exposing it
@@ -2078,6 +2091,8 @@ pub enum CartError {
                                                                DepartmentNeedsApproval(String, String), // 1.4.12
     #[error("the stored sale {0} is not one that could have completed: {1}")]
                                                                StoredSaleInconsistent(SaleId, &'static str), // 1.8.2
+    #[error("the resume was proved by {0}, but the till is {1}'s")]
+                                                               ResumedByAnotherThanTheTill(UserId, UserId), // 1.8.2b
     #[error(transparent)] Permission(#[from] PermissionError),  // 1.4.5: an approval that does not match
     #[error(transparent)] Tax(#[from] TaxError),
     #[error(transparent)] Money(#[from] MoneyError),

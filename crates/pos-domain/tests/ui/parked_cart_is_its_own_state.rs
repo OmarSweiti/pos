@@ -3,11 +3,12 @@
 // be changed until it is. This file must fail to compile.
 
 use pos_domain::cart::{CartContext, ParkedCart, open, resume, set_qty};
+use pos_domain::permissions::{Authorized, cap};
 use pos_domain::ids::{SaleId, SaleLineId};
 use pos_domain::money::Qty;
 
-fn resume_a_cart_being_built(id: SaleId, till: &CartContext) {
-    let _ = resume(open(id, till), till);
+fn resume_a_cart_being_built(id: SaleId, till: &CartContext, auth: &Authorized<cap::SaleResume>) {
+    let _ = resume(open(id, till), till, auth);
 }
 
 fn change_a_parked_cart(parked: ParkedCart, line: SaleLineId) {

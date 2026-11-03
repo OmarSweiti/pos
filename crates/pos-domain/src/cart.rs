@@ -1507,7 +1507,7 @@ pub fn park(cart: Cart) -> Result<ParkedCart, CartError> {
 }
 
 /// The parked cart, being built again at `till`: the register, shift and
-/// cashier resuming it.
+/// cashier resuming it, who proves `sale.resume` with `auth`.
 ///
 /// Its lines, prices, age gates, buyer, supply and the moment it was opened are
 /// exactly as they were parked. Its shift and cashier become the till's: a cart
@@ -1516,16 +1516,35 @@ pub fn park(cart: Cart) -> Result<ParkedCart, CartError> {
 /// (`ref/schema.md` §0005). `till.opened_at` is not read, because a resumed sale
 /// began when it was first opened.
 ///
+/// Whoever holds `sale.resume` at the cart's own register may resume it,
+/// whoever parked it (the owner's decision on #363, 1.8.2b). A cart another
+/// cashier parked comes back with a `sale.resume` intent on the `sale`, naming
+/// who parked it, so a report reads whose basket was taken over and by whom. A
+/// cashier's own cart comes back with none.
+///
 /// # Errors
 ///
+/// - [`CartError::ResumedByAnotherThanTheTill`]: `auth` is not the till's own
+///   cashier's proof, so the cart would be handed to one person on the
+///   authority of another.
 /// - [`CartError::ParkedOnAnotherRegister`]: a parked cart never leaves the
 ///   till it was parked at, where its customer is standing (master plan C.14).
 /// - [`CartError::TrainingModeMismatch`]: a training cart never resumes as a
 ///   real sale, nor a real one as training. Every report and the fiscal queue
 ///   tell the two apart by this flag, so either would count the sale wrongly.
 /// - [`CartError::Money`]: a till in another currency than the cart's prices.
-pub fn resume(parked: ParkedCart, till: &CartContext) -> Result<Cart, CartError> {
+pub fn resume(
+    parked: ParkedCart,
+    till: &CartContext,
+    auth: &Authorized<cap::SaleResume>,
+) -> Result<(Cart, Option<AuditIntent>), CartError> {
     let ParkedCart(mut cart) = parked;
+    if auth.actor() != till.cashier_id {
+        return Err(CartError::ResumedByAnotherThanTheTill(
+            auth.actor(),
+            till.cashier_id,
+        ));
+    }
     if cart.register_id != till.register_id {
         return Err(CartError::ParkedOnAnotherRegister(cart.id));
     }
@@ -1537,9 +1556,24 @@ pub fn resume(parked: ParkedCart, till: &CartContext) -> Result<Cart, CartError>
             MoneyError::CurrencyMismatch(cart.currency.code(), till.currency.code()).into(),
         );
     }
+    let parked_by = cart.cashier_id;
+    let intent = (parked_by != auth.actor()).then(|| AuditIntent {
+        actor: auth.actor(),
+        approver: auth.approver(),
+        approval: auth.approval(),
+        action: cap::SaleResume::NAME,
+        entity: "sale",
+        entity_id: cart.id.as_uuid(),
+        reason: None,
+        payload: json!({
+            "parked_by": parked_by.as_uuid().to_string(),
+            "line_count": cart.lines.len(),
+        }),
+        at: auth.at(),
+    });
     cart.shift_id = till.shift_id;
     cart.cashier_id = till.cashier_id;
-    Ok(cart)
+    Ok((cart, intent))
 }
 
 /// A sale being paid for: its cart, priced once, the store's cash-rounding
@@ -2403,6 +2437,10 @@ pub enum CartError {
     /// disagree, and how.
     #[error("the stored sale {0} is not one that could have completed: {1}")]
     StoredSaleInconsistent(SaleId, &'static str),
+    /// Added at 1.8.2b: a resume proved by one person for a till that is
+    /// another's, the proof's actor first.
+    #[error("the resume was proved by {0}, but the till is {1}'s")]
+    ResumedByAnotherThanTheTill(UserId, UserId),
     /// Added at 1.4.5: an approval that does not match the operation.
     #[error(transparent)]
     Permission(#[from] PermissionError),
@@ -3171,6 +3209,13 @@ mod tests {
 
     /// The same register after a shift handover: another shift, another
     /// cashier, a later moment.
+    /// `parked`, resumed at `till` on its own cashier's proof of `sale.resume`.
+    /// The handover intent, if any, is the subject of its own tests.
+    fn resumed_at(parked: ParkedCart, till: &CartContext) -> Result<Cart, CartError> {
+        let proof = proof_of::<cap::SaleResume>(till.cashier_id, Role::Cashier, moment());
+        resume(parked, till, &proof).map(|(cart, _)| cart)
+    }
+
     fn next_shift() -> CartContext {
         CartContext {
             shift_id: ShiftId::from_uuid(id(6)),
@@ -3414,10 +3459,10 @@ mod tests {
                 _ => None,
             };
             prop_assert_eq!(restored.as_ref(), Some(&parked));
-            let resumed = resume(parked, &till);
+            let resumed = resumed_at(parked, &till);
             prop_assert_eq!(resumed.as_ref(), Ok(&cart));
             if let Some(restored) = restored {
-                let resumed = resume(restored, &till);
+                let resumed = resumed_at(restored, &till);
                 prop_assert_eq!(resumed.as_ref(), Ok(&cart));
             }
         }
@@ -3447,7 +3492,7 @@ mod tests {
     #[test]
     fn a_cart_parked_before_a_shift_change_is_paid_for_in_the_next_one() {
         let cart = with_tobacco();
-        let resumed = resume(park(cart.clone()).unwrap(), &next_shift()).unwrap();
+        let resumed = resumed_at(park(cart.clone()).unwrap(), &next_shift()).unwrap();
         // Rung up in the shift that takes the money, by the cashier taking it,
         // and otherwise the cart that was parked: its lines at the prices they
         // were captured at, and the moment it was first opened, not the
@@ -3477,7 +3522,7 @@ mod tests {
             register_id: RegisterId::from_uuid(id(8)),
             ..next_shift()
         };
-        let refused = resume(parked.clone(), &elsewhere);
+        let refused = resumed_at(parked.clone(), &elsewhere);
         assert_eq!(refused, Err(CartError::ParkedOnAnotherRegister(sale)));
         assert_eq!(
             refused.unwrap_err().to_string(),
@@ -3489,7 +3534,7 @@ mod tests {
             is_training: true,
             ..next_shift()
         };
-        let refused = resume(parked.clone(), &training);
+        let refused = resumed_at(parked.clone(), &training);
         assert_eq!(refused, Err(CartError::TrainingModeMismatch(sale, false)));
         assert_eq!(
             refused.unwrap_err().to_string(),
@@ -3499,7 +3544,7 @@ mod tests {
         let practice = SaleId::from_uuid(id(9));
         let item = product(0x20, UnitOfMeasure::Each);
         let rehearsed = add(open(practice, &context(true)), 1, &item, 1_000).unwrap();
-        let refused = resume(park(rehearsed).unwrap(), &next_shift());
+        let refused = resumed_at(park(rehearsed).unwrap(), &next_shift());
         assert_eq!(
             refused,
             Err(CartError::TrainingModeMismatch(practice, true))
@@ -3514,11 +3559,74 @@ mod tests {
             ..next_shift()
         };
         assert_eq!(
-            resume(parked.clone(), &dollars),
+            resumed_at(parked.clone(), &dollars),
             Err(CartError::Money(MoneyError::CurrencyMismatch("JOD", "USD")))
         );
         // At its own till, in its own mode, it resumes.
-        assert!(resume(parked, &next_shift()).is_ok());
+        assert!(resumed_at(parked, &next_shift()).is_ok());
+    }
+
+    /// 1.8.2b, the owner's decision on #363: whoever holds `sale.resume` at the
+    /// cart's register may resume it, and taking over another cashier's basket
+    /// is audited, naming who parked it. A cashier's own cart is not: nobody
+    /// needs a record that they came back to their own customer.
+    #[test]
+    fn resuming_another_cashier_s_cart_is_audited_and_one_s_own_is_not() {
+        let cart = with_tobacco();
+        let parked_by = cart.cashier_id;
+
+        let own = proof_of::<cap::SaleResume>(parked_by, Role::Cashier, moment());
+        let (_, intent) = resume(park(cart.clone()).unwrap(), &context(false), &own).unwrap();
+        assert_eq!(intent, None, "a cashier coming back to their own customer");
+
+        let next = proof_of::<cap::SaleResume>(next_shift().cashier_id, Role::Cashier, moment());
+        let (resumed, intent) = resume(park(cart.clone()).unwrap(), &next_shift(), &next).unwrap();
+        assert_eq!(resumed.cashier_id, next_shift().cashier_id);
+        assert_eq!(
+            intent,
+            Some(AuditIntent {
+                actor: next_shift().cashier_id,
+                approver: None,
+                approval: None,
+                action: "sale.resume",
+                entity: "sale",
+                entity_id: cart.id.as_uuid(),
+                reason: None,
+                payload: json!({
+                    "parked_by": parked_by.as_uuid().to_string(),
+                    "line_count": cart.lines.len(),
+                }),
+                at: moment(),
+            })
+        );
+
+        // The proof is the till's own cashier's, or the cart would be handed
+        // to one person on another's authority.
+        assert_eq!(
+            resume(park(cart.clone()).unwrap(), &next_shift(), &own),
+            Err(CartError::ResumedByAnotherThanTheTill(
+                parked_by,
+                next_shift().cashier_id
+            ))
+        );
+
+        // And the owner, who runs no till, holds no `sale.resume` to prove.
+        let unbound = ApprovalBinding {
+            entity_id: Uuid::nil(),
+            amount_minor: 0,
+            content_hash: None,
+        };
+        assert!(
+            authorize::<cap::SaleResume>(
+                next_shift().cashier_id,
+                &GrantSet::of_role(Role::Owner),
+                None,
+                &unbound,
+                &EscalationPolicy::empty(),
+                moment(),
+            )
+            .is_err()
+        );
     }
 
     // ── manual line discounts (1.4.5) ───────────────────────────────────
@@ -6179,7 +6287,7 @@ mod tests {
             }
             (Sale::Building(cart), Op::Park) => park(cart).map(Sale::Parked),
             (Sale::Parked(parked), Op::Resume) => {
-                resume(parked, &context(false)).map(Sale::Building)
+                resumed_at(parked, &context(false)).map(Sale::Building)
             }
             (Sale::Building(cart), Op::BeginTender) => {
                 begin_tender(cart, &bands(), settings, policy).map(Sale::Tendering)
@@ -6226,7 +6334,9 @@ mod tests {
             sale = match sale {
                 Sale::Complete(done) => return done,
                 Sale::Voided(_) => Sale::Building(building()),
-                Sale::Parked(parked) => Sale::Building(resume(parked, &context(false)).unwrap()),
+                Sale::Parked(parked) => {
+                    Sale::Building(resumed_at(parked, &context(false)).unwrap())
+                }
                 Sale::Building(cart) if cart.lines.is_empty() => Sale::Building(one_item(1_247)),
                 Sale::Building(cart) => {
                     Sale::Tendering(begin_tender(cart, &bands(), settings, policy).unwrap())
@@ -6607,9 +6717,19 @@ mod tests {
                     let _: fn(Cart) -> Result<ParkedCart, CartError> = park;
                     ("park", Duty::Unaudited)
                 }
+                // Audited only when the cart was parked by another cashier: a
+                // cashier's own cart comes back with no intent (1.8.2b).
                 Transition::Resume => {
-                    let _: fn(ParkedCart, &CartContext) -> Result<Cart, CartError> = resume;
-                    ("resume", Duty::Unaudited)
+                    let _: fn(
+                        ParkedCart,
+                        &CartContext,
+                        &Authorized<cap::SaleResume>,
+                    )
+                        -> Result<(Cart, Option<AuditIntent>), CartError> = resume;
+                    (
+                        "resume",
+                        Duty::Privileged(cap::SaleResume::NAME, cap::SaleResume::NAME),
+                    )
                 }
                 Transition::BeginTender => {
                     let _: fn(
@@ -6678,7 +6798,6 @@ mod tests {
                 | Transition::AddLine
                 | Transition::SetQty
                 | Transition::Park
-                | Transition::Resume
                 | Transition::BeginTender
                 | Transition::BackToBuilding
                 | Transition::AddTender
@@ -6718,6 +6837,16 @@ mod tests {
                     )
                     .unwrap()
                     .1
+                }
+                Transition::Resume => {
+                    let lead = proof_of::<cap::SaleResume>(
+                        next_shift().cashier_id,
+                        Role::ShiftLead,
+                        moment(),
+                    );
+                    resume(park(with_tobacco()).unwrap(), &next_shift(), &lead)
+                        .unwrap()
+                        .1?
                 }
                 Transition::RemoveTender => {
                     let t = pay(paying(one_item(1_247), qirsh()), 1, "card", 500).unwrap();
@@ -6783,6 +6912,7 @@ mod tests {
                     "discount.manual"
                 ),
                 ("override_price", "price.override", "price.override"),
+                ("resume", "sale.resume", "sale.resume"),
                 ("remove_tender", "sale.create", "tender.remove"),
                 ("void_sale", "sale.void", "sale.void"),
             ]
