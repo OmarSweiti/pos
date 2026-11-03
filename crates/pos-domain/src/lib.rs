@@ -70,7 +70,8 @@ pub use receipt::{
 };
 pub use sensitive::{SENSITIVE_FIELD_RULES, SensitiveFieldRules};
 pub use stock::{
-    IncomingCost, NewStockEvent, StockError, StockEvent, StockEventKind, StockPosition, StockSource,
+    IncomingCost, NewStockEvent, StockError, StockEvent, StockEventKind, StockPosition,
+    StockSource, on_hand,
 };
 pub use tax::{
     ComponentTax, LineTax, PriceMode, StoreTaxProfile, SupplyDestination, SupplyTaxContext,

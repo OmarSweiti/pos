@@ -315,6 +315,25 @@ impl StockEvent {
     }
 }
 
+/// A product's on-hand in a store: the sum of its events' quantity deltas
+/// (I-6). `events` are that product's events in that store; the sum is the
+/// definition, so it neither checks them nor reads any event's projection.
+///
+/// `stock_cache` holds this figure and is rebuilt to it (microstep 1.10.3).
+/// Each event also stores the position it left, and over a ledger whose events
+/// were captured in order the last one's `after.on_hand` is this sum; the
+/// sum stays the definition, because a projection is what a rebuild checks.
+///
+/// # Errors
+///
+/// [`StockError::Money`] when the sum leaves the range of a quantity.
+pub fn on_hand(events: &[StockEvent]) -> Result<Qty, StockError> {
+    events.iter().try_fold(
+        Qty::ZERO,
+        |sum, event| Ok(sum.checked_add(event.qty_delta)?),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -554,6 +573,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn on_hand_is_the_sum_of_the_deltas() {
+        assert_eq!(on_hand(&[]), Ok(Qty::ZERO));
+        let opening = StockEvent::capture(
+            &movement(
+                StockEventKind::Adjust,
+                12_000,
+                Some(IncomingCost::Observed(jod(380))),
+            ),
+            &StockPosition::unstocked(JOD),
+        )
+        .unwrap();
+        let sold = StockEvent::capture(&sale(-15_000), &opening.after).unwrap();
+        assert_eq!(on_hand(&[opening, sold]), Ok(Qty::from_milli(-3_000)));
+    }
+
+    #[test]
+    fn on_hand_beyond_a_quantity_is_refused() {
+        let full = StockEvent::capture(
+            &movement(
+                StockEventKind::Adjust,
+                i64::MAX,
+                Some(IncomingCost::Unknown),
+            ),
+            &StockPosition::unstocked(JOD),
+        )
+        .unwrap();
+        assert_eq!(
+            on_hand(&[full.clone(), full]),
+            Err(StockError::Money(MoneyError::Overflow))
+        );
+    }
+
+    /// One movement of a sequence: a signed number of units, and the cost an
+    /// arrival brings. Outgoing and zero movements bring none.
+    fn any_movement() -> impl Strategy<Value = NewStockEvent> {
+        (-50i64..=50, any_cost()).prop_map(|(units, cost)| {
+            let qty = units * 1_000;
+            movement(StockEventKind::Adjust, qty, (qty > 0).then_some(cost))
+        })
+    }
+
     fn any_position() -> impl Strategy<Value = StockPosition> {
         (
             -1_000_000_000i64..1_000_000_000,
@@ -622,6 +683,30 @@ mod tests {
                 }
                 Err(other) => prop_assert!(false, "unexpected refusal {other:?}"),
             }
+        }
+
+        /// Over any run of events captured in order, the sum of what moved is
+        /// the position the last event left. That is why a cache rebuilt by
+        /// summing the ledger and a cache projected one event at a time can
+        /// agree at all. A movement the ledger refuses is not an event and
+        /// moves nothing.
+        #[test]
+        fn prop_on_hand_is_the_position_the_last_event_leaves(
+            movements in prop::collection::vec(any_movement(), 0..40),
+        ) {
+            let mut events: Vec<StockEvent> = Vec::new();
+            let mut position = StockPosition::unstocked(JOD);
+            for movement in &movements {
+                match StockEvent::capture(movement, &position) {
+                    Ok(event) => {
+                        position = event.after;
+                        events.push(event);
+                    }
+                    Err(StockError::WacBlendNotSupported { .. }) => {}
+                    Err(other) => prop_assert!(false, "unexpected refusal {other:?}"),
+                }
+            }
+            prop_assert_eq!(on_hand(&events), Ok(position.on_hand));
         }
     }
 }
