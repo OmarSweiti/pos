@@ -3416,8 +3416,8 @@ which is the same guarantee the old "every kind has a term" would have given had
 ## 12 · `stock.rs` — ledger and WAC — [1.10.x, 4.2.x]
 
 As delivered at 1.10.2: the event types and the cost-capture rule. `on_hand` followed at 1.10.3,
-with the cache-rebuild property. `recompute_wac` and `cost_deviation_exceeds` below are still to
-come, with receiving (4.2.2, 4.2.3).
+with the cache-rebuild property, and `NegativeStockPolicy::screen` at 1.10.4. `recompute_wac` and
+`cost_deviation_exceeds` below are still to come, with receiving (4.2.2, 4.2.3).
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -3506,7 +3506,24 @@ pub enum StockError {
     SaleSourceMismatch, SaleNotOutgoing, WeightDerivedOutsideSale,
     IncomingCostMissing, CostOnOutgoingEvent, NegativeCost,
     WacBlendNotSupported { wac: Money, incoming: Money },
+    WouldGoNegative(Vec<Shortfall>),             // 1.10.4: the hard block, before tender
     Money(MoneyError),
+}
+
+/// `store.allow_negative_stock` (master plan C.7, merchant decision 4.1). Delivered at 1.10.4.
+pub enum NegativeStockPolicy { AllowAndFlag, HardBlock }
+
+/// A product a basket would leave below zero.
+pub struct Shortfall { pub product_id: ProductId, pub on_hand: Qty, pub taken: Qty }
+
+impl NegativeStockPolicy {
+    /// What a basket takes, per line, screened before tender: lines of one product are
+    /// summed, and every product the basket takes from and would leave below zero is
+    /// returned in product order (the flag). A product `on_hand` does not hold has none.
+    /// `HardBlock` refuses a non-empty flag as `WouldGoNegative`; `AllowAndFlag` never
+    /// refuses. Finalize never screens: money has been taken by then.
+    pub fn screen(self, on_hand: &BTreeMap<ProductId, Qty>, taken: &[(ProductId, Qty)])
+        -> Result<Vec<Shortfall>, StockError>;
 }
 
 /// = Σ qty_delta over one product's events in one store: the definition, not
