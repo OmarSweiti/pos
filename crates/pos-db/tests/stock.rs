@@ -18,8 +18,6 @@
 
 mod sale_world;
 
-use std::cell::Cell;
-
 use pos_db::DbError;
 use pos_db::fixtures::registered_chain::RegisteredChain;
 use pos_db::repo::outbox::{CommitEnvelope, FactMember, OutboxRepository};
@@ -31,7 +29,7 @@ use pos_domain::{
 use pos_test_support::io_proptest_config;
 use proptest::prelude::*;
 use rusqlite::types::Value;
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, Transaction, params};
 use sale_world::{
     OTHER_REGISTER, REGISTER, World, at, day, jod, no_sabotage, uuid, write_envelope,
 };
@@ -418,21 +416,24 @@ const STILL: [StockEventKind; 2] = [
     StockEventKind::CountCorrection,
 ];
 
-/// One database per test thread, with a fresh store and register for every
-/// case: opening an encrypted database costs most of a second, and a store is
-/// what a replay is scoped to, so a case's store holds that case's ledger and
-/// nothing else.
+/// One database per test thread, opened once: opening an encrypted file costs
+/// most of a second. Every case runs in one transaction that is rolled back
+/// when the case ends, so each starts from the same empty ledger, the file
+/// never grows, and a shrunk failure replays on its own.
 struct Shelf {
     _dir: tempfile::TempDir,
     conn: Connection,
-    chain: RegisteredChain,
-    cases: Cell<u128>,
+    store: StoreId,
 }
+
+/// The register a case's events are recorded by.
+const SHELF_REGISTER: u128 = 0x7E61;
 
 fn shelf() -> Shelf {
     let dir = tempfile::tempdir().unwrap();
     let conn = pos_db::open(&dir.path().join("shelf.db"), KEY).unwrap();
     let chain = RegisteredChain::seed(&conn);
+    chain.add_register(&conn, Uuid::from_u128(SHELF_REGISTER).as_bytes(), "PROP-R1");
     for (id, sku, step, weighed) in PRODUCTS {
         conn.execute(
             "INSERT INTO product (id, sku, name, price_minor, currency, is_active,
@@ -452,63 +453,14 @@ fn shelf() -> Shelf {
     Shelf {
         _dir: dir,
         conn,
-        chain,
-        cases: Cell::new(0),
+        store: StoreId::from_uuid(Uuid::from_slice(&chain.store).unwrap()),
     }
 }
 
-/// Ids a case mints, each from its case number, so no two cases share one.
-const STORE_TAG: u128 = 0x5703 << 112;
-const REGISTER_TAG: u128 = 0x7E61 << 112;
+/// Ids a case mints, from the batch and the movement's place in it.
 const COMMIT_TAG: u128 = 0xC044 << 112;
 const CHANGE_TAG: u128 = 0xC4A6 << 112;
 const EVENT_TAG: u128 = 0xE7E7 << 112;
-
-impl Shelf {
-    /// A new store with one register, and the case number its ids derive from.
-    fn fresh_store(&self) -> (u128, StoreId, RegisterId) {
-        let case = self.cases.get() + 1;
-        self.cases.set(case);
-        let store = Uuid::from_u128(STORE_TAG | case);
-        let register = Uuid::from_u128(REGISTER_TAG | case);
-        self.conn
-            .execute(
-                "INSERT INTO store
-                   (id, org_id, code, name_ar, fiscal_obligation,
-                    fiscal_obligation_evidence_ref, fiscal_profile,
-                    tax_rule_pack_id, tax_computation_policy_id)
-                 VALUES (?1, ?2, ?3, ?3, 'exempt', 'fixture-evidence', 'disabled', ?4, ?5)",
-                params![
-                    store.as_bytes().as_slice(),
-                    &self.chain.org,
-                    format!("PROP-S{case}"),
-                    &self.chain.tax_rule_pack,
-                    &self.chain.tax_policy
-                ],
-            )
-            .unwrap();
-        self.conn
-            .execute(
-                "INSERT INTO register
-                   (id, store_id, code, name, device_id, credential_key_id,
-                    credential_algorithm, credential_public_key, credential_issued_at)
-                 VALUES (?1, ?2, ?3, ?3, ?3, ?3, 'ed25519', ?4, ?5)",
-                params![
-                    register.as_bytes().as_slice(),
-                    store.as_bytes().as_slice(),
-                    format!("PROP-R{case}"),
-                    vec![0x99_u8; 32],
-                    sale_world::AT
-                ],
-            )
-            .unwrap();
-        (
-            case,
-            StoreId::from_uuid(store),
-            RegisterId::from_uuid(register),
-        )
-    }
-}
 
 /// What an arrival cost.
 #[derive(Debug, Clone, Copy)]
@@ -529,7 +481,7 @@ struct Movement {
     cost: Cost,
 }
 
-/// A change made to one column of every cache row in a case's store, as a
+/// A change made to one column of every cache row in the store, as a
 /// missed projection, an older copy or a hand would make it. Each is a change
 /// on every row, whatever it held.
 #[derive(Debug, Clone, Copy)]
@@ -555,12 +507,17 @@ const CORRUPTIONS: [Corruption; 9] = [
     Corruption::Delete,
 ];
 
-/// The input space: up to eight transactions of one to four movements each,
-/// over three products, of up to six steps either way or none — so a batch can
-/// move one product twice, stock can go below zero and come back, and the WAC
-/// resets on an arrival into stock that is not positive. Costs come from
-/// `COSTS`, observed, projected or unknown. A batch the ledger refuses (a
-/// different cost into positive stock) is rolled back and moves nothing.
+/// The input space: up to eight batches of one to four movements each, over
+/// three products, of up to six steps either way or none — so a batch can move
+/// one product twice, stock can go below zero and come back, and the WAC resets
+/// on an arrival into stock that is not positive. Costs come from `COSTS`,
+/// observed, projected or unknown. A batch the ledger refuses (a different cost
+/// into positive stock) is refused before it writes, and moves nothing.
+///
+/// Each batch is what one commit writes, but the case's batches share its
+/// transaction: the projection runs per insert, and no commit boundary changes
+/// what it writes. Commit and rollback are
+/// `a_rebuild_that_fails_part_way_leaves_the_old_cache_whole`'s subject.
 ///
 /// Deliberately excluded: `sale` events. A sale event needs a whole completed
 /// sale, and the projection trigger and the replay read no column that differs
@@ -593,7 +550,7 @@ fn product(index: usize) -> ProductId {
     ProductId::from_uuid(Uuid::from_u128(PRODUCTS.get(index).unwrap().0))
 }
 
-fn new_event(case: u128, batch: usize, slot: usize, m: &Movement, store: StoreId) -> NewStockEvent {
+fn new_event(batch: usize, slot: usize, m: &Movement, store: StoreId) -> NewStockEvent {
     let (_, _, step, _) = *PRODUCTS.get(m.product).unwrap();
     let qty = m.steps * step;
     let kind = *m.kind.get(match qty {
@@ -604,7 +561,7 @@ fn new_event(case: u128, batch: usize, slot: usize, m: &Movement, store: StoreId
     let money = |minor: i64| Money::from_minor(minor, Currency::JOD);
     NewStockEvent {
         id: StockEventId::from_uuid(Uuid::from_u128(
-            EVENT_TAG | case << 32 | (batch as u128) << 8 | slot as u128,
+            EVENT_TAG | (batch as u128) << 8 | slot as u128,
         )),
         product_id: product(m.product),
         store_id: store,
@@ -623,18 +580,17 @@ fn new_event(case: u128, batch: usize, slot: usize, m: &Movement, store: StoreId
     }
 }
 
-/// One transaction: the batch prepared, its envelope, its events. `None` when
-/// the ledger refuses the batch, which then writes nothing.
+/// One batch: prepared, its envelope, its events, in the case's transaction.
+/// `None` when the ledger refuses the batch, which is refused before it writes.
 fn record(
-    shelf: &Shelf,
-    case: u128,
+    conn: &Connection,
+    tx: &Transaction<'_>,
     batch: usize,
-    register: RegisterId,
     movements: &[NewStockEvent],
 ) -> Option<Vec<PreparedStockEvent>> {
-    let stock = StockRepository::new(&shelf.conn);
-    let tx = shelf.conn.unchecked_transaction().unwrap();
-    let prepared = match stock.prepare(&tx, register, movements) {
+    let stock = StockRepository::new(conn);
+    let register = RegisterId::from_uuid(Uuid::from_u128(SHELF_REGISTER));
+    let prepared = match stock.prepare(tx, register, movements) {
         Ok(prepared) => prepared,
         Err(DbError::StockRefused(StockError::WacBlendNotSupported { .. })) => return None,
         Err(other) => panic!("the ledger refused {movements:?}: {other:?}"),
@@ -644,10 +600,7 @@ fn record(
         .map(|p| *p.event().id.as_uuid().as_bytes())
         .collect();
     let changes: Vec<[u8; 16]> = (0..prepared.len())
-        .map(|slot| {
-            *Uuid::from_u128(CHANGE_TAG | case << 32 | (batch as u128) << 8 | slot as u128)
-                .as_bytes()
-        })
+        .map(|slot| *Uuid::from_u128(CHANGE_TAG | (batch as u128) << 8 | slot as u128).as_bytes())
         .collect();
     let payloads: Vec<String> = prepared.iter().map(PreparedStockEvent::payload).collect();
     let members: Vec<FactMember<'_>> = ids
@@ -661,10 +614,10 @@ fn record(
             payload,
         })
         .collect();
-    let commit = *Uuid::from_u128(COMMIT_TAG | case << 32 | batch as u128).as_bytes();
-    OutboxRepository::new(&shelf.conn)
+    let commit = *Uuid::from_u128(COMMIT_TAG | batch as u128).as_bytes();
+    OutboxRepository::new(conn)
         .write_commit(
-            &tx,
+            tx,
             &CommitEnvelope {
                 commit_id: &commit,
                 protocol_version: 1,
@@ -675,8 +628,7 @@ fn record(
             &members,
         )
         .unwrap();
-    stock.append(&tx, &prepared).unwrap();
-    tx.commit().unwrap();
+    stock.append(tx, &prepared).unwrap();
     Some(prepared)
 }
 
@@ -699,21 +651,23 @@ proptest! {
             static SHELF: Shelf = shelf();
         }
         SHELF.with(|shelf| {
-            let (case, store, register) = shelf.fresh_store();
+            let store = shelf.store;
             let stock = StockRepository::new(&shelf.conn);
+            // Rolled back when the case ends, however it ends.
+            let tx = shelf.conn.unchecked_transaction().unwrap();
             let mut events: Vec<StockEvent> = Vec::new();
             for (batch, movements) in ledger.iter().enumerate() {
                 let movements: Vec<NewStockEvent> = movements
                     .iter()
                     .enumerate()
-                    .map(|(slot, m)| new_event(case, batch, slot, m, store))
+                    .map(|(slot, m)| new_event(batch, slot, m, store))
                     .collect();
-                if let Some(prepared) = record(shelf, case, batch, register, &movements) {
+                if let Some(prepared) = record(&shelf.conn, &tx, batch, &movements) {
                     events.extend(prepared.iter().map(|p| p.event().clone()));
                 }
             }
 
-            prop_assert_eq!(verify(&shelf.conn, store).unwrap(), []);
+            prop_assert_eq!(stock.verify_cache(&tx, store).unwrap(), []);
             let mut moved: Vec<ProductId> = Vec::new();
             for index in 0..PRODUCTS.len() {
                 let p = product(index);
@@ -725,14 +679,12 @@ proptest! {
                 }
             }
             moved.sort_by_key(|p| *p.as_uuid().as_bytes());
-            let projected = cache_rows(&shelf.conn, store);
+            let projected = cache_rows(&tx, store);
             prop_assert_eq!(projected.len(), moved.len());
 
-            let tx = shelf.conn.unchecked_transaction().unwrap();
             let written = stock.rebuild_cache(&tx, store).unwrap();
-            tx.commit().unwrap();
             prop_assert_eq!(written, projected.len() as u64);
-            prop_assert_eq!(&cache_rows(&shelf.conn, store), &projected);
+            prop_assert_eq!(&cache_rows(&tx, store), &projected);
 
             let (changed, expected): (String, Vec<CacheDrift>) = match corruption {
                 Corruption::Set(column, to) => (
@@ -750,13 +702,11 @@ proptest! {
                     moved.iter().map(|&p| CacheDrift::Missing(p)).collect(),
                 ),
             };
-            shelf
-                .conn
-                .execute(&changed, [store.as_uuid().as_bytes().as_slice()])
+            tx.execute(&changed, [store.as_uuid().as_bytes().as_slice()])
                 .unwrap();
-            prop_assert_eq!(&verify(&shelf.conn, store).unwrap(), &expected);
-            prop_assert_eq!(reconcile(&shelf.conn, store).unwrap(), expected);
-            prop_assert_eq!(cache_rows(&shelf.conn, store), projected);
+            prop_assert_eq!(&stock.verify_cache(&tx, store).unwrap(), &expected);
+            prop_assert_eq!(stock.reconcile_cache(&tx, store).unwrap(), expected);
+            prop_assert_eq!(cache_rows(&tx, store), projected);
             Ok(())
         })?;
     }
