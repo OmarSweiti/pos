@@ -266,6 +266,22 @@ pub enum DbError {
     },
     #[error("stored tax pack is malformed: {reason}")]
     StoredTaxPackInvalid { reason: String },
+    #[error("no register {0} on this database to complete a sale on")]
+    SaleRegisterUnknown(pos_domain::RegisterId),
+    #[error("this completed sale cannot be stored exactly: {reason}")]
+    SaleNotStorable { reason: String },
+    #[error(
+        "refusing to write a sale's {entity} with no delivery envelope naming it: write the \
+         commit and its manifest first, in the same transaction (I-9)"
+    )]
+    SaleEnvelopeMissing { entity: &'static str },
+    #[error(
+        "the delivery envelope naming this sale's {entity} carries another commit or another \
+         payload, so what travels would not be what was recorded"
+    )]
+    SaleEnvelopeMismatch { entity: &'static str },
+    #[error("stored sale is malformed: {reason}")]
+    StoredSaleInvalid { reason: String },
 }
 
 /// `PRAGMA synchronous = FULL`, as SQLite reports it back. The pragma accepts a

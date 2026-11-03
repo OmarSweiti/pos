@@ -10,7 +10,10 @@
 use std::path::Path;
 
 use pos_db::fixtures::registered_chain::{Checkout, RegisteredChain};
+use pos_db::repo::sale::SaleRepository;
+use pos_domain::SaleId;
 use rusqlite::{Connection, params};
+use uuid::Uuid;
 
 const KEY: &str = "test-key";
 const DAY: &str = "2026-08-25";
@@ -108,7 +111,8 @@ fn refused(result: rusqlite::Result<usize>, expected: &str) {
 /// A sale completed before `0009` carries none of its columns, and no value
 /// would be true for it. The migration adds them empty and leaves the sale
 /// exactly as it was: the completed row, its line and its tender, byte for
-/// byte.
+/// byte. The repository then refuses to read it as a `CompletedSale` and says
+/// what it lacks, rather than filling in a unit or a supply it never captured.
 #[test]
 fn migration_0009_leaves_a_sale_completed_before_it_as_it_was() {
     let dir = tempfile::tempdir().unwrap();
@@ -159,6 +163,12 @@ fn migration_0009_leaves_a_sale_completed_before_it_as_it_was() {
         captured,
         (None, None, None, None),
         "nothing is invented for it"
+    );
+
+    let read = SaleRepository::new(&conn).by_id(SaleId::from_uuid(Uuid::from_bytes(id(0x01))));
+    assert!(
+        matches!(read, Err(pos_db::DbError::StoredSaleInvalid { .. })),
+        "a sale with no captured facts is refused by name: {read:?}"
     );
 }
 

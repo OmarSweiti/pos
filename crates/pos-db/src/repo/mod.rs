@@ -32,6 +32,7 @@ pub mod outbox;
 pub mod product;
 pub mod receipt;
 pub mod role;
+pub mod sale;
 pub mod sequence;
 pub mod stock;
 pub mod trade_scale;

@@ -440,8 +440,9 @@ impl StoredProduct {
     }
 }
 
-/// The dimension `product.unit` stores for a unit.
-const fn unit_token(unit: UnitOfMeasure) -> &'static str {
+/// The dimension `product.unit` stores for a unit, and `sale_line.unit` too
+/// (`0009`), which copies it.
+pub(crate) const fn unit_token(unit: UnitOfMeasure) -> &'static str {
     match unit {
         UnitOfMeasure::Each => "each",
         UnitOfMeasure::Package => "package",
@@ -455,13 +456,19 @@ const fn unit_token(unit: UnitOfMeasure) -> &'static str {
 /// named error for anything else — `0003`'s `CHECK` admits nothing else, so
 /// reaching that arm means the row was not written through this schema.
 fn unit_from_token(id: ProductId, token: &str) -> Result<UnitOfMeasure, DbError> {
+    unit_from(token).ok_or_else(|| invalid(format!("product {id} has unit {token:?}")))
+}
+
+/// The unit a stored dimension means, or `None` for a token no `0003` or
+/// `0009` column admits.
+pub(crate) fn unit_from(token: &str) -> Option<UnitOfMeasure> {
     match token {
-        "each" => Ok(UnitOfMeasure::Each),
-        "package" => Ok(UnitOfMeasure::Package),
-        "weight" => Ok(UnitOfMeasure::Kilogram),
-        "volume" => Ok(UnitOfMeasure::Litre),
-        "length" => Ok(UnitOfMeasure::Metre),
-        other => Err(invalid(format!("product {id} has unit {other:?}"))),
+        "each" => Some(UnitOfMeasure::Each),
+        "package" => Some(UnitOfMeasure::Package),
+        "weight" => Some(UnitOfMeasure::Kilogram),
+        "volume" => Some(UnitOfMeasure::Litre),
+        "length" => Some(UnitOfMeasure::Metre),
+        _ => None,
     }
 }
 

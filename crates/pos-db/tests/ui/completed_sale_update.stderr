@@ -1,0 +1,35 @@
+error[E0599]: no method named `update` found for struct `SaleRepository<'c>` in the current scope
+  --> tests/ui/completed_sale_update.rs:11:19
+   |
+11 |     let _ = sales.update(tx, id);
+   |                   ^^^^^^ method not found in `SaleRepository<'_>`
+
+error[E0599]: no method named `delete` found for struct `SaleRepository<'c>` in the current scope
+  --> tests/ui/completed_sale_update.rs:12:19
+   |
+12 |     let _ = sales.delete(tx, id);
+   |                   ^^^^^^ method not found in `SaleRepository<'_>`
+
+error[E0599]: no method named `void` found for struct `SaleRepository<'c>` in the current scope
+  --> tests/ui/completed_sale_update.rs:13:19
+   |
+13 |     let _ = sales.void(tx, id);
+   |                   ^^^^ method not found in `SaleRepository<'_>`
+
+error[E0599]: no method named `complete` found for struct `SaleRepository<'c>` in the current scope
+  --> tests/ui/completed_sale_update.rs:14:19
+   |
+14 |     let _ = sales.complete(tx, id);
+   |                   ^^^^^^^^
+   |
+help: there is a method `insert_complete` with a similar name, but with different arguments
+  --> src/repo/sale.rs
+   |
+   | /     pub fn insert_complete<E, F>(
+   | |         &self,
+   | |         tx: &Transaction<'_>,
+   | |         prepared: &PreparedSale,
+...  |
+   | |         E: From<DbError>,
+   | |         F: FnOnce(&Transaction<'_>) -> Result<(), E>,
+   | |_____________________________________________________^
