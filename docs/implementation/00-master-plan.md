@@ -63,6 +63,7 @@ is superseded, and what is still open — is **§4a** below. Read §4a before ac
 | [`ref/sync-protocol.md`](ref/sync-protocol.md) | ownership classes, push/pull, chaos, accepted risks |
 | [`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) | traits, the Arabic raster pipeline, simulator-first and the qualification gate, the lab checklist |
 | [`ref/ui-spec.md`](ref/ui-spec.md) | screen by screen, RTL mechanics, keyboard map |
+| [`ref/ui-design.md`](ref/ui-design.md) | how the screens look: principles, surfaces, the 3D and motion budget, the design references and skills |
 | [`ref/test-catalog.md`](ref/test-catalog.md) | 95 edge cases → named tests, checked by a script. **The coverage matrix** |
 | [`ref/security-compliance.md`](ref/security-compliance.md) | PDPL, PCI, the audit chain, permissions, tenancy, key custody, secrets |
 | [`ref/merchant-decisions.md`](ref/merchant-decisions.md) | the questionnaire to fill in with the merchant |

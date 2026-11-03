@@ -277,6 +277,7 @@ docs/implementation/
     ├── ipc-contract.md            every Tauri command
     ├── sync-protocol.md           ownership, chaos, accepted risks
     ├── hardware-and-receipts.md   traits, Arabic raster, emulators and the gate, lab checklist
+    ├── ui-design.md               the look: principles, references, skills, 3D budget
     ├── ui-spec.md                 screens, RTL, keyboard map
     ├── test-catalog.md            95 edge cases → named tests
     ├── security-compliance.md     PDPL · PCI · tenancy · keys · audit chain
