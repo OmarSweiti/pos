@@ -29,6 +29,7 @@ pub mod approval;
 pub mod audit;
 pub mod clock;
 pub mod outbox;
+pub mod parked_cart;
 pub mod product;
 pub mod receipt;
 pub mod role;

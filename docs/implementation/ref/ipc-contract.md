@@ -272,7 +272,7 @@ result, not a query. Tests: `search_survives_every_fts5_metacharacter` ·
 | `cart_set_buyer_tin` | `{ tin, name? }` → `CartSnapshot` | 2 | `sale.create` | | |
 | `cart_clear_buyer_tin` | `()` → `CartSnapshot` | 2 | `sale.create` | | |
 | `cart_park` | `{ label? }` → `ParkedRef` | 1 | `sale.park` | | |
-| `cart_resume` | `{ parked_id }` → `CartSnapshot` | 1 | `sale.resume` | | |
+| `cart_resume` | `{ parked_id }` → `CartSnapshot` | 1 | `sale.resume` | another's cart | |
 | `cart_list_parked` | `()` → `Vec<ParkedRef>` | 1 | `sale.resume` | | |
 | `cart_void_sale` | `{ reason, approval_id? }` → `()` | 1 | `sale.void` | ✓ | ✓ |
 | `cart_set_training` | `{ on }` → `CartSnapshot` | 1 | `training_mode.toggle` | ✓ | |
@@ -289,6 +289,15 @@ ranks first, executable without a trace, and it also made
 `override_below_floor_is_denied` and `sale_above_ceiling_is_hard_blocked` (E.71 — where "the
 fine is real") optional. Price-embedded barcodes, which is what the optional field was for, arrive
 through `cart_add_scan` as a typed `ScanLookup::PriceEmbedded`.
+
+**`cart_resume` is audited only when it takes over another cashier's cart.** Whoever holds
+`sale.resume` at the cart's own register may resume any cart parked there, whoever parked it (the
+owner's decision on #363); there is no manager escalation, so **E** stays blank. A cashier coming back
+to their own customer writes nothing. Resuming another's basket writes `sale.resume` on the `sale`,
+naming who parked it and how many lines it held, in the same transaction as the claim and with its
+delivery envelope, so the handover is on the record the moment the basket changes hands. A cart
+parked on an earlier business day is refused as expired (master plan C.2) and is not offered by
+`cart_list_parked`.
 
 **`cart_confirm_age` moves to Phase 1.** Phase 1 builds the refusal (`add_line` rejects a `min_age`
 product without confirmation, E.69) and Phase 2 built the confirmation, so every age-restricted
