@@ -42,6 +42,7 @@ the corresponding area:
 | `crates/pos-domain/**`, root dependency features, domain purity/property-test checkers, or the shared Rust lexer | `.claude/rules/rust-domain.md` |
 | `crates/pos-db/**`, either migration tree, schema reference/verifiers, or the shared Rust lexer | `.claude/rules/sql-migrations.md` |
 | Either app's `src/**` or `index.html`, or `packages/money/**`, `packages/ui/**`, or `packages/api-types/**` | `.claude/rules/frontend.md` |
+| Either app's `src/**` or `index.html`, `packages/ui/**`, or the root `DESIGN.md` and `PRODUCT.md` — anything that decides how a screen looks | `.claude/rules/ui-design.md`, which points to `docs/implementation/ref/ui-design.md` |
 | Authentication, authorization, secrets, payments, PII, logs, or compliance | `.claude/rules/security.md` — the only rule file with no path scope, so it applies to every change |
 
 Read every applicable row when a change crosses boundaries. For schema changes,
