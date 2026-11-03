@@ -688,7 +688,7 @@ impl StoredRate {
 
 // ── The schema's spelling, mapped explicitly (`ref/domain-api.md` §1.2) ──
 
-fn treatment_token(treatment: TaxTreatment) -> &'static str {
+pub(crate) fn treatment_token(treatment: TaxTreatment) -> &'static str {
     match treatment {
         TaxTreatment::Standard => "standard",
         TaxTreatment::Reduced => "reduced",
@@ -697,7 +697,7 @@ fn treatment_token(treatment: TaxTreatment) -> &'static str {
     }
 }
 
-fn treatment_from_token(token: &str) -> Option<TaxTreatment> {
+pub(crate) fn treatment_from_token(token: &str) -> Option<TaxTreatment> {
     match token {
         "standard" => Some(TaxTreatment::Standard),
         "reduced" => Some(TaxTreatment::Reduced),

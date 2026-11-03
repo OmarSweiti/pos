@@ -87,11 +87,12 @@ fact-ness is a design judgement rather than something the DDL records.
 | 0006 | `0006_stock_ledger.sql` | stock ledger + rebuildable on-hand/WAC cache | 1 |
 | 0007 | `0007_search_and_seed.sql` | FTS5 index + triggers, price-embedded barcode rules | 1 |
 | 0008 | `0008_discount_caps.sql` | the adopted manual-discount caps in `role_capability.limit_json`, and the shift lead's capped cell | 1 |
-| 0009 | `0009_shifts_and_cash.sql` | blind-close detail, cash locations and movements, counts, drawer events, Z reports | 2 |
-| 0010 | `0010_refunds_and_returns.sql` | immutable refund/exchange links, restock decisions, refund policy, minimal store credit | 2 |
-| 0011 | `0011_fiscal.sql` | fiscal queue, results, dead letters, reconciliation | 2 |
-| 0012 | `0012_customers_loyalty.sql` | customers, consent notices/events, privacy tombstones, loyalty ledger, offline authorization leases | 3 |
-| 0013 | `0013_pricing_promotions_supply.sql` | price lists, versioned promotions, supplier tax invoices, receipts, counts, transfers, filing periods | 4 |
+| 0009 | `0009_sale_capture.sql` | the facts a completed sale captured that had no column: each line's unit, price origin, ceiling, age gate and label, each discount and override as asked, the cart's opening, its price mode, its cash rounding's base and its tenders' order | 1 |
+| 0010 | `0010_shifts_and_cash.sql` | blind-close detail, cash locations and movements, counts, drawer events, Z reports | 2 |
+| 0011 | `0011_refunds_and_returns.sql` | immutable refund/exchange links, restock decisions, refund policy, minimal store credit | 2 |
+| 0012 | `0012_fiscal.sql` | fiscal queue, results, dead letters, reconciliation | 2 |
+| 0013 | `0013_customers_loyalty.sql` | customers, consent notices/events, privacy tombstones, loyalty ledger, offline authorization leases | 3 |
+| 0014 | `0014_pricing_promotions_supply.sql` | price lists, versioned promotions, supplier tax invoices, receipts, counts, transfers, filing periods | 4 |
 
 **Renumbered on 29 October 2026, at the owner's direction.** Merchant decisions 3.1–3.3 were
 answered at microstep 1.4.5, and writing them needs a migration: `0004` seeded the cashier's
@@ -99,6 +100,14 @@ answered at microstep 1.4.5, and writing them needs a migration: `0004` seeded t
 migration is never edited. `0008` is therefore the discount caps, and every migration still planned
 moved up one: shifts and cash `0009`, refunds `0010`, fiscal `0011`, customers `0012`, the Phase-4
 spine `0013`. No committed file changed, and the phase files name the new numbers.
+
+**Renumbered again on 2 November 2026, at the owner's direction.** `SaleRepository` (1.8.2) reads a
+completed sale back, and the domain's `CompletedSale` captures facts no shipped column held: each
+line's unit, price origin, ceiling, age gate and label, each discount and override as it was asked
+for, the cart's opening moment and price mode, the cash rounding's base and the tenders' order. The
+owner chose to add them as typed columns before any real sale exists to lose them (#359), so `0009`
+is the sale capture and every migration still planned moved up one again: shifts and cash `0010`,
+refunds `0011`, fiscal `0012`, customers `0013`, the Phase-4 spine `0014`.
 
 Each migration is complete when its file is first committed. `0003` commits at 1.2.1 with the
 structural tax vocabulary and no guessed rates. Microstep 1.3.7 later imports the reviewed,
@@ -108,7 +117,7 @@ evidence that was not available when the migration committed.
 explicit decision for every one of their 128 (role, capability) cells; provisioning creates the
 merchant's users and their `user_role` grants against those rows rather than inventing a role per
 install. `0005` owns the complete tender-type catalogue with unsupported tenders inactive. A later microstep verifies, configures or consumes those rows; it never edits the earlier
-migration to append them. The three Phase-4 workstreams consume one complete `0013` schema-spine
+migration to append them. The three Phase-4 workstreams consume one complete `0014` schema-spine
 migration rather than successively reopening it.
 
 ---
@@ -2674,7 +2683,7 @@ END;
 > plus a repair on a sequence required to be gapless — so `2.7.4` MUST re-check 6.9 before it
 > allocates the first value. That standing obligation is what this block now carries.
 > Default until answered: the store-scoped counter keyed `('store', store_id, 'fiscal_icv')`
-> described under `0011`.
+> described under `0012`.
 > Owner: `2.7.0` ratifies 6.9, arriving through #69 on a timeline outside this project's control.
 > Tracked as **#113**, which stays **open**: what is settled is what `0005` does, not what the ICV
 > namespace is. Source that settles it: the official ISTD business rules or a written ISTD
@@ -3529,7 +3538,302 @@ UPDATE role_capability
 
 ---
 
-## 0009 — shifts and cash  ·  Phase 2, microstep 2.4.1
+## 0009 — sale capture  ·  Phase 1, microstep 1.8.2  ·  SHIPPED
+
+`0003` and `0005` kept the money a completed line came to and not how it came to it, so
+`SaleRepository` could not read back the sale it wrote, and a refund or a reprint would have read
+today's catalogue for what the sale captured (I-5). The owner's decision on #359 was to add the
+missing facts now, as typed columns: each line's `unit` (`product.unit`'s spelling), `price_origin`
+with a scale label's rule and code, `max_price_minor`, `min_age` and `is_age_confirmed`, the label's
+implied weight and the catalogue price behind it, the line discount and the override as they were
+asked for; on the sale, the cart's `opened_at`, the `price_mode` it was priced under, the cash
+rounding's `cash_rounding_original_minor` and the basket discount as asked; and `tender_no`, the
+order a sale's tenders were taken in, which nothing else recorded.
+
+A discount as asked sits beside its attributions in `sale_line_discount` rather than replacing them:
+the attribution is the fiscal truth, and the request is not derivable from it, because a share that
+rounds to nothing writes no attribution row. Department lines get no origin here: `sale_line.product_id`
+is NOT NULL until #330 is decided, and the origin's vocabulary is a trigger so that decision's
+migration can widen it without rebuilding `sale_line`. Each group of columns is kept whole by a pair
+of triggers, since `ALTER TABLE` cannot add a table `CHECK`, and from this migration on a sale
+completes only with the facts every sale has (`sale_completed_requires_capture_*`).
+
+`pos_db::repo::sale` writes and reads every one of them, and `roundtrip_preserves_every_field` holds
+the round trip. The tokens it writes where the schema names no vocabulary: `sale_supply_tax_context.destination_code`
+is `domestic`, `export`, `free_zone`, `development_area` or `eligible_body`; `zero_tax_reason_code`
+is `export`, `free_zone_supply`, `eligible_entity` or `product_category`; a business buyer's tax
+number is recorded under `buyer_id_scheme = 'TN'`, the reconstructed candidate
+[`fiscal-jofotara.md`](fiscal-jofotara.md) lists as provisional until 2.7.0; and
+`sale_line_discount.authorized_by` is whoever the discount's authority rests on, its approver when
+there is one.
+
+The server has no `sale`, `sale_line` or `sale_tender` yet (the `0003` mirror deferred them as
+tenant-owned), so `20261102120000_sale_capture.sql` creates nothing and records that the migration
+creating those tables carries these columns with them.
+
+```sql
+-- 0009 — sale capture  ·  Phase 1, microstep 1.8.2
+--
+-- The facts a completed sale captured that the schema had no column for. The
+-- domain's `CompletedSale` (1.4.x, 1.5.2) keeps each line's unit, where its
+-- price came from, its ceiling, its age gate and its label's implied weight,
+-- each manual discount and override as it was asked for, the cart's opening
+-- moment, the price mode it was priced under, and what the final cash tender
+-- was rounded from. `0003` and `0005` had kept the money a line came to and
+-- not these, so `SaleRepository` (1.8.2) could not read back the sale it
+-- wrote, and a refund or reprint would have read today's catalogue for them
+-- (I-5). The owner's decision on #359 was to add them now, before any real
+-- sale exists to lose them.
+--
+-- ── Shape decisions, settled here because 0009 is never reopened ───────────
+--
+--   1. Every column arrives by ALTER TABLE ADD COLUMN, nullable, as 0005's
+--      did. A sale completed before this migration has none of them, and no
+--      default would be true for it: `unit` defaulted to 'each' would call a
+--      kilogram of cheese one item. The completion gate at the end requires the
+--      ones every new sale has, from this migration on.
+--
+--   2. A discount is stored as it was asked for, beside the attributions
+--      `sale_line_discount` already holds. The attribution is the fiscal truth
+--      (`ref/fiscal-jofotara.md`); the request is what the cashier typed, and
+--      it is not derivable from the attributions: a basket share or a line
+--      discount that rounds to nothing writes no attribution row at all.
+--
+--   3. Department lines are not given a price origin here. A department line
+--      has no product, and `sale_line.product_id` is NOT NULL: #330 asks how
+--      that changes, and its migration widens these vocabularies with it.
+--      The origin's vocabulary is guarded by a trigger rather than a CHECK for
+--      that reason, so widening it never means rebuilding `sale_line`.
+--
+--   4. The coherence rules span several columns, and ALTER TABLE cannot add a
+--      table CHECK, so each is a pair of triggers, as 0005's buyer identifier
+--      is. Single-column vocabularies and ranges are CHECKs on the column.
+--
+--   5. `sale_tender.tender_no` orders a sale's tenders as they were taken.
+--      Nothing else did: tender ids are not ordered, and a rowid is not a fact
+--      (VACUUM may renumber it on a table with no INTEGER PRIMARY KEY).
+--
+--   6. No PRAGMA appears in this file, for 0005's reason: the runner applies
+--      each migration in one transaction.
+
+-- ── The sale: the cart's opening, its price mode, its basket discount ───────
+
+ALTER TABLE sale ADD COLUMN opened_at TEXT;
+ALTER TABLE sale ADD COLUMN price_mode TEXT
+  CHECK (price_mode IN ('inclusive','exclusive'));
+-- What the final cash tender was asked to round: `CashRounding.original`.
+-- NULL when no cash tender settled the sale. `rounding_adj_minor` (0005) is the
+-- adjustment, and the two give the rounded amount.
+ALTER TABLE sale ADD COLUMN cash_rounding_original_minor INTEGER;
+ALTER TABLE sale ADD COLUMN basket_discount_kind TEXT
+  CHECK (basket_discount_kind IN ('percent','amount'));
+ALTER TABLE sale ADD COLUMN basket_discount_ppm INTEGER
+  CHECK (basket_discount_ppm BETWEEN 1 AND 1000000);
+ALTER TABLE sale ADD COLUMN basket_discount_amount_minor INTEGER
+  CHECK (basket_discount_amount_minor > 0);
+ALTER TABLE sale ADD COLUMN basket_discount_reason   TEXT;
+ALTER TABLE sale ADD COLUMN basket_discount_by       BLOB REFERENCES app_user(id);
+ALTER TABLE sale ADD COLUMN basket_discount_approver BLOB REFERENCES app_user(id);
+
+CREATE TRIGGER sale_basket_discount_coherent_insert
+BEFORE INSERT ON sale
+WHEN NOT (
+  (NEW.basket_discount_kind IS NULL
+    AND NEW.basket_discount_ppm IS NULL AND NEW.basket_discount_amount_minor IS NULL
+    AND NEW.basket_discount_reason IS NULL AND NEW.basket_discount_by IS NULL
+    AND NEW.basket_discount_approver IS NULL)
+  OR (NEW.basket_discount_kind IS NOT NULL
+    AND NEW.basket_discount_reason IS NOT NULL AND NEW.basket_discount_by IS NOT NULL
+    AND ((NEW.basket_discount_kind = 'percent'
+           AND NEW.basket_discount_ppm IS NOT NULL
+           AND NEW.basket_discount_amount_minor IS NULL)
+      OR (NEW.basket_discount_kind = 'amount'
+           AND NEW.basket_discount_amount_minor IS NOT NULL
+           AND NEW.basket_discount_ppm IS NULL))))
+BEGIN
+  SELECT RAISE(ABORT, 'a basket discount is a share or an amount, with its reason and who gave it, or nothing at all');
+END;
+CREATE TRIGGER sale_basket_discount_coherent_update
+BEFORE UPDATE OF basket_discount_kind, basket_discount_ppm, basket_discount_amount_minor,
+                 basket_discount_reason, basket_discount_by, basket_discount_approver ON sale
+WHEN NOT (
+  (NEW.basket_discount_kind IS NULL
+    AND NEW.basket_discount_ppm IS NULL AND NEW.basket_discount_amount_minor IS NULL
+    AND NEW.basket_discount_reason IS NULL AND NEW.basket_discount_by IS NULL
+    AND NEW.basket_discount_approver IS NULL)
+  OR (NEW.basket_discount_kind IS NOT NULL
+    AND NEW.basket_discount_reason IS NOT NULL AND NEW.basket_discount_by IS NOT NULL
+    AND ((NEW.basket_discount_kind = 'percent'
+           AND NEW.basket_discount_ppm IS NOT NULL
+           AND NEW.basket_discount_amount_minor IS NULL)
+      OR (NEW.basket_discount_kind = 'amount'
+           AND NEW.basket_discount_amount_minor IS NOT NULL
+           AND NEW.basket_discount_ppm IS NULL))))
+BEGIN
+  SELECT RAISE(ABORT, 'a basket discount is a share or an amount, with its reason and who gave it, or nothing at all');
+END;
+
+-- ── The line: unit, price origin, ceiling, age gate, label, discount, override
+
+-- `product.unit`'s spelling (0003), which names the dimension.
+ALTER TABLE sale_line ADD COLUMN unit TEXT
+  CHECK (unit IN ('each','package','weight','volume','length'));
+ALTER TABLE sale_line ADD COLUMN price_origin      TEXT;
+ALTER TABLE sale_line ADD COLUMN label_rule_prefix TEXT;
+ALTER TABLE sale_line ADD COLUMN label_raw_code    TEXT;
+-- The ministry ceiling on the line's unit price when it was captured (J.3).
+ALTER TABLE sale_line ADD COLUMN max_price_minor INTEGER
+  CHECK (max_price_minor >= 0);
+ALTER TABLE sale_line ADD COLUMN min_age INTEGER
+  CHECK (min_age BETWEEN 0 AND 255);
+ALTER TABLE sale_line ADD COLUMN is_age_confirmed INTEGER
+  CHECK (is_age_confirmed IN (0,1));
+-- The weight a scale label's price implied at the catalogue's price per unit:
+-- the stock basis, never money (E.80).
+ALTER TABLE sale_line ADD COLUMN label_qty_milli INTEGER
+  CHECK (label_qty_milli > 0);
+ALTER TABLE sale_line ADD COLUMN label_unit_price_minor INTEGER
+  CHECK (label_unit_price_minor >= 0);
+ALTER TABLE sale_line ADD COLUMN line_discount_kind TEXT
+  CHECK (line_discount_kind IN ('percent','amount'));
+ALTER TABLE sale_line ADD COLUMN line_discount_ppm INTEGER
+  CHECK (line_discount_ppm BETWEEN 1 AND 1000000);
+ALTER TABLE sale_line ADD COLUMN line_discount_amount_minor INTEGER
+  CHECK (line_discount_amount_minor > 0);
+ALTER TABLE sale_line ADD COLUMN line_discount_reason   TEXT;
+ALTER TABLE sale_line ADD COLUMN line_discount_by       BLOB REFERENCES app_user(id);
+ALTER TABLE sale_line ADD COLUMN line_discount_approver BLOB REFERENCES app_user(id);
+-- What an overridden line charges a unit. `unit_price_minor` keeps the price
+-- it was captured at (1.4.7).
+ALTER TABLE sale_line ADD COLUMN override_price_minor INTEGER
+  CHECK (override_price_minor >= 0);
+ALTER TABLE sale_line ADD COLUMN override_reason   TEXT;
+ALTER TABLE sale_line ADD COLUMN override_by       BLOB REFERENCES app_user(id);
+ALTER TABLE sale_line ADD COLUMN override_approver BLOB REFERENCES app_user(id);
+
+CREATE TRIGGER sale_line_price_origin_coherent_insert
+BEFORE INSERT ON sale_line
+WHEN (NEW.price_origin IS NOT NULL AND NEW.price_origin NOT IN ('catalog','label'))
+  OR (NEW.price_origin IS 'label')
+       <> (NEW.label_rule_prefix IS NOT NULL AND NEW.label_raw_code IS NOT NULL)
+  OR (NEW.label_rule_prefix IS NULL) <> (NEW.label_raw_code IS NULL)
+  OR (NEW.label_qty_milli IS NULL) <> (NEW.label_unit_price_minor IS NULL)
+BEGIN
+  SELECT RAISE(ABORT, 'a line priced from the catalogue carries no label; a label line carries its rule and code, and a weight with its price');
+END;
+CREATE TRIGGER sale_line_price_origin_coherent_update
+BEFORE UPDATE OF price_origin, label_rule_prefix, label_raw_code,
+                 label_qty_milli, label_unit_price_minor ON sale_line
+WHEN (NEW.price_origin IS NOT NULL AND NEW.price_origin NOT IN ('catalog','label'))
+  OR (NEW.price_origin IS 'label')
+       <> (NEW.label_rule_prefix IS NOT NULL AND NEW.label_raw_code IS NOT NULL)
+  OR (NEW.label_rule_prefix IS NULL) <> (NEW.label_raw_code IS NULL)
+  OR (NEW.label_qty_milli IS NULL) <> (NEW.label_unit_price_minor IS NULL)
+BEGIN
+  SELECT RAISE(ABORT, 'a line priced from the catalogue carries no label; a label line carries its rule and code, and a weight with its price');
+END;
+
+CREATE TRIGGER sale_line_discount_request_coherent_insert
+BEFORE INSERT ON sale_line
+WHEN NOT (
+  (NEW.line_discount_kind IS NULL
+    AND NEW.line_discount_ppm IS NULL AND NEW.line_discount_amount_minor IS NULL
+    AND NEW.line_discount_reason IS NULL AND NEW.line_discount_by IS NULL
+    AND NEW.line_discount_approver IS NULL)
+  OR (NEW.line_discount_kind IS NOT NULL
+    AND NEW.line_discount_reason IS NOT NULL AND NEW.line_discount_by IS NOT NULL
+    AND ((NEW.line_discount_kind = 'percent'
+           AND NEW.line_discount_ppm IS NOT NULL
+           AND NEW.line_discount_amount_minor IS NULL)
+      OR (NEW.line_discount_kind = 'amount'
+           AND NEW.line_discount_amount_minor IS NOT NULL
+           AND NEW.line_discount_ppm IS NULL))))
+BEGIN
+  SELECT RAISE(ABORT, 'a line discount is a share or an amount, with its reason and who gave it, or nothing at all');
+END;
+CREATE TRIGGER sale_line_discount_request_coherent_update
+BEFORE UPDATE OF line_discount_kind, line_discount_ppm, line_discount_amount_minor,
+                 line_discount_reason, line_discount_by, line_discount_approver ON sale_line
+WHEN NOT (
+  (NEW.line_discount_kind IS NULL
+    AND NEW.line_discount_ppm IS NULL AND NEW.line_discount_amount_minor IS NULL
+    AND NEW.line_discount_reason IS NULL AND NEW.line_discount_by IS NULL
+    AND NEW.line_discount_approver IS NULL)
+  OR (NEW.line_discount_kind IS NOT NULL
+    AND NEW.line_discount_reason IS NOT NULL AND NEW.line_discount_by IS NOT NULL
+    AND ((NEW.line_discount_kind = 'percent'
+           AND NEW.line_discount_ppm IS NOT NULL
+           AND NEW.line_discount_amount_minor IS NULL)
+      OR (NEW.line_discount_kind = 'amount'
+           AND NEW.line_discount_amount_minor IS NOT NULL
+           AND NEW.line_discount_ppm IS NULL))))
+BEGIN
+  SELECT RAISE(ABORT, 'a line discount is a share or an amount, with its reason and who gave it, or nothing at all');
+END;
+
+CREATE TRIGGER sale_line_override_coherent_insert
+BEFORE INSERT ON sale_line
+WHEN (NEW.override_price_minor IS NULL) <> (NEW.override_reason IS NULL)
+  OR (NEW.override_price_minor IS NULL) <> (NEW.override_by IS NULL)
+  OR (NEW.override_price_minor IS NULL AND NEW.override_approver IS NOT NULL)
+BEGIN
+  SELECT RAISE(ABORT, 'an override carries its price, its reason and who set it, or nothing at all');
+END;
+CREATE TRIGGER sale_line_override_coherent_update
+BEFORE UPDATE OF override_price_minor, override_reason, override_by, override_approver
+  ON sale_line
+WHEN (NEW.override_price_minor IS NULL) <> (NEW.override_reason IS NULL)
+  OR (NEW.override_price_minor IS NULL) <> (NEW.override_by IS NULL)
+  OR (NEW.override_price_minor IS NULL AND NEW.override_approver IS NOT NULL)
+BEGIN
+  SELECT RAISE(ABORT, 'an override carries its price, its reason and who set it, or nothing at all');
+END;
+
+-- ── The tender: the order it was taken in ─────────────────────────────────
+
+ALTER TABLE sale_tender ADD COLUMN tender_no INTEGER
+  CHECK (tender_no > 0);
+CREATE UNIQUE INDEX idx_sale_tender_no ON sale_tender(sale_id, tender_no);
+
+-- ── The completion gate ──────────────────────────────────────────────────
+--
+-- From this migration on, a sale completes only with the facts every sale
+-- captures: its opening moment and price mode, each line's unit, price origin
+-- and age check, and each tender's place. The optional ones (a ceiling, an age
+-- limit, a label, a discount, an override, a cash rounding) are absent when the
+-- sale had none, which is what NULL says for them.
+
+CREATE TRIGGER sale_completed_requires_capture_insert
+BEFORE INSERT ON sale
+WHEN NEW.status = 'completed' AND (
+  NEW.opened_at IS NULL OR NEW.price_mode IS NULL
+  OR EXISTS (
+    SELECT 1 FROM sale_line l
+     WHERE l.sale_id = NEW.id
+       AND (l.unit IS NULL OR l.price_origin IS NULL OR l.is_age_confirmed IS NULL))
+  OR EXISTS (
+    SELECT 1 FROM sale_tender t WHERE t.sale_id = NEW.id AND t.tender_no IS NULL))
+BEGIN
+  SELECT RAISE(ABORT, 'a completed sale carries what it captured: its opening, its price mode, each line''s unit, price origin and age check, and each tender''s order');
+END;
+CREATE TRIGGER sale_completed_requires_capture_update
+BEFORE UPDATE OF status, opened_at, price_mode ON sale
+WHEN NEW.status = 'completed' AND (
+  NEW.opened_at IS NULL OR NEW.price_mode IS NULL
+  OR EXISTS (
+    SELECT 1 FROM sale_line l
+     WHERE l.sale_id = NEW.id
+       AND (l.unit IS NULL OR l.price_origin IS NULL OR l.is_age_confirmed IS NULL))
+  OR EXISTS (
+    SELECT 1 FROM sale_tender t WHERE t.sale_id = NEW.id AND t.tender_no IS NULL))
+BEGIN
+  SELECT RAISE(ABORT, 'a completed sale carries what it captured: its opening, its price mode, each line''s unit, price origin and age check, and each tender''s order');
+END;
+```
+
+---
+
+## 0010 — shifts and cash  ·  Phase 2, microstep 2.4.1
 
 ```sql
 -- 0005 already owns the immutable opening fact, minimal close event and one-open
@@ -3900,7 +4204,7 @@ END;
 
 ---
 
-## 0010 — refunds and returns  ·  Phase 2, microstep 2.3.1
+## 0011 — refunds and returns  ·  Phase 2, microstep 2.3.1
 
 ```sql
 -- Post-completion "void" DOES NOT EXIST. It is a same-day full refund document
@@ -4194,7 +4498,7 @@ CREATE TABLE document_link (
 
 -- Store credit is needed by Phase 2 receiptless-return policy, so its minimum
 -- ledger belongs here rather than waiting for the customer migration. Identity
--- may be anonymous; 0012 adds the optional customer link after `customer` exists.
+-- may be anonymous; 0013 adds the optional customer link after `customer` exists.
 CREATE TABLE stored_value_instrument (
   id             BLOB PRIMARY KEY,
   org_id         BLOB NOT NULL REFERENCES org(id),
@@ -4359,7 +4663,7 @@ END;
 
 ---
 
-## 0011 — fiscal  ·  Phase 2, microstep 2.7.4
+## 0012 — fiscal  ·  Phase 2, microstep 2.7.4
 
 Full pipeline design in [`fiscal-jofotara.md`](fiscal-jofotara.md).
 
@@ -4545,8 +4849,8 @@ BEGIN
   SELECT RAISE(ABORT, 'fiscal payload allocation must match its store identity and durable commit');
 END;
 
--- `credit_note_context` is created in 0010 so receiptless/non-fiscal returns can
--- exist without the fiscal migration. Once 0011 is installed, a fiscal source
+-- `credit_note_context` is created in 0011 so receiptless/non-fiscal returns can
+-- exist without the fiscal migration. Once 0012 is installed, a fiscal source
 -- must copy its locally generated UUID exactly; a non-fiscal source must not
 -- invent one.
 CREATE TRIGGER credit_note_original_fiscal_uuid_matches
@@ -5025,7 +5329,7 @@ distinct monotonic ICVs without changing either `fiscal_uuid`.
 
 ---
 
-## 0012 — customers and loyalty  ·  Phase 3, microstep 3.4.1
+## 0013 — customers and loyalty  ·  Phase 3, microstep 3.4.1
 
 PDPL is the spec for this migration (master plan B.3).
 
@@ -5402,7 +5706,7 @@ BEGIN
     updated_at = NEW.occurred_at;
 END;
 
--- 0010 owns the minimal stored-value ledger. Phase 3 may associate an
+-- 0011 owns the minimal stored-value ledger. Phase 3 may associate an
 -- instrument with a customer without moving or rewriting any ledger entry.
 ALTER TABLE stored_value_instrument
   ADD COLUMN customer_id BLOB REFERENCES customer(id);
@@ -5521,7 +5825,7 @@ END;
 
 ---
 
-## 0013 — pricing, promotions, supply  ·  Phase 4, microsteps 4.1.1, 4.2.1, 4.4.1
+## 0014 — pricing, promotions, supply  ·  Phase 4, microsteps 4.1.1, 4.2.1, 4.4.1
 
 ```sql
 CREATE TABLE price_list (

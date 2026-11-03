@@ -3,7 +3,7 @@
 > **Exit:** three stores run a full week unattended, with promotions whose cost report matches finance's arithmetic, stock that receives and counts, and shelf labels that keep the merchant out of trouble with the ministry.
 
 **Effort:** 9–12 weeks.
-**Scope from the master plan:** C.1 price lists, C.7 receiving/counts/transfers, C.9 promotions, C.12 back-office report suite, C.13 multi-store, migration **0013**.
+**Scope from the master plan:** C.1 price lists, C.7 receiving/counts/transfers, C.9 promotions, C.12 back-office report suite, C.13 multi-store, migration **0014**.
 **Plus, promoted from J.3:** shelf-label printing, treated as a **compliance feature** rather than a convenience.
 **Plus:** the supplier-tax, filing-period and regulated-display facts the accounting and compliance work needs, and **a pre-pilot gate** (4.9.0) that has to pass before three real shops trade on this.
 
@@ -16,7 +16,7 @@ Nothing here is on the money-critical path. That is exactly why it comes fourth 
 ```
 4.1 price lists ──┬──→ 4.4 promotions engine ──→ 4.5 promotion reporting
   (4.1.1 is the    │
-   0013 spine)     │
+   0014 spine)     │
                   ├──→ 4.2 receiving, supplier tax & WAC ──┬──→ 4.3 counts & transfers
                   │                                        └──→ 4.6 label printing
                   └──→ 4.7 report suite ────────────────────────────────────────┐
@@ -25,7 +25,7 @@ Nothing here is on the money-critical path. That is exactly why it comes fourth 
                                                         4.9.0 pre-pilot gate → 4.9 pilot
 ```
 
-**One migration, one microstep.** `0013` is created complete by **4.1.1** and never reopened. Groups
+**One migration, one microstep.** `0014` is created complete by **4.1.1** and never reopened. Groups
 4.2 and 4.4 therefore depend on 4.1.1 being merged, and their own first steps are behavioural rather
 than schema steps. Three groups each editing one migration file across three branches and three
 commits — which is what "part one / part two / part three" asked for — contradicts the law that a
@@ -34,13 +34,13 @@ conflict repair before the migration has shipped at all.
 
 ---
 
-## Group 4.1 — Price lists and the `0013` schema spine
+## Group 4.1 — Price lists and the `0014` schema spine
 
-### 4.1.1 — Migration `0013` — the complete Phase-4 schema
+### 4.1.1 — Migration `0014` — the complete Phase-4 schema
 **Files:** `crates/pos-db/migrations/0013_pricing_promotions_supply.sql`, `apps/server/migrations/`
-The whole of [`ref/schema.md`](ref/schema.md) §0013, in one file, in one commit: `price_list` and `price`; `promotion` with its immutable `promotion_version`, regulated exclusions, publications and attributions; `supplier`, supplier tax invoices and their line taxes; goods receipts; stock counts; transfers; and the filing-period, adjustment, allocation, credit-ledger and election tables.
+The whole of [`ref/schema.md`](ref/schema.md) §0014, in one file, in one commit: `price_list` and `price`; `promotion` with its immutable `promotion_version`, regulated exclusions, publications and attributions; `supplier`, supplier tax invoices and their line taxes; goods receipts; stock counts; transfers; and the filing-period, adjustment, allocation, credit-ledger and election tables.
 
-Its **PostgreSQL mirror ships in the same commit**. Phase 3's mirror stopped at SQLite `0012`, which left the cloud without the pricing, promotion, supply and filing tables that Phase 4's own reports read.
+Its **PostgreSQL mirror ships in the same commit**. Phase 3's mirror stopped at SQLite `0013`, which left the cloud without the pricing, promotion, supply and filing tables that Phase 4's own reports read.
 **Verify:** `just verify-schema && just verify-pg`
 **Done when:** both verifiers pass, and no later Phase-4 microstep names this file in its `Files:` list.
 
@@ -195,7 +195,7 @@ Reuse the Phase-1 raster pipeline: Arabic name, price, barcode, unit price where
 Fed by price changes (4.1.3), new products, and `displayed_price` overrides (Phase 1, 1.4.7). Print in batches, mark printed.
 **Tests:** `worklist_clears_only_what_was_printed`
 
-> **Left by 1.4.7.** `override_price` returns a `LabelReprint { product_id, cause: DisplayedPriceOverride }` for every displayed-price override from Phase 1 on, and nothing can store it until `label_reprint_queue` exists (migration `0013`). When the table lands, seed it with one row for each product that has a `price.override` audit row with the reason `displayed_price`, so the shelves the till honoured before the table existed are printed too.
+> **Left by 1.4.7.** `override_price` returns a `LabelReprint { product_id, cause: DisplayedPriceOverride }` for every displayed-price override from Phase 1 on, and nothing can store it until `label_reprint_queue` exists (migration `0014`). When the table lands, seed it with one row for each product that has a `price.override` audit row with the reason `displayed_price`, so the shelves the till honoured before the table existed are printed too.
 
 ### 4.6.3 — Regulated price ceilings
 **Files:** `crates/pos-domain/src/cart.rs`, back office
@@ -235,7 +235,7 @@ By day / hour / register / cashier; by product / category with quantity, net, ta
 **Files:** `apps/server/src/reports/tax.rs` (new)
 The register's `report_tax_by_rate` is built in Phase 1 (it is the deliverable the tax engine exists for, and it had no owner in any phase); here it becomes the back-office deliverable per [`ref/tax-jordan.md`](ref/tax-jordan.md) §6.
 
-**It is a sales-side reconciliation, not a return, and it is named that way in the UI, the export header and the owner guide.** The statutory declaration also needs prior credit, domestic purchases and expenses by rate, assets, imports and imported services, exempt purchases, non-deductible input tax, adjustments and the refund or carry-forward election. Those arrive with 4.2.1's supplier facts and the filing-period tables in `0013`; the workpaper maps them to return boxes, tracks the assigned filing cycle and its boundaries, and carries nil-return status — because a normal general-tax return, a special-tax return and an ASEZA return do not share a calendar.
+**It is a sales-side reconciliation, not a return, and it is named that way in the UI, the export header and the owner guide.** The statutory declaration also needs prior credit, domestic purchases and expenses by rate, assets, imports and imported services, exempt purchases, non-deductible input tax, adjustments and the refund or carry-forward election. Those arrive with 4.2.1's supplier facts and the filing-period tables in `0014`; the workpaper maps them to return boxes, tracks the assigned filing cycle and its boundaries, and carries nil-return status — because a normal general-tax return, a special-tax return and an ASEZA return do not share a calendar.
 
 A refund issued in period N+1 against a sale in period N keeps **both** period references and its disposition, rather than becoming a negative row in an arbitrary date range.
 **Tests:** `the_workpaper_maps_every_populated_box` · `a_nil_period_still_produces_a_return_row` · `a_refund_in_the_next_period_preserves_both_period_references`

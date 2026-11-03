@@ -37,8 +37,8 @@ pub use audit::{
 };
 pub use cart::{
     Cart, CartContext, CartError, CartLine, CompletedSale, FinalizeEffects, Finalizing, ParkedCart,
-    PricedCart, PricedLine, PricingSettings, Sale, TaxBands, Tendering, VoidedSale, change_due,
-    is_settled, remaining_due,
+    PricedCart, PricedLine, PricingSettings, Sale, StoredCompletedSale, TaxBands, Tendering,
+    VoidedSale, change_due, is_settled, remaining_due,
 };
 pub use catalog::{
     Barcode, BarcodeKind, CatalogError, Department, DepartmentPolicy, DerivedWeight,

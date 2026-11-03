@@ -1686,6 +1686,117 @@ impl CompletedSale {
     pub fn completed_at(&self) -> Timestamp {
         self.completed_at
     }
+
+    /// This sale's parts, as storage holds them (1.8.2).
+    #[must_use]
+    pub fn to_stored(&self) -> StoredCompletedSale {
+        StoredCompletedSale {
+            cart: self.cart.clone(),
+            priced: self.priced.clone(),
+            tenders: self.tenders.clone(),
+            cash_rounding: self.cash_rounding,
+            change: self.change,
+            receipt_number: self.receipt_number.clone(),
+            business_date: self.business_date,
+            completed_at: self.completed_at,
+        }
+    }
+
+    /// A completed sale read back from storage, once its parts are shown to
+    /// be ones [`complete`] could have made (1.8.2).
+    ///
+    /// Like `ApprovalHandle::restore`, this proves the structure and nothing
+    /// more: that the prices are this cart's lines', in order and in its
+    /// currency; that a cash rounding adds up; that no tender appears twice;
+    /// that the tenders settle what was due; and that the change is exactly
+    /// what they leave over. That the sale was priced under its store's pack
+    /// on its day is evidence of the finalize transaction that wrote it, which
+    /// no stored record can prove.
+    ///
+    /// # Errors
+    ///
+    /// - [`CartError::StoredSaleInconsistent`]: parts that disagree, naming
+    ///   which.
+    /// - [`CartError::DuplicateTenderId`]: one tender listed twice.
+    /// - [`CartError::Underpaid`]: tenders that do not settle what was due.
+    /// - [`CartError::Money`]: an amount in another currency than the sale's.
+    pub fn restore(stored: StoredCompletedSale) -> Result<CompletedSale, CartError> {
+        let id = stored.cart.id;
+        let inconsistent = |what| CartError::StoredSaleInconsistent(id, what);
+        if stored.priced.currency != stored.cart.currency {
+            return Err(inconsistent("its prices are in another currency"));
+        }
+        if !stored
+            .priced
+            .lines
+            .iter()
+            .map(|l| l.line_id)
+            .eq(stored.cart.lines.iter().map(|l| l.id))
+        {
+            return Err(inconsistent("its prices are not its lines'"));
+        }
+        if let Some(r) = stored.cash_rounding
+            && r.original.checked_add(r.adjustment)? != r.rounded
+        {
+            return Err(inconsistent("its cash rounding does not add up"));
+        }
+        let mut seen = BTreeSet::new();
+        if let Some(twice) = stored.tenders.iter().find(|t| !seen.insert(t.id)) {
+            return Err(CartError::DuplicateTenderId(twice.id));
+        }
+        let due = match stored.cash_rounding {
+            Some(r) => stored.priced.total.checked_add(r.adjustment)?,
+            None => stored.priced.total,
+        };
+        let collected = Money::sum(
+            stored.tenders.iter().map(|t| t.amount),
+            stored.cart.currency,
+        )?;
+        let over = collected.checked_sub(due)?;
+        if over.is_negative() {
+            return Err(CartError::Underpaid(
+                collected.format_exact(),
+                due.format_exact(),
+            ));
+        }
+        if stored.change != over {
+            return Err(inconsistent(
+                "its change is not what its tenders leave over",
+            ));
+        }
+        Ok(CompletedSale {
+            cart: stored.cart,
+            priced: stored.priced,
+            tenders: stored.tenders,
+            cash_rounding: stored.cash_rounding,
+            change: stored.change,
+            receipt_number: stored.receipt_number,
+            business_date: stored.business_date,
+            completed_at: stored.completed_at,
+        })
+    }
+}
+
+/// A completed sale's parts, crossing the trusted persistence boundary
+/// (1.8.2).
+///
+/// Transport, not proof, as `StoredApprovalHandle` is: its fields are public so
+/// a repository can write and read the rows without reaching through
+/// [`CompletedSale`]'s invariants, and every record read back passes through
+/// [`CompletedSale::restore`] before anything treats it as a sale.
+///
+/// `Debug` is the derived one, which reaches [`Cart`]'s own: `buyer_name` stays
+/// redacted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredCompletedSale {
+    pub cart: Cart,
+    pub priced: PricedCart,
+    pub tenders: Vec<Tender>,
+    pub cash_rounding: Option<CashRounding>,
+    pub change: Money,
+    pub receipt_number: String,
+    pub business_date: BusinessDate,
+    pub completed_at: Timestamp,
 }
 
 /// A sale abandoned before it completed (master plan C.5).
@@ -2288,6 +2399,10 @@ pub enum CartError {
     /// row repeats the handle's reason, so the two must be one.
     #[error("the approval was given for {0}, not {1}")]
     ApprovalReasonMismatch(String, String),
+    /// Added at 1.8.2: a completed sale read back from storage whose parts
+    /// disagree, and how.
+    #[error("the stored sale {0} is not one that could have completed: {1}")]
+    StoredSaleInconsistent(SaleId, &'static str),
     /// Added at 1.4.5: an approval that does not match the operation.
     #[error(transparent)]
     Permission(#[from] PermissionError),
@@ -5744,6 +5859,65 @@ mod tests {
         assert!(done.tenders().is_empty());
     }
 
+    /// 1.8.2: a stored sale whose parts disagree is refused by name, never
+    /// handed on as a sale. Each fixture breaks one thing the cash sale of
+    /// `complete_requires_settled` had right.
+    #[test]
+    fn a_stored_sale_that_does_not_add_up_is_refused() {
+        let t = pay(paying(one_item(1_247), qirsh()), 1, "cash", 500).unwrap();
+        let t = pay(t, 2, "cash", 1_000).unwrap();
+        let done = complete(begin_finalize(t).unwrap(), effects()).unwrap();
+        let inconsistent = |what| Err(CartError::StoredSaleInconsistent(the_sale(), what));
+
+        let mut wrong_change = done.to_stored();
+        wrong_change.change = jod(249);
+        assert_eq!(
+            CompletedSale::restore(wrong_change),
+            inconsistent("its change is not what its tenders leave over")
+        );
+
+        let mut short = done.to_stored();
+        short.tenders.truncate(1);
+        short.change = jod(0);
+        assert_eq!(
+            CompletedSale::restore(short),
+            Err(CartError::Underpaid("0.500".to_owned(), "1.250".to_owned()))
+        );
+
+        let mut twice = done.to_stored();
+        let first = twice.tenders.first().unwrap().id;
+        twice.tenders.last_mut().unwrap().id = first;
+        assert_eq!(
+            CompletedSale::restore(twice),
+            Err(CartError::DuplicateTenderId(tender_id(1)))
+        );
+
+        let mut rounding = done.to_stored();
+        if let Some(r) = rounding.cash_rounding.as_mut() {
+            r.rounded = jod(1_240);
+        }
+        assert_eq!(
+            CompletedSale::restore(rounding),
+            inconsistent("its cash rounding does not add up")
+        );
+
+        let mut lines = done.to_stored();
+        lines.priced.lines.first_mut().unwrap().line_id = SaleLineId::from_uuid(id(0x7777));
+        assert_eq!(
+            CompletedSale::restore(lines),
+            inconsistent("its prices are not its lines'")
+        );
+
+        let mut currency = done.to_stored();
+        currency.priced.currency = Currency::USD;
+        assert_eq!(
+            CompletedSale::restore(currency),
+            inconsistent("its prices are in another currency")
+        );
+
+        assert_eq!(CompletedSale::restore(done.to_stored()), Ok(done));
+    }
+
     /// Master plan C.5: a sale is voided only before it completes and before
     /// any money is taken, by whoever holds `sale.void`, and the void is
     /// audited with the stage it was voided from.
@@ -6148,6 +6322,35 @@ mod tests {
                     prop_assert!(kind_of(t.tenders().last().unwrap()).allows_change);
                 }
             }
+        }
+
+        /// 1.8.2: a completed sale read back from its stored form is the sale
+        /// that was stored, field for field. Whatever tenders paid for it, in
+        /// whatever order, with or without a cash rounding and change, the
+        /// structure `restore` checks is the structure `complete` made, so
+        /// storage can hand back every sale it was given.
+        #[test]
+        fn prop_restore_inverts_to_stored(
+            scans in scans(),
+            price_mode in modes(),
+            rule in rules(),
+            policy in policies(),
+            plan in proptest::collection::vec(takes(), 0..=6),
+        ) {
+            let cart = sellable(ring(&scans, None, rule));
+            let settings = PricingSettings { price_mode, profile: StoreTaxProfile::Standard, rule };
+            let mut t = begin_tender(cart, &bands(), &settings, policy).unwrap();
+            for (n, take) in (1u128..).zip(&plan) {
+                if let Ok(next) = add_tender(t.clone(), taken(&t, n, take)) {
+                    t = next;
+                }
+            }
+            if !is_settled(&t) {
+                let left = remaining_due(&t).unwrap().minor();
+                t = pay(t, 0x80, "card", left).unwrap();
+            }
+            let done = complete(begin_finalize(t).unwrap(), effects()).unwrap();
+            prop_assert_eq!(CompletedSale::restore(done.to_stored()), Ok(done));
         }
 
         /// I-4, by construction: once a sale is complete, nothing a till can
