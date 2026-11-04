@@ -189,6 +189,11 @@ Legend — **Ph**: phase introduced · **Cap**: required capability · **A**: wr
 | `auth_verify_pin` | `{ user_code, pin, for_capability, entity_id, amount_minor, reason }` → `ApprovalRef` | 1 | — | ✓ | |
 | `user_reset_pin` | `{ user_id, new_pin, approval_id }` → `()` | 1 | `user.admin` | ✓ | ✓ |
 
+`session_state`, `auth_login_pin` and `auth_logout` land with 1.8.2c, which opens the register's
+database in the shell, holds the signed-in user and their role's grants, and resolves the
+`approval_id` every privileged command receives, through one command context. `auth_switch_user`
+waits on its policy test, which is 2.4.2's.
+
 `auth_verify_pin` is the manager-approval modal's backing call, and its arguments identify the
 binding. For a prepared intent, the Rust handler loads the row and recomputes its canonical
 `content_hash`; JavaScript cannot submit or replace that digest.

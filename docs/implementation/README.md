@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **73 of 122 executable microsteps fully complete (~60%)**: `1.1.0`
+Phase 1 has **73 of 123 executable microsteps fully complete (~59%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -259,12 +259,13 @@ Group 1.9's `1.9.5` is **partially delivered**: a shift opens with a float count
 on a business date the clock derives when it is trusted and the operator confirms, audited, when it
 is not; one stays open per register; and only its opener closes it, with a fact of its own and no
 approval. A sale completes only in the open shift and on its business date. Its commands and screens
-wait on the same shell state as 1.10.5's.
+wait on the same shell state as 1.10.5's, which `1.8.2c` creates.
 Group 1.10's `1.10.5` is **partially delivered**: stock moved by hand, with a reason from five, a
 note, and an approval bound to the exact request by its digest, posts its event, audit row and
 consumption together; opening stock is read from its three-column file and posted as ledger events,
-never cache rows. Its commands and screen wait on the shell's database and session state, which no
-microstep's `Files:` line yet creates.
+never cache rows. Its commands and screen wait on the shell's database and session state, which `1.8.2c`
+creates. That step was added on 4 November 2026 (#373), once two steps had stopped at the same
+missing wiring.
 Repository-hardening and documentation work may land between numbered product steps, but it does
 not advance that frontier.
 
