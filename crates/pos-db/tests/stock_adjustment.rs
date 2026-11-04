@@ -113,7 +113,8 @@ fn approve(w: &World, id: StockEventId, approval: u8) -> ApprovalHandle {
         "synthetic shelf count".to_owned(),
         at(),
         600_000,
-        [approval; 16],
+        // Derived from the bound id rather than written as a literal.
+        bound.entity_id.as_bytes().map(|b| b.wrapping_add(approval)),
     )
     .unwrap();
     write_envelope(
@@ -470,7 +471,7 @@ fn approve_unstored(bound: &ApprovalBinding) -> ApprovalHandle {
         "never stored".to_owned(),
         at(),
         600_000,
-        [0x2F; 16],
+        bound.entity_id.as_bytes().map(|b| b ^ 0x2F),
     )
     .unwrap()
 }
@@ -526,7 +527,7 @@ fn altering_a_stock_request_after_approval_is_refused() {
         "synthetic shelf count".to_owned(),
         at(),
         600_000,
-        [0x5E; 16],
+        elsewhere.entity_id.as_bytes().map(|b| b ^ 0x5E),
     )
     .unwrap();
     let tx = w.conn.unchecked_transaction().unwrap();
