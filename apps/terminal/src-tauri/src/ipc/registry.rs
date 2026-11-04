@@ -182,16 +182,48 @@ pub enum ContentBindingSpec {
 
 /// Every command the shell registers, and nothing else. A command's
 /// microstep adds its row in the change that registers the command.
-pub const COMMANDS: &[CommandSpec] = &[CommandSpec {
-    name: "split_tender",
-    access: Access::NoCapability {
-        reason: "Phase 0's smoke command: arithmetic over its own two arguments, \
-                 reading and writing nothing",
+pub const COMMANDS: &[CommandSpec] = &[
+    CommandSpec {
+        name: "split_tender",
+        access: Access::NoCapability {
+            reason: "Phase 0's smoke command: arithmetic over its own two arguments, \
+                     reading and writing nothing",
+        },
+        audited: false,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[Arg::required("total_minor"), Arg::required("parts")],
     },
-    audited: false,
-    approval_requirement: ApprovalRequirement::Never,
-    args: &[Arg::required("total_minor"), Arg::required("parts")],
-}];
+    // 1.8.2c: the lock screen's three commands.
+    CommandSpec {
+        name: "session_state",
+        access: Access::NoCapability {
+            reason: "the lock screen asks who is signed in before anyone is, and \
+                     the answer carries no grant, hash or token",
+        },
+        audited: false,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[],
+    },
+    CommandSpec {
+        name: "auth_login_pin",
+        access: Access::NoCapability {
+            reason: "signing in is how a capability is first held: the PIN is the proof, \
+                     under 1.6.2's attempt policy",
+        },
+        audited: true,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[Arg::required("user_code"), Arg::required("pin")],
+    },
+    CommandSpec {
+        name: "auth_logout",
+        access: Access::NoCapability {
+            reason: "anyone signed in may end their own session, whatever they hold",
+        },
+        audited: true,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[],
+    },
+];
 
 /// Names the commands the shell registers, once.
 ///

@@ -1,13 +1,16 @@
 //! Tauri shell: the UI → IPC → pure-domain boundary.
 //! Business rules live in `pos-domain`; this crate only marshals.
 
+pub mod commands;
 pub mod ipc;
 pub mod print_queue;
 pub mod scan;
+pub mod state;
 pub mod telemetry;
 pub mod time;
 
 use ipc::{IpcError, IpcResult};
+use tauri::Manager;
 
 /// First proof of the blueprint's core boundary: UI → Tauri IPC → pure Rust domain.
 #[tauri::command]
@@ -24,7 +27,12 @@ fn split_tender(total_minor: i64, parts: u32) -> IpcResult<Vec<i64>> {
 // and the list the IPC contract test walks are both made from this list
 // (`ipc::registry`, 1.6.7). A command added here needs its row in
 // `ipc::registry::COMMANDS`.
-ipc::registry::commands![split_tender];
+ipc::registry::commands![
+    split_tender,
+    commands::auth::session_state,
+    commands::auth::auth_login_pin,
+    commands::auth::auth_logout,
+];
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -34,6 +42,17 @@ pub fn run() {
     // unrecoverable and must be loud (conventions §4 exempts main/run).
     #[allow(clippy::expect_used)]
     tauri::Builder::default()
+        // The register's state is opened once, before the first command
+        // (1.8.2c). A refusal keeps the till closed and says why: every
+        // command answers with it rather than with an empty till.
+        .setup(|app| {
+            let till = match app.path().app_data_dir() {
+                Ok(data_dir) => state::Till::open(&data_dir),
+                Err(_) => state::Till::from_result(Err(state::StartupError::DataDirUnavailable)),
+            };
+            app.manage(till);
+            Ok(())
+        })
         .invoke_handler(invoke_handler())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
