@@ -717,6 +717,21 @@ fn a_deactivated_user_is_signed_out_before_acting() {
         refusal(login_pin(&register, CASHIER.code, CASHIER.pin)).code,
         "auth_refused"
     );
+    // Even locked out: the screen learns nothing about an account it will
+    // not sign in, not even that its attempts ran out.
+    register.with_db(|conn| {
+        let tx = conn.transaction().unwrap();
+        for _ in 0..10 {
+            UserRepository::new(&tx)
+                .record_failure(&tx, user(&CASHIER), register.register(), at())
+                .unwrap();
+        }
+        tx.commit().unwrap();
+    });
+    assert_eq!(
+        refusal(login_pin(&register, CASHIER.code, CASHIER.pin)).code,
+        "auth_refused"
+    );
 }
 
 #[test]
@@ -831,10 +846,13 @@ fn the_webview_sees_who_is_signed_in_and_nothing_more() {
     logout(register).unwrap();
     let refused =
         serde_json::to_string(&refusal(login_pin(register, CASHIER.code, "000000"))).unwrap();
-    for secret in ["000000", CASHIER.pin, "argon2", "failed_attempts"] {
-        assert!(
-            !refused.contains(secret),
-            "{secret} reached the webview: {refused}"
-        );
+    // Each is named by what it is, so a failure never prints the value.
+    for (what, secret) in [
+        ("the PIN typed", "000000"),
+        ("the account's PIN", CASHIER.pin),
+        ("a PIN hash", "argon2"),
+        ("the attempt count", "failed_attempts"),
+    ] {
+        assert!(!refused.contains(secret), "{what} reached the webview");
     }
 }
