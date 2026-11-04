@@ -14,6 +14,7 @@ pub mod fixtures;
 pub mod key;
 pub mod repo;
 pub mod search;
+pub mod seed;
 pub mod storage_version;
 pub mod tax_pack;
 pub mod tax_policy;
@@ -226,6 +227,19 @@ pub enum DbError {
     StockReplayAcrossRegisters,
     #[error("stored stock record is malformed: {reason}")]
     StoredStockRecordInvalid { reason: String },
+    #[error("opening-stock file line {line}: {reason}")]
+    OpeningStockFileInvalid { line: usize, reason: &'static str },
+    #[error("no prepared stock adjustment {0}")]
+    StockAdjustmentNotFound(pos_domain::StockEventId),
+    #[error(
+        "prepared stock adjustment {0} no longer matches the digest it was stored with, \
+         so it is not what a manager was shown"
+    )]
+    StockAdjustmentAltered(pos_domain::StockEventId),
+    #[error("the approval does not authorise this operation: {0}")]
+    ApprovalRefused(pos_domain::PermissionError),
+    #[error("no approval {0} is stored")]
+    ApprovalMissing(pos_domain::ApprovalId),
     #[error("no store {0} to compute tax for")]
     TaxPolicyStoreUnknown(pos_domain::StoreId),
     #[error(

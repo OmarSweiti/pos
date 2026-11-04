@@ -402,6 +402,19 @@ impl<'c> StockRepository<'c> {
         Ok(())
     }
 
+    /// A product's position in a store, from the cache: on-hand, the WAC and
+    /// whether it is estimated, or [`StockPosition::unstocked`] for a product
+    /// the store has never stocked. What `stock_on_hand` answers (1.10.5).
+    ///
+    /// # Errors
+    ///
+    /// [`DbError::StockStoreUnknown`] for a store the database does not hold,
+    /// and [`DbError::StoredStockRecordInvalid`] for a store currency this
+    /// build cannot read.
+    pub fn position(&self, product: ProductId, store: StoreId) -> Result<StockPosition, DbError> {
+        cached_position(self.conn, product, store)
+    }
+
     /// A product's on-hand in a store, from the cache: zero for one the store
     /// has never stocked.
     ///
@@ -660,7 +673,7 @@ impl<'c> StockRepository<'c> {
 
 /// The product's quantity step, which every event's quantity must be a whole
 /// number of.
-fn product_step(tx: &Transaction<'_>, product: ProductId) -> Result<i64, DbError> {
+pub(crate) fn product_step(tx: &Connection, product: ProductId) -> Result<i64, DbError> {
     let step: Option<i64> = tx
         .query_row(
             "SELECT qty_step_milli FROM product WHERE id = ?1",
@@ -680,8 +693,8 @@ fn product_step(tx: &Transaction<'_>, product: ProductId) -> Result<i64, DbError
 /// The position the cache holds for a product in a store, valued in the
 /// store's currency — or an unstocked position when it holds none, which is
 /// what `0006`'s projection trigger assumes too.
-fn cached_position(
-    tx: &Transaction<'_>,
+pub(crate) fn cached_position(
+    tx: &Connection,
     product: ProductId,
     store: StoreId,
 ) -> Result<StockPosition, DbError> {
