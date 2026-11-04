@@ -23,8 +23,9 @@ use pos_db::fixtures::registered_chain::RegisteredChain;
 use pos_db::repo::outbox::{CommitEnvelope, FactMember, OutboxRepository};
 use pos_db::repo::stock::{CacheDrift, PreparedStockEvent, StockRepository};
 use pos_domain::{
-    Currency, IncomingCost, Money, NewStockEvent, ProductId, Qty, RegisterId, StockError,
-    StockEvent, StockEventId, StockEventKind, StoreId, on_hand,
+    Currency, IncomingCost, Money, NewStockEvent, ProductId, Qty, RegisterId,
+    StockAdjustmentReason, StockError, StockEvent, StockEventId, StockEventKind, StockSource,
+    StoreId, on_hand,
 };
 use pos_test_support::io_proptest_config;
 use proptest::prelude::*;
@@ -86,7 +87,10 @@ fn arrive(w: &World, commit: u8, arrivals: &[(ProductId, i64, i64)]) {
             qty_delta: Qty::from_milli(qty_milli),
             incoming_cost: Some(IncomingCost::Observed(jod(cost_minor))),
             is_weight_derived: false,
-            source: None,
+            source: Some(StockSource::Adjustment {
+                reason: StockAdjustmentReason::OpeningStock,
+                note: None,
+            }),
             actor_id: Some(w.cashier()),
             occurred_at: at(),
             business_date: day(),
@@ -573,7 +577,11 @@ fn new_event(batch: usize, slot: usize, m: &Movement, store: StoreId) -> NewStoc
             Cost::Unknown => IncomingCost::Unknown,
         }),
         is_weight_derived: false,
-        source: None,
+        // An adjustment names its reason; a count corrects either way.
+        source: (kind == StockEventKind::Adjust).then_some(StockSource::Adjustment {
+            reason: StockAdjustmentReason::CountCorrection,
+            note: None,
+        }),
         actor_id: None,
         occurred_at: at(),
         business_date: day(),

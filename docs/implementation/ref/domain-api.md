@@ -2872,7 +2872,26 @@ Prepared-intent canonical bytes have version `1` and the domain separator
 `pos-prepared-intent\0product_quick_add` or `pos-prepared-intent\0stock_adjustment`. Every column
 other than `content_hash` follows in declaration order: BLOB and UTF-8 TEXT values are unsigned
 32-bit big-endian length-prefixed bytes, INTEGER values are signed 64-bit big-endian, and a nullable
-value starts with a `0`/`1` presence byte. The digest is BLAKE3 of those bytes. Both the issue path
+value starts with a `0`/`1` presence byte. The digest is BLAKE3 of those bytes.
+
+As delivered at 1.10.5, the first time a prepared intent is hashed:
+
+```rust
+pub enum PreparedIntent { ProductQuickAdd, StockAdjustment }
+pub enum IntentValue<'a> { Blob(&'a [u8]), Text(&'a str), Integer(i64) }
+pub enum IntentColumn<'a> { NotNull(IntentValue<'a>), Nullable(Option<IntentValue<'a>>) }
+impl PreparedIntentHash {
+    pub const VERSION: u8 = 1;
+    pub fn of(intent: PreparedIntent, columns: &[IntentColumn<'_>]) -> PreparedIntentHash;
+    pub fn to_stored(self) -> [u8; 32];   // the trusted persistence seam, like `to_stored` on the handle
+}
+```
+
+The version byte is followed by the separator's raw bytes. Neither separator is a prefix of the
+other, so neither needs a length. The caller names the columns, in declaration order, from the row as
+it is stored, so the digest is taken over what the manager was shown and never over a re-rendering of
+it. `a_prepared_intent_hash_is_blake3_of_its_canonical_bytes` writes those bytes out by hand, and
+`prop_changing_any_one_column_changes_the_prepared_intent_hash` holds every column to the digest. Both the issue path
 and the commit path recompute the digest from the loaded row; commit refuses unless the recomputed
 value equals both the row and the handle. The schema additionally refuses `UPDATE` once a matching
 approval row exists. That second layer matters because a repository bug must not turn an approved
@@ -3416,7 +3435,8 @@ which is the same guarantee the old "every kind has a term" would have given had
 ## 12 · `stock.rs` — ledger and WAC — [1.10.x, 4.2.x]
 
 As delivered at 1.10.2: the event types and the cost-capture rule. `on_hand` followed at 1.10.3,
-with the cache-rebuild property, and `NegativeStockPolicy::screen` at 1.10.4. `recompute_wac` and
+with the cache-rebuild property, `NegativeStockPolicy::screen` at 1.10.4, and the adjustment's
+reason, request and source at 1.10.5. `recompute_wac` and
 `cost_deviation_exceeds` below are still to come, with receiving (4.2.2, 4.2.3).
 
 ```rust
@@ -3431,9 +3451,44 @@ impl StockEventKind {
     pub const fn as_str(self) -> &'static str;   // the `stock_ledger.kind` token
 }
 
-/// The document that moved stock. One variant today; refund, goods-receipt and
-/// stock-count sources arrive with the microsteps that write those documents.
-pub enum StockSource { SaleLine { sale_id: SaleId, line_id: SaleLineId } }
+/// The document that moved stock: a sale's line, or (1.10.5) a person's adjustment.
+/// Refund, goods-receipt and stock-count sources arrive with the microsteps that write
+/// those documents. An `Adjust` event names an `Adjustment` and nothing else does, and the
+/// adjustment's direction must be one its reason allows. The event is then posted with
+/// `reason_code` and `note` set.
+pub enum StockSource {
+    SaleLine { sale_id: SaleId, line_id: SaleLineId },
+    Adjustment { reason: StockAdjustmentReason, note: Option<String> },
+}
+
+/// `stock_adjustment_request.reason_code`. Opening stock arrives; damage, theft and
+/// expiry leave; a count corrects either way; nothing is adjusted by nothing.
+pub enum StockAdjustmentReason { OpeningStock, Damage, Theft, Expiry, CountCorrection }
+impl StockAdjustmentReason {
+    pub const ALL: [StockAdjustmentReason; 5];
+    pub const fn as_str(self) -> &'static str;                                // the wire code
+    pub fn from_code(code: &str) -> Result<StockAdjustmentReason, StockError>; // UnknownAdjustmentReason
+    pub fn allows(self, qty_delta: Qty) -> bool;
+}
+
+/// `stock_adjust_prepare`'s request, as delivered at 1.10.5. The quantity is a `Qty`,
+/// like every other domain quantity. The plan sketched `qty_delta_milli: i64`.
+pub struct StockAdjustmentRequest {
+    pub stock_event_id: StockEventId,   // the id the ledger event will carry
+    pub product_id: ProductId,
+    pub qty_delta: Qty,
+    pub reason: StockAdjustmentReason,
+    pub note: Option<String>,
+}
+impl StockAdjustmentRequest {
+    pub fn check(&self) -> Result<(), StockError>;   // AdjustmentAgainstItsReason
+    /// The `adjust` event an approved request posts, by `actor_id`. Stock that arrives
+    /// comes in at the cost basis in force, `Projected`; a product never costed brings
+    /// `Unknown`, never zero. So an adjustment never revalues the shelf
+    /// (`prop_an_adjustment_never_revalues_the_stock`).
+    pub fn movement(&self, store_id: StoreId, before: &StockPosition, actor_id: UserId,
+                    occurred_at: Timestamp, business_date: BusinessDate) -> NewStockEvent;
+}
 
 /// What an incoming event's stock cost, per unit. `Unknown` is stored as NULL,
 /// never zero: a real zero is `Observed(zero)`, and collapsing the two would
@@ -3504,6 +3559,9 @@ impl StockEvent {
 
 pub enum StockError {
     SaleSourceMismatch, SaleNotOutgoing, WeightDerivedOutsideSale,
+    AdjustmentSourceMismatch,                                   // 1.10.5
+    AdjustmentAgainstItsReason { reason: StockAdjustmentReason }, // 1.10.5
+    UnknownAdjustmentReason(String),                            // 1.10.5
     IncomingCostMissing, CostOnOutgoingEvent, NegativeCost,
     WacBlendNotSupported { wac: Money, incoming: Money },
     WouldGoNegative(Vec<Shortfall>),             // 1.10.4: the hard block, before tender

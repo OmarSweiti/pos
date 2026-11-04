@@ -107,13 +107,20 @@ impl PreparedStockEvent {
     #[must_use]
     pub fn payload(&self) -> String {
         let e = &self.event;
-        let (ref_kind, ref_id, line_id) = match e.source {
+        let (ref_kind, ref_id, line_id) = match &e.source {
             Some(StockSource::SaleLine { sale_id, line_id }) => (
                 Value::from("sale"),
                 Value::from(sale_id.as_uuid().hyphenated().to_string()),
                 Value::from(line_id.as_uuid().hyphenated().to_string()),
             ),
-            None => (Value::Null, Value::Null, Value::Null),
+            Some(StockSource::Adjustment { .. }) | None => (Value::Null, Value::Null, Value::Null),
+        };
+        let (reason_code, note) = match &e.source {
+            Some(StockSource::Adjustment { reason, note }) => (
+                Value::from(reason.as_str()),
+                note.as_deref().map_or(Value::Null, Value::from),
+            ),
+            Some(StockSource::SaleLine { .. }) | None => (Value::Null, Value::Null),
         };
         let fields: BTreeMap<&str, Value> = BTreeMap::from([
             (
@@ -138,9 +145,8 @@ impl PreparedStockEvent {
                 Value::from(i64::from(e.is_weight_derived)),
             ),
             ("kind", Value::from(e.kind.as_str())),
-            // 1.10.5's adjustments fill these two. The columns exist, so the
-            // payload carries them from the first event and keeps its shape.
-            ("note", Value::Null),
+            // An adjustment's reason and note (1.10.5); null on every other event.
+            ("note", note),
             ("occurred_at", Value::from(e.occurred_at.to_iso8601())),
             ("on_hand_after_milli", Value::from(e.after.on_hand.milli())),
             (
@@ -149,7 +155,7 @@ impl PreparedStockEvent {
             ),
             ("qty_delta_milli", Value::from(e.qty_delta.milli())),
             ("qty_step_milli", Value::from(self.qty_step_milli)),
-            ("reason_code", Value::Null),
+            ("reason_code", reason_code),
             ("ref_id", ref_id),
             ("ref_kind", ref_kind),
             (
@@ -344,13 +350,19 @@ impl<'c> StockRepository<'c> {
                 }
                 Some(_) => {}
             }
-            let (ref_kind, ref_id, line_id) = match e.source {
+            let (ref_kind, ref_id, line_id) = match &e.source {
                 Some(StockSource::SaleLine { sale_id, line_id }) => (
                     Some("sale"),
                     Some(sale_id.as_uuid().as_bytes().to_vec()),
                     Some(line_id.as_uuid().as_bytes().to_vec()),
                 ),
-                None => (None, None, None),
+                Some(StockSource::Adjustment { .. }) | None => (None, None, None),
+            };
+            let (reason_code, note) = match &e.source {
+                Some(StockSource::Adjustment { reason, note }) => {
+                    (Some(reason.as_str()), note.as_deref())
+                }
+                Some(StockSource::SaleLine { .. }) | None => (None, None),
             };
             tx.execute(
                 "INSERT INTO stock_ledger
@@ -358,9 +370,9 @@ impl<'c> StockRepository<'c> {
                     qty_step_milli, kind, ref_kind, ref_id, source_sale_line_id,
                     unit_cost_minor, is_cost_estimated, is_weight_derived,
                     on_hand_after_milli, wac_after_minor, is_wac_estimated,
-                    actor_id, occurred_at, business_date)
+                    actor_id, occurred_at, business_date, reason_code, note)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                         ?15, ?16, ?17, ?18, ?19, ?20)",
+                         ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
                 params![
                     id.as_bytes().as_slice(),
                     prepared.register.as_uuid().as_bytes().as_slice(),
@@ -382,6 +394,8 @@ impl<'c> StockRepository<'c> {
                     e.actor_id.map(|actor| actor.as_uuid().as_bytes().to_vec()),
                     e.occurred_at.to_iso8601(),
                     e.business_date.to_iso(),
+                    reason_code,
+                    note,
                 ],
             )?;
         }
@@ -753,8 +767,8 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use pos_domain::{
-        AuditIntent, BusinessDate, IncomingCost, SaleId, SaleLineId, StockError, StockEventId,
-        StockEventKind, Timestamp, UserId,
+        AuditIntent, BusinessDate, IncomingCost, SaleId, SaleLineId, StockAdjustmentReason,
+        StockError, StockEventId, StockEventKind, Timestamp, UserId,
     };
     use rusqlite::params;
     use serde_json::json;
@@ -838,7 +852,11 @@ mod tests {
             qty_delta: Qty::from_milli(qty_milli),
             incoming_cost: cost,
             is_weight_derived: false,
-            source: None,
+            // An adjustment names its reason; a count corrects either way.
+            source: (kind == StockEventKind::Adjust).then_some(StockSource::Adjustment {
+                reason: StockAdjustmentReason::CountCorrection,
+                note: None,
+            }),
             actor_id: None,
             occurred_at: Timestamp::parse_iso8601(AT).unwrap(),
             business_date: BusinessDate::new(2026, 10, 25).unwrap(),
@@ -1224,31 +1242,35 @@ mod tests {
     #[test]
     fn stock_event_payload_is_its_row_in_canonical_form() {
         let t = till();
-        let prepared = record(
-            &t,
-            0x10,
-            &[movement(
+        let opening = NewStockEvent {
+            source: Some(StockSource::Adjustment {
+                reason: StockAdjustmentReason::OpeningStock,
+                note: Some("synthetic opening sheet".to_owned()),
+            }),
+            ..movement(
                 &t,
                 0x100,
                 COLA,
                 StockEventKind::Adjust,
                 12_000,
                 Some(IncomingCost::Observed(jod(380))),
-            )],
-        )
-        .unwrap();
+            )
+        };
+        let prepared = record(&t, 0x10, &[opening]).unwrap();
         let store = Uuid::from_slice(&t.chain.store).unwrap().hyphenated();
         // `ref/sync-protocol.md` §3's shape, key for key: sorted, no whitespace,
-        // flags as 0/1, and the two 1.10.5 columns present as null.
+        // flags as 0/1, and an adjustment's reason and note (1.10.5).
         assert_eq!(
             prepared.first().unwrap().payload(),
             format!(
                 "{{\"actor_id\":null,\"business_date\":\"2026-10-25\",\"event_seq\":1,\
                  \"id\":\"00000000-0000-0000-0000-000000000100\",\"is_cost_estimated\":0,\
-                 \"is_wac_estimated\":0,\"is_weight_derived\":0,\"kind\":\"adjust\",\"note\":null,\
+                 \"is_wac_estimated\":0,\"is_weight_derived\":0,\"kind\":\"adjust\",\
+                 \"note\":\"synthetic opening sheet\",\
                  \"occurred_at\":\"2026-10-25T09:00:00.000Z\",\"on_hand_after_milli\":12000,\
                  \"product_id\":\"00000000-0000-0000-0000-00000000000a\",\"qty_delta_milli\":12000,\
-                 \"qty_step_milli\":1000,\"reason_code\":null,\"ref_id\":null,\"ref_kind\":null,\
+                 \"qty_step_milli\":1000,\"reason_code\":\"opening_stock\",\"ref_id\":null,\
+                 \"ref_kind\":null,\
                  \"register_id\":\"00000000-0000-0000-0000-000000000001\",\
                  \"source_sale_line_id\":null,\"store_id\":\"{store}\",\"unit_cost_minor\":380,\
                  \"wac_after_minor\":380}}"
@@ -1264,6 +1286,19 @@ mod tests {
             )
             .unwrap();
         assert_eq!(travelled, prepared.first().unwrap().payload());
+        let stored: (String, String) = t
+            .conn
+            .query_row("SELECT reason_code, note FROM stock_ledger", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(
+            stored,
+            (
+                "opening_stock".to_owned(),
+                "synthetic opening sheet".to_owned()
+            )
+        );
     }
 
     #[test]
