@@ -315,6 +315,25 @@ the row's own columns in the same canonical form, `evidence_hash` as lower-case 
   carries exactly this payload. A migration that adds the trigger makes that the second line.
 - **Versioned like every payload**, by the envelope's `schema_version`.
 
+**The payloads a `shift` and a `shift_close_event` travel as** — defined on the same terms, when
+`ShiftRepository` (1.9.5) became the first code outside a fixture to open or close a shift. Each is the
+row's own columns in the same canonical form. The close carries the commit it travels in, as a sale
+does:
+
+```json
+{"business_date":"2026-08-25","float_minor":50000,"id":"<uuid>","opened_at":"2026-08-25T06:00:00.000Z",
+ "opened_by":"<uuid>","register_id":"<uuid>","store_id":"<uuid>"}
+{"closed_at":"2026-08-25T18:00:00.000Z","closed_by":"<uuid>","id":"<uuid>","shift_id":"<uuid>",
+ "sync_commit_id":"<uuid>"}
+```
+
+- **Neither is ever written again.** A shift's state is `shift_state`, a projection that never syncs
+  (§1). The facts travel, and the server rebuilds the state from them.
+- **The repository writes neither without the envelope naming it with exactly this payload.**
+  `0005`'s `shift_open_has_ready_commit` and `shift_close_has_ready_commit` already refuse one with no
+  envelope at all.
+- **Versioned like every payload**, by the envelope's `schema_version`.
+
 **The payload a `stock_ledger` row travels as** — defined on the same terms, when
 `StockRepository` (1.10.2) became the first code outside a fixture to write a stock event. It is the
 row's own columns in the same canonical form, flags as `0`/`1`:

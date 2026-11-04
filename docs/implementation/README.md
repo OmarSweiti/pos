@@ -255,6 +255,11 @@ printer and drawer profile says — refusing what a device would refuse, reporti
 where a profile does not know — and `just printer-emulator <profile>` prints to it before any
 printer exists; only its golden comparison waits for `1.7.5`'s goldens.
 `1.7.13` is **partially delivered** as well: one conformance suite runs against the emulated printer for every receipt-printer profile, refuses to reach a device that is not named, replays a synthetic capture, and is replayed through a pinned independent emulator in CI; only its golden replay waits for `1.7.5`.
+Group 1.9's `1.9.5` is **partially delivered**: a shift opens with a float counted by denomination,
+on a business date the clock derives when it is trusted and the operator confirms, audited, when it
+is not; one stays open per register; and only its opener closes it, with a fact of its own and no
+approval. A sale completes only in the open shift and on its business date. Its commands and screens
+wait on the same shell state as 1.10.5's.
 Group 1.10's `1.10.5` is **partially delivered**: stock moved by hand, with a reason from five, a
 note, and an approval bound to the exact request by its digest, posts its event, audit row and
 consumption together; opening stock is read from its three-column file and posted as ledger events,
