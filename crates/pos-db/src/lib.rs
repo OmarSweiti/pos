@@ -185,6 +185,11 @@ pub enum DbError {
     StoredProductInvalid { reason: String },
     #[error("stored role limit is malformed: {reason}")]
     StoredRoleLimitInvalid { reason: String },
+    /// A role-grid cell, or a user's role, this build cannot read as a grant.
+    /// Read as nothing, it would be a capability lost or one given away, so it
+    /// is refused by name (1.8.2c).
+    #[error("stored role grant is unreadable: {reason}")]
+    StoredRoleGrantInvalid { reason: String },
     #[error(
         "refusing to record scale verification evidence with no delivery \
          envelope naming it: write the commit and its manifest first, in the \
