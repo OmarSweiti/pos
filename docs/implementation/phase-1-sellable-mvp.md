@@ -1187,11 +1187,14 @@ auth_logout     ()                 -> ()
 - **Refusals keep the till closed.** It opens through `pos_db::open`, so every refusal 1.8.0 and 1.8.1b defined keeps the till closed and says why: an unreviewed storage engine, a half-migrated file, or one another build altered. No command runs against a database that did not open.
 - **Which register the file serves.** It is the `register` row whose `device_id` is this install's. That id is a provisioned UUID, never a hardware fingerprint (`ref/schema.md` §0003), kept in a file beside the database. This step reads it, and its tests write it. A file with no such row, or a missing id, refuses by name rather than guessing.
 - **The process's session nonce** is minted here: the one 1.8.2b's parked carts are claimed under.
+- **A session a crash left open is closed here,** before anyone signs in: its `user_session` row is ended with `end_reason = 'crash'`.
 - **1.8.4's start-up recovery runs here,** after the open and before the first command. That includes `ParkedCartRepository::reclaim_after_restart` and `StockRepository::reconcile_cache`, as their notes ask.
 
 **A session is one signed-in user and the grants of their role.**
 
 - **`auth_login_pin`** finds the user by code and refuses an inactive or deleted one: `is_active = 0` or a non-NULL `deleted_at`, 1.6.4's item 5. It applies 1.6.2's attempt policy and lockout before verifying, verifies the PIN against its PHC hash, and records the attempt. It then holds `Session { user, role, grants }`, with the grants read from the shipped `role_capability` grid that 1.6.3 holds to the domain's.
+- **A user signs in with one role at this store:** their org-wide `user_role` row, or one scoped to this store. `user_role` allows several, but combining two roles' grants needs a precedence nobody has decided. So a user with no role here, or with more than one, is refused sign-in by name, and a person who works two jobs is given the one role that covers them.
+- **The session is recorded.** Sign-in opens a register-local `user_session` row (`0004`, never synced), and sign-out ends it with `end_reason = 'logout'`.
 - **It is audited**, as `ref/ipc-contract.md` marks it. A wrong PIN is audited as an attempt, and no PIN, hash or attempt count reaches a log line or the webview.
 - **`auth_logout`** ends the session, audited.
 - **`session_state`** tells the webview who is signed in: code, display name and role. It never sends the grants, a hash, a nonce or a token.
@@ -1206,14 +1209,14 @@ auth_logout     ()                 -> ()
 This is 1.6.4's deferred half, and its `Full-step status:` marker clears here. The context resolves an approval; it doesn't spend one. Each command still writes the consumption in its effect's transaction. `deactivated_user_denied` stays 1.8.3's, at the finalize's own gate.
 
 **What waits on this step:** 1.6.2's `user_reset_pin`, 1.9.5's and 1.10.5's commands, 1.4.11's cart commands, and 1.8.3's finalize. User switching inside an open shift is 2.4.2's, and the approval modal's `auth_verify_pin` is 1.11.4b's.
-**Tests:** `the_register_database_is_opened_once_with_its_key` · `a_file_this_build_will_not_open_keeps_the_till_closed_by_name` · `an_install_with_no_register_of_its_own_is_refused_by_name` · `no_command_runs_without_a_signed_in_user` · `a_pin_sign_in_holds_the_role_grants` · `a_wrong_pin_signs_nobody_in_and_counts_toward_the_lockout` · `a_locked_out_user_cannot_sign_in_until_released` · `signing_out_ends_the_session` · `a_deactivated_user_is_signed_out_before_acting` · `a_stored_approval_is_resolved_by_id_and_held_to_its_binding` · `a_consumed_approval_is_refused_by_the_context` · `the_webview_sees_who_is_signed_in_and_nothing_more`
+**Tests:** `the_register_database_is_opened_once_with_its_key` · `a_file_this_build_will_not_open_keeps_the_till_closed_by_name` · `an_install_with_no_register_of_its_own_is_refused_by_name` · `no_command_runs_without_a_signed_in_user` · `a_pin_sign_in_holds_the_role_grants` · `a_user_with_no_role_here_or_two_cannot_sign_in` · `a_session_is_recorded_and_a_crash_closes_it` · `a_wrong_pin_signs_nobody_in_and_counts_toward_the_lockout` · `a_locked_out_user_cannot_sign_in_until_released` · `signing_out_ends_the_session` · `a_deactivated_user_is_signed_out_before_acting` · `a_stored_approval_is_resolved_by_id_and_held_to_its_binding` · `a_consumed_approval_is_refused_by_the_context` · `the_webview_sees_who_is_signed_in_and_nothing_more`
 **Done when:** `cargo nextest run -p terminal --test session` passes all of these:
 
 - a fresh synthetic register file opens with its key;
 - every command with a capability is refused until a cashier signs in by PIN;
 - a wrong PIN signs nobody in and is counted;
 - a stored approval is resolved by id, and refused for another binding or once consumed;
-- signing out ends the session;
+- signing out ends the session and its `user_session` row, and a start-up after a crash closes the one left open;
 - a file another build altered keeps the till closed, by name.
 
 ### 1.8.3 — The atomic finalize
