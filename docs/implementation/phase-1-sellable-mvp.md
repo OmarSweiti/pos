@@ -2,7 +2,7 @@
 
 > **Exit:** a real Jordanian minimarket could sell for cash, all day, fully offline, in Arabic, with correct GST and a printed receipt.
 
-**Effort:** 15–21 weeks for a solo developer learning Rust on the job: 8–11 weeks for Phase 1A (groups 1.1–1.7 through the pure receipt pipeline, plus the early 1.8.9 commit-manifest writer and schema-spine steps 1.9.1 and 1.10.1 needed before migration 0007) and 7–10 weeks for Phase 1B. In 1B, land 1.8.0–1.8.2b and 1.7.7, build the emulated printer and its conformance suite (1.7.12–1.7.13) once 1.7.10's driver exists, complete the backend halves of the sequence/shift and stock repositories in 1.9.2–1.10.5, build 1.11.0 before their UI tests, then land the checkout-journal/repository half of 1.8.4 before atomic finalize in 1.8.3. Finish 1.8.4's startup recovery orchestration and printer-unavailable handling in 1.7.6b before the remaining recovery, UI and gate work. This phase now contains the tax engine, Arabic raster pipeline, recovery-key custody, crash-safe fact commits, a minimal shift lifecycle, stock opening and the register UI; treating those integrations as an acceleration would hide a slip until the final gate.
+**Effort:** 15–21 weeks for a solo developer learning Rust on the job: 8–11 weeks for Phase 1A (groups 1.1–1.7 through the pure receipt pipeline, plus the early 1.8.9 commit-manifest writer and schema-spine steps 1.9.1 and 1.10.1 needed before migration 0007) and 7–10 weeks for Phase 1B. In 1B, land 1.8.0–1.8.2b and 1.7.7, build the emulated printer and its conformance suite (1.7.12–1.7.13) once 1.7.10's driver exists, complete the backend halves of the sequence/shift and stock repositories in 1.9.2–1.10.5, build 1.11.0 before their UI tests, then wire the register's database and session into the shell (1.8.2c) and land the checkout-journal/repository half of 1.8.4, both before 1.4.11's cart commands and atomic finalize in 1.8.3. Finish 1.8.4's startup recovery orchestration and printer-unavailable handling in 1.7.6b before the remaining recovery, UI and gate work. This phase now contains the tax engine, Arabic raster pipeline, recovery-key custody, crash-safe fact commits, a minimal shift lifecycle, stock opening and the register UI; treating those integrations as an acceleration would hide a slip until the final gate.
 **Scope from the master plan:** C.1 (base), C.2, C.3, C.4 cash, C.7 ledger-only, C.10, C.11 receipts, D screens 1–5 and 10–11.
 **Plus, from this plan's gap analysis:** G-1 backup, G-2 sequences, G-4 business date, G-5 i18n, G-6 permission guards, G-7 audit chain, G-9 benchmarks, G-10 seed fixture, G-11 Money completion, G-12 qty fix.
 
@@ -563,6 +563,7 @@ Every money-reversing transition returns `(NewState, AuditIntent)`. A pure funct
 > **As delivered, 1 November 2026.** Every cart transition is in one list, with its duty. **Removing a collected tender reverses money**, so `remove_tender` now takes `Authorized<cap::SaleCreate>` and returns a `tender.remove` intent on the `sale`. That answers 1.4.8's note from the IPC contract, whose `tender_remove` already requires `sale.create` and is audited with no approval. A cashier who took the tender may take it back (E.15), and the intent records the tender, its kind, amount and provider reference, and what is owed once it is gone. A cash tender taken, removed, and the sale then emptied line by line is how money leaves the drawer with nothing on record, and this intent is the record. Its action is the act's own verb, as `age.confirm`'s is, because `sale.create` names nothing about the act. `AuditIntent.action`'s documentation now says so, and no approval handle can be consumed against it. **Five transitions are privileged**: two discounts, an override, a void and a removed tender. Each takes its capability's proof and returns an intent. **Two more are audited**: `void_line` and `confirm_age`, which name who acted and reverse no money. **Ten return none.** `complete` is among them, because the completed sale is itself the record; 1.8.3's note says what is left to that step. **The test is compile-time where it can be.** Each entry binds its transition to the exact signature its duty requires, so a transition that stops taking its proof or returning its intent does not compile, and a new entry does not compile until it is given a duty. A new public function of `cart` that is not in the list is found when the test runs: it reads the module's own source.
 
 ### 1.4.11 — Phase-1 cart IPC boundary
+**Scheduled in:** Phase 1B, after 1.8.2c: its commands run in the register's state and take their proof from the command context that step creates
 **Files:** `apps/terminal/src-tauri/src/commands/cart.rs` (new), `apps/terminal/src-tauri/src/ipc/registry.rs`, `apps/terminal/src-tauri/tests/ipc_contract.rs`
 
 ```text
@@ -704,7 +705,7 @@ Reset requires `user.admin` and a bound approval, retires the old PHC hash, clea
 **Tests:** `hash_verify_roundtrip` · `wrong_pin_rejected` · `hash_is_salted_and_differs_per_call` · `argon2_parameters_match_the_reviewed_profile` · `failed_attempt_state_survives_restart` · `manager_reset_retires_old_hash_and_audits` (E.51; the same fixture refuses a short manager PIN, clears a lockout only through the audited manager path, and retires the old hash) · the `pos-db` half's own: `a_hash_below_the_profile_in_any_one_parameter_is_rehashed` · `a_new_pin_has_the_digits_its_account_needs` · `wrong_pins_wait_longer_then_lock_out` · `auth_errors_carry_no_pin_and_no_hash` · `a_correct_pin_clears_the_count_and_a_rolled_back_failure_never_counts` · `a_pin_hash_is_replaced_and_the_old_pin_stops_working`
 **Bench:** `crates/pos-db/benches/pin_verify.rs` measures the reviewed target under conventions §7; no wall-clock assertion lives in a unit test.
 **Done when:** `cargo nextest run -p pos-db auth:: && cargo nextest run -p terminal manager_reset_ && cargo test -p pos-db --bench pin_verify` passes the named reset/audit and Argon2 assertions and runs the benchmark once; the 200–350 ms median / 500 ms p99 band on the reference register is 5.8.2's, and 1.6.8 proves neither PIN nor PHC hash reaches a sink.
-**Full-step status:** 1.6.2 is not complete until `user_reset_pin` lands in `apps/terminal/src-tauri/src/commands/user.rs`, with `manager_reset_retires_old_hash_and_audits`, the middle third of the `Done when`. The command consumes an `ApprovalHandle` and writes its audit row in the effect's transaction, and the database is not yet wired into the terminal (1.6.4's deferred shell half). The `pos-db` half is complete: `cargo nextest run -p pos-db auth:: && cargo test -p pos-db --bench pin_verify` passes, with the hash, the profile, the attempt policy and its persistence, and the benchmark.
+**Full-step status:** 1.6.2 is not complete until `user_reset_pin` lands in `apps/terminal/src-tauri/src/commands/user.rs`, with `manager_reset_retires_old_hash_and_audits`, the middle third of the `Done when`. The command consumes an `ApprovalHandle` and writes its audit row in the effect's transaction, and the database is not yet wired into the terminal (1.6.4's deferred shell half). 1.8.2c wires it, after which this command is a call through its context. The `pos-db` half is complete: `cargo nextest run -p pos-db auth:: && cargo test -p pos-db --bench pin_verify` passes, with the hash, the profile, the attempt policy and its persistence, and the benchmark.
 
 > **As delivered, 1 November 2026 — the `pos-db` half.** **The profile is RFC 9106 §4's second recommended option**: Argon2id with three passes over 64 MiB in four lanes, a 128-bit salt from the OS (the same `getrandom` source as the database key, so `argon2` carries no `rand` feature) and a 256-bit tag. It is version 1 of `PIN_PROFILE`. `argon2_parameters_match_the_reviewed_profile` reads the parameters back out of the PHC string, and `needs_rehash` flags a hash below the profile for a rehash at its owner's next correct PIN. A hash made under an older profile still verifies, under the parameters it records. **Wrong PINs follow the owner's answer to merchant decision 9.7, given on 1 November 2026.** Three are free. After that each waits longer, 30 s doubling to 15 minutes, and the tenth in a row locks the user out on that register until a manager releases them. A correct PIN resets the count. `UserRepository` keeps the count per user and per register, in the caller's transaction, so a restart forgives nothing and a rolled-back failure never counted. A lockout is the count reaching ten, not a time, so `auth_attempt_state.locked_until_at` stays empty. **A manager account's PIN is six digits or more**, and a manager account is any one holding a `refund.` capability, `settings.edit`, `user.admin` or `zreport.run`, as §5 of [`ref/security-compliance.md`](ref/security-compliance.md) lists. A PIN is ASCII digits only. **No error carries a PIN or a hash**, and a test shows it. **The hashing crates build optimised in the dev profile.** At the reviewed profile, an unoptimised hash took over a second, and every test that hashes a PIN would have been a slow one. The profile itself is unchanged. One indicative run of the benchmark on a development laptop is in the evidence; the 200–350 ms band is 5.8.2's to prove on the reference register.
 
@@ -784,7 +785,7 @@ The caller owns the transaction and the write order: refuse an already-consumed 
 **Domain half done when:** `cargo nextest run -p pos-domain permissions:: && cargo nextest run -p pos-domain --test typed_ids_ui` passes, including the inclusive issuance boundary, compile-time refusal to deserialize `ApprovalHandle`, and compile-time refusal to forge or substitute an `Authorized<C>` token.
 **Persistence half done when:** `cargo nextest run -p pos-db --test approval` passes through the registered migration chain, including restart, rehydration and rollback coverage.
 
-**Deferred half — terminal orchestration only.** The IPC command resolves the stored handle and coordinates validation, effect, audit and consumption after 1.8.x wires `pos-db` into the terminal.
+**Deferred half — terminal orchestration only.** The IPC command resolves the stored handle and coordinates validation, effect, audit and consumption. It lands with 1.8.2c, which creates the register's state, `commands/auth.rs` and the command context that resolves a stored handle by id.
 **Files (deferred half):** `apps/terminal/src-tauri/src/commands/auth.rs` (new)
 **Deferred half done when:** `cargo nextest run -p terminal` passes with stored-handle resolution, explicit permission-error mapping and current-user activity denial exercised across the real IPC orchestration.
 > **The terminal file waits on something this microstep does not own.** `apps/terminal/src-tauri/Cargo.toml` does not depend on `pos-db`, and §17 of [`02-development-workflow.md`](02-development-workflow.md) assigns that wiring to 1.8.x persistence. A command that resolves a persisted handle cannot be written against a crate the terminal does not link, so `commands/auth.rs` follows the persistence wiring rather than leading it.
@@ -799,7 +800,7 @@ The caller owns the transaction and the write order: refuse an already-consumed 
 
 > ⚠️ **OPEN — blocks the 1.8.x terminal approval handler.** Does deactivating an approver retroactively revoke an already-issued, unexpired handle? Default until answered: no terminal behavior depending on either answer is declared complete or described as guaranteed. Owner: the 1.8.x command-handler integration. Source that settles it: the reviewed authorization policy and its recorded threat-model decision.
 
-**Full-step status:** 1.6.4 remains incomplete only until the 1.8.x terminal handler resolves a stored handle and orchestrates its explicit permission mapping and same-transaction use. The domain proof and persistence halves, including restart and rollback evidence, are complete.
+**Full-step status:** 1.6.4 remains incomplete only until 1.8.2c's command context resolves a stored handle and orchestrates its explicit permission mapping and same-transaction use. The domain proof and persistence halves, including restart and rollback evidence, are complete.
 **Done when:** `cargo nextest run -p pos-domain permissions:: && cargo nextest run -p pos-domain --test typed_ids_ui && cargo nextest run -p pos-db --test approval && cargo nextest run -p terminal` passes the domain, repository and eventual terminal-handler suites, including `deactivated_user_denied` at the handler boundary.
 
 ### 1.6.5 — Audit hash chain
@@ -1149,6 +1150,75 @@ Persist the complete building-cart snapshot under migration `0005`. Resume atomi
 
 > **As delivered, 3 November 2026.** A parked basket lives on the register's own disk, as one row of `parked_cart` from the moment it is set aside until the sale it becomes is completed, and a restart at any point leaves exactly one current basket or one completed sale. **One row, three states.** The row's id is its sale's id. `park(tx, &ParkedCart, label, parked_at)` writes it `parked`, with the business day of the cart's shift as `expires_on`, and refuses a cart already there. `resume(tx, id, till, auth, session_nonce)` reads the stored form back as a `ParkedCart`, passes it to the domain's `resume`, and in one `UPDATE … WHERE state = 'parked'` claims the row as `active` under the session's nonce and replaces its snapshot with the cart as the till now holds it, under the till's cashier. A resume that never commits leaves the cart parked as if nobody had touched it, and a second resume of a claimed cart is refused as `ParkedCartClaimed` rather than handing out a second copy. Only the claim's nonce can replace the working snapshot (`save_active`), set the cart aside again (`repark`, which keeps its first business day) or remove it, and removal is `consume_on_finalize`, inside the transaction that completes its sale: a finalize that fails takes the removal with it. **A process death leaves the claim, not a lost basket.** `reclaim_after_restart(tx, register, session_nonce)` runs once at start-up, before any till claims a cart, and hands every `active` row to the new process's session, because every claim it finds belonged to a session that died with the process; the dead session's nonce can no longer write. The fixtures restart for real: the connection is closed and the file opened again, before a resume commits, after it commits but before the till hears, after a change to the resumed basket, and during a finalize. **Who may resume** is the owner's decision on #363: whoever holds `sale.resume` at the cart's own register, whoever parked it. The domain's `resume` now takes that proof, refuses one that is not the till's own cashier's as `ResumedByAnotherThanTheTill`, and returns an audit intent only for another cashier's basket, `sale.resume` on the `sale`, naming who parked it and how many lines it held. The repository hands that intent back in `Resumed::audit`, and the caller writes it with its envelope in the same transaction as the claim (I-9); a cashier coming back to their own customer writes nothing. **When a basket expires.** Master plan C.2 keeps a parked cart until the end of its business day, so a resume on a later business day, read from the till's shift, is refused as `ParkedCartExpired`. `parked(register, on)` lists only the carts that can still be resumed, and `expired(register, on)` lists the rest for the end-of-day report; nothing deletes an expired cart yet, since that report reads them. **A stored form this build cannot read** is refused as `StoredParkedCartInvalid` without quoting it, because it holds the buyer's name. **The signatures differ from the sketch** where the domain already decided: the cart is `ParkedCart`, not `BuildingCart`; the id is a `SaleId`; `park` takes a label and its moment and reads the expiry itself; and `resume` takes the till and the proof rather than an actor, so the grant is checked where every other grant is. **The three IPC commands are 1.4.11's.** `apps/terminal/src-tauri/src/commands/cart.rs` is created by 1.4.11, which has not landed, so `cart_park`, `cart_resume` and `cart_list_parked`, and writing the resume's audit row with its envelope, are recorded there.
 
+### 1.8.2c — The shell's database and session
+**Scheduled in:** Phase 1B, before 1.4.11 and 1.8.3: every register command runs in the state this step opens and takes its proof from the context it creates. Added on 4 November 2026 by the owner's decision (#373). 1.10.5 and 1.9.5 had each landed their database half and stopped at the same missing wiring, which `02-development-workflow.md` §17 had assigned to "1.8.x persistence" and no 1.8.x `Files:` line carried.
+**Files:** `apps/terminal/src-tauri/src/state.rs` (new), `apps/terminal/src-tauri/src/ipc/context.rs` (new), `apps/terminal/src-tauri/src/ipc/mod.rs`, `apps/terminal/src-tauri/src/commands/mod.rs` (new), `apps/terminal/src-tauri/src/commands/auth.rs` (new), `apps/terminal/src-tauri/src/ipc/registry.rs`, `apps/terminal/src-tauri/src/lib.rs` (the state opened and managed in `run`), `apps/terminal/src-tauri/tests/session.rs` (new), `packages/api-types/src/ipc/` (generated), `crates/pos-db/src/repo/user.rs` (a user by code), `crates/pos-db/src/repo/role.rs` (a role's grants)
+
+```rust
+// apps/terminal/src-tauri/src/state.rs — managed by Tauri, one per process
+pub struct Register {
+    db: Mutex<Connection>,
+    register: RegisterId,
+    store: StoreId,
+    process_nonce: Uuid,              // the nonce 1.8.2b's parked carts are claimed under
+    session: Mutex<Option<Session>>,
+}
+impl Register {
+    pub fn open(data_dir: &Path) -> Result<Register, StartupError>;
+}
+pub struct Session { pub user: UserId, pub role: Role, pub grants: GrantSet,
+                     pub signed_in_at: Timestamp }
+
+// apps/terminal/src-tauri/src/ipc/context.rs
+pub fn authorize<C: Capability>(state: &Register, approval: Option<ApprovalId>,
+                                binding: &ApprovalBinding, policy: &EscalationPolicy,
+                                at: Timestamp) -> IpcResult<Authorized<C>>;
+```
+
+```text
+session_state   ()                 -> SessionState
+auth_login_pin  { user_code, pin } -> Session
+auth_logout     ()                 -> ()
+```
+
+**The register's state is opened once, at start-up, and held.**
+
+- **The file and its key.** `Register::open` finds the database file in the app's data directory and takes its key from `pos_db::key::get_or_create`. That is 1.8.5's policy: `POS_DB_KEY` in a debug build, the OS credential store otherwise.
+- **Refusals keep the till closed.** It opens through `pos_db::open`, so every refusal 1.8.0 and 1.8.1b defined keeps the till closed and says why: an unreviewed storage engine, a half-migrated file, or one another build altered. No command runs against a database that did not open.
+- **Which register the file serves.** It is the `register` row whose `device_id` is this install's. That id is a provisioned UUID, never a hardware fingerprint (`ref/schema.md` §0003), kept in a file beside the database. This step reads it, and its tests write it. A file with no such row, or a missing id, refuses by name rather than guessing.
+- **The process's session nonce** is minted here: the one 1.8.2b's parked carts are claimed under.
+- **A session a crash left open is closed here,** before anyone signs in: its `user_session` row is ended with `end_reason = 'crash'`.
+- **1.8.4's start-up recovery runs here,** after the open and before the first command. That includes `ParkedCartRepository::reclaim_after_restart` and `StockRepository::reconcile_cache`, as their notes ask.
+
+**A session is one signed-in user and the grants of their role.**
+
+- **`auth_login_pin`** finds the user by code and refuses an inactive or deleted one: `is_active = 0` or a non-NULL `deleted_at`, 1.6.4's item 5. It applies 1.6.2's attempt policy and lockout before verifying, verifies the PIN against its PHC hash, and records the attempt. It then holds `Session { user, role, grants }`, with the grants read from the shipped `role_capability` grid that 1.6.3 holds to the domain's.
+- **A user signs in with one role at this store:** their org-wide `user_role` row, or one scoped to this store. `user_role` allows several, but combining two roles' grants needs a precedence nobody has decided. So a user with no role here, or with more than one, is refused sign-in by name, and a person who works two jobs is given the one role that covers them.
+- **The session is recorded.** Sign-in opens a register-local `user_session` row (`0004`, never synced), and sign-out ends it with `end_reason = 'logout'`.
+- **It is audited**, as `ref/ipc-contract.md` marks it. A wrong PIN is audited as an attempt, and no PIN, hash or attempt count reaches a log line or the webview.
+- **`auth_logout`** ends the session, audited.
+- **`session_state`** tells the webview who is signed in: code, display name and role. It never sends the grants, a hash, a nonce or a token.
+
+**Every command takes its proof from the context.** `ipc::context::authorize::<C>`:
+
+- refuses the command when no one is signed in;
+- re-reads the signed-in user, and ends the session if they have since been deactivated or deleted;
+- resolves the `approval_id` a privileged command receives. It loads the stored handle (`ApprovalRepository::load_for_consumption`), refuses one already consumed, and passes it to the domain's `authorize::<C>`, so the handle is held to the command's binding before any effect;
+- maps a `PermissionError` to a typed `IpcError` code, never its text (1.6.8).
+
+This is 1.6.4's deferred half, and its `Full-step status:` marker clears here. The context resolves an approval; it doesn't spend one. Each command still writes the consumption in its effect's transaction. `deactivated_user_denied` stays 1.8.3's, at the finalize's own gate.
+
+**What waits on this step:** 1.6.2's `user_reset_pin`, 1.9.5's and 1.10.5's commands, 1.4.11's cart commands, and 1.8.3's finalize. User switching inside an open shift is 2.4.2's, and the approval modal's `auth_verify_pin` is 1.11.4b's.
+**Tests:** `the_register_database_is_opened_once_with_its_key` · `a_file_this_build_will_not_open_keeps_the_till_closed_by_name` · `an_install_with_no_register_of_its_own_is_refused_by_name` · `no_command_runs_without_a_signed_in_user` · `a_pin_sign_in_holds_the_role_grants` · `a_user_with_no_role_here_or_two_cannot_sign_in` · `a_session_is_recorded_and_a_crash_closes_it` · `a_wrong_pin_signs_nobody_in_and_counts_toward_the_lockout` · `a_locked_out_user_cannot_sign_in_until_released` · `signing_out_ends_the_session` · `a_deactivated_user_is_signed_out_before_acting` · `a_stored_approval_is_resolved_by_id_and_held_to_its_binding` · `a_consumed_approval_is_refused_by_the_context` · `the_webview_sees_who_is_signed_in_and_nothing_more`
+**Done when:** `cargo nextest run -p terminal --test session` passes all of these:
+
+- a fresh synthetic register file opens with its key;
+- every command with a capability is refused until a cashier signs in by PIN;
+- a wrong PIN signs nobody in and is counted;
+- a stored approval is resolved by id, and refused for another binding or once consumed;
+- signing out ends the session and its `user_session` row, and a start-up after a crash closes the one left open;
+- a file another build altered keeps the till closed, by name.
+
 ### 1.8.3 — The atomic finalize
 **Files:** `apps/terminal/src-tauri/src/commands/sale.rs` (new)
 Generate every identity before opening the transaction. One SQLite transaction allocates the register-scoped receipt number, renders the deterministic receipt bytes without performing hardware I/O, and computes the canonical payload for every constituent fact. It then inserts one immutable `sync_commit`, every permanent `fact_commit_member` and every delivery row **before** any guarded fact; the `sync_commit_ready` view becomes true from those rows and has no mutable “mark ready” operation. Only then does the transaction write the complete sale graph, initial tender facts, stock facts, any `approval_consumption`, audit entry, original `receipt_artifact` and initial `print_job`, and remove `checkout_operation`. This order is required because the schema's `BEFORE INSERT` guards refuse a financial fact whose complete delivery envelope is not already visible in the same transaction. `fiscal_queue` does not exist until migration `0012` and is not a Phase-1 write.
@@ -1225,6 +1295,8 @@ Generate a random per-register data key. Before any key generation on an empty m
 The provisioning screen shows the formatted code and offers one direct recovery-sheet print before requiring the merchant to confirm it was recorded. The sheet is a hardware effect, never a receipt artifact or retry job; the code is dropped from Rust and webview memory on confirmation. If the app crashes before confirmation and no backup exists, provisioning rewraps the same credential-store data key under a newly issued code and invalidates the unacknowledged envelope, because silently completing with an unseen code creates a backup nobody can restore.
 **Tests:** `a_backup_opens_with_the_recovery_code_alone` · `wrong_recovery_code_is_refused` · `key_generation_refuses_when_a_database_already_exists` · `clean_machine_restore_path_precedes_key_generation` · `recovery_envelope_survives_restart` · `the_wrapped_envelope_travels_with_every_backup` · `recovery_code_is_displayed_exactly_once_at_provisioning` · `recovery_sheet_is_never_queued_or_persisted` · `unacknowledged_provisioning_rewraps_with_a_new_code` · `recovery_code_and_wrapped_key_are_redacted`
 **Done when:** `cargo nextest run -p pos-db key_custody:: && cargo nextest run -p pos-hardware recovery_sheet_ && cargo nextest run -p terminal recovery_code_provisioning_ && pnpm --filter terminal exec vitest run src/screens/RecoveryCodeProvisioning.test.tsx` exits zero and a fixture backup opens after deleting its credential-store entry using only its envelope and the once-displayed code.
+> **Left by 1.8.2c.** The register's state finds which register a file serves by the install's `device_id`, a provisioned UUID kept in a file beside the database. First run is where a real register's is minted and written, with the `register` row that carries it. 1.8.2c only reads it, and its tests write it.
+
 > **1.3.4's terminal half waits on this file too.** Provisioning must refuse a store whose tax computation policy is not approved, and 1.3.4's terminal test proves it for both provisioning and finalize. It lands with whichever of this step and 1.8.3 comes second; 1.3.4's `Full-step status:` marker is what it clears.
 
 > **1.3.8 leaves provisioning one setting to write explicitly.** `0003` defaults `store.gst_profile` to `'unregistered'`, while merchant decision 6.2b assumes the merchant is registered (and still names `store.tax_profile` as its column). Nothing reads the column yet; once 1.8.3 does, a store provisioned without it would charge no GST. Provisioning therefore writes `gst_profile` from the merchant's registration evidence and never leaves the default in place.
@@ -1389,7 +1461,7 @@ Opening records the actor and opening float and refuses a second open shift on t
 - `shift_current` reads `ShiftRepository::current`.
 - `shift_close` calls `Shift::close` with the cashier's `Authorized<cap::ShiftClose>`. It writes one envelope naming the close (`close_payload`) and the audit row, then calls `ShiftRepository::close` and `AuditRepository::append`.
 
-These commands wait on the same shell state as 1.10.5's: the register's database and the signed-in user, which no microstep's `Files:` line creates yet.
+These commands wait on the same shell state as 1.10.5's: the register's database and the signed-in user, which 1.8.2c creates.
 
 ---
 
@@ -1538,7 +1610,7 @@ The CSV columns are exactly `product_id`, `qty_milli` and nullable `unit_cost_mi
 - `stock_adjust_prepare` parses `reason_code` with `StockAdjustmentReason::from_code`, mints the event id, and calls `prepare`.
 - `stock_adjust` resolves the stored approval, authorizes `cap::StockAdjust` against `binding`, then runs `prepare_effect`, writes the envelope from `ApprovedAdjustment::facts`, and calls `commit`, all in one transaction.
 
-The commands need the register's database, the signed-in user and stored-approval resolution in the shell's state. **No microstep's `Files:` line creates those yet.** It is the same wiring 1.6.2's and 1.6.4's markers wait on, which `02-development-workflow.md` §17 assigns to "1.8.x persistence".
+The commands need the register's database, the signed-in user and stored-approval resolution in the shell's state, which 1.8.2c creates, the same wiring 1.6.2's and 1.6.4's markers wait on.
 
 ---
 
