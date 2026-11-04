@@ -59,7 +59,7 @@ crates/pos-domain/src/
 ├── audit.rs         hash-chain construction            [1.6.x]
 ├── sensitive.rs     the never-log registry             [1.6.8]
 ├── refund.rs        refundable balances, credit docs   [2.3.x]
-├── shift.rs         shift lifecycle, over/short, Z     [2.4.x]
+├── shift.rs         shift lifecycle, over/short, Z     [1.9.5, 2.4.x]
 ├── stock.rs         ledger kinds, on-hand, WAC         [1.10.x, 4.2.x]
 ├── loyalty.rs       points ledger                      [3.4.x]
 └── promo.rs         promotion engine                   [4.4.x]
@@ -3365,7 +3365,55 @@ Tests: `partial_return_of_a_multibuy_reprices_the_remainder` (E.74) ·
 
 ---
 
-## 11 · `shift.rs` — cash accountability — [2.4.x]
+## 11 · `shift.rs` — cash accountability — [1.9.5, 2.4.x]
+
+**As delivered at 1.9.5: Phase 1's minimal lifecycle.** Open with a counted float, one open per
+register, close. The rest of this section is Phase 2's and builds on these types.
+
+```rust
+pub struct Shift {                       // the immutable opening fact
+    pub id: ShiftId, pub register_id: RegisterId, pub store_id: StoreId,
+    pub business_date: BusinessDate, pub opened_by: UserId, pub opened_at: Timestamp,
+    pub float: Money,
+}
+pub struct OpeningDate { pub date: BusinessDate, pub confirmed_by_operator: bool }
+pub struct ShiftOpening { pub id: ShiftId, pub register_id: RegisterId, pub store_id: StoreId,
+                          pub float: Money, pub date: OpeningDate,
+                          pub confidence: ClockConfidence, pub opened_at: Timestamp }
+pub struct ShiftClose { pub id: Uuid, pub shift_id: ShiftId, pub closed_by: UserId,
+                        pub closed_at: Timestamp }
+
+/// Trusted or Stale: derived from `now` and the store's boundary (§3), and a supplied date is
+/// `SuppliedDateRefused`. Suspect or Untrusted: the operator's date is required
+/// (`ConfirmedDateRequired`) and marked `confirmed_by_operator`.
+pub fn opening_business_date(confidence: ClockConfidence, now: Timestamp, boundary: DayBoundary,
+                             supplied: Option<BusinessDate>) -> Result<OpeningDate, ShiftError>;
+/// Σ piece × count over the currency's own pieces (§7's `denominations`).
+pub fn count_float(currency: Currency, counted: &[(Money, u32)]) -> Result<Money, ShiftError>;
+/// The opening fact, and its audit intent: `shift.open`, naming how the date was decided and the
+/// clock's confidence, with a reason when the operator confirmed it.
+pub fn open_shift(opener: &Authorized<cap::ShiftOpen>, opening: &ShiftOpening)
+    -> (Shift, AuditIntent);
+impl Shift {
+    /// Only the opener, with no approval: `NotTheOpener`, `ApprovalNotTaken`, `ClosedBeforeOpened`.
+    pub fn close(&self, closer: &Authorized<cap::ShiftClose>, id: Uuid, closed_at: Timestamp)
+        -> Result<(ShiftClose, AuditIntent), ShiftError>;
+    /// The till a cashier works at in this shift, always out of training (E.54).
+    pub fn till(&self, cashier: UserId) -> CartContext;
+}
+pub enum ShiftError {
+    SuppliedDateRefused, ConfirmedDateRequired, NotADenomination(Money),
+    NotTheOpener { opened_by: UserId, actor: UserId }, ApprovalNotTaken, ClosedBeforeOpened,
+    Money(MoneyError),
+}
+```
+
+Property: `prop_a_business_date_is_derived_or_confirmed_never_both`. Tests:
+`trusted_clock_refuses_a_supplied_business_date` · `training_auto_off_at_shift_close` ·
+`an_untrusted_clock_requires_the_operator_to_confirm_the_date` ·
+`the_opening_float_is_counted_in_the_currencys_pieces` ·
+`only_the_opener_closes_a_shift_and_without_approval` ·
+`a_close_proof_that_carries_an_approval_is_refused`.
 
 **This section is the normative home of the expected-cash formula.** Master plan C.6 and microstep
 2.4.4 both carry a version of it and both are wrong; the corrections are recorded in
@@ -3725,7 +3773,9 @@ for the `Authorized<C>` arguments its override and discount functions take. As d
 it depends on `money` and `ids` only: a function that takes a cart and an `Authorized<C>` is a cart
 transition and lives in `cart`, which reads `pricing` for the values and checks those transitions
 use. None adds a cycle, and `just acyclic` is what establishes that rather than this diagram.
-`sensitive` (1.6.8) depends on nothing, and `audit` reads it: the audit-payload guard refuses a
+`shift` (1.9.5) depends on `audit`, `cart` (a shift's till is a `CartContext`), `ids`, `money`,
+`permissions`, `tender` (the float is counted in its `denominations`) and `time`, and nothing
+depends on it yet. `sensitive` (1.6.8) depends on nothing, and `audit` reads it: the audit-payload guard refuses a
 member under any name in `SENSITIVE_FIELD_RULES`, the same registry the terminal's log scrubber
 reads (`ref/security-compliance.md` §6).
 

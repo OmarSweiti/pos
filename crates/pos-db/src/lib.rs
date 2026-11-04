@@ -227,6 +227,37 @@ pub enum DbError {
     StockReplayAcrossRegisters,
     #[error("stored stock record is malformed: {reason}")]
     StoredStockRecordInvalid { reason: String },
+    #[error("register {register} already has shift {open} open; close it before opening another")]
+    ShiftAlreadyOpen {
+        register: pos_domain::RegisterId,
+        open: pos_domain::ShiftId,
+    },
+    #[error("a shift's float is counted in its store's currency")]
+    ShiftFloatCurrencyMismatch,
+    #[error(
+        "refusing to write a {entity} with no delivery envelope naming it: write the \
+         commit and its manifest first, in the same transaction (I-9)"
+    )]
+    ShiftEnvelopeMissing { entity: &'static str },
+    #[error(
+        "the delivery envelope naming this {entity} carries a different payload, so what \
+         travels would not be what was recorded"
+    )]
+    ShiftEnvelopeMismatch { entity: &'static str },
+    #[error("no shift {0}")]
+    ShiftNotFound(pos_domain::ShiftId),
+    #[error("shift {0} is not open")]
+    ShiftNotOpen(pos_domain::ShiftId),
+    #[error(
+        "shift opened by {opened_by} is closed on the ordinary path only by its opener, \
+         not {closed_by}"
+    )]
+    ShiftClosedByAnother {
+        opened_by: pos_domain::UserId,
+        closed_by: pos_domain::UserId,
+    },
+    #[error("stored shift record is malformed: {reason}")]
+    StoredShiftRecordInvalid { reason: String },
     #[error("opening-stock file line {line}: {reason}")]
     OpeningStockFileInvalid { line: usize, reason: &'static str },
     #[error("no prepared stock adjustment {0}")]

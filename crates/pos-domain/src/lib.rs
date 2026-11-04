@@ -10,6 +10,7 @@ pub mod permissions;
 pub mod pricing;
 pub mod receipt;
 pub mod sensitive;
+pub mod shift;
 pub mod stock;
 pub mod tax;
 pub mod tender;
@@ -70,6 +71,10 @@ pub use receipt::{
     ReceiptTender, ReceiptTotals, TextDirection, Watermark,
 };
 pub use sensitive::{SENSITIVE_FIELD_RULES, SensitiveFieldRules};
+pub use shift::{
+    OpeningDate, Shift, ShiftClose, ShiftError, ShiftOpening, count_float, open_shift,
+    opening_business_date,
+};
 pub use stock::{
     IncomingCost, NegativeStockPolicy, NewStockEvent, Shortfall, StockAdjustmentReason,
     StockAdjustmentRequest, StockError, StockEvent, StockEventKind, StockPosition, StockSource,
