@@ -333,8 +333,10 @@ row's own columns in the same canonical form, flags as `0`/`1`:
 - **The repository writes no event its envelope does not describe.** `StockRepository::append` refuses
   unless a ready envelope names the event with exactly this payload; `0006`'s
   `stock_ledger_has_ready_commit` already refuses one with no envelope at all.
-- **`note` and `reason_code` are `null` until 1.10.5's adjustments fill them.** The keys are present
-  from the first event, so filling them changes no payload's shape.
+- **`note` and `reason_code` carry an adjustment's reason and note** (1.10.5): an `adjust` event
+  names one of `opening_stock`, `damage`, `theft`, `expiry` or `count_correction`, with the note the
+  person gave or `null`. Every other event carries both as `null`. The keys were present from the
+  first event, so filling them changed no payload's shape.
 - **Versioned like every payload**, by the envelope's `schema_version`.
 
 ---

@@ -200,7 +200,7 @@ device is bought before it ([`ref/hardware-and-receipts.md`](ref/hardware-and-re
 append-only facts, because every fact graph commits with its delivery envelope and the writer refuses
 to return success on an incomplete one. **`1.9.1`, `1.10.1` and `1.2.5` have landed too**, so the
 migration chain is contiguous to `0007`, and `1.2.3`, the product repository and its search, is
-built on it; the `1.2.4` database half and `1.10.2`–`1.10.4` have landed, so `1.10.5` may be built next. `1.2.4` is **complete**: its pure half
+built on it; the `1.2.4` database half and `1.10.2`–`1.10.4` have landed, and `1.10.5`'s domain and database half with them. `1.2.4` is **complete**: its pure half
 — the scan parser, `PriceSource`, `ScanLookup`, `resolve_scan` and the trade-scale gate — is in
 `pos-domain`, with the compile-fail proof that only the scan handler can make a price-embedded
 lookup. Its database half has landed too: `TradeScaleRepository` reads a scale's current evidence and
@@ -255,6 +255,11 @@ printer and drawer profile says — refusing what a device would refuse, reporti
 where a profile does not know — and `just printer-emulator <profile>` prints to it before any
 printer exists; only its golden comparison waits for `1.7.5`'s goldens.
 `1.7.13` is **partially delivered** as well: one conformance suite runs against the emulated printer for every receipt-printer profile, refuses to reach a device that is not named, replays a synthetic capture, and is replayed through a pinned independent emulator in CI; only its golden replay waits for `1.7.5`.
+Group 1.10's `1.10.5` is **partially delivered**: stock moved by hand, with a reason from five, a
+note, and an approval bound to the exact request by its digest, posts its event, audit row and
+consumption together; opening stock is read from its three-column file and posted as ledger events,
+never cache rows. Its commands and screen wait on the shell's database and session state, which no
+microstep's `Files:` line yet creates.
 Repository-hardening and documentation work may land between numbered product steps, but it does
 not advance that frontier.
 

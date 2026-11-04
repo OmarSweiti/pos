@@ -90,9 +90,9 @@ impl StockEventKind {
 
 /// The document that moved stock, when one did.
 ///
-/// One variant today. The refund, goods-receipt and stock-count sources arrive
-/// with the microsteps that write those documents.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// A sale's line, or a person's adjustment. The refund, goods-receipt and
+/// stock-count sources arrive with the microsteps that write those documents.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StockSource {
     /// The sale line whose quantity left the shelf.
@@ -100,6 +100,143 @@ pub enum StockSource {
         sale_id: SaleId,
         line_id: SaleLineId,
     },
+    /// A stock adjustment (1.10.5): why stock was moved by hand, and the note
+    /// the person gave. The event's own id is the adjustment request's.
+    Adjustment {
+        reason: StockAdjustmentReason,
+        note: Option<String>,
+    },
+}
+
+/// Why stock was moved by hand: `stock_adjustment_request.reason_code`, and
+/// the `reason_code` of the `adjust` event it posts. No free text stands in for
+/// one; a note may accompany it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StockAdjustmentReason {
+    OpeningStock,
+    Damage,
+    Theft,
+    Expiry,
+    CountCorrection,
+}
+
+impl StockAdjustmentReason {
+    /// Every reason, in `0006`'s `CHECK` order.
+    pub const ALL: [StockAdjustmentReason; 5] = [
+        StockAdjustmentReason::OpeningStock,
+        StockAdjustmentReason::Damage,
+        StockAdjustmentReason::Theft,
+        StockAdjustmentReason::Expiry,
+        StockAdjustmentReason::CountCorrection,
+    ];
+
+    /// The wire code, which `reason_code` stores.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            StockAdjustmentReason::OpeningStock => "opening_stock",
+            StockAdjustmentReason::Damage => "damage",
+            StockAdjustmentReason::Theft => "theft",
+            StockAdjustmentReason::Expiry => "expiry",
+            StockAdjustmentReason::CountCorrection => "count_correction",
+        }
+    }
+
+    /// The reason a wire code names.
+    ///
+    /// # Errors
+    ///
+    /// [`StockError::UnknownAdjustmentReason`] for any other code.
+    pub fn from_code(code: &str) -> Result<StockAdjustmentReason, StockError> {
+        StockAdjustmentReason::ALL
+            .into_iter()
+            .find(|reason| reason.as_str() == code)
+            .ok_or_else(|| StockError::UnknownAdjustmentReason(code.to_owned()))
+    }
+
+    /// Whether stock may move this way for this reason. Opening stock arrives;
+    /// damage, theft and expiry take stock off the shelf; a count corrects it
+    /// either way. Nothing is adjusted by nothing.
+    pub fn allows(self, qty_delta: Qty) -> bool {
+        match self {
+            StockAdjustmentReason::OpeningStock => qty_delta.milli() > 0,
+            StockAdjustmentReason::Damage
+            | StockAdjustmentReason::Theft
+            | StockAdjustmentReason::Expiry => qty_delta.milli() < 0,
+            StockAdjustmentReason::CountCorrection => qty_delta.milli() != 0,
+        }
+    }
+}
+
+/// A stock adjustment a person asks for, before a manager approves it
+/// (`stock_adjust_prepare`, 1.10.5).
+///
+/// Its id is the id the ledger event will carry, allocated before the manager
+/// sees it, so the approval binds the event that will exist rather than a
+/// request that might post something else.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StockAdjustmentRequest {
+    pub stock_event_id: StockEventId,
+    pub product_id: ProductId,
+    /// Signed: negative leaves the shelf, positive arrives.
+    pub qty_delta: Qty,
+    pub reason: StockAdjustmentReason,
+    pub note: Option<String>,
+}
+
+impl StockAdjustmentRequest {
+    /// Refuse a request no approval could make right.
+    ///
+    /// # Errors
+    ///
+    /// [`StockError::AdjustmentAgainstItsReason`] for a movement the reason
+    /// does not allow, a zero movement among them.
+    pub fn check(&self) -> Result<(), StockError> {
+        if self.reason.allows(self.qty_delta) {
+            Ok(())
+        } else {
+            Err(StockError::AdjustmentAgainstItsReason {
+                reason: self.reason,
+            })
+        }
+    }
+
+    /// The movement an approved request posts: an `adjust` event under the
+    /// request's own id, naming its reason and note, by the person who asked.
+    ///
+    /// Stock that arrives this way comes with no invoice, so it is valued at the
+    /// cost basis in force, marked projected; a product never given a cost
+    /// brings an unknown one rather than a zero (`StockPosition::cost_basis`).
+    pub fn movement(
+        &self,
+        store_id: StoreId,
+        before: &StockPosition,
+        actor_id: UserId,
+        occurred_at: Timestamp,
+        business_date: BusinessDate,
+    ) -> NewStockEvent {
+        let incoming_cost = (self.qty_delta.milli() > 0).then(|| {
+            before
+                .cost_basis()
+                .map_or(IncomingCost::Unknown, IncomingCost::Projected)
+        });
+        NewStockEvent {
+            id: self.stock_event_id,
+            product_id: self.product_id,
+            store_id,
+            kind: StockEventKind::Adjust,
+            qty_delta: self.qty_delta,
+            incoming_cost,
+            is_weight_derived: false,
+            source: Some(StockSource::Adjustment {
+                reason: self.reason,
+                note: self.note.clone(),
+            }),
+            actor_id: Some(actor_id),
+            occurred_at,
+            business_date,
+        }
+    }
 }
 
 /// What an incoming event's stock cost, per unit.
@@ -204,6 +341,16 @@ pub enum StockError {
     /// one.
     #[error("a sale event must name its sale line, and only a sale event may")]
     SaleSourceMismatch,
+    /// An `adjust` event names why stock was moved by hand, and only an
+    /// `adjust` event names a reason.
+    #[error("an adjustment must name its reason, and only an adjustment may")]
+    AdjustmentSourceMismatch,
+    /// Opening stock that leaves, damage that arrives, or a movement of nothing.
+    #[error("a {} adjustment cannot move stock that way", .reason.as_str())]
+    AdjustmentAgainstItsReason { reason: StockAdjustmentReason },
+    /// A reason code that names none of the five.
+    #[error("{0:?} is not a stock adjustment reason")]
+    UnknownAdjustmentReason(String),
     #[error("a sale event moves stock out")]
     SaleNotOutgoing,
     #[error("only a sale's price-embedded label can derive a weight")]
@@ -254,6 +401,19 @@ impl StockEvent {
         }
         if new.is_weight_derived && !is_sale {
             return Err(StockError::WeightDerivedOutsideSale);
+        }
+        let is_adjustment = new.kind == StockEventKind::Adjust;
+        match &new.source {
+            Some(StockSource::Adjustment { reason, .. }) => {
+                if !is_adjustment {
+                    return Err(StockError::AdjustmentSourceMismatch);
+                }
+                if !reason.allows(new.qty_delta) {
+                    return Err(StockError::AdjustmentAgainstItsReason { reason: *reason });
+                }
+            }
+            _ if is_adjustment => return Err(StockError::AdjustmentSourceMismatch),
+            _ => {}
         }
 
         let on_hand = before.on_hand.checked_add(new.qty_delta)?;
@@ -309,7 +469,7 @@ impl StockEvent {
             unit_cost,
             is_cost_estimated,
             is_weight_derived: new.is_weight_derived,
-            source: new.source,
+            source: new.source.clone(),
             actor_id: new.actor_id,
             occurred_at: new.occurred_at,
             business_date: new.business_date,
@@ -445,7 +605,11 @@ mod tests {
             qty_delta: Qty::from_milli(qty_milli),
             incoming_cost: cost,
             is_weight_derived: false,
-            source: None,
+            // An adjustment names its reason; a count corrects either way.
+            source: (kind == StockEventKind::Adjust).then_some(StockSource::Adjustment {
+                reason: StockAdjustmentReason::CountCorrection,
+                note: None,
+            }),
             actor_id: None,
             occurred_at: Timestamp::parse_iso8601("2026-10-25T09:00:00.000Z").unwrap(),
             business_date: BusinessDate::new(2026, 10, 25).unwrap(),
@@ -688,6 +852,114 @@ mod tests {
         ProductId::from_uuid(Uuid::from_u128(n))
     }
 
+    fn request(reason: StockAdjustmentReason, qty_milli: i64) -> StockAdjustmentRequest {
+        StockAdjustmentRequest {
+            stock_event_id: StockEventId::from_uuid(Uuid::from_u128(9)),
+            product_id: ProductId::from_uuid(Uuid::from_u128(2)),
+            qty_delta: Qty::from_milli(qty_milli),
+            reason,
+            note: Some("synthetic note".to_owned()),
+        }
+    }
+
+    fn adjusted(req: &StockAdjustmentRequest, before: &StockPosition) -> NewStockEvent {
+        req.movement(
+            StoreId::from_uuid(Uuid::from_u128(3)),
+            before,
+            UserId::from_uuid(Uuid::from_u128(4)),
+            Timestamp::parse_iso8601("2026-10-25T09:00:00.000Z").unwrap(),
+            BusinessDate::new(2026, 10, 25).unwrap(),
+        )
+    }
+
+    #[test]
+    fn stock_adjustment_reason_codes_are_its_serde_names() {
+        for reason in StockAdjustmentReason::ALL {
+            assert_eq!(
+                serde_json::to_value(reason).unwrap(),
+                serde_json::Value::from(reason.as_str())
+            );
+            assert_eq!(
+                StockAdjustmentReason::from_code(reason.as_str()),
+                Ok(reason)
+            );
+        }
+        assert_eq!(
+            StockAdjustmentReason::from_code("correction"),
+            Err(StockError::UnknownAdjustmentReason("correction".to_owned()))
+        );
+    }
+
+    #[test]
+    fn an_adjustment_names_its_reason_and_moves_only_its_way() {
+        let stocked = position(10_000, 380, false);
+        let bare = NewStockEvent {
+            source: None,
+            ..movement(StockEventKind::Adjust, -1_000, None)
+        };
+        assert_eq!(
+            StockEvent::capture(&bare, &stocked),
+            Err(StockError::AdjustmentSourceMismatch)
+        );
+        let waste = NewStockEvent {
+            source: Some(StockSource::Adjustment {
+                reason: StockAdjustmentReason::Damage,
+                note: None,
+            }),
+            ..movement(StockEventKind::Waste, -1_000, None)
+        };
+        assert_eq!(
+            StockEvent::capture(&waste, &stocked),
+            Err(StockError::AdjustmentSourceMismatch)
+        );
+        for (reason, qty) in [
+            (StockAdjustmentReason::OpeningStock, -1_000),
+            (StockAdjustmentReason::Damage, 1_000),
+            (StockAdjustmentReason::Theft, 1_000),
+            (StockAdjustmentReason::Expiry, 1_000),
+            (StockAdjustmentReason::CountCorrection, 0),
+        ] {
+            let req = request(reason, qty);
+            let refused = Err(StockError::AdjustmentAgainstItsReason { reason });
+            assert_eq!(req.check(), refused, "{reason:?} {qty}");
+            assert_eq!(
+                StockEvent::capture(&adjusted(&req, &stocked), &stocked).map(|_| ()),
+                refused
+            );
+        }
+        let counted = request(StockAdjustmentReason::CountCorrection, -1_000);
+        let event = StockEvent::capture(&adjusted(&counted, &stocked), &stocked).unwrap();
+        assert_eq!(event.id, counted.stock_event_id);
+        assert_eq!(event.kind, StockEventKind::Adjust);
+        assert_eq!(
+            event.source,
+            Some(StockSource::Adjustment {
+                reason: StockAdjustmentReason::CountCorrection,
+                note: Some("synthetic note".to_owned()),
+            })
+        );
+        assert_eq!(event.after, position(9_000, 380, false));
+    }
+
+    #[test]
+    fn stock_found_by_hand_arrives_at_the_cost_basis_in_force() {
+        let found = request(StockAdjustmentReason::CountCorrection, 2_000);
+        assert_eq!(
+            adjusted(&found, &position(10_000, 380, false)).incoming_cost,
+            Some(IncomingCost::Projected(jod(380)))
+        );
+        assert_eq!(
+            adjusted(&found, &StockPosition::unstocked(JOD)).incoming_cost,
+            Some(IncomingCost::Unknown),
+            "a product never given a cost brings an unknown one, not a zero"
+        );
+        let lost = request(StockAdjustmentReason::Theft, -2_000);
+        assert_eq!(
+            adjusted(&lost, &position(10_000, 380, false)).incoming_cost,
+            None
+        );
+    }
+
     #[test]
     fn a_basket_is_screened_product_by_product() {
         let on_hand = BTreeMap::from([
@@ -751,7 +1023,14 @@ mod tests {
     fn any_movement() -> impl Strategy<Value = NewStockEvent> {
         (-50i64..=50, any_cost()).prop_map(|(units, cost)| {
             let qty = units * 1_000;
-            movement(StockEventKind::Adjust, qty, (qty > 0).then_some(cost))
+            // A count corrects stock either way but never by nothing; a damaged
+            // return is the event that moves nothing.
+            let kind = if qty == 0 {
+                StockEventKind::RefundDamage
+            } else {
+                StockEventKind::Adjust
+            };
+            movement(kind, qty, (qty > 0).then_some(cost))
         })
     }
 
@@ -869,6 +1148,32 @@ mod tests {
                 prop_assert_eq!(blocked, Ok(vec![]));
             } else {
                 prop_assert_eq!(blocked, Err(StockError::WouldGoNegative(expected)));
+            }
+        }
+
+        /// Moving stock by hand never revalues what is on the shelf: whatever
+        /// the reason and the position, an adjustment the reason allows is
+        /// recorded and leaves the weighted average cost exactly as it was, and
+        /// one it does not allow is refused before it is recorded.
+        #[test]
+        fn prop_an_adjustment_never_revalues_the_stock(
+            before in any_position(),
+            reason in prop::sample::select(StockAdjustmentReason::ALL.to_vec()),
+            qty in -5_000_000i64..5_000_000,
+        ) {
+            let req = request(reason, qty);
+            match StockEvent::capture(&adjusted(&req, &before), &before) {
+                Ok(event) => {
+                    prop_assert!(reason.allows(Qty::from_milli(qty)));
+                    prop_assert_eq!(req.check(), Ok(()));
+                    prop_assert_eq!(event.after.wac, before.wac);
+                    prop_assert_eq!(event.after.on_hand.milli(), before.on_hand.milli() + qty);
+                }
+                Err(StockError::AdjustmentAgainstItsReason { reason: refused }) => {
+                    prop_assert_eq!(refused, reason);
+                    prop_assert!(!reason.allows(Qty::from_milli(qty)));
+                }
+                Err(other) => prop_assert!(false, "unexpected refusal {other:?}"),
             }
         }
 

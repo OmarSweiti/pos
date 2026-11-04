@@ -664,6 +664,99 @@ impl fmt::Debug for PreparedIntentHash {
     }
 }
 
+/// The register-local rows an approval binds by their content
+/// (`ref/domain-api.md` §8.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreparedIntent {
+    ProductQuickAdd,
+    StockAdjustment,
+}
+
+impl PreparedIntent {
+    /// The domain separator. Neither is a prefix of the other, so the raw bytes
+    /// after the version byte cannot be read as the other intent's.
+    const fn separator(self) -> &'static [u8] {
+        match self {
+            PreparedIntent::ProductQuickAdd => b"pos-prepared-intent\0product_quick_add",
+            PreparedIntent::StockAdjustment => b"pos-prepared-intent\0stock_adjustment",
+        }
+    }
+}
+
+/// One value of a prepared row, as SQLite stores it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntentValue<'a> {
+    Blob(&'a [u8]),
+    Text(&'a str),
+    Integer(i64),
+}
+
+/// One column of a prepared row, in declaration order: a `NOT NULL` column's
+/// value, or a nullable column's value or its absence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntentColumn<'a> {
+    NotNull(IntentValue<'a>),
+    Nullable(Option<IntentValue<'a>>),
+}
+
+impl PreparedIntentHash {
+    /// The canonical bytes' version.
+    pub const VERSION: u8 = 1;
+
+    /// The digest of a prepared row: BLAKE3 over the version byte, the
+    /// intent's domain separator, and every column but `content_hash` in
+    /// declaration order (`ref/domain-api.md` §8.1).
+    ///
+    /// A BLOB or TEXT value is its bytes behind their length as an unsigned
+    /// 32-bit big-endian integer, an INTEGER is signed 64-bit big-endian, and a
+    /// nullable column starts with a presence byte, `0` or `1`. The lengths are
+    /// what stop one column's tail being read as the next one's head.
+    ///
+    /// Both the issue path and the commit path compute this from the row as it
+    /// is stored, so an approval binds exactly what the manager was shown.
+    pub fn of(intent: PreparedIntent, columns: &[IntentColumn<'_>]) -> PreparedIntentHash {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&[Self::VERSION]);
+        hasher.update(intent.separator());
+        for column in columns {
+            match column {
+                IntentColumn::NotNull(value) => encode(&mut hasher, *value),
+                IntentColumn::Nullable(None) => {
+                    hasher.update(&[0]);
+                }
+                IntentColumn::Nullable(Some(value)) => {
+                    hasher.update(&[1]);
+                    encode(&mut hasher, *value);
+                }
+            }
+        }
+        PreparedIntentHash(*hasher.finalize().as_bytes())
+    }
+
+    /// The bytes persistence stores in a `content_hash` column. Like
+    /// [`ApprovalHandle::to_stored`], this is the trusted persistence seam; the
+    /// webview never receives them.
+    pub fn to_stored(self) -> [u8; 32] {
+        self.0
+    }
+}
+
+fn encode(hasher: &mut blake3::Hasher, value: IntentValue<'_>) {
+    let bytes = match value {
+        IntentValue::Blob(bytes) => bytes,
+        IntentValue::Text(text) => text.as_bytes(),
+        IntentValue::Integer(integer) => {
+            hasher.update(&integer.to_be_bytes());
+            return;
+        }
+    };
+    // SQLite holds no value longer than its own limit (2^31 - 1 bytes at
+    // most), so every length fits; saturating keeps the arithmetic total.
+    let length = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
+    hasher.update(&length.to_be_bytes());
+    hasher.update(bytes);
+}
+
 /// The exact operation a manager was shown before approving it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ApprovalBinding {
@@ -1000,13 +1093,18 @@ pub enum PermissionError {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+    use pos_test_support::domain_proptest_config;
+    use proptest::prelude::*;
+
     use super::*;
 
-    // No `prop_` test here, and that is conventions §5.1 rather than an omission:
-    // "a bounded universal claim uses an exhaustive `#[test]` loop when that loop
-    // is feasible". The whole claim is thirty-two capabilities times four roles,
-    // and a generator sampling from 128 cases would be a weaker proof with more
-    // machinery. Every sweep below iterates `cap::ALL` or `Role::ALL` in full.
+    // No `prop_` test for the grid, and that is conventions §5.1 rather than an
+    // omission: "a bounded universal claim uses an exhaustive `#[test]` loop when
+    // that loop is feasible". The whole claim is thirty-two capabilities times
+    // four roles, and a generator sampling from 128 cases would be a weaker proof
+    // with more machinery. Every sweep below iterates `cap::ALL` or `Role::ALL` in
+    // full. The prepared-intent digest's claim is over unbounded rows, so it has
+    // its property at the end of this module.
 
     const NOW_MS: i64 = 1_788_307_200_000;
     const APPROVAL_TTL_MS: i64 = 120_000;
@@ -1816,5 +1914,172 @@ mod tests {
         assert_eq!(Limit::ExactMatchOnly.as_str(), "exact_match_only");
         assert_eq!(Limit::RoleCap.as_str(), "role_cap");
         assert_eq!(Limit::RefundThreshold.as_str(), "refund_threshold");
+    }
+
+    /// A stock adjustment's prepared row, in `0006`'s declaration order:
+    /// `stock_event_id`, `product_id`, `qty_delta_milli`, `reason_code`, the
+    /// nullable `note`, `requested_by`, `requested_at`.
+    fn adjustment<'a>(note: Option<&'a str>) -> [IntentColumn<'a>; 7] {
+        [
+            IntentColumn::NotNull(IntentValue::Blob(&[0xA1; 16])),
+            IntentColumn::NotNull(IntentValue::Blob(&[0xB2; 16])),
+            IntentColumn::NotNull(IntentValue::Integer(-2_000)),
+            IntentColumn::NotNull(IntentValue::Text("damage")),
+            IntentColumn::Nullable(note.map(IntentValue::Text)),
+            IntentColumn::NotNull(IntentValue::Blob(&[0xC3; 16])),
+            IntentColumn::NotNull(IntentValue::Text("2026-08-25T10:00:00.000Z")),
+        ]
+    }
+
+    #[test]
+    fn a_prepared_intent_hash_is_blake3_of_its_canonical_bytes() {
+        // The bytes `ref/domain-api.md` §8.1 describes, written out by hand.
+        let canonical = |note: Option<&[u8]>| {
+            let mut bytes = vec![1_u8];
+            bytes.extend_from_slice(b"pos-prepared-intent\0stock_adjustment");
+            for blob in [[0xA1_u8; 16], [0xB2; 16]] {
+                bytes.extend_from_slice(&16_u32.to_be_bytes());
+                bytes.extend_from_slice(&blob);
+            }
+            bytes.extend_from_slice(&(-2_000_i64).to_be_bytes());
+            bytes.extend_from_slice(&6_u32.to_be_bytes());
+            bytes.extend_from_slice(b"damage");
+            match note {
+                None => bytes.push(0),
+                Some(note) => {
+                    bytes.push(1);
+                    bytes.extend_from_slice(&u32::try_from(note.len()).unwrap().to_be_bytes());
+                    bytes.extend_from_slice(note);
+                }
+            }
+            bytes.extend_from_slice(&16_u32.to_be_bytes());
+            bytes.extend_from_slice(&[0xC3; 16]);
+            bytes.extend_from_slice(&24_u32.to_be_bytes());
+            bytes.extend_from_slice(b"2026-08-25T10:00:00.000Z");
+            *blake3::hash(&bytes).as_bytes()
+        };
+        let of = |note| PreparedIntentHash::of(PreparedIntent::StockAdjustment, &adjustment(note));
+        assert_eq!(of(None).to_stored(), canonical(None));
+        assert_eq!(of(Some("dropped")).to_stored(), canonical(Some(b"dropped")));
+    }
+
+    #[test]
+    fn neighbouring_columns_cannot_trade_bytes() {
+        let of = |columns: &[IntentColumn<'_>]| {
+            PreparedIntentHash::of(PreparedIntent::StockAdjustment, columns)
+        };
+        let text = |t| IntentColumn::NotNull(IntentValue::Text(t));
+        assert_ne!(of(&[text("ab"), text("c")]), of(&[text("a"), text("bc")]));
+        assert_ne!(
+            of(&[IntentColumn::Nullable(None)]),
+            of(&[IntentColumn::Nullable(Some(IntentValue::Text("")))]),
+            "an absent note is not an empty one"
+        );
+        let row = adjustment(None);
+        assert_ne!(
+            PreparedIntentHash::of(PreparedIntent::ProductQuickAdd, &row),
+            of(&row),
+            "the two intents never share a digest"
+        );
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum Kind {
+        Blob,
+        Text,
+        Integer,
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    enum Owned {
+        Blob(Vec<u8>),
+        Text(String),
+        Integer(i64),
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    enum OwnedColumn {
+        NotNull(Owned),
+        Nullable(Option<Owned>),
+    }
+
+    fn borrowed(value: &Owned) -> IntentValue<'_> {
+        match value {
+            Owned::Blob(bytes) => IntentValue::Blob(bytes),
+            Owned::Text(text) => IntentValue::Text(text),
+            Owned::Integer(integer) => IntentValue::Integer(*integer),
+        }
+    }
+
+    fn columns(row: &[OwnedColumn]) -> Vec<IntentColumn<'_>> {
+        row.iter()
+            .map(|column| match column {
+                OwnedColumn::NotNull(value) => IntentColumn::NotNull(borrowed(value)),
+                OwnedColumn::Nullable(value) => {
+                    IntentColumn::Nullable(value.as_ref().map(borrowed))
+                }
+            })
+            .collect()
+    }
+
+    fn any_value(kind: Kind) -> BoxedStrategy<Owned> {
+        match kind {
+            Kind::Blob => prop::collection::vec(any::<u8>(), 0..20)
+                .prop_map(Owned::Blob)
+                .boxed(),
+            Kind::Text => ".{0,10}".prop_map(Owned::Text).boxed(),
+            Kind::Integer => any::<i64>().prop_map(Owned::Integer).boxed(),
+        }
+    }
+
+    fn any_column(kind: Kind, nullable: bool) -> BoxedStrategy<OwnedColumn> {
+        if nullable {
+            prop::option::of(any_value(kind))
+                .prop_map(OwnedColumn::Nullable)
+                .boxed()
+        } else {
+            any_value(kind).prop_map(OwnedColumn::NotNull).boxed()
+        }
+    }
+
+    /// A row of one to eight columns, each a BLOB, TEXT or INTEGER, nullable or
+    /// not, and one of its columns given another value of the same declared
+    /// shape. A column never changes its type: the schema fixes it, and a BLOB
+    /// and a TEXT of the same bytes encode alike by design.
+    fn any_row_and_change() -> impl Strategy<Value = (Vec<OwnedColumn>, usize, OwnedColumn)> {
+        let shape = (
+            prop::sample::select(vec![Kind::Blob, Kind::Text, Kind::Integer]),
+            any::<bool>(),
+        );
+        prop::collection::vec(shape, 1..8).prop_flat_map(|shapes| {
+            let row: Vec<BoxedStrategy<OwnedColumn>> = shapes
+                .iter()
+                .map(|&(kind, nullable)| any_column(kind, nullable))
+                .collect();
+            let count = shapes.len();
+            (row, 0..count).prop_flat_map(move |(row, index)| {
+                let (kind, nullable) = *shapes.get(index).unwrap();
+                (Just(row), Just(index), any_column(kind, nullable))
+            })
+        })
+    }
+
+    proptest! {
+        #![proptest_config(domain_proptest_config())]
+
+        /// An approval binds exactly what the manager was shown. Change any one
+        /// column of a prepared row — its bytes, its text, its number, or
+        /// whether a nullable value is there at all — and the digest changes;
+        /// leave it as it was and the digest is the same.
+        #[test]
+        fn prop_changing_any_one_column_changes_the_prepared_intent_hash(
+            (row, index, replacement) in any_row_and_change(),
+        ) {
+            let mut changed = row.clone();
+            *changed.get_mut(index).unwrap() = replacement.clone();
+            let before = PreparedIntentHash::of(PreparedIntent::StockAdjustment, &columns(&row));
+            let after = PreparedIntentHash::of(PreparedIntent::StockAdjustment, &columns(&changed));
+            prop_assert_eq!(before == after, row.get(index) == Some(&replacement));
+        }
     }
 }

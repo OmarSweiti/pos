@@ -55,8 +55,9 @@ pub use ids::{
 pub use money::{Currency, Money, MoneyError, Percent, Qty, RoundingDirection, RoundingRule};
 pub use permissions::{
     ApprovalBinding, ApprovalHandle, Authorized, Capability, CustomerQueryShape, EscalationPolicy,
-    Grant, GrantSet, JournalScope, Limit, PermissionError, PreparedIntentHash, Role, RoleGrants,
-    StoredApprovalHandle, authorize, cap, default_grants,
+    Grant, GrantSet, IntentColumn, IntentValue, JournalScope, Limit, PermissionError,
+    PreparedIntent, PreparedIntentHash, Role, RoleGrants, StoredApprovalHandle, authorize, cap,
+    default_grants,
 };
 pub use pricing::{
     BasketDiscount, DiscountAttribution, DiscountCap, DiscountKind, DiscountReason,
@@ -70,8 +71,9 @@ pub use receipt::{
 };
 pub use sensitive::{SENSITIVE_FIELD_RULES, SensitiveFieldRules};
 pub use stock::{
-    IncomingCost, NegativeStockPolicy, NewStockEvent, Shortfall, StockError, StockEvent,
-    StockEventKind, StockPosition, StockSource, on_hand,
+    IncomingCost, NegativeStockPolicy, NewStockEvent, Shortfall, StockAdjustmentReason,
+    StockAdjustmentRequest, StockError, StockEvent, StockEventKind, StockPosition, StockSource,
+    on_hand,
 };
 pub use tax::{
     ComponentTax, LineTax, PriceMode, StoreTaxProfile, SupplyDestination, SupplyTaxContext,
