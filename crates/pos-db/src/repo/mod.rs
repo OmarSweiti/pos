@@ -35,6 +35,7 @@ pub mod receipt;
 pub mod role;
 pub mod sale;
 pub mod sequence;
+pub mod shift;
 pub mod stock;
 pub mod stock_adjustment;
 pub mod trade_scale;
