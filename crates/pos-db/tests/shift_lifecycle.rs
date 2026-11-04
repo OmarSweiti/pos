@@ -625,13 +625,48 @@ fn an_opening_and_a_close_travel_as_their_rows() {
              \"register_id\":\"{register}\",\"store_id\":\"{store}\"}}"
         )
     );
-    // An envelope that carries anything else is refused, and nothing is written.
+    // The close travels with the commit it is in.
     close(&w, &opened, w.cashier(), "2026-08-25T18:00:00.000Z", 0x70).unwrap();
+    let close_id = Uuid::from_bytes([0x70, 0xC1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+    let commit = Uuid::from_bytes([0x70; 16]);
+    let carried: String = w
+        .conn
+        .query_row(
+            "SELECT payload FROM fact_commit_member WHERE entity = 'shift_close_event'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        carried,
+        format!(
+            "{{\"closed_at\":\"2026-08-25T18:00:00.000Z\",\"closed_by\":\"{cashier}\",\
+             \"id\":\"{}\",\"shift_id\":\"{id}\",\"sync_commit_id\":\"{}\"}}",
+            close_id.hyphenated(),
+            commit.hyphenated()
+        )
+    );
+
+    // A shift with no envelope, one whose envelope carries anything else, and
+    // one whose float is in another currency than its store's: each refused by
+    // name, and nothing written.
     let other = Shift {
         id: ShiftId::from_uuid(uuid(0x61)),
         ..opened
     };
     let tx = w.conn.unchecked_transaction().unwrap();
+    assert!(matches!(
+        ShiftRepository::new(&w.conn).open(&tx, &other),
+        Err(DbError::ShiftEnvelopeMissing { entity: "shift" })
+    ));
+    let dollars = Shift {
+        float: Money::from_minor(5_000, Currency::USD),
+        ..other.clone()
+    };
+    assert!(matches!(
+        ShiftRepository::new(&w.conn).open(&tx, &dollars),
+        Err(DbError::ShiftFloatCurrencyMismatch)
+    ));
     write_envelope(
         &w.conn,
         &tx,
