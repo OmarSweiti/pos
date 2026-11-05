@@ -144,11 +144,8 @@ pub struct ParkedRef {
     pub line_count: usize,
     /// The currency `total_minor` is in, by its ISO code.
     pub currency: &'static str,
-    /// What it comes to under the store's settings now, or `None` when the
-    /// store cannot price a cart now. A basket is set aside and listed
-    /// whatever the store's settings, and resuming it is refused until it can
-    /// be priced.
-    pub total_minor: Option<i64>,
+    /// What it comes to, priced as `cart_resume` will show it.
+    pub total_minor: i64,
 }
 
 /// The longest label a parked basket takes, in characters: enough to name a
@@ -424,8 +421,9 @@ pub fn answer_age(
 ///
 /// What the context refuses; `park_label_invalid` for a label longer than
 /// [`PARK_LABEL_MAX_CHARS`] or holding a control character; `cart_not_open`;
-/// `nothing_to_park` for a basket with no line, which stays on the till; and
-/// `storage_failed`.
+/// `nothing_to_park` for a basket with no line, which stays on the till; the
+/// pricing refusals of [`CartSnapshot`]; and `storage_failed`. A refused park
+/// leaves the basket on the till.
 pub fn park_cart(register: &Register, label: Option<&str>) -> IpcResult<ParkedRef> {
     let at = register.now();
     let auth = proof::<cap::SalePark>(register, at)?;
@@ -464,7 +462,8 @@ pub fn park_cart(register: &Register, label: Option<&str>) -> IpcResult<ParkedRe
 /// # Errors
 ///
 /// What the context refuses; `shift_not_open`, because nothing can be
-/// resumed outside a shift; and `storage_failed`.
+/// resumed outside a shift; the pricing refusals of [`CartSnapshot`]; and
+/// `storage_failed`.
 pub fn list_parked(register: &Register) -> IpcResult<Vec<ParkedRef>> {
     let auth = proof::<cap::SaleResume>(register, register.now())?;
     let till = register.lock_till();
@@ -598,19 +597,17 @@ struct Listed<'c> {
     cart: &'c Cart,
 }
 
-/// `listed` as the resume list shows it: who parked it by name, and what it
-/// comes to now, which is `None` when the store cannot price a cart now.
+/// `listed` as the resume list shows it: who parked it, by name, and what it
+/// comes to. Every line was priced as it was added, on the same business day
+/// and under settings the schema keeps approved, so a parked basket prices
+/// as it did.
 fn parked_ref(conn: &Connection, store: StoreId, listed: Listed<'_>) -> IpcResult<ParkedRef> {
     let parked_by_name = UserRepository::new(conn)
         .by_id(listed.parked_by)
         .map_err(stored)?
         .ok_or_else(|| IpcError::new("storage_failed", "error.storage.failed"))?
         .display_name;
-    let total_minor = match priced(conn, store, listed.cart) {
-        Ok(priced) => Some(priced.total.minor()),
-        Err(refusal) if is_pricing_refusal(&refusal) => None,
-        Err(failure) => return Err(failure),
-    };
+    let total_minor = priced(conn, store, listed.cart)?.total.minor();
     Ok(ParkedRef {
         parked_id: listed.id,
         label: listed.label,
@@ -621,12 +618,6 @@ fn parked_ref(conn: &Connection, store: StoreId, listed: Listed<'_>) -> IpcResul
         currency: listed.cart.currency.code(),
         total_minor,
     })
-}
-
-/// Whether `refusal` says the store cannot price a cart now, rather than
-/// that something failed.
-fn is_pricing_refusal(refusal: &IpcError) -> bool {
-    matches!(refusal.code, "pricing_unavailable" | "tax_band_missing")
 }
 
 /// A parked basket's label, trimmed; a blank one is no label. It is a name
