@@ -5,7 +5,11 @@
 //! It refuses a command when no one is signed in, signs out a user whose
 //! account has stopped being live, resolves a privileged command's
 //! `approval_id` from storage, and hands both to the domain's `authorize`,
-//! which holds the handle to the command's binding before any effect.
+//! which holds the handle to the command's binding before any effect. An
+//! approval that authorizes is then refused if its approver's account has
+//! stopped being live: deactivating an approver revokes every handle they
+//! issued that has not been spent (1.6.4, the owner's decision of
+//! 5 November 2026).
 //!
 //! It resolves an approval; it does not spend one. The command writes the
 //! `approval_consumption` row in its effect's transaction, beside the audit
@@ -16,7 +20,7 @@ use pos_db::repo::approval::ApprovalRepository;
 use pos_db::repo::user::UserRepository;
 use pos_domain::{
     ApprovalBinding, ApprovalHandle, ApprovalId, Authorized, Capability, EscalationPolicy,
-    PermissionError, Timestamp,
+    PermissionError, Timestamp, UserId,
 };
 use rusqlite::Connection;
 
@@ -35,6 +39,9 @@ use crate::state::Register;
 /// - `approval_unknown`, `approval_used` or `approval_unreadable` for an
 ///   `approval_id` that names no handle, a consumed one, or a row this build
 ///   cannot read.
+/// - `approval_revoked` when the approval would authorize, and its approver's
+///   account is no longer live. Nothing is written: the handle stays unspent,
+///   and the signed-in user stays signed in.
 /// - Each [`PermissionError`] as its own code (see [`permission_refused`]).
 pub fn authorize<C: Capability>(
     register: &Register,
@@ -60,7 +67,7 @@ pub fn authorize<C: Capability>(
     }
 
     let handle = approval.map(|id| resolve(&mut db, id)).transpose()?;
-    pos_domain::authorize::<C>(
+    let authorized = pos_domain::authorize::<C>(
         current.user,
         &current.grants,
         handle.as_ref(),
@@ -68,7 +75,13 @@ pub fn authorize<C: Capability>(
         policy,
         at,
     )
-    .map_err(|refusal| permission_refused(&refusal))
+    .map_err(|refusal| permission_refused(&refusal))?;
+    // Only a handle the domain accepted is used, so only its approver is
+    // read: an id supplied to a command that does not escalate is ignored.
+    if let Some(approver) = authorized.approver() {
+        ensure_approver_live(&db, approver)?;
+    }
+    Ok(authorized)
 }
 
 /// What a command answers when no one is signed in.
@@ -99,6 +112,23 @@ fn resolve(db: &mut Connection, id: ApprovalId) -> IpcResult<ApprovalHandle> {
     Ok(handle)
 }
 
+/// Refuses an approval whose approver's account is not live: deactivated, or
+/// with a `deleted_at`, or gone. It reads the account as it is when the
+/// approval is used, so the refusal holds while the account is not live, and
+/// every handle expires on its own.
+fn ensure_approver_live(db: &Connection, approver: UserId) -> IpcResult<()> {
+    let account = UserRepository::new(db).by_id(approver).map_err(|error| {
+        IpcError::from_source("approval_unreadable", "error.approval.unreadable", &error)
+    })?;
+    if account.is_some_and(|account| account.is_live) {
+        Ok(())
+    } else {
+        Err(permission_refused(&PermissionError::ApproverInactive(
+            approver,
+        )))
+    }
+}
+
 /// A [`PermissionError`] as the webview receives it: a code to branch on, a
 /// key to translate, a static detail where one helps, and never the error's
 /// text, which names users and amounts (1.6.8). The source goes to the
@@ -120,6 +150,11 @@ pub fn permission_refused(refusal: &PermissionError) -> IpcError {
         }
         PermissionError::SelfApprovalBanned(_) => ("approval_self", "error.approval.self", None),
         PermissionError::UserInactive(_) => ("user_inactive", "error.auth.user_inactive", None),
+        PermissionError::ApproverInactive(_) => (
+            "approval_revoked",
+            "error.approval.revoked",
+            Some("the approver's account is no longer active"),
+        ),
         PermissionError::OfflineAuthExpired => (
             "offline_auth_expired",
             "error.permission.offline_auth_expired",
