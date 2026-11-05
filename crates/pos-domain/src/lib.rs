@@ -37,9 +37,9 @@ pub use audit::{
     chain_hash, check_payload, verify_chain,
 };
 pub use cart::{
-    Cart, CartContext, CartError, CartLine, CompletedSale, FinalizeEffects, Finalizing, ParkedCart,
-    PricedCart, PricedLine, PricingSettings, Sale, StoredCompletedSale, TaxBands, Tendering,
-    VoidedSale, change_due, is_settled, remaining_due,
+    CardOpRef, Cart, CartContext, CartError, CartLine, CompletedSale, FinalizeEffects, Finalizing,
+    InFlight, InFlightSale, ParkedCart, PricedCart, PricedLine, PricingSettings, Sale,
+    StoredCompletedSale, TaxBands, Tendering, VoidedSale, change_due, is_settled, remaining_due,
 };
 pub use catalog::{
     Barcode, BarcodeKind, CatalogError, Department, DepartmentPolicy, DerivedWeight,

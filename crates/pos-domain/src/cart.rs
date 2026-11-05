@@ -1644,6 +1644,73 @@ impl Finalizing {
     }
 }
 
+/// A sale that has left `Building` and not yet completed, as the register
+/// journals it before the first irreversible effect (§6.6, 1.8.4).
+///
+/// `sale.status` admits only completed, voided and parked sales, and the
+/// finalize transaction writes a sale whole, so until it commits nothing else
+/// on disk says a checkout was under way. This record is written before a card
+/// is charged and before a finalize begins, and is removed inside the finalize
+/// transaction itself. After a power cut it is what a restart resumes from.
+///
+/// The sale, its register, its shift and its cashier are the cart's own, read
+/// through [`Self::tendering`], so the record cannot name one sale and carry
+/// another's cart.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InFlightSale {
+    /// The exact state the checkout has reached.
+    pub state: InFlight,
+    /// A card operation the terminal was asked for and has not answered:
+    /// what a restart queries before anything else (E.2).
+    pub card_op: Option<CardOpRef>,
+    /// One per checkout attempt, never reused. A finalize replayed after a
+    /// power cut runs under the same key, so it is not applied twice.
+    pub idempotency_key: uuid::Uuid,
+    pub updated_at: Timestamp,
+}
+
+impl InFlightSale {
+    /// The sale being checked out: its cart's id.
+    #[must_use]
+    pub fn sale_id(&self) -> SaleId {
+        self.tendering().cart().id
+    }
+
+    /// The register it is being checked out at.
+    #[must_use]
+    pub fn register_id(&self) -> RegisterId {
+        self.tendering().cart().register_id
+    }
+
+    /// The sale as it is being paid for, whichever state it has reached.
+    #[must_use]
+    pub fn tendering(&self) -> &Tendering {
+        match &self.state {
+            InFlight::Tendering(tendering) => tendering,
+            InFlight::Finalizing(finalizing) => finalizing.tendering(),
+        }
+    }
+}
+
+/// The two states a sale passes through between its cart and its completion.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum InFlight {
+    /// Being paid for: tenders are still being taken.
+    Tendering(Tendering),
+    /// Paid for and being written: it takes no more tenders, and it completes
+    /// or replays under the same idempotency key.
+    Finalizing(Finalizing),
+}
+
+/// A card operation started at the terminal and not yet resolved (E.2). The
+/// terminal itself is Phase 2's (2.1); no Phase-1 checkout has one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CardOpRef {
+    pub sale_ref: String,
+    pub amount: Money,
+    pub started_at: Timestamp,
+}
+
 /// What finalizing gives a sale that the domain cannot make for itself
 /// (1.8.3): the receipt number its register's counter spent in the finalize
 /// transaction, the business date of its shift, and the moment it completed.
@@ -5656,6 +5723,33 @@ mod tests {
 
     fn the_sale() -> SaleId {
         SaleId::from_uuid(id(1))
+    }
+
+    /// 1.8.4: the journal's record names the sale and the register its own
+    /// cart does, in either state, and reads back from its stored form whole.
+    #[test]
+    fn an_in_flight_sale_is_identified_by_its_own_cart() {
+        let paid = pay(paying(one_item(1_247), qirsh()), 1, "cash", 1_250).unwrap();
+        let cart = paid.cart().clone();
+        for state in [
+            InFlight::Tendering(paid.clone()),
+            InFlight::Finalizing(begin_finalize(paid.clone()).unwrap()),
+        ] {
+            let in_flight = InFlightSale {
+                state,
+                card_op: None,
+                idempotency_key: id(0x77),
+                updated_at: moment(),
+            };
+            assert_eq!(in_flight.sale_id(), cart.id);
+            assert_eq!(in_flight.register_id(), cart.register_id);
+            assert_eq!(in_flight.tendering().cart(), &cart);
+            let stored = serde_json::to_string(&in_flight).unwrap();
+            assert_eq!(
+                serde_json::from_str::<InFlightSale>(&stored).unwrap(),
+                in_flight
+            );
+        }
     }
 
     /// 1.4.3b's second half: a sealed pack of tobacco reaches tendering only
