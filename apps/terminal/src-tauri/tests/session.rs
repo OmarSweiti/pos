@@ -873,6 +873,17 @@ fn an_approval_is_revoked_when_its_approver_is_deactivated() {
         at(),
     )
     .unwrap();
+    // Only an approval that would authorize is refused. Where the policy does
+    // not escalate the discount, the id is ignored, as the domain ignores it.
+    let unescalated = authorize::<cap::DiscountManual>(
+        &register,
+        Some(id),
+        &binding,
+        &EscalationPolicy::empty(),
+        at(),
+    )
+    .unwrap();
+    assert_eq!(unescalated.approver(), None);
     assert!(!register.with_db(|conn| ApprovalRepository::new(conn).is_consumed(id).unwrap()));
     assert_eq!(audited(&register, "auth.logout"), 0);
 }
