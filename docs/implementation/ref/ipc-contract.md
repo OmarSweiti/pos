@@ -172,6 +172,16 @@ boolean cannot express the department-sale threshold at all.
 > `.plugin(`, so the step that adds one extends the walk to its commands. It also fails on a
 > renamed command, which would reach the webview under a name the registry does not hold.
 
+> **Closed at 1.4.11.** A row is now held to its handler's real signature:
+> `every_command_declares_the_arguments_its_handler_takes` reads every registered `#[tauri::command]`
+> function from the shell's source, leaves out what Tauri injects, reads `Option<_>` as optional, and
+> requires the row's `args` to be exactly that. The price rule is the registry's own now:
+> `PRICE_ARGUMENTS` lists each argument allowed to carry money, by command, with the control its row
+> must keep, and `check` refuses any other argument with `price` in its name or a `_minor` suffix
+> (`RegistryError::PriceArgument`), and a listed one on a row that has lost its control
+> (`PriceArgumentUncontrolled`). `no_command_argument_carries_a_price` walks the handlers' signatures,
+> so an argument a row forgot is walked too.
+
 ---
 
 ## 3 · The catalog
@@ -329,6 +339,27 @@ refusal is the valuable half and it is useless without a way to say yes.
 free-zone supply, and in v1 it is always `Domestic`: exports and free-zone supplies are hard-blocked
 at the register rather than approximated. Adding the command without the reason codes, the evidence
 capture and the return-box mapping would let a cashier zero-rate a sale that is not zero-rated.
+
+> **As delivered at 1.4.11, its first part.** `cart_open`, `cart_current`, `cart_add_line`,
+> `cart_add_scan` and `cart_confirm_age` are registered; the rest of the Phase-1 rows above follow in
+> the step's later parts. Four things the table does not say:
+>
+> - **`CartSnapshot` is minor units only**: per line its price, gross, discount, tax and total, then
+>   the totals, the tax rows with each rate in parts per million, the lines still awaiting an age
+>   answer, and the products the basket would leave below zero. It is `price_cart` under the store's
+>   own price mode, tax profile and approved rule, so a store that cannot price is refused when a cart
+>   opens or changes (`pricing_unavailable`, `tax_band_missing`).
+> - **The till's working cart is on disk from its first moment** (the owner's decision of 5 November
+>   2026), as an `active` `parked_cart` row; every change is saved before it is answered. A sign-out,
+>   requested or forced, sets a basket with lines aside in the parked list and drops an empty one,
+>   and start-up does the same with what a crash left. `cart_open` asked again answers with the same
+>   cart; with no open shift it is `shift_not_open`.
+> - **A scan that adds no line is its own refusal**: `scan_unknown`, `scan_ambiguous`,
+>   `scan_checksum_failed`, `scan_unreadable`, `scan_scale_refused` (with the scale's reason) and
+>   `scan_layout_switched_off`. No clock is trusted until 1.1.9's database half, so no scale label
+>   prices a line yet; every other scan sells.
+> - **Every add screens the basket's stock** (1.10.4): under the store's hard block a shortfall is
+>   `stock_would_go_negative` and the cart is unchanged; otherwise it is flagged in the answer.
 
 ### Tender and finalize
 
