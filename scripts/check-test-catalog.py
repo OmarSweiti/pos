@@ -79,7 +79,6 @@ KNOWN_KINDS = RUST_KINDS | {"web", "fuzz", "drill"}
 # As tests land, delete their entries; never add one merely to silence an
 # absent-test failure.
 PLANNED: dict[str, tuple[str, ...]] = {
-    "1.4.11": ("no_command_argument_carries_a_price",),
     "1.4.12": ("queue_never_stalls_on_unknown_code",),
     "1.6.2": ("manager_reset_retires_old_hash_and_audits",),
     "1.7.5": (
@@ -526,6 +525,7 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "manager_self_approval_denied_when_policy_bans_it",
         "mutating_an_identity_column_breaks_the_chain",
         "narrow_profile_reflows_rather_than_truncates",
+        "no_command_argument_carries_a_price",
         "override_below_floor_is_denied",
         "parked_carts_survive_restart",
         "price_embedded_line_total_equals_the_label",
