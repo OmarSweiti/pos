@@ -1,6 +1,7 @@
-//! Building a basket: `cart_open`, `cart_current`, `cart_add_line`,
-//! `cart_add_scan` and `cart_confirm_age` (`ref/ipc-contract.md` §3, "Cart";
-//! microstep 1.4.11, its first part).
+//! Building a basket, and setting it aside: `cart_open`, `cart_current`,
+//! `cart_add_line`, `cart_add_scan` and `cart_confirm_age`, then `cart_park`,
+//! `cart_list_parked` and `cart_resume` (`ref/ipc-contract.md` §3, "Cart";
+//! microstep 1.4.11, its first two parts).
 //!
 //! **No command here takes a price.** A line's price comes from the catalogue,
 //! through `AddLine::from_product`, or from a label the scan handler resolved,
@@ -24,6 +25,17 @@
 //! hard block, a line that would take a product below zero is refused and the
 //! cart is unchanged. Otherwise the products it would leave short are flagged
 //! in the answer, which the screen shows loudly and does not block on.
+//!
+//! **A basket set aside comes back as it was.** `cart_park` moves the till's
+//! basket to the parked list, under an optional label, and leaves the till
+//! free for the next customer. `cart_list_parked` lists the baskets that can
+//! still be resumed on the shift's business day, and `cart_resume` makes one
+//! the till's working cart again, at the prices its lines were captured at
+//! (I-5). A resume onto a till that already holds a basket sets that basket
+//! aside first, in the same transaction (the owner's decision of 6 November
+//! 2026), so no resume loses one. Taking over another cashier's basket is
+//! audited, with its delivery envelope, in the transaction that claims it
+//! (#363's decision).
 
 use std::collections::BTreeSet;
 
@@ -32,14 +44,15 @@ use pos_db::repo::parked_cart::ParkedCartRepository;
 use pos_db::repo::product::ProductRepository;
 use pos_db::repo::shift::ShiftRepository;
 use pos_db::repo::stock::StockRepository;
+use pos_db::repo::user::UserRepository;
 use pos_db::tax_pack::TaxPackRepository;
 use pos_db::tax_policy::TaxPolicyRepository;
-use pos_domain::cart::{AddLine, add_line, confirm_age, open, price_cart};
+use pos_domain::cart::{AddLine, add_line, confirm_age, open, park, price_cart};
 use pos_domain::{
-    ApprovalBinding, AuditIntent, Authorized, Cart, CartContext, CartError, ClockConfidence,
-    Currency, EscalationPolicy, PricedCart, ProductId, Qty, SaleId, SaleLineId,
-    ScalePricingRefusal, ScanLookup, Shortfall, StockError, StoreId, StoreTaxProfile, TaxBands,
-    Timestamp, UnitOfMeasure, cap,
+    ApprovalBinding, AuditIntent, Authorized, Capability, Cart, CartContext, CartError,
+    ClockConfidence, Currency, EscalationPolicy, PricedCart, ProductId, Qty, SaleId, SaleLineId,
+    ScalePricingRefusal, ScanLookup, Shift, Shortfall, StockError, StoreId, StoreTaxProfile,
+    TaxBands, Timestamp, UnitOfMeasure, UserId, cap,
 };
 use rusqlite::Connection;
 use serde::Serialize;
@@ -114,6 +127,33 @@ pub struct StockFlag {
     pub on_hand_milli: i64,
     pub taken_milli: i64,
 }
+
+/// A basket in the parked list, as the resume list shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ParkedRef {
+    /// The id `cart_resume` takes, which is its sale's id.
+    pub parked_id: SaleId,
+    /// The label the cashier gave it, if any.
+    pub label: Option<String>,
+    /// The cashier who set it aside, and their name as the lock screen shows
+    /// it.
+    pub parked_by: UserId,
+    pub parked_by_name: String,
+    /// When it was set aside, in milliseconds since the Unix epoch.
+    pub parked_at: Timestamp,
+    pub line_count: usize,
+    /// The currency `total_minor` is in, by its ISO code.
+    pub currency: &'static str,
+    /// What it comes to under the store's settings now, or `None` when the
+    /// store cannot price a cart now. A basket is set aside and listed
+    /// whatever the store's settings, and resuming it is refused until it can
+    /// be priced.
+    pub total_minor: Option<i64>,
+}
+
+/// The longest label a parked basket takes, in characters: enough to name a
+/// customer's basket, and one line of a slip.
+pub const PARK_LABEL_MAX_CHARS: usize = 40;
 
 impl CartSnapshot {
     fn of(cart: &Cart, priced: &PricedCart, flags: &[Shortfall]) -> CartSnapshot {
@@ -215,6 +255,21 @@ pub fn cart_confirm_age(
     answer_age(till.register()?, line_id, confirmed)
 }
 
+#[tauri::command]
+pub fn cart_park(till: State<'_, Till>, label: Option<String>) -> IpcResult<ParkedRef> {
+    park_cart(till.register()?, label.as_deref())
+}
+
+#[tauri::command]
+pub fn cart_list_parked(till: State<'_, Till>) -> IpcResult<Vec<ParkedRef>> {
+    list_parked(till.register()?)
+}
+
+#[tauri::command]
+pub fn cart_resume(till: State<'_, Till>, parked_id: SaleId) -> IpcResult<CartSnapshot> {
+    resume_cart(till.register()?, parked_id)
+}
+
 /// `cart_open`: the till's working cart, opened on the register's open shift
 /// if it holds none. Asking again answers with the same cart, so a second
 /// press opens nothing.
@@ -227,16 +282,13 @@ pub fn cart_confirm_age(
 /// price one; and `storage_failed`.
 pub fn open_cart(register: &Register) -> IpcResult<CartSnapshot> {
     let at = register.now();
-    let auth = sale_create(register, at)?;
+    let auth = proof::<cap::SaleCreate>(register, at)?;
     let mut till = register.lock_till();
-    signed_in_as(till.session.as_ref(), &auth)?;
+    signed_in_as(till.session.as_ref(), auth.actor())?;
     if let Some(cart) = till.cart.as_ref() {
         return snapshot(&till.db, register.store(), cart);
     }
-    let shift = ShiftRepository::new(&till.db)
-        .current(register.register())
-        .map_err(stored)?
-        .ok_or_else(|| IpcError::new("shift_not_open", "error.shift.not_open"))?;
+    let shift = open_shift(&till.db, register)?;
     // The register sells in its store's currency, which `0003` holds to an
     // exponent of three and no step provisions as anything but JOD.
     let cart = open(
@@ -268,9 +320,9 @@ pub fn open_cart(register: &Register) -> IpcResult<CartSnapshot> {
 /// What the context refuses, the pricing refusals of [`CartSnapshot`], and
 /// `storage_failed`.
 pub fn current(register: &Register) -> IpcResult<Option<CartSnapshot>> {
-    let auth = sale_create(register, register.now())?;
+    let auth = proof::<cap::SaleCreate>(register, register.now())?;
     let till = register.lock_till();
-    signed_in_as(till.session.as_ref(), &auth)?;
+    signed_in_as(till.session.as_ref(), auth.actor())?;
     till.cart
         .as_ref()
         .map(|cart| snapshot(&till.db, register.store(), cart))
@@ -292,7 +344,7 @@ pub fn add_product(
     qty_milli: Option<i64>,
 ) -> IpcResult<CartSnapshot> {
     let at = register.now();
-    let auth = sale_create(register, at)?;
+    let auth = proof::<cap::SaleCreate>(register, at)?;
     let line_id = SaleLineId::from_uuid(register.next_id());
     change(register, &auth, Screen::Refuse, |conn, cart| {
         let product = ProductRepository::new(conn)
@@ -325,7 +377,7 @@ pub fn add_scan(
     clock: ClockConfidence,
 ) -> IpcResult<CartSnapshot> {
     let at = register.now();
-    let auth = sale_create(register, at)?;
+    let auth = proof::<cap::SaleCreate>(register, at)?;
     let line_id = SaleLineId::from_uuid(register.next_id());
     let context = ScanContext {
         store: *register.store().as_uuid().as_bytes(),
@@ -355,13 +407,138 @@ pub fn answer_age(
     confirmed: bool,
 ) -> IpcResult<CartSnapshot> {
     let at = register.now();
-    let auth = sale_create(register, at)?;
+    let auth = proof::<cap::SaleCreate>(register, at)?;
     let actor = auth.actor();
     change(register, &auth, Screen::Flag, |_, cart| {
         let (cart, intent) =
             confirm_age(cart, line_id, confirmed, actor, at).map_err(|e| cart_refused(&e))?;
         Ok((cart, Some(intent)))
     })
+}
+
+/// `cart_park`: set the till's basket aside under `label`, as it is, and
+/// leave the till free for the next customer. The basket keeps the business
+/// day it was opened in, and expires when that day ends.
+///
+/// # Errors
+///
+/// What the context refuses; `park_label_invalid` for a label longer than
+/// [`PARK_LABEL_MAX_CHARS`] or holding a control character; `cart_not_open`;
+/// `nothing_to_park` for a basket with no line, which stays on the till; and
+/// `storage_failed`.
+pub fn park_cart(register: &Register, label: Option<&str>) -> IpcResult<ParkedRef> {
+    let at = register.now();
+    let auth = proof::<cap::SalePark>(register, at)?;
+    let label = park_label(label)?;
+    let mut till = register.lock_till();
+    signed_in_as(till.session.as_ref(), auth.actor())?;
+    let working = till
+        .cart
+        .clone()
+        .ok_or_else(|| IpcError::new("cart_not_open", "error.cart.not_open"))?;
+    let parked = park(working).map_err(|e| cart_refused(&e))?;
+    let answer = parked_ref(
+        &till.db,
+        register.store(),
+        Listed {
+            id: parked.cart().id,
+            label: label.clone(),
+            parked_by: parked.cart().cashier_id,
+            parked_at: at,
+            cart: parked.cart(),
+        },
+    )?;
+    let tx = till.db.transaction().map_err(sqlite)?;
+    ParkedCartRepository::new(&tx)
+        .repark(&tx, register.process_nonce(), &parked, label.as_deref(), at)
+        .map_err(stored)?;
+    tx.commit().map_err(sqlite)?;
+    *till.cart = None;
+    Ok(answer)
+}
+
+/// `cart_list_parked`: the baskets parked at this register that can still be
+/// resumed on the open shift's business day, oldest first. One parked on an
+/// earlier day has expired and is not offered (master plan C.2).
+///
+/// # Errors
+///
+/// What the context refuses; `shift_not_open`, because nothing can be
+/// resumed outside a shift; and `storage_failed`.
+pub fn list_parked(register: &Register) -> IpcResult<Vec<ParkedRef>> {
+    let auth = proof::<cap::SaleResume>(register, register.now())?;
+    let till = register.lock_till();
+    signed_in_as(till.session.as_ref(), auth.actor())?;
+    let shift = open_shift(&till.db, register)?;
+    ParkedCartRepository::new(&till.db)
+        .parked(register.register(), shift.business_date)
+        .map_err(stored)?
+        .iter()
+        .map(|entry| {
+            parked_ref(
+                &till.db,
+                register.store(),
+                Listed {
+                    id: entry.id,
+                    label: entry.label.clone(),
+                    parked_by: entry.parked_by,
+                    parked_at: entry.parked_at,
+                    cart: entry.cart.cart(),
+                },
+            )
+        })
+        .collect()
+}
+
+/// `cart_resume`: make the parked basket `parked_id` the till's working cart,
+/// on the open shift and under the signed-in cashier, at the prices its lines
+/// were captured at. A basket the till already holds is set aside first, in
+/// the same transaction: parked if it has a line, dropped if not. Taking over
+/// another cashier's basket writes `sale.resume` with its envelope in that
+/// transaction; a cashier resuming their own writes nothing. Resuming the
+/// basket the till already holds answers with it.
+///
+/// # Errors
+///
+/// What the context refuses; `shift_not_open`; `parked_cart_unknown` for no
+/// such basket parked at this register; `parked_cart_claimed` for one a till
+/// is working on; `parked_cart_expired` for one parked on an earlier business
+/// day; `training_mode_mismatch`; the pricing refusals of [`CartSnapshot`];
+/// and `storage_failed`. A refused resume changes nothing: the till keeps its
+/// basket, and the parked one stays parked.
+pub fn resume_cart(register: &Register, parked_id: SaleId) -> IpcResult<CartSnapshot> {
+    let at = register.now();
+    let auth = proof::<cap::SaleResume>(register, at)?;
+    let mut till = register.lock_till();
+    signed_in_as(till.session.as_ref(), auth.actor())?;
+    if let Some(cart) = till.cart.as_ref().filter(|cart| cart.id == parked_id) {
+        return snapshot(&till.db, register.store(), cart);
+    }
+    let shift = open_shift(&till.db, register)?;
+    let context = CartContext {
+        register_id: register.register(),
+        shift_id: shift.id,
+        cashier_id: auth.actor(),
+        currency: Currency::JOD,
+        is_training: false,
+        opened_at: at,
+    };
+    let nonce = register.process_nonce();
+    let tx = till.db.transaction().map_err(sqlite)?;
+    let carts = ParkedCartRepository::new(&tx);
+    if let Some(working) = till.cart.as_ref() {
+        carts.set_aside(&tx, nonce, working, at).map_err(stored)?;
+    }
+    let resumed = carts
+        .resume(&tx, parked_id, &context, &auth, nonce)
+        .map_err(|e| resume_refused(&e))?;
+    let answer = snapshot(&tx, register.store(), &resumed.cart)?;
+    if let Some(intent) = resumed.audit.as_ref() {
+        audit(register, &tx, intent)?;
+    }
+    tx.commit().map_err(sqlite)?;
+    *till.cart = Some(resumed.cart);
+    Ok(answer)
 }
 
 /// Whether a stock shortfall refuses the change, or is only flagged.
@@ -384,7 +561,7 @@ fn change(
     work: impl FnOnce(&Connection, Cart) -> IpcResult<(Cart, Option<AuditIntent>)>,
 ) -> IpcResult<CartSnapshot> {
     let mut till = register.lock_till();
-    signed_in_as(till.session.as_ref(), auth)?;
+    signed_in_as(till.session.as_ref(), auth.actor())?;
     let working = till
         .cart
         .clone()
@@ -412,26 +589,112 @@ fn snapshot(conn: &Connection, store: StoreId, cart: &Cart) -> IpcResult<CartSna
     Ok(CartSnapshot::of(cart, &priced, &flags))
 }
 
-/// The proof every command here takes. `sale.create` is held by every role
-/// that sells and escalates under no policy, so no approval is ever asked for.
-fn sale_create(register: &Register, at: Timestamp) -> IpcResult<Authorized<cap::SaleCreate>> {
+/// What the resume list says of a parked basket.
+struct Listed<'c> {
+    id: SaleId,
+    label: Option<String>,
+    parked_by: UserId,
+    parked_at: Timestamp,
+    cart: &'c Cart,
+}
+
+/// `listed` as the resume list shows it: who parked it by name, and what it
+/// comes to now, which is `None` when the store cannot price a cart now.
+fn parked_ref(conn: &Connection, store: StoreId, listed: Listed<'_>) -> IpcResult<ParkedRef> {
+    let parked_by_name = UserRepository::new(conn)
+        .by_id(listed.parked_by)
+        .map_err(stored)?
+        .ok_or_else(|| IpcError::new("storage_failed", "error.storage.failed"))?
+        .display_name;
+    let total_minor = match priced(conn, store, listed.cart) {
+        Ok(priced) => Some(priced.total.minor()),
+        Err(refusal) if is_pricing_refusal(&refusal) => None,
+        Err(failure) => return Err(failure),
+    };
+    Ok(ParkedRef {
+        parked_id: listed.id,
+        label: listed.label,
+        parked_by: listed.parked_by,
+        parked_by_name,
+        parked_at: listed.parked_at,
+        line_count: listed.cart.lines.len(),
+        currency: listed.cart.currency.code(),
+        total_minor,
+    })
+}
+
+/// Whether `refusal` says the store cannot price a cart now, rather than
+/// that something failed.
+fn is_pricing_refusal(refusal: &IpcError) -> bool {
+    matches!(refusal.code, "pricing_unavailable" | "tax_band_missing")
+}
+
+/// A parked basket's label, trimmed; a blank one is no label. It is a name
+/// for the basket, so it is short and holds no control character, which
+/// would let one label pass for another on the screen.
+fn park_label(label: Option<&str>) -> IpcResult<Option<String>> {
+    let Some(label) = label.map(str::trim).filter(|label| !label.is_empty()) else {
+        return Ok(None);
+    };
+    if label.chars().count() > PARK_LABEL_MAX_CHARS || label.chars().any(char::is_control) {
+        return Err(
+            IpcError::new("park_label_invalid", "error.cart.park_label_invalid")
+                .with_detail("the label is too long, or holds a control character"),
+        );
+    }
+    Ok(Some(label.to_owned()))
+}
+
+/// A resume the repository refused, as the screen is told it. A basket
+/// parked at another register is not this register's to offer, so it is
+/// answered as unknown here.
+fn resume_refused(error: &DbError) -> IpcError {
+    match error {
+        DbError::ParkedCartNotFound(_)
+        | DbError::ResumeRefused(CartError::ParkedOnAnotherRegister(_)) => {
+            IpcError::from_source("parked_cart_unknown", "error.cart.parked_unknown", error)
+        }
+        DbError::ParkedCartClaimed(_) => {
+            IpcError::from_source("parked_cart_claimed", "error.cart.parked_claimed", error)
+        }
+        DbError::ParkedCartExpired { .. } => {
+            IpcError::from_source("parked_cart_expired", "error.cart.parked_expired", error)
+        }
+        DbError::ResumeRefused(refusal) => cart_refused(refusal),
+        other => IpcError::from_source("storage_failed", "error.storage.failed", other),
+    }
+}
+
+/// The proof a command here takes: `sale.create`, `sale.park` or
+/// `sale.resume`. Each is held by every role that sells and escalates under no
+/// policy, so no approval is ever asked for.
+fn proof<C: Capability>(register: &Register, at: Timestamp) -> IpcResult<Authorized<C>> {
     let unbound = ApprovalBinding {
         entity_id: Uuid::nil(),
         amount_minor: 0,
         content_hash: None,
     };
-    authorize::<cap::SaleCreate>(register, None, &unbound, &EscalationPolicy::empty(), at)
+    authorize::<C>(register, None, &unbound, &EscalationPolicy::empty(), at)
 }
 
-/// Refuse the change when the proof is not the signed-in user's: the session
-/// ended, or changed hands, between the proof and the lock. The till's cart
-/// is always the signed-in cashier's, because every sign-out sets it aside
-/// under the same lock.
-fn signed_in_as(session: Option<&Session>, auth: &Authorized<cap::SaleCreate>) -> IpcResult<()> {
+/// Refuse the command when the proof is not the signed-in user's: the
+/// session ended, or changed hands, between the proof and the lock. The
+/// till's cart is always the signed-in cashier's, because every sign-out sets
+/// it aside under the same lock.
+fn signed_in_as(session: Option<&Session>, actor: UserId) -> IpcResult<()> {
     match session {
-        Some(session) if session.user == auth.actor() => Ok(()),
+        Some(session) if session.user == actor => Ok(()),
         _ => Err(not_signed_in()),
     }
+}
+
+/// The register's open shift: a sale is opened and resumed only in one,
+/// because a sale outside a shift has no business date.
+fn open_shift(conn: &Connection, register: &Register) -> IpcResult<Shift> {
+    ShiftRepository::new(conn)
+        .current(register.register())
+        .map_err(stored)?
+        .ok_or_else(|| IpcError::new("shift_not_open", "error.shift.not_open"))
 }
 
 /// What `cart` would leave below zero at `store`, per line as each line moves
@@ -585,6 +848,11 @@ fn cart_refused(error: &CartError) -> IpcError {
             ("age_not_pending", "error.cart.age_not_pending")
         }
         CartError::TaxBandMissing(_) => ("tax_band_missing", "error.pricing.tax_band_missing"),
+        CartError::NothingToPark => ("nothing_to_park", "error.cart.nothing_to_park"),
+        CartError::TrainingModeMismatch(..) => (
+            "training_mode_mismatch",
+            "error.cart.training_mode_mismatch",
+        ),
         _ => ("cart_refused", "error.cart.refused"),
     };
     IpcError::from_source(code, key, error)

@@ -322,6 +322,30 @@ pub const COMMANDS: &[CommandSpec] = &[
         approval_requirement: ApprovalRequirement::Never,
         args: &[Arg::required("line_id"), Arg::required("confirmed")],
     },
+    // 1.4.11, its second part: setting a basket aside and bringing it back.
+    CommandSpec {
+        name: "cart_park",
+        access: Access::Capability(cap::SalePark::NAME),
+        audited: false,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[Arg::optional("label")],
+    },
+    CommandSpec {
+        name: "cart_list_parked",
+        access: Access::Capability(cap::SaleResume::NAME),
+        audited: false,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[],
+    },
+    // Not every call is audited: taking over another cashier's basket writes
+    // `sale.resume`, and a cashier resuming their own writes nothing (#363).
+    CommandSpec {
+        name: "cart_resume",
+        access: Access::Capability(cap::SaleResume::NAME),
+        audited: false,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[Arg::required("parked_id")],
+    },
 ];
 
 /// Names the commands the shell registers, once.
