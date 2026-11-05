@@ -361,6 +361,25 @@ capture and the return-box mapping would let a cashier zero-rate a sale that is 
 > - **Every add screens the basket's stock** (1.10.4): under the store's hard block a shortfall is
 >   `stock_would_go_negative` and the cart is unchanged; otherwise it is flagged in the answer.
 
+> **As delivered at 1.4.11, its second part.** `cart_park`, `cart_list_parked` and `cart_resume`
+> are registered. Four things the table does not say:
+>
+> - **`ParkedRef` is `{ parked_id, label?, parked_by, parked_by_name, parked_at, line_count,
+>   currency, total_minor }`**: the id `cart_resume` takes, which is the sale's; who parked it, by id
+>   and by name; when, in milliseconds since the Unix epoch; and its total, priced as `cart_resume`
+>   will show it.
+> - **`cart_park` sets the till's basket aside and leaves the till with no cart.** A basket with no
+>   line is `nothing_to_park`; a label is trimmed, a blank one is none, and one over 40 characters or
+>   holding a control character is `park_label_invalid`.
+> - **`cart_resume` onto a till that holds a basket sets that basket aside first**, parked if it has
+>   a line and dropped if not, in the transaction that claims the resumed one (the owner's decision
+>   of 6 November 2026). A refusal changes nothing: `parked_cart_unknown`, `parked_cart_claimed`,
+>   `parked_cart_expired`, `training_mode_mismatch`, `shift_not_open` or a pricing refusal. Resuming
+>   the basket the till holds answers with it.
+> - **The registry marks `cart_resume` `audited: false`**, because the flag means every call writes a
+>   row; the takeover row above is written by the domain's intent, and a cashier resuming their own
+>   basket writes none.
+
 ### Tender and finalize
 
 | Command | Args → Returns | Ph | Cap | A | E |
