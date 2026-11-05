@@ -1057,6 +1057,13 @@ pub enum PermissionError {
     /// observes those fields; it does not apply this business rule.
     #[error("user {0} is deactivated")]
     UserInactive(UserId),
+    /// The handle's approver is no longer live: deactivating an approver
+    /// revokes every handle they issued that has not been spent (1.6.4, the
+    /// owner's decision of 5 November 2026). Like `UserInactive`, the
+    /// command-handler gate decides it from the account, which the domain
+    /// never reads.
+    #[error("approver {0} is deactivated")]
+    ApproverInactive(UserId),
     /// The shell's last trusted authorization snapshot is too old.
     #[error("offline authorization window expired")]
     OfflineAuthExpired,
