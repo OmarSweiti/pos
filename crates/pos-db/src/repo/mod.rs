@@ -27,6 +27,7 @@
 
 pub mod approval;
 pub mod audit;
+pub mod checkout_operation;
 pub mod clock;
 pub mod outbox;
 pub mod parked_cart;
