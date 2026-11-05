@@ -640,3 +640,105 @@ fn a_stored_cart_this_build_cannot_read_is_refused_without_quoting_it() {
         "left as they were found"
     );
 }
+
+/// A cart is held from the moment the till opens it, so a basket never parked
+/// is still on disk after a restart, claimed, with every change saved
+/// (1.4.11, the owner's decision of 5 November 2026). It is held once, and
+/// only on a shift the register holds.
+#[test]
+fn a_working_cart_is_held_from_the_moment_it_opens() {
+    let mut world = World::new();
+    let session = nonce(1);
+    let opened = world.cart(0x40);
+
+    let tx = world.conn.unchecked_transaction().unwrap();
+    parked_carts(&world).hold(&tx, &opened, session).unwrap();
+    tx.commit().unwrap();
+    assert_eq!(rows(&world.conn), vec![active(session)]);
+    let (parked_at, expires_on): (String, String) = world
+        .conn
+        .query_row(
+            "SELECT parked_at, expires_on FROM parked_cart WHERE id = ?1",
+            [opened.id.as_uuid().as_bytes().as_slice()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        (parked_at, expires_on),
+        (opened.opened_at.to_iso8601(), DAY.to_owned()),
+        "a cart never parked began when it was opened, and expires with its business day"
+    );
+
+    // A line added is saved over the held snapshot.
+    let mut changed = opened.clone();
+    changed.lines = vec![world.line(0x41, world.item, 1_000, 2_000)];
+    let tx = world.conn.unchecked_transaction().unwrap();
+    parked_carts(&world)
+        .save_active(&tx, session, &changed)
+        .unwrap();
+    tx.commit().unwrap();
+
+    // The process dies; the next one finds the basket, as it was saved.
+    restart(&mut world);
+    let tx = world.conn.unchecked_transaction().unwrap();
+    let found = parked_carts(&world)
+        .reclaim_after_restart(&tx, RegisterId::from_uuid(uuid(REGISTER)), nonce(2))
+        .unwrap();
+    tx.commit().unwrap();
+    assert_eq!(found, vec![changed.clone()]);
+    assert_eq!(rows(&world.conn), vec![active(nonce(2))]);
+
+    // A cart is held once, and only on a shift this register holds.
+    let tx = world.conn.unchecked_transaction().unwrap();
+    assert!(matches!(
+        parked_carts(&world).hold(&tx, &opened, session),
+        Err(DbError::ParkedCartAlreadyParked(id)) if id == opened.id
+    ));
+    let mut elsewhere = world.cart(0x42);
+    elsewhere.shift_id = ShiftId::from_uuid(uuid(0x7F));
+    assert!(matches!(
+        parked_carts(&world).hold(&tx, &elsewhere, session),
+        Err(DbError::ParkedCartShiftUnknown(shift)) if shift == elsewhere.shift_id
+    ));
+}
+
+/// Only a basket with nothing in it is dropped, and only by the session that
+/// claims it. Whether it is empty is read from disk: a caller holding a stale,
+/// empty copy cannot drop a basket whose saved snapshot has lines.
+#[test]
+fn only_an_empty_working_cart_is_dropped() {
+    let world = World::new();
+    let session = nonce(1);
+    let opened = world.cart(0x40);
+    let tx = world.conn.unchecked_transaction().unwrap();
+    parked_carts(&world).hold(&tx, &opened, session).unwrap();
+    let mut changed = opened.clone();
+    changed.lines = vec![world.line(0x41, world.item, 1_000, 1_000)];
+    parked_carts(&world)
+        .save_active(&tx, session, &changed)
+        .unwrap();
+    tx.commit().unwrap();
+
+    let tx = world.conn.unchecked_transaction().unwrap();
+    assert!(matches!(
+        parked_carts(&world).discard(&tx, session, opened.id),
+        Err(DbError::ParkedCartNotEmpty(id)) if id == opened.id
+    ));
+    assert!(matches!(
+        parked_carts(&world).discard(&tx, nonce(9), opened.id),
+        Err(DbError::ParkedCartNotClaimed(id)) if id == opened.id
+    ));
+    drop(tx);
+    assert_eq!(rows(&world.conn), vec![active(session)]);
+
+    // Emptied again, it is dropped, and nothing of it is left.
+    let tx = world.conn.unchecked_transaction().unwrap();
+    parked_carts(&world)
+        .save_active(&tx, session, &opened)
+        .unwrap();
+    parked_carts(&world)
+        .discard(&tx, session, opened.id)
+        .unwrap();
+    tx.commit().unwrap();
+    assert_eq!(rows(&world.conn), Vec::new());
+}

@@ -11,13 +11,21 @@
 //!
 //! - **parked**: set aside, with no claim. [`ParkedCartRepository::park`]
 //!   writes it.
-//! - **active**: resumed and being worked on, claimed by one session's nonce.
-//!   [`ParkedCartRepository::resume`] claims it, and only that claim can
-//!   replace its working snapshot ([`ParkedCartRepository::save_active`]), set
-//!   it aside again ([`ParkedCartRepository::repark`]) or remove it with the
-//!   sale that completes it ([`ParkedCartRepository::consume_on_finalize`]).
-//! - **gone**: only once the sale it became is completed, in that sale's own
-//!   transaction. Nothing deletes the only durable copy of a basket earlier.
+//! - **active**: being worked on, claimed by one session's nonce. A cart is
+//!   active from the moment the till opens it
+//!   ([`ParkedCartRepository::hold`], 1.4.11), and again when
+//!   [`ParkedCartRepository::resume`] claims it. Only that claim can replace
+//!   its working snapshot ([`ParkedCartRepository::save_active`]), set it
+//!   aside ([`ParkedCartRepository::repark`]) or remove it with the sale that
+//!   completes it ([`ParkedCartRepository::consume_on_finalize`]).
+//! - **gone**: once the sale it became is completed, in that sale's own
+//!   transaction, or, holding no line at all, when the till drops it
+//!   ([`ParkedCartRepository::discard`]). Nothing deletes the only durable copy
+//!   of a basket with something in it.
+//!
+//! **Every working basket is on disk** (the owner's decision of 5 November
+//! 2026): the till holds a cart from the moment it opens and saves every
+//! change, so neither a crash nor a power cut loses one that was never parked.
 //!
 //! **A restart loses neither the basket nor the claim.** A claim committed
 //! before a process died is still `active` when the register starts again.
@@ -126,6 +134,92 @@ impl<'c> ParkedCartRepository<'c> {
             ],
         )?;
         Ok(cart.id)
+    }
+
+    /// Hold `cart`, which the till has just opened, as the working cart the
+    /// session `session_nonce` claims: an `active` row from its first moment,
+    /// so every change to it can be saved ([`Self::save_active`]) and a crash
+    /// leaves it for start-up to find ([`Self::reclaim_after_restart`]).
+    ///
+    /// A cart never parked records when it was opened as its `parked_at`, the
+    /// moment its basket began. It expires at the end of its shift's business
+    /// day, as a parked cart does.
+    ///
+    /// # Errors
+    ///
+    /// [`DbError::ParkedCartShiftUnknown`] for a shift this register does not
+    /// hold, [`DbError::ParkedCartAlreadyParked`] for a cart the register
+    /// already holds, and [`DbError::Sqlite`] if the write fails.
+    pub fn hold(
+        &self,
+        tx: &Transaction<'_>,
+        cart: &Cart,
+        session_nonce: Uuid,
+    ) -> Result<(), DbError> {
+        let expires_on = business_date_of(tx, cart.shift_id)?;
+        let exists: Option<i64> = tx
+            .query_row(
+                "SELECT 1 FROM parked_cart WHERE id = ?1",
+                [bytes(cart.id.as_uuid())],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if exists.is_some() {
+            return Err(DbError::ParkedCartAlreadyParked(cart.id));
+        }
+        tx.execute(
+            "INSERT INTO parked_cart
+               (id, register_id, cashier_id, label, snapshot, parked_at, expires_on,
+                state, session_nonce)
+             VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6, 'active', ?7)",
+            params![
+                bytes(cart.id.as_uuid()),
+                bytes(cart.register_id.as_uuid()),
+                bytes(cart.cashier_id.as_uuid()),
+                snapshot(cart)?,
+                cart.opened_at.to_iso8601(),
+                expires_on.to_iso(),
+                bytes(session_nonce),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Drop the working cart `id` that this session claimed, which holds no
+    /// line: a basket with nothing in it is not kept (the owner's decision of
+    /// 5 November 2026). A cart with lines is set aside with [`Self::repark`]
+    /// instead. The stored snapshot is what is checked, so a caller holding a
+    /// stale copy cannot drop a basket that has lines on disk.
+    ///
+    /// # Errors
+    ///
+    /// [`DbError::ParkedCartNotClaimed`] when this session holds no claim on
+    /// the cart, [`DbError::ParkedCartNotEmpty`] when it holds a line,
+    /// [`DbError::StoredParkedCartInvalid`] for a snapshot this build cannot
+    /// read, and [`DbError::Sqlite`] if a read or the write fails.
+    pub fn discard(
+        &self,
+        tx: &Transaction<'_>,
+        session_nonce: Uuid,
+        id: SaleId,
+    ) -> Result<(), DbError> {
+        let stored: Option<String> = tx
+            .query_row(
+                "SELECT snapshot FROM parked_cart
+                  WHERE id = ?1 AND state = 'active' AND session_nonce = ?2",
+                params![bytes(id.as_uuid()), bytes(session_nonce)],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let stored = stored.ok_or(DbError::ParkedCartNotClaimed(id))?;
+        if !read_snapshot(id, &stored)?.cart().lines.is_empty() {
+            return Err(DbError::ParkedCartNotEmpty(id));
+        }
+        let removed = tx.execute(
+            "DELETE FROM parked_cart WHERE id = ?1 AND state = 'active' AND session_nonce = ?2",
+            params![bytes(id.as_uuid()), bytes(session_nonce)],
+        )?;
+        claimed(removed, id)
     }
 
     /// Resume the parked cart `id` at `till`, on the till cashier's proof of
