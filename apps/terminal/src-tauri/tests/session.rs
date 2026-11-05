@@ -820,6 +820,74 @@ fn a_consumed_approval_is_refused_by_the_context() {
     assert_eq!(replayed.code, "approval_used");
 }
 
+/// 1.6.4, the owner's decision of 5 November 2026: deactivating an approver
+/// revokes every handle they issued that has not been spent.
+#[test]
+fn an_approval_is_revoked_when_its_approver_is_deactivated() {
+    let (_dir, register) = seeded();
+    sign_in(&register, &CASHIER);
+    let binding = ApprovalBinding {
+        entity_id: register.next_id(),
+        amount_minor: 1_250,
+        content_hash: None,
+    };
+    let id = approval(&register, &binding);
+    let use_it = || {
+        authorize::<cap::DiscountManual>(&register, Some(id), &binding, &discount_escalates(), at())
+    };
+    let manager = |change: &str| {
+        register.with_db(|conn| {
+            conn.execute(
+                &format!("UPDATE app_user SET {change} WHERE id = ?1"),
+                [MANAGER.id.as_slice()],
+            )
+            .unwrap();
+        });
+    };
+    // While the manager's account is live, their approval authorizes.
+    assert_eq!(use_it().unwrap().approver(), Some(user(&MANAGER)));
+
+    // Deactivated after approving, and before the handle expires.
+    manager("is_active = 0");
+    let revoked = refusal(use_it());
+    assert_eq!(revoked.code, "approval_revoked");
+    assert_eq!(
+        revoked.detail,
+        Some("the approver's account is no longer active")
+    );
+    // Deleted rather than deactivated, alike.
+    manager("is_active = 1, deleted_at = '2026-11-04T09:00:00.000Z'");
+    assert_eq!(refusal(use_it()).code, "approval_revoked");
+
+    // It is the approval that is refused, not the cashier: they stay signed
+    // in, a command that needs no approval still runs, and nothing was spent.
+    assert_eq!(
+        register.session().map(|session| session.user),
+        Some(user(&CASHIER))
+    );
+    authorize::<cap::SaleCreate>(
+        &register,
+        None,
+        &any_binding(),
+        &EscalationPolicy::empty(),
+        at(),
+    )
+    .unwrap();
+    // Only an approval that would authorize is refused. Where the policy does
+    // not escalate the discount, the id is ignored, as the domain ignores it.
+    let unescalated = authorize::<cap::DiscountManual>(
+        &register,
+        Some(id),
+        &binding,
+        &EscalationPolicy::empty(),
+        at(),
+    )
+    .unwrap();
+    assert_eq!(unescalated.approver(), None);
+    assert!(!register.with_db(|conn| ApprovalRepository::new(conn).is_consumed(id).unwrap()));
+    assert_eq!(audited(&register, "auth.logout"), 0);
+}
+
 #[test]
 fn the_webview_sees_who_is_signed_in_and_nothing_more() {
     let (_dir, register) = seeded();

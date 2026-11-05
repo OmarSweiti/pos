@@ -2678,6 +2678,9 @@ pub enum PermissionError {
     #[error("{0} requires manager approval")]              EscalationRequired(&'static str),
     #[error("self-approval is not permitted for {0}")]     SelfApprovalBanned(&'static str), // E.52
     #[error("user {0} is deactivated")]                    UserInactive(UserId),
+    // The owner's decision of 5 November 2026 (1.6.4): an approver's deactivation
+    // revokes every unspent handle they issued. The shell's gate decides it.
+    #[error("approver {0} is deactivated")]                ApproverInactive(UserId),
     #[error("offline authorization window expired")]       OfflineAuthExpired,               // E.55
     #[error("approval authorises {0}, not {1}")]           ApprovalCapabilityMismatch(String, &'static str),
     #[error("approval was issued to {0}, not {1}")]        ApprovalActorMismatch(UserId, UserId),

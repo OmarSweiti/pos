@@ -204,7 +204,9 @@ database in the shell, holds the signed-in user and their role's grants, and res
 > context adds `permission_denied`, `permission_outside_limit`, `approval_required`,
 > `approval_self`, `approval_mismatch` (with a detail naming the field), `approval_unknown`,
 > `approval_used`, `approval_expired`, `approval_not_yet_valid`, `approval_unreadable` and
-> `offline_auth_expired`, one for each `PermissionError`.
+> `offline_auth_expired`, one for each `PermissionError`. Since 1.6.4 closed (the owner's decision of
+> 5 November 2026), `approval_revoked`, with the detail `the approver's account is no longer
+> active`, refuses a handle whose approver has been deactivated or deleted since approving.
 
 `auth_verify_pin` is the manager-approval modal's backing call, and its arguments identify the
 binding. For a prepared intent, the Rust handler loads the row and recomputes its canonical
