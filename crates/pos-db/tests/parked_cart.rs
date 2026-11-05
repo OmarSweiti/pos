@@ -12,7 +12,7 @@ mod sale_world;
 use pos_db::DbError;
 use pos_db::fixtures::registered_chain::Member;
 use pos_db::repo::audit::AuditRepository;
-use pos_db::repo::parked_cart::{ParkedCartRepository, Resumed};
+use pos_db::repo::parked_cart::{ParkedCartRepository, Resumed, SetAside};
 use pos_domain::cart::{ParkedCart, park, set_qty};
 use pos_domain::{
     ApprovalBinding, Authorized, CartContext, CartError, Currency, EscalationPolicy, GrantSet,
@@ -741,4 +741,64 @@ fn only_an_empty_working_cart_is_dropped() {
         .unwrap();
     tx.commit().unwrap();
     assert_eq!(rows(&world.conn), Vec::new());
+}
+
+/// A working cart set aside goes to the parked list if it holds a line,
+/// unlabelled, unclaimed and under its cashier, and is dropped if it holds
+/// none. Only the session that claims it can set it aside, and a stale, empty
+/// copy never drops the basket saved on disk.
+#[test]
+fn a_working_cart_is_set_aside_parked_or_dropped() {
+    let world = World::new();
+    let session = nonce(1);
+    let mut basket = world.cart(0x50);
+    let empty = world.cart(0x52);
+    let tx = world.conn.unchecked_transaction().unwrap();
+    parked_carts(&world).hold(&tx, &basket, session).unwrap();
+    parked_carts(&world).hold(&tx, &empty, session).unwrap();
+    basket.lines = vec![world.line(0x51, world.item, 1_000, 1_000)];
+    parked_carts(&world)
+        .save_active(&tx, session, &basket)
+        .unwrap();
+    tx.commit().unwrap();
+
+    let tx = world.conn.unchecked_transaction().unwrap();
+    let mut stale = basket.clone();
+    stale.lines.clear();
+    assert!(matches!(
+        parked_carts(&world).set_aside(&tx, session, &stale, at()),
+        Err(DbError::ParkedCartNotEmpty(id)) if id == basket.id
+    ));
+    assert!(matches!(
+        parked_carts(&world).set_aside(&tx, nonce(9), &basket, at()),
+        Err(DbError::ParkedCartNotClaimed(id)) if id == basket.id
+    ));
+    drop(tx);
+    assert_eq!(rows(&world.conn), vec![active(session), active(session)]);
+
+    let tx = world.conn.unchecked_transaction().unwrap();
+    assert_eq!(
+        parked_carts(&world)
+            .set_aside(&tx, session, &basket, at())
+            .unwrap(),
+        SetAside::Parked
+    );
+    assert_eq!(
+        parked_carts(&world)
+            .set_aside(&tx, session, &empty, at())
+            .unwrap(),
+        SetAside::Dropped
+    );
+    tx.commit().unwrap();
+    assert_eq!(rows(&world.conn), vec![parked_row()]);
+    let listed = parked_carts(&world)
+        .parked(RegisterId::from_uuid(uuid(REGISTER)), day())
+        .unwrap();
+    let entry = listed.first().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        (entry.id, entry.label.as_deref(), entry.parked_by, entry.parked_at),
+        (basket.id, None, basket.cashier_id, at())
+    );
+    assert_eq!(entry.cart.cart(), &basket);
 }

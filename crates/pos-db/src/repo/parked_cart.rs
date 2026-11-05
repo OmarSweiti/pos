@@ -26,6 +26,9 @@
 //! **Every working basket is on disk** (the owner's decision of 5 November
 //! 2026): the till holds a cart from the moment it opens and saves every
 //! change, so neither a crash nor a power cut loses one that was never parked.
+//! When the till lets go of it without completing it (a sign-out, a crash
+//! found at start-up, or a resume onto a till already holding a basket),
+//! [`ParkedCartRepository::set_aside`] parks it, or drops it if it is empty.
 //!
 //! **A restart loses neither the basket nor the claim.** A claim committed
 //! before a process died is still `active` when the register starts again.
@@ -42,7 +45,7 @@
 //! refused, and it is listed among the expired carts instead.
 
 use pos_domain::cap;
-use pos_domain::cart::{ParkedCart, resume};
+use pos_domain::cart::{ParkedCart, park, resume};
 use pos_domain::{
     AuditIntent, Authorized, BusinessDate, Cart, CartContext, RegisterId, SaleId, ShiftId,
     Timestamp, UserId,
@@ -60,6 +63,15 @@ use crate::DbError;
 pub struct Resumed {
     pub cart: Cart,
     pub audit: Option<AuditIntent>,
+}
+
+/// What [`ParkedCartRepository::set_aside`] did with a working cart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetAside {
+    /// It held a line, and is in the parked list.
+    Parked,
+    /// It held none, and is gone.
+    Dropped,
 }
 
 /// A parked cart as the register lists it.
@@ -220,6 +232,38 @@ impl<'c> ParkedCartRepository<'c> {
             params![bytes(id.as_uuid()), bytes(session_nonce)],
         )?;
         claimed(removed, id)
+    }
+
+    /// Set aside the working cart this session claimed, as the till holds it
+    /// now, at `at`: a basket with lines goes to the parked list, with no
+    /// label and under its cashier ([`Self::repark`]), and one with nothing in
+    /// it is dropped ([`Self::discard`]). A sign-out, a crash found at start-up
+    /// and a resume onto a till already holding a basket each set the till's
+    /// basket aside this way (the owner's decisions of 5 and 6 November 2026).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::repark`] and [`Self::discard`]. A till's copy with no line
+    /// over a stored snapshot that has one is
+    /// [`DbError::ParkedCartNotEmpty`]: the basket on disk is never dropped on
+    /// a stale copy's word.
+    pub fn set_aside(
+        &self,
+        tx: &Transaction<'_>,
+        session_nonce: Uuid,
+        cart: &Cart,
+        at: Timestamp,
+    ) -> Result<SetAside, DbError> {
+        match park(cart.clone()) {
+            Ok(parked) => {
+                self.repark(tx, session_nonce, &parked, None, at)?;
+                Ok(SetAside::Parked)
+            }
+            Err(_) => {
+                self.discard(tx, session_nonce, cart.id)?;
+                Ok(SetAside::Dropped)
+            }
+        }
     }
 
     /// Resume the parked cart `id` at `till`, on the till cashier's proof of
