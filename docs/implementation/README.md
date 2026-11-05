@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **74 of 123 executable microsteps fully complete (~60%)**: `1.1.0`
+Phase 1 has **75 of 123 executable microsteps fully complete (~61%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -186,7 +186,10 @@ with its key, for the register this install is, or the till kept closed and the 
 crash-left session closed and parked carts reclaimed before the first command; a PIN sign-in under
 the attempt policy, recorded and audited, holding the grants of the user's one role at this store;
 and one command context that refuses a command with no one signed in, signs out a deactivated user,
-and resolves a stored approval by id and holds it to its binding).
+and resolves a stored approval by id and holds it to its binding), and `1.6.4` (`Authorized<C>` and
+the one-use `ApprovalHandle` bound to one actor, operation and amount, stored and consumed in the
+effect's transaction and resolved by the command context, and, as the owner decided on 5 November,
+refused once its approver is deactivated).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
@@ -226,16 +229,17 @@ escalated above a threshold and always audited; its terminal half needs 1.4.11's
 department that can be stored, which #330 asks about. Group 1.6's `1.6.2` is **partially delivered**:
 PINs are hashed under a reviewed Argon2id profile, wrong PINs wait longer and then lock a user out
 until a manager releases them, as the owner decided, and the count survives a restart; the reset
-command can now be written through 1.8.2c's command context. `1.6.3` is closed: its seed comparison landed against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
+command can now be written through 1.8.2c's command context. `1.6.3` is closed: its seed comparison landed against `0004`'s 128 rows. `1.6.4` is **complete**: `Authorized<C>`,
 `authorize`, `ApprovalHandle` and `EscalationPolicy` are complete in `pos-domain`, with the two
 compile-fail proofs that a token cannot be forged or substituted across capabilities. Its
 persistence half now stores, validates, reloads and one-use consumes a handle through a
 caller-owned transaction, with restart and rollback coverage; the additional compile-fail proof
 prevents deserialization from bypassing that validated seam. Its terminal half landed with 1.8.2c:
-the command context resolves a stored handle by id and holds it to its binding. What remains is the
-`⚠️ OPEN` question in its section, whether deactivating an approver revokes a handle they already
-issued. It is not **blocked on the merchant legal name or TIN**, which instead gate store
-provisioning and the issuing of a valid tax receipt. `1.3.2`, the first code step on the phase's
+the command context resolves a stored handle by id and holds it to its binding. Its last `⚠️ OPEN`
+question was answered by the owner on 5 November: deactivating an approver revokes every handle they
+issued that has not been spent, and the context refuses one as `approval_revoked`. Group 1.6 is not
+**blocked on the merchant legal name or TIN**, which instead gate store provisioning and the issuing
+of a valid tax receipt. `1.3.2`, the first code step on the phase's
 longest critical path, has landed. It was waiting on which zero-rating reasons the GST return
 distinguishes; the owner decided on 26 October that, while it is unknown whether the merchant makes
 such supplies at all, every supply other than domestic is refused

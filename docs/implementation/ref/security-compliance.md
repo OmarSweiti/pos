@@ -368,6 +368,7 @@ The rules that make it a proof rather than a bearer note:
 7. **Amount and reason are always present.** A non-money operation binds `amount_minor = 0`; zero is an exact value, never a wildcard. An optional amount or reason would let a handle omit the very field the effect must match.
 8. **Actor and approver always differ on a handle path.** `ban_self_approval` determines whether an operation needs escalation; it never permits a self-issued handle once that path is selected.
 9. **Prepared intents freeze when approval is issued.** The database refuses `UPDATE` on a matching `product_quick_add_request` or `stock_adjustment_request` once an approval references it, while the independent hash check catches corruption or a bypassed trigger. The webview supplies the visible fields, never the hash.
+10. **An approver's deactivation revokes it.** This is the owner's decision of 5 November 2026, 1.6.4's last item. When a handle would authorize, the command context reads the approver's account and refuses `approval_revoked` unless the account is live: `is_active = 1` and no `deleted_at`. The refusal writes nothing, so the handle stays unspent and expires on its own. A register learns of a deactivation made elsewhere when it syncs; until then, the handle's expiry in seconds bounds the exposure.
 
 **Tests:** `a_handle_used_twice_is_refused` · `an_altered_amount_is_refused` · `a_different_sale_is_refused` · `a_different_actor_is_refused` · `a_consumed_handle_is_still_consumed_after_restart` · `an_expired_handle_is_refused` · `the_effect_and_the_consumption_commit_together_or_not_at_all` · `altering_a_stock_request_after_approval_is_refused` · `altering_a_quick_add_request_after_approval_is_refused`.
 
@@ -703,7 +704,7 @@ The threats worth designing against, in the order they actually occur:
 | **Cashier pockets cash, opens drawer without a sale** | software-commanded drawer opens counted on X/Z, no-sale report, blind close, over/short trend (E.35) |
 | **Cashier refunds to their own card** | refunds route to the *original* card; cash-for-card is a separate capability with a threshold |
 | **Serial refund abuse across stores** | connected remaining-refundable check; offline window disclosed (E.31) |
-| **Manager approval reused or re-aimed** | one-use `ApprovalHandle` bound to actor, entity and amount, consumed in the effect's transaction (§5) |
+| **Manager approval reused or re-aimed** | one-use `ApprovalHandle` bound to actor, entity and amount, consumed in the effect's transaction, and refused once its approver is deactivated (§5, rule 10) |
 | **Terminated employee returns** | deactivation syncs down; signed offline authorization lease that fails closed on privileged capabilities (E.55) |
 | **PIN brute force on a shared device** | Argon2id floors, persisted attempt limiting and lockout, longer manager credentials (§5) |
 | **Stolen register** | SQLCipher at rest and full-disk encryption give cold-disk protection; a powered-on, logged-in register's key is retrievable by anything running as that user, so the control is the kiosk account baseline (§6a) |
