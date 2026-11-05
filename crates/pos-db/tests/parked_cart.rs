@@ -797,7 +797,12 @@ fn a_working_cart_is_set_aside_parked_or_dropped() {
     let entry = listed.first().unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(
-        (entry.id, entry.label.as_deref(), entry.parked_by, entry.parked_at),
+        (
+            entry.id,
+            entry.label.as_deref(),
+            entry.parked_by,
+            entry.parked_at
+        ),
         (basket.id, None, basket.cashier_id, at())
     );
     assert_eq!(entry.cart.cart(), &basket);
