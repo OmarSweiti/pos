@@ -28,7 +28,7 @@ use pos_domain::{
     PriceOverride, PricingSettings, ProductId, Qty, RegisterId, Role, SaleId, SaleLineId,
     SeqIdSource, ShiftId, StockEventId, StockEventKind, StockSource, StoreId, StoreTaxProfile,
     SupplyDestination, SupplyTaxContext, TaxBands, TaxCategoryId, Tender, TenderId, TenderState,
-    Timestamp, UnitOfMeasure, UserId, authorize, cap, remaining_due,
+    Tendering, Timestamp, UnitOfMeasure, UserId, authorize, cap, remaining_due,
 };
 use rusqlite::{Connection, Transaction, params};
 use serde_json::json;
@@ -196,15 +196,9 @@ impl World {
         }
     }
 
-    /// `cart` priced under its store's pack and policy, paid for with
-    /// `tenders` and then cash for whatever is left, and completed.
-    pub fn complete(
-        &self,
-        cart: Cart,
-        tenders: Vec<Tender>,
-        cash: i64,
-        receipt: &str,
-    ) -> CompletedSale {
+    /// `cart` priced under its store's pack and policy, and being paid for,
+    /// with no tender taken yet.
+    pub fn tendering(&self, cart: Cart) -> Tendering {
         let policy = TaxPolicyRepository::new(&self.conn)
             .approved_for_store(self.store())
             .unwrap();
@@ -225,7 +219,19 @@ impl World {
             step_minor: policy.cash_round_step_minor(),
             direction: policy.cash_round_direction(),
         };
-        let mut t = begin_tender(cart, &bands, &settings, cash_policy).unwrap();
+        begin_tender(cart, &bands, &settings, cash_policy).unwrap()
+    }
+
+    /// `cart` priced under its store's pack and policy, paid for with
+    /// `tenders` and then cash for whatever is left, and completed.
+    pub fn complete(
+        &self,
+        cart: Cart,
+        tenders: Vec<Tender>,
+        cash: i64,
+        receipt: &str,
+    ) -> CompletedSale {
+        let mut t = self.tendering(cart);
         for tender in tenders {
             t = add_tender(t, tender).unwrap();
         }
