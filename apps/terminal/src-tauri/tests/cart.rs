@@ -1,5 +1,5 @@
-//! Building a basket through the cart commands (microstep 1.4.11, its first
-//! part).
+//! Building a basket through the cart commands, and setting it aside and
+//! bringing it back (microstep 1.4.11, its first two parts).
 //!
 //! Every fixture is a fresh register file built through `pos_db::open`, the
 //! registered migration chain: the reference chain's store, registered for
@@ -22,13 +22,14 @@ use pos_db::repo::trade_scale::{ENTITY, TradeScaleRepository, VerificationEvent}
 use pos_db::seed::opening_stock::{OpeningStockLoad, OpeningStockRow, load_opening_stock};
 use pos_domain::{
     Barcode, BarcodeKind, BusinessDate, Cart, ClockConfidence, Currency, FixedClock, Money,
-    Product, ProductId, Qty, RegisterId, RegulatedSaleForm, SaleForm, SeqIdSource, StoreId,
-    TaxCategoryId, Timestamp, UnitOfMeasure, VerificationState,
+    Product, ProductId, Qty, RegisterId, RegulatedSaleForm, SaleForm, SaleId, SeqIdSource, StoreId,
+    TaxCategoryId, Timestamp, UnitOfMeasure, UserId, VerificationState,
 };
 use rusqlite::{Connection, params};
 use terminal_lib::commands::auth::{login_pin, logout};
 use terminal_lib::commands::cart::{
-    CartSnapshot, add_product, add_scan, answer_age, current, open_cart,
+    CartSnapshot, PARK_LABEL_MAX_CHARS, ParkedRef, add_product, add_scan, answer_age, current,
+    list_parked, open_cart, park_cart, resume_cart,
 };
 use terminal_lib::ipc::IpcError;
 use terminal_lib::state::{DATABASE_FILE, DEVICE_ID_FILE, Register, V7Ids};
@@ -43,6 +44,10 @@ const SHIFT_ID: [u8; 16] = [0x5F; 16];
 const CASHIER_ID: [u8; 16] = [0xC1; 16];
 const CASHIER_CODE: &str = "C-100";
 const CASHIER_PIN: &str = "482916";
+const SECOND_ID: [u8; 16] = [0xC2; 16];
+const SECOND_CODE: &str = "C-200";
+const OWNER_ID: [u8; 16] = [0x0E; 16];
+const OWNER_CODE: &str = "O-100";
 
 const OIL: u128 = 1;
 const CHEESE: u128 = 2;
@@ -304,6 +309,41 @@ fn shop() -> (tempfile::TempDir, Register) {
     let register = open(dir.path());
     login_pin(&register, CASHIER_CODE, CASHIER_PIN).unwrap();
     (dir, register)
+}
+
+/// A second synthetic account in the cashier's organisation, under `role`,
+/// with the same synthetic PIN.
+fn add_staff(register: &Register, id: [u8; 16], code: &str, name: &str, role: &str) {
+    register.with_db(|conn| {
+        conn.execute(
+            "INSERT INTO app_user (id, org_id, code, display_name, pin_hash, pin_set_at)
+             SELECT ?1, org_id, ?2, ?3, ?4, ?5 FROM app_user WHERE id = ?6",
+            params![
+                id.as_slice(),
+                code,
+                name,
+                pin_hash(),
+                AT,
+                CASHIER_ID.as_slice()
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO user_role (user_id, role_id, store_id)
+             SELECT ?1, id, NULL FROM role WHERE code = ?2",
+            params![id.as_slice(), role],
+        )
+        .unwrap();
+    });
+}
+
+/// Every parked-cart row, as `(state, its cart's id)`, in the order `saved`
+/// reads them.
+fn states(register: &Register) -> Vec<(String, SaleId)> {
+    saved(register)
+        .into_iter()
+        .map(|(state, cart)| (state, cart.id))
+        .collect()
 }
 
 fn refusal<T: std::fmt::Debug>(result: Result<T, IpcError>) -> IpcError {
@@ -775,5 +815,275 @@ fn a_deactivated_cashier_is_signed_out_and_their_basket_set_aside() {
     assert_eq!(
         current(&register).map_err(|refused| refused.code),
         Err("not_signed_in")
+    );
+}
+
+// ── 1.4.11, its second part: setting a basket aside and bringing it back ──
+
+#[test]
+fn a_parked_basket_leaves_the_till_free_and_comes_back_as_it_was() {
+    let (_dir, register) = shop();
+    open_cart(&register).unwrap();
+    add_product(&register, product_id(OIL), Some(2_000)).unwrap();
+    let basket = add_product(&register, product_id(BREAD), None).unwrap();
+
+    // Parked under a label, the basket leaves the till, and the till is free
+    // for the next customer.
+    let parked = park_cart(&register, Some("  Blue bag  ")).unwrap();
+    assert_eq!(
+        parked,
+        ParkedRef {
+            parked_id: basket.sale_id,
+            label: Some("Blue bag".to_owned()),
+            parked_by: UserId::from_uuid(Uuid::from_bytes(CASHIER_ID)),
+            parked_by_name: "Synthetic Cashier".to_owned(),
+            parked_at: at(),
+            line_count: 2,
+            currency: "JOD",
+            total_minor: basket.total_minor,
+        }
+    );
+    assert_eq!(current(&register).unwrap(), None);
+    assert_eq!(
+        states(&register),
+        vec![("parked".to_owned(), basket.sale_id)]
+    );
+    assert_eq!(list_parked(&register).unwrap(), vec![parked]);
+
+    // A resume onto an empty cart drops it. The basket comes back exactly as
+    // it was shown, and a cashier resuming their own writes nothing.
+    let empty = open_cart(&register).unwrap();
+    assert_eq!(resume_cart(&register, basket.sale_id).unwrap(), basket);
+    assert_eq!(current(&register).unwrap(), Some(basket.clone()));
+    assert_eq!(
+        states(&register),
+        vec![("active".to_owned(), basket.sale_id)]
+    );
+    assert!(list_parked(&register).unwrap().is_empty());
+    assert!(
+        saved(&register)
+            .iter()
+            .all(|(_, cart)| cart.id != empty.sale_id)
+    );
+    // Resuming the basket the till holds answers with it.
+    assert_eq!(resume_cart(&register, basket.sale_id).unwrap(), basket);
+
+    // A resume onto a basket with lines parks that basket, in the same step.
+    park_cart(&register, None).unwrap();
+    open_cart(&register).unwrap();
+    let other = add_product(&register, product_id(OIL), None).unwrap();
+    assert_eq!(resume_cart(&register, basket.sale_id).unwrap(), basket);
+    let listed = list_parked(&register).unwrap();
+    assert_eq!(listed.len(), 1);
+    let waiting = listed.first().unwrap();
+    assert_eq!(
+        (
+            waiting.parked_id,
+            waiting.label.as_deref(),
+            waiting.line_count,
+            waiting.total_minor
+        ),
+        (other.sale_id, None, 1, other.total_minor)
+    );
+    assert!(audited(&register, "sale.resume").is_empty());
+}
+
+#[test]
+fn parking_names_what_it_refuses_and_changes_nothing() {
+    let (_dir, register) = shop();
+    assert_eq!(refusal(park_cart(&register, None)).code, "cart_not_open");
+    let empty = open_cart(&register).unwrap();
+    assert_eq!(refusal(park_cart(&register, None)).code, "nothing_to_park");
+    assert_eq!(current(&register).unwrap(), Some(empty));
+
+    let basket = add_product(&register, product_id(OIL), None).unwrap();
+    let too_long = "ب".repeat(PARK_LABEL_MAX_CHARS + 1);
+    for label in [too_long.as_str(), "Blue\nbag", "Blue\u{7}bag"] {
+        assert_eq!(
+            refusal(park_cart(&register, Some(label))).code,
+            "park_label_invalid"
+        );
+    }
+    assert_eq!(current(&register).unwrap(), Some(basket.clone()));
+    assert_eq!(
+        states(&register),
+        vec![("active".to_owned(), basket.sale_id)]
+    );
+
+    // At the limit a label is taken whole, counted in characters in any
+    // script; a blank one is no label.
+    let longest = "ب".repeat(PARK_LABEL_MAX_CHARS);
+    assert_eq!(
+        park_cart(&register, Some(&longest)).unwrap().label,
+        Some(longest)
+    );
+    open_cart(&register).unwrap();
+    add_product(&register, product_id(OIL), None).unwrap();
+    assert_eq!(park_cart(&register, Some("   ")).unwrap().label, None);
+}
+
+#[test]
+fn another_cashiers_basket_is_resumed_on_the_record() {
+    let (_dir, register) = shop();
+    add_staff(
+        &register,
+        SECOND_ID,
+        SECOND_CODE,
+        "Synthetic Second Cashier",
+        "cashier",
+    );
+    open_cart(&register).unwrap();
+    add_product(&register, product_id(OIL), None).unwrap();
+    let basket = add_product(&register, product_id(TOBACCO), None).unwrap();
+    assert_eq!(basket.awaiting_age.len(), 1);
+    // The first cashier signs out, which sets the basket aside.
+    logout(&register).unwrap();
+
+    login_pin(&register, SECOND_CODE, CASHIER_PIN).unwrap();
+    let listed = list_parked(&register).unwrap();
+    assert_eq!(listed.len(), 1);
+    let waiting = listed.first().unwrap();
+    assert_eq!(
+        (
+            waiting.parked_id,
+            waiting.parked_by_name.as_str(),
+            waiting.line_count
+        ),
+        (basket.sale_id, "Synthetic Cashier", 2)
+    );
+
+    // The second cashier takes it over: the basket comes back as it was, its
+    // age gate still waiting, and is theirs from now on.
+    assert_eq!(resume_cart(&register, basket.sale_id).unwrap(), basket);
+    let rows = saved(&register);
+    let (state, cart) = rows.first().unwrap();
+    assert_eq!(
+        (state.as_str(), cart.cashier_id),
+        ("active", UserId::from_uuid(Uuid::from_bytes(SECOND_ID)))
+    );
+
+    // The handover is on the record, naming who parked it and what it held,
+    // and went out with its envelope (I-9).
+    let takeovers = audited(&register, "sale.resume");
+    assert_eq!(takeovers.len(), 1);
+    let payload = takeovers.first().unwrap();
+    assert_eq!(
+        *field(payload, "parked_by"),
+        Uuid::from_bytes(CASHIER_ID).to_string()
+    );
+    assert_eq!(*field(payload, "line_count"), 2);
+    let (actor, entity_id, enveloped): (Vec<u8>, Vec<u8>, i64) = register.with_db(|conn| {
+        conn.query_row(
+            "SELECT a.actor_id, a.entity_id,
+                    EXISTS (SELECT 1 FROM fact_commit_member m WHERE m.entity_id = a.id)
+               FROM audit_log a WHERE a.action = 'sale.resume'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap()
+    });
+    assert_eq!(actor, SECOND_ID.to_vec());
+    assert_eq!(entity_id, basket.sale_id.as_uuid().as_bytes().to_vec());
+    assert_eq!(enveloped, 1);
+}
+
+#[test]
+fn a_refused_resume_leaves_both_baskets_where_they_were() {
+    let (_dir, register) = shop();
+    open_cart(&register).unwrap();
+    let parked = add_product(&register, product_id(OIL), None).unwrap();
+    park_cart(&register, None).unwrap();
+    open_cart(&register).unwrap();
+    let working = add_product(&register, product_id(BREAD), None).unwrap();
+    let before = saved(&register);
+
+    // No such basket.
+    let unknown = SaleId::from_uuid(Uuid::from_u128(0xBAD));
+    assert_eq!(
+        refusal(resume_cart(&register, unknown)).code,
+        "parked_cart_unknown"
+    );
+    // A basket another till is working on.
+    let claim = |state: &str, nonce: Option<[u8; 16]>| {
+        register.with_db(|conn| {
+            conn.execute(
+                "UPDATE parked_cart SET state = ?1, session_nonce = ?2 WHERE id = ?3",
+                params![
+                    state,
+                    nonce.map(|n| n.to_vec()),
+                    parked.sale_id.as_uuid().as_bytes().as_slice()
+                ],
+            )
+            .unwrap();
+        });
+    };
+    claim("active", Some([0xEE; 16]));
+    assert_eq!(
+        refusal(resume_cart(&register, parked.sale_id)).code,
+        "parked_cart_claimed"
+    );
+    claim("parked", None);
+    // A basket parked on an earlier business day has expired, and is no
+    // longer offered.
+    register.with_db(|conn| {
+        conn.execute(
+            "UPDATE parked_cart SET expires_on = '2026-11-04' WHERE id = ?1",
+            [parked.sale_id.as_uuid().as_bytes().as_slice()],
+        )
+        .unwrap();
+    });
+    assert_eq!(
+        refusal(resume_cart(&register, parked.sale_id)).code,
+        "parked_cart_expired"
+    );
+    assert!(list_parked(&register).unwrap().is_empty());
+
+    // Each refusal left the till's basket on the till, unparked, and the
+    // parked one where it was.
+    assert_eq!(current(&register).unwrap(), Some(working));
+    let after = saved(&register);
+    assert_eq!(after.len(), before.len());
+    for ((state, cart), (was_state, was)) in after.iter().zip(&before) {
+        assert_eq!(
+            (state, cart.id, &cart.lines),
+            (was_state, was.id, &was.lines)
+        );
+    }
+    assert!(audited(&register, "sale.resume").is_empty());
+}
+
+#[test]
+fn parking_and_resuming_need_a_shift_and_a_role_that_sells() {
+    // Outside a shift nothing can be listed or resumed.
+    let dir = tempfile::tempdir().unwrap();
+    seed(dir.path(), false);
+    let register = open(dir.path());
+    login_pin(&register, CASHIER_CODE, CASHIER_PIN).unwrap();
+    assert_eq!(refusal(list_parked(&register)).code, "shift_not_open");
+    let anything = SaleId::from_uuid(Uuid::from_u128(0xBAD));
+    assert_eq!(
+        refusal(resume_cart(&register, anything)).code,
+        "shift_not_open"
+    );
+
+    // An owner sells nothing, so parks and resumes nothing (§8.2's grid).
+    let (_dir, register) = shop();
+    open_cart(&register).unwrap();
+    let basket = add_product(&register, product_id(OIL), None).unwrap();
+    logout(&register).unwrap();
+    add_staff(&register, OWNER_ID, OWNER_CODE, "Synthetic Owner", "owner");
+    login_pin(&register, OWNER_CODE, CASHIER_PIN).unwrap();
+    assert_eq!(
+        refusal(park_cart(&register, None)).code,
+        "permission_denied"
+    );
+    assert_eq!(refusal(list_parked(&register)).code, "permission_denied");
+    assert_eq!(
+        refusal(resume_cart(&register, basket.sale_id)).code,
+        "permission_denied"
+    );
+    assert_eq!(
+        states(&register),
+        vec![("parked".to_owned(), basket.sale_id)]
     );
 }
