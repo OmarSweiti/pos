@@ -4,6 +4,7 @@
 //! in `ipc::registry::COMMANDS`.
 
 pub mod auth;
+pub mod cart;
 
 use pos_db::DbError;
 use pos_db::repo::audit::AuditRepository;
