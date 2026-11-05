@@ -23,7 +23,7 @@ use terminal_lib::REGISTERED;
 use terminal_lib::ipc::registry::{
     APPROVAL_ARGUMENT, Access, AmountBindingSpec, ApprovalBindingSpec, ApprovalPredicate,
     ApprovalRequirement, Arg, COMMANDS, CommandSpec, ContentBindingSpec, EntityBindingSpec,
-    Presence, ReasonBindingSpec, RegistryError, check,
+    PRICE_ARGUMENTS, Presence, ReasonBindingSpec, RegistryError, carries_money, check,
 };
 use uuid::Uuid;
 
@@ -568,6 +568,274 @@ fn a_privileged_fixture_without_a_binding_is_refused() {
             vec![refusal]
         );
     }
+}
+
+// ── The handlers' own signatures (1.4.11) ───────────────────────────────────
+
+/// The arguments the handler `command` takes from the webview, read from its
+/// signature in the shell's source: every parameter but those Tauri injects,
+/// and whether a call may leave it out. Sorted by name, because Tauri finds
+/// each argument by its name. `None` when no `#[tauri::command]` function has
+/// that name.
+fn handler_schema(source: &[(PathBuf, String)], command: &str) -> Option<Vec<(String, Presence)>> {
+    let mut found = Vec::new();
+    for (_, code) in source {
+        for after in code.split("#[tauri::command").skip(1) {
+            let Some((_, after_fn)) = after.split_once("fn ") else {
+                continue;
+            };
+            let Some((name, params)) = after_fn.split_once('(') else {
+                continue;
+            };
+            if name.trim() == command {
+                found.push(webview_arguments(params));
+            }
+        }
+    }
+    assert!(found.len() <= 1, "{command} is defined as a command twice");
+    found.pop()
+}
+
+/// The parameters of a signature whose text starts after its `(`, as
+/// `(name, presence)`, without the ones Tauri injects.
+fn webview_arguments(params: &str) -> Vec<(String, Presence)> {
+    let mut depth = 0_i32;
+    let mut current = String::new();
+    let mut each = Vec::new();
+    for c in params.chars() {
+        match c {
+            ')' if depth == 0 => break,
+            '(' | '<' | '[' => depth += 1,
+            ')' | '>' | ']' => depth -= 1,
+            ',' if depth == 0 => {
+                each.push(std::mem::take(&mut current));
+                continue;
+            }
+            _ => {}
+        }
+        current.push(c);
+    }
+    each.push(current);
+    let mut schema: Vec<(String, Presence)> = each
+        .iter()
+        .filter_map(|param| param.split_once(':'))
+        .map(|(name, ty)| (name.trim().trim_start_matches("mut ").to_owned(), ty.trim()))
+        .filter(|(_, ty)| !injected(ty))
+        .map(|(name, ty)| {
+            let presence = if ty.starts_with("Option<") {
+                Presence::Optional
+            } else {
+                Presence::Required
+            };
+            (name, presence)
+        })
+        .collect();
+    schema.sort_by(|a, b| a.0.cmp(&b.0));
+    schema
+}
+
+/// A parameter Tauri supplies itself, which the webview never sends.
+fn injected(ty: &str) -> bool {
+    let ty = ty.trim_start_matches("tauri::");
+    ["State<", "AppHandle", "Window", "Webview"]
+        .iter()
+        .any(|injected| ty.starts_with(injected))
+}
+
+/// What a row declares, in the same form.
+fn declared_schema(row: &CommandSpec) -> Vec<(String, Presence)> {
+    let mut schema: Vec<(String, Presence)> = row
+        .args
+        .iter()
+        .map(|arg| (arg.name.to_owned(), arg.presence))
+        .collect();
+    schema.sort_by(|a, b| a.0.cmp(&b.0));
+    schema
+}
+
+fn registered_names() -> Vec<&'static str> {
+    REGISTERED
+        .iter()
+        .map(|path| path.rsplit("::").next().unwrap().trim())
+        .collect()
+}
+
+/// Every registered command's row declares exactly the arguments its handler
+/// takes, as its signature reads, with the presence its type gives. A row is
+/// what the approval and price checks read, so a row that differs from its
+/// handler would check arguments the webview cannot send and miss ones it
+/// can (1.6.7's note, closed here).
+#[test]
+fn every_command_declares_the_arguments_its_handler_takes() {
+    let source = shell_source();
+    for name in registered_names() {
+        let row = COMMANDS.iter().find(|row| row.name == name).unwrap();
+        assert_eq!(
+            handler_schema(&source, name),
+            Some(declared_schema(row)),
+            "{name}'s row and its handler disagree"
+        );
+    }
+
+    // The reader leaves out what Tauri injects, reads `Option<_>` as
+    // optional, and is not misled by a comma inside a type.
+    let read = webview_arguments(
+        "till: State<'_, Till>, app: tauri::AppHandle, mut line_id: SaleLineId, \n         \
+         labels: Vec<(String, u8)>, qty_milli: Option<i64>) -> IpcResult<()> {",
+    );
+    assert_eq!(
+        read,
+        vec![
+            ("labels".to_owned(), Presence::Required),
+            ("line_id".to_owned(), Presence::Required),
+            ("qty_milli".to_owned(), Presence::Optional),
+        ]
+    );
+    // A row that leaves an argument out, or says it is required when a call
+    // may leave it out, is not its handler's.
+    const MISSING: &[Arg] = &[Arg::required("product_id")];
+    const REQUIRED: &[Arg] = &[Arg::required("product_id"), Arg::required("qty_milli")];
+    let add_line = *COMMANDS
+        .iter()
+        .find(|row| row.name == "cart_add_line")
+        .unwrap();
+    for args in [MISSING, REQUIRED] {
+        let row = CommandSpec { args, ..add_line };
+        assert_ne!(
+            handler_schema(&source, "cart_add_line"),
+            Some(declared_schema(&row))
+        );
+    }
+    assert_eq!(handler_schema(&source, "cart_void_sale"), None);
+}
+
+/// No command takes a price but through a reviewed line whose control its row
+/// keeps (`ref/ipc-contract.md` §1, rule 6, and §5, rule 6). What each
+/// handler takes is read from its own signature, so an argument a row forgot
+/// to declare is walked too. `cart_add_line`'s is a product and a quantity.
+#[test]
+fn no_command_argument_carries_a_price() {
+    let source = shell_source();
+    for name in registered_names() {
+        for (argument, _) in handler_schema(&source, name).unwrap() {
+            if carries_money(&argument) {
+                assert!(
+                    PRICE_ARGUMENTS
+                        .iter()
+                        .any(|allowed| allowed.command == name && allowed.argument == argument),
+                    "{name} takes {argument}, which carries money"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        handler_schema(&source, "cart_add_line"),
+        Some(vec![
+            ("product_id".to_owned(), Presence::Required),
+            ("qty_milli".to_owned(), Presence::Optional),
+        ]),
+        "a line is a product and a quantity; its price is the catalogue's"
+    );
+    assert_eq!(check(COMMANDS, REGISTERED), Ok(()));
+
+    // A price on a base sale command is refused, however it is spelt, and a
+    // reviewed argument belongs to its own command only.
+    let add_line = *COMMANDS
+        .iter()
+        .find(|row| row.name == "cart_add_line")
+        .unwrap();
+    const UNIT_PRICE: &[Arg] = &[
+        Arg::required("product_id"),
+        Arg::optional("unit_price_minor"),
+    ];
+    const PRICE: &[Arg] = &[Arg::required("product_id"), Arg::optional("price")];
+    const AMOUNT: &[Arg] = &[Arg::required("product_id"), Arg::required("amount_minor")];
+    for (args, argument) in [
+        (UNIT_PRICE, "unit_price_minor"),
+        (PRICE, "price"),
+        (AMOUNT, "amount_minor"),
+    ] {
+        assert_eq!(
+            refusals(&[CommandSpec { args, ..add_line }]),
+            vec![RegistryError::PriceArgument {
+                command: "cart_add_line",
+                argument,
+            }]
+        );
+    }
+
+    // Each reviewed argument holds only while its row keeps its control.
+    let uncontrolled = |command: &'static str, argument: &'static str| {
+        RegistryError::PriceArgumentUncontrolled { command, argument }
+    };
+    const OVERRIDE_ARGS: &[Arg] = &[
+        Arg::required("line_id"),
+        Arg::required("unit_price_minor"),
+        Arg::required("reason"),
+    ];
+    let override_price = CommandSpec {
+        name: "cart_override_price",
+        access: Access::Capability(cap::PriceOverride::NAME),
+        audited: true,
+        approval_requirement: ApprovalRequirement::Never,
+        args: OVERRIDE_ARGS,
+    };
+    assert_eq!(refusals(&[override_price]), Vec::new());
+    for row in [
+        CommandSpec {
+            access: Access::Capability(cap::SaleCreate::NAME),
+            ..override_price
+        },
+        CommandSpec {
+            audited: false,
+            ..override_price
+        },
+    ] {
+        assert_eq!(
+            refusals(&[row]),
+            vec![uncontrolled("cart_override_price", "unit_price_minor")]
+        );
+    }
+    assert!(
+        refusals(&[CommandSpec {
+            audited: false,
+            ..CART_ADD_DEPARTMENT_SALE
+        }])
+        .contains(&uncontrolled("cart_add_department_sale", "amount_minor"))
+    );
+    const PREPARE_ARGS: &[Arg] = &[
+        Arg::required("product_id"),
+        Arg::required("barcode"),
+        Arg::required("name_ar"),
+        Arg::required("unit_price_minor"),
+        Arg::required("tax_category_id"),
+    ];
+    let prepare = CommandSpec {
+        name: "product_quick_add_prepare",
+        access: Access::Capability(cap::ProductEdit::NAME),
+        audited: false,
+        approval_requirement: ApprovalRequirement::Never,
+        args: PREPARE_ARGS,
+    };
+    assert_eq!(refusals(&[prepare]), Vec::new());
+    assert_eq!(
+        refusals(&[CommandSpec {
+            access: Access::Capability(cap::SaleCreate::NAME),
+            ..prepare
+        }]),
+        vec![uncontrolled(
+            "product_quick_add_prepare",
+            "unit_price_minor"
+        )]
+    );
+    // Phase 0's smoke command keeps its total only while it touches no sale.
+    assert_eq!(
+        refusals(&[CommandSpec {
+            access: Access::Capability(cap::SaleCreate::NAME),
+            ..split_tender()
+        }]),
+        vec![uncontrolled("split_tender", "total_minor")]
+    );
 }
 
 // ── Each condition at its boundary ──────────────────────────────────────────
