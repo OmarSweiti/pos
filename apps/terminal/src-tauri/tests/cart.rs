@@ -197,7 +197,7 @@ fn seed(dir: &Path, shift: bool) {
     )
     .unwrap();
 
-    // Ten bottles of oil, five packs of tobacco and five kilograms of cheese.
+    // Ten bottles of oil, five packs of tobacco and half a kilogram of cheese.
     // No bread at all.
     let ids = SeqIdSource::new(1_788_000_000_000, 0x0B);
     let tx = conn.unchecked_transaction().unwrap();
@@ -218,7 +218,7 @@ fn seed(dir: &Path, shift: bool) {
             },
             ids: &ids,
         },
-        [(OIL, 10_000), (TOBACCO, 5_000), (CHEESE, 5_000)].map(|(n, qty_milli)| OpeningStockRow {
+        [(OIL, 10_000), (TOBACCO, 5_000), (CHEESE, 500)].map(|(n, qty_milli)| OpeningStockRow {
             product_id: product_id(n),
             qty_milli,
             unit_cost_minor: Some(100),
@@ -546,6 +546,9 @@ fn a_price_label_prices_its_line_only_from_a_trusted_clock() {
         (1_000, UnitOfMeasure::Package, 416, 416)
     );
     assert_eq!(priced.total_minor, 1_250 + 416);
+    // Its stock is the weight its price implies, 49 g at 8.500 a kilogram,
+    // not its one package: half a kilogram of cheese covers it.
+    assert!(priced.stock_flags.is_empty());
 }
 
 #[test]
