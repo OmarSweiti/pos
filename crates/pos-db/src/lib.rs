@@ -354,6 +354,37 @@ pub enum DbError {
     ResumeRefused(#[from] pos_domain::CartError),
     #[error("stored parked cart is malformed: {reason}")]
     StoredParkedCartInvalid { reason: String },
+    #[error("the checkout of sale {0} is already journalled")]
+    CheckoutAlreadyJournalled(pos_domain::SaleId),
+    #[error(
+        "the checkout of sale {0} names an idempotency key another checkout used, and a key is \
+         never reused"
+    )]
+    CheckoutKeyReused(pos_domain::SaleId),
+    #[error("no checkout of sale {0} is journalled on this register")]
+    CheckoutNotJournalled(pos_domain::SaleId),
+    #[error("the checkout of sale {0} is journalled under another attempt's key")]
+    CheckoutKeyMismatch(pos_domain::SaleId),
+    #[error("the checkout of sale {0} has begun its finalize, which only completes or replays it")]
+    CheckoutFinalizing(pos_domain::SaleId),
+    #[error("the checkout of sale {0} never began its finalize")]
+    CheckoutNotFinalizing(pos_domain::SaleId),
+    #[error(
+        "the checkout of sale {sale} was advanced to version {found} since this copy was read \
+         at version {expected}"
+    )]
+    CheckoutStale {
+        sale: pos_domain::SaleId,
+        expected: i64,
+        found: i64,
+    },
+    #[error(
+        "the checkout of sale {0} carries a card operation, which this build cannot journal: the \
+         terminal is Phase 2's"
+    )]
+    CheckoutCardOpNotJournalled(pos_domain::SaleId),
+    #[error("stored checkout is malformed: {reason}")]
+    StoredCheckoutInvalid { reason: String },
 }
 
 /// `PRAGMA synchronous = FULL`, as SQLite reports it back. The pragma accepts a

@@ -266,6 +266,10 @@ printer and drawer profile says — refusing what a device would refuse, reporti
 where a profile does not know — and `just printer-emulator <profile>` prints to it before any
 printer exists; only its golden comparison waits for `1.7.5`'s goldens.
 `1.7.13` is **partially delivered** as well: one conformance suite runs against the emulated printer for every receipt-printer profile, refuses to reach a device that is not named, replays a synthetic capture, and is replayed through a pinned independent emulator in CI; only its golden replay waits for `1.7.5`.
+Group 1.8's `1.8.4` is **partially delivered**: its journal half has landed. A sale being paid for
+is journalled before its first irreversible effect, each tender advances the record under the version
+it read, and once its finalize begins only the finalize removes it, inside the finalize's own
+transaction. Its start-up recovery half follows 1.8.3, which it needs.
 Group 1.9's `1.9.5` is **partially delivered**: a shift opens with a float counted by denomination,
 on a business date the clock derives when it is trusted and the operator confirms, audited, when it
 is not; one stays open per register; and only its opener closes it, with a fact of its own and no

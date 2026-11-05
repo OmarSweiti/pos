@@ -2212,13 +2212,19 @@ attach it to.
 /// `begin_finalize` — and deleted inside the finalize transaction itself.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InFlightSale {
-    pub sale_id: SaleId,
-    pub register_id: RegisterId,
-    pub state: Sale,                  // the exact state-machine value, serialized
+    pub state: InFlight,              // the exact state-machine value, serialized
     pub card_op: Option<CardOpRef>,   // E.2's status-query input
     pub idempotency_key: Uuid,        // one per checkout attempt, never reused
     pub updated_at: Timestamp,
 }
+impl InFlightSale {
+    pub fn sale_id(&self) -> SaleId;          // the cart's own
+    pub fn register_id(&self) -> RegisterId;  // the cart's own
+    pub fn tendering(&self) -> &Tendering;    // whichever state it has reached
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum InFlight { Tendering(Tendering), Finalizing(Finalizing) }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CardOpRef { pub sale_ref: String, pub amount: Money, pub started_at: Timestamp }
@@ -2246,6 +2252,18 @@ Tests: `an_interrupted_tendering_is_recovered_and_status_queried` (E.2) ·
 `a_checkout_operation_row_never_outlives_its_commit` · `finalize_replays_under_the_same_idempotency_key` ·
 `a_card_approval_before_a_power_cut_is_found_and_attached` ·
 `prop_resume_never_produces_a_second_authorisation`.
+
+> **As delivered at 1.8.4, the journal half.** `InFlightSale`, `InFlight` and `CardOpRef` are in
+> `cart.rs`, and `pos_db::repo::checkout_operation` journals them. Two departures from the first
+> draft of this section, both shown above:
+> - **`state` is an `InFlight`, not a `Sale`.** No other state is ever journalled, and
+>   `checkout_operation`'s `CHECK` admits only these two, so the type rules the others out rather
+>   than a refusal at run time.
+> - **`sale_id` and `register_id` are read from the cart, not stored beside it,** so the record
+>   cannot name one sale and carry another's cart.
+>
+> `Resumption` and `resume_in_flight` belong to the recovery half, after 1.8.3. So do this section's
+> tests: `an_in_flight_sale_is_identified_by_its_own_cart` is the journal half's own.
 
 ---
 
