@@ -1087,3 +1087,32 @@ fn parking_and_resuming_need_a_shift_and_a_role_that_sells() {
         vec![("parked".to_owned(), basket.sale_id)]
     );
 }
+
+#[test]
+fn a_resumed_basket_changed_and_crashed_comes_back_as_it_was_left() {
+    let dir = tempfile::tempdir().unwrap();
+    seed(dir.path(), true);
+    let register = open(dir.path());
+    login_pin(&register, CASHIER_CODE, CASHIER_PIN).unwrap();
+    open_cart(&register).unwrap();
+    let basket = add_product(&register, product_id(OIL), None).unwrap();
+    park_cart(&register, Some("Blue bag")).unwrap();
+    resume_cart(&register, basket.sale_id).unwrap();
+    // A change to the resumed basket is saved as any other.
+    let changed = add_product(&register, product_id(BREAD), None).unwrap();
+
+    // The process dies with nobody signing out. The next start-up sets the
+    // basket aside again, with the line added after it was resumed.
+    drop(register);
+    let restarted = open(dir.path());
+    assert_eq!(restarted.recovered().carts_set_aside, 1);
+    login_pin(&restarted, CASHIER_CODE, CASHIER_PIN).unwrap();
+    let listed = list_parked(&restarted).unwrap();
+    assert_eq!(listed.len(), 1);
+    let waiting = listed.first().unwrap();
+    assert_eq!(
+        (waiting.parked_id, waiting.line_count, waiting.total_minor),
+        (basket.sale_id, 2, changed.total_minor)
+    );
+    assert_eq!(resume_cart(&restarted, basket.sale_id).unwrap(), changed);
+}
