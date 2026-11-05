@@ -7,9 +7,17 @@
 //! the refusal instead, and every command answers with it, by name, so the
 //! screen can say why rather than show an empty till.
 //!
-//! **Lock order.** The database and the session each sit behind a mutex. Code
-//! that needs both takes them through [`Register::lock`], database first, so no
-//! two commands can each hold one and wait for the other.
+//! **Lock order.** The database, the session and the till's working cart each
+//! sit behind a mutex. Code that needs more than one takes them through
+//! [`Register::lock`] or [`Register::lock_till`], always database, then
+//! session, then cart, so no two commands can each hold one and wait for the
+//! other.
+//!
+//! **The working cart** is the basket the till is building (1.4.11). It is on
+//! disk from the moment it opens, as an `active` `parked_cart` row under this
+//! process's nonce, and every change is saved before it is answered (the
+//! owner's decision of 5 November 2026). What the till holds in memory is that
+//! row's copy, never a basket only the process knows.
 
 use std::fs;
 use std::io;
@@ -22,7 +30,10 @@ use pos_db::DbError;
 use pos_db::repo::parked_cart::ParkedCartRepository;
 use pos_db::repo::stock::{CacheDrift, StockRepository};
 use pos_db::repo::user::{SessionEnd, UserRepository};
-use pos_domain::{Clock, GrantSet, IdSource, RegisterId, Role, StoreId, Timestamp, UserId};
+use pos_domain::cart::park;
+use pos_domain::{
+    Cart, Clock, ClockConfidence, GrantSet, IdSource, RegisterId, Role, StoreId, Timestamp, UserId,
+};
 use rusqlite::{Connection, OptionalExtension};
 use uuid::Uuid;
 
@@ -166,8 +177,12 @@ pub struct Session {
 pub struct Recovered {
     /// Sessions a crash left open, now ended with `end_reason = 'crash'`.
     pub sessions_closed: usize,
-    /// Active carts claimed under this process's nonce.
-    pub carts_reclaimed: usize,
+    /// Baskets a crash left being worked on, now waiting in the parked list.
+    /// The session that was building each one died with the process, so none
+    /// is handed to whoever signs in next without being resumed.
+    pub carts_set_aside: usize,
+    /// Working carts a crash left with nothing in them, dropped.
+    pub empty_carts_dropped: usize,
     pub stock_cache: CacheCheck,
 }
 
@@ -192,6 +207,7 @@ pub struct Register {
     clock: Box<dyn Clock + Send + Sync>,
     ids: Box<dyn IdSource + Send + Sync>,
     session: Mutex<Option<Session>>,
+    cart: Mutex<Option<Cart>>,
     recovered: Recovered,
 }
 
@@ -259,6 +275,7 @@ impl Register {
             clock,
             ids,
             session: Mutex::new(None),
+            cart: Mutex::new(None),
             recovered,
         })
     }
@@ -317,6 +334,39 @@ impl Register {
         let session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         (db, session)
     }
+
+    /// The database, the session and the till's working cart, in that order.
+    pub fn lock_till(&self) -> Locked<'_> {
+        let (db, session) = self.lock();
+        let cart = self.cart.lock().unwrap_or_else(PoisonError::into_inner);
+        Locked { db, session, cart }
+    }
+
+    /// The till's working cart, for a caller already holding the database and
+    /// the session, which it must have taken first.
+    pub(crate) fn cart_after(
+        &self,
+        _db: &MutexGuard<'_, Connection>,
+        _session: &MutexGuard<'_, Option<Session>>,
+    ) -> MutexGuard<'_, Option<Cart>> {
+        self.cart.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// How far the register trusts its clock. No trusted time is held yet:
+    /// the state that anchors it is 1.1.9's database half, still to land. So
+    /// no clock is trusted, and no scale label prices a line. Selling is never
+    /// refused for a clock (`ref/ui-spec.md` §8): every other scan still sells.
+    #[must_use]
+    pub fn clock_confidence(&self) -> ClockConfidence {
+        ClockConfidence::Untrusted
+    }
+}
+
+/// Everything a cart command works under, taken in the one order.
+pub struct Locked<'r> {
+    pub db: MutexGuard<'r, Connection>,
+    pub session: MutexGuard<'r, Option<Session>>,
+    pub cart: MutexGuard<'r, Option<Cart>>,
 }
 
 /// The install's device id, trimmed.
@@ -369,7 +419,10 @@ fn process_nonce(ids: &(dyn IdSource + Send + Sync)) -> Uuid {
 
 /// 1.8.4's start-up recovery, as far as the steps before it left work for it.
 ///
-/// Sessions and carts first, in one transaction. Then the stock cache, in a
+/// Sessions and carts first, in one transaction. Every basket a crash left
+/// being worked on is claimed and set aside in the parked list, where whoever
+/// signs in can resume it, and one with nothing in it is dropped: the session
+/// building it died with the process (1.4.11). Then the stock cache, in a
 /// transaction of its own, because a cache that spans registers is an alarm
 /// that leaves the cache as it was, not a reason to undo the rest.
 fn recover(
@@ -386,10 +439,26 @@ fn recover(
     let sessions_closed = UserRepository::new(&tx)
         .end_open_sessions(&tx, register, SessionEnd::Crash, at)
         .map_err(failed)?;
-    let carts_reclaimed = ParkedCartRepository::new(&tx)
+    let carts = ParkedCartRepository::new(&tx);
+    let (mut carts_set_aside, mut empty_carts_dropped) = (0, 0);
+    for cart in carts
         .reclaim_after_restart(&tx, register, nonce)
         .map_err(failed)?
-        .len();
+    {
+        let id = cart.id;
+        match park(cart) {
+            Ok(parked) => {
+                carts
+                    .repark(&tx, nonce, &parked, None, at)
+                    .map_err(failed)?;
+                carts_set_aside += 1;
+            }
+            Err(_) => {
+                carts.discard(&tx, nonce, id).map_err(failed)?;
+                empty_carts_dropped += 1;
+            }
+        }
+    }
     tx.commit().map_err(sqlite)?;
 
     let tx = conn.transaction().map_err(sqlite)?;
@@ -423,9 +492,16 @@ fn recover(
             "start-up closed sessions a crash left open"
         );
     }
+    if carts_set_aside > 0 {
+        tracing::warn!(
+            carts_set_aside,
+            "start-up set aside baskets a crash left being worked on"
+        );
+    }
     Ok(Recovered {
         sessions_closed,
-        carts_reclaimed,
+        carts_set_aside,
+        empty_carts_dropped,
         stock_cache,
     })
 }

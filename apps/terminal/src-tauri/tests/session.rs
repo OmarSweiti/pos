@@ -369,7 +369,8 @@ fn the_register_database_is_opened_once_with_its_key() {
     });
     assert_eq!(register.store().as_uuid().as_bytes().as_slice(), store);
     assert_eq!(register.recovered().sessions_closed, 0);
-    assert_eq!(register.recovered().carts_reclaimed, 0);
+    assert_eq!(register.recovered().carts_set_aside, 0);
+    assert_eq!(register.recovered().empty_carts_dropped, 0);
     assert_eq!(register.recovered().stock_cache, CacheCheck::True);
     assert_eq!(
         state_of(&Till::Open(Box::new(register))),

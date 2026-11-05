@@ -180,6 +180,68 @@ pub enum ContentBindingSpec {
     },
 }
 
+/// An argument that carries money into a command, and why it is not an
+/// uncontrolled price (`ref/ipc-contract.md` §1, rule 6; 1.4.11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PriceArgument {
+    pub command: &'static str,
+    pub argument: &'static str,
+    /// What the command's row must keep for the argument to be allowed.
+    pub control: PriceControl,
+}
+
+/// What keeps a money-bearing argument from setting a sale's price
+/// unchecked. [`check`] holds each row to its control, so a row that loses it
+/// loses the argument.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PriceControl {
+    /// The command proves a capability other than the base `sale.create` and
+    /// writes an audit entry: the price override, and the capped department
+    /// sale.
+    AuditedCapability,
+    /// The command proves `product.edit` and writes only a content-hashed
+    /// proposal, which creates neither a product nor a line.
+    InertProposal,
+    /// Phase 0's smoke command, which proves no capability and reads and
+    /// writes nothing: the amount is a total being split, not a price.
+    TouchesNoSale,
+}
+
+/// Every argument allowed to carry money, by command. Any other argument
+/// whose name says money, with `price` anywhere in it or a minor-unit
+/// `_minor` suffix, is refused on every command: a new one is a reviewed
+/// line here, never a quiet addition to a signature. The rows for commands
+/// not registered yet are the contract's (§3), so the step that registers
+/// one meets its control already written.
+pub const PRICE_ARGUMENTS: &[PriceArgument] = &[
+    PriceArgument {
+        command: "cart_override_price",
+        argument: "unit_price_minor",
+        control: PriceControl::AuditedCapability,
+    },
+    PriceArgument {
+        command: "cart_add_department_sale",
+        argument: "amount_minor",
+        control: PriceControl::AuditedCapability,
+    },
+    PriceArgument {
+        command: "product_quick_add_prepare",
+        argument: "unit_price_minor",
+        control: PriceControl::InertProposal,
+    },
+    PriceArgument {
+        command: "split_tender",
+        argument: "total_minor",
+        control: PriceControl::TouchesNoSale,
+    },
+];
+
+/// Whether an argument's name says it carries money.
+#[must_use]
+pub fn carries_money(argument: &str) -> bool {
+    argument.contains("price") || argument.ends_with("_minor")
+}
+
 /// Every command the shell registers, and nothing else. A command's
 /// microstep adds its row in the change that registers the command.
 pub const COMMANDS: &[CommandSpec] = &[
@@ -222,6 +284,43 @@ pub const COMMANDS: &[CommandSpec] = &[
         audited: true,
         approval_requirement: ApprovalRequirement::Never,
         args: &[],
+    },
+    // 1.4.11, its first part: building a basket. None takes a price; see
+    // `PRICE_ARGUMENTS`.
+    CommandSpec {
+        name: "cart_open",
+        access: Access::Capability(cap::SaleCreate::NAME),
+        audited: false,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[],
+    },
+    CommandSpec {
+        name: "cart_current",
+        access: Access::Capability(cap::SaleCreate::NAME),
+        audited: false,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[],
+    },
+    CommandSpec {
+        name: "cart_add_line",
+        access: Access::Capability(cap::SaleCreate::NAME),
+        audited: false,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[Arg::required("product_id"), Arg::optional("qty_milli")],
+    },
+    CommandSpec {
+        name: "cart_add_scan",
+        access: Access::Capability(cap::SaleCreate::NAME),
+        audited: false,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[Arg::required("raw_code")],
+    },
+    CommandSpec {
+        name: "cart_confirm_age",
+        access: Access::Capability(cap::SaleCreate::NAME),
+        audited: true,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[Arg::required("line_id"), Arg::required("confirmed")],
     },
 ];
 
@@ -310,6 +409,19 @@ pub enum RegistryError {
         part: &'static str,
         argument: &'static str,
     },
+    /// An argument that carries money where no reviewed line allows it: a
+    /// price a base command would take unchecked.
+    #[error("{command} takes {argument}, which carries money and is not a reviewed price argument")]
+    PriceArgument {
+        command: &'static str,
+        argument: &'static str,
+    },
+    /// A reviewed price argument on a row that no longer keeps its control.
+    #[error("{command} takes {argument} without the control that allows it")]
+    PriceArgumentUncontrolled {
+        command: &'static str,
+        argument: &'static str,
+    },
 }
 
 /// How an argument is declared, in a refusal's words.
@@ -330,7 +442,8 @@ const fn declared(presence: Option<Presence>) -> &'static str {
 /// a real capability or says why it needs none. Every privileged spec proves a
 /// capability, audits, takes `approval_id` as its requirement says, and binds
 /// its entity, amount, reason and any prepared content to something it
-/// actually takes.
+/// actually takes. And no spec takes money but through a [`PRICE_ARGUMENTS`]
+/// line whose control it keeps.
 ///
 /// # Errors
 ///
@@ -404,6 +517,8 @@ fn check_spec(spec: &CommandSpec, errors: &mut Vec<RegistryError>) {
             (Some(Presence::Optional), Some((binding, Some(predicate))))
         }
     };
+    check_price_arguments(spec, errors);
+
     let found = presence(spec, APPROVAL_ARGUMENT);
     if found != expected {
         errors.push(RegistryError::ApprovalArgument {
@@ -434,6 +549,43 @@ fn check_spec(spec: &CommandSpec, errors: &mut Vec<RegistryError>) {
         errors.push(RegistryError::PrivilegedUnaudited(command));
     }
     check_binding(spec, &binding, errors);
+}
+
+/// Refuse an argument that carries money unless a [`PRICE_ARGUMENTS`] line
+/// allows it on this command, and the row keeps that line's control.
+fn check_price_arguments(spec: &CommandSpec, errors: &mut Vec<RegistryError>) {
+    for arg in spec.args.iter().filter(|arg| carries_money(arg.name)) {
+        let allowed = PRICE_ARGUMENTS
+            .iter()
+            .find(|allowed| allowed.command == spec.name && allowed.argument == arg.name);
+        let Some(allowed) = allowed else {
+            errors.push(RegistryError::PriceArgument {
+                command: spec.name,
+                argument: arg.name,
+            });
+            continue;
+        };
+        let controlled = match allowed.control {
+            PriceControl::AuditedCapability => {
+                spec.audited
+                    && matches!(spec.access, Access::Capability(held) if held != cap::SaleCreate::NAME)
+            }
+            PriceControl::InertProposal => {
+                spec.access == Access::Capability(cap::ProductEdit::NAME)
+            }
+            PriceControl::TouchesNoSale => {
+                matches!(spec.access, Access::NoCapability { .. })
+                    && !spec.audited
+                    && spec.approval_requirement == ApprovalRequirement::Never
+            }
+        };
+        if !controlled {
+            errors.push(RegistryError::PriceArgumentUncontrolled {
+                command: spec.name,
+                argument: arg.name,
+            });
+        }
+    }
 }
 
 fn check_binding(

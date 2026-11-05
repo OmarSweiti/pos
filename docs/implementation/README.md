@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **75 of 123 executable microsteps fully complete (~61%)**: `1.1.0`
+Phase 1 has **76 of 123 executable microsteps fully complete (~62%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -189,7 +189,9 @@ and one command context that refuses a command with no one signed in, signs out 
 and resolves a stored approval by id and holds it to its binding), and `1.6.4` (`Authorized<C>` and
 the one-use `ApprovalHandle` bound to one actor, operation and amount, stored and consumed in the
 effect's transaction and resolved by the command context, and, as the owner decided on 5 November,
-refused once its approver is deactivated).
+refused once its approver is deactivated), and `1.4.3b` (an age-restricted line kept on screen and
+blocked until an operator answers, yes opening its gate and no removing it, each answer audited, now
+through the register's `cart_confirm_age`).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
@@ -221,12 +223,14 @@ has landed, and its first indicative run on a development laptop put the first t
 the 50 ms limit, which fires the risk-register trigger in [`00-master-plan.md`](00-master-plan.md)
 §6; what to do about it is the owner's decision, and the microstep's note records the measurement.
 `1.2.8`, the scan-parser fuzz target, has landed with `just fuzz`, so every microstep of group 1.2
-has begun; `1.2.0` is its one partial step, waiting on milestone 5.8. Group 1.4's `1.4.3b` is **partially delivered**: an
-operator confirms or declines an age-restricted line, audited, and since 1.4.8 the line it blocks
-reaches `Tendering` only once confirmed; what remains is the command 1.4.11 adds. `1.4.12` is
+has begun; `1.2.0` is its one partial step, waiting on milestone 5.8. Group 1.4's `1.4.11` is
+**partially delivered**: a basket is built through the register's first cart commands, every answer
+the cart priced under the store's own settings, no command taking a price, stock screened as each
+line is added, and every working basket on disk, so a crash or a sign-out sets it aside in the parked
+list. Parking, the price override and the department sale follow, as the owner decided. `1.4.12` is
 **partially delivered**: its domain half sells goods with no product through a department, capped,
-escalated above a threshold and always audited; its terminal half needs 1.4.11's command file and a
-department that can be stored, which #330 asks about. Group 1.6's `1.6.2` is **partially delivered**:
+escalated above a threshold and always audited; its terminal half needs a department that can be
+stored, which #330 asks about. Group 1.6's `1.6.2` is **partially delivered**:
 PINs are hashed under a reviewed Argon2id profile, wrong PINs wait longer and then lock a user out
 until a manager releases them, as the owner decided, and the count survives a restart; the reset
 command can now be written through 1.8.2c's command context. `1.6.3` is closed: its seed comparison landed against `0004`'s 128 rows. `1.6.4` is **complete**: `Authorized<C>`,

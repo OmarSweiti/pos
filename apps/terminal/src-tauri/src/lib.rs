@@ -32,6 +32,11 @@ ipc::registry::commands![
     commands::auth::session_state,
     commands::auth::auth_login_pin,
     commands::auth::auth_logout,
+    commands::cart::cart_open,
+    commands::cart::cart_current,
+    commands::cart::cart_add_line,
+    commands::cart::cart_add_scan,
+    commands::cart::cart_confirm_age,
 ];
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

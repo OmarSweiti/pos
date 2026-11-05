@@ -342,6 +342,10 @@ pub enum DbError {
     ParkedCartClaimed(pos_domain::SaleId),
     #[error("this session holds no claim on cart {0}")]
     ParkedCartNotClaimed(pos_domain::SaleId),
+    /// Only a basket with nothing in it is ever dropped; one with lines is
+    /// set aside (the owner's decision of 5 November 2026, 1.4.11).
+    #[error("cart {0} still holds lines, and is set aside rather than dropped")]
+    ParkedCartNotEmpty(pos_domain::SaleId),
     #[error(
         "parked cart {id} expired at the end of business day {expires_on}, and can no longer \
          be resumed"

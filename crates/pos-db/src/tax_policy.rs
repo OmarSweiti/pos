@@ -49,8 +49,18 @@
 //! `cash_round_tax_treatment`: its vocabulary is `ref/tax-jordan.md` §5's
 //! `⚠️ OPEN` item, owned by 2.7.0, and until then a cash-rounding adjustment
 //! moves no line and no tax row (merchant decision 6.12).
+//!
+//! ## A store's pricing settings
+//!
+//! [`TaxPolicyRepository::pricing_settings`] is what a cart is priced under
+//! (1.4.11): the approved policy's rule, beside the store's own price mode and
+//! the tax profile its two columns name (1.3.8). The policy is read first, so
+//! a store whose policy is not approved prices nothing.
 
-use pos_domain::{RoundingDirection, RoundingRule, StoreId, Timestamp};
+use pos_domain::{
+    PriceMode, PricingSettings, RoundingDirection, RoundingRule, StoreId, StoreTaxProfile,
+    Timestamp,
+};
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::DbError;
@@ -188,6 +198,66 @@ impl<'c> TaxPolicyRepository<'c> {
             .optional()?
             .ok_or(DbError::TaxPolicyMissing(store))?;
         row.into_policy(store, id)
+    }
+
+    /// What a cart at `store` is priced under (`ref/domain-api.md` §6.2):
+    /// the store's price mode, its tax profile, and the rule of the approved
+    /// policy it is pinned to.
+    ///
+    /// The profile is read from two columns `store` keeps apart (1.3.8): a
+    /// store whose `gst_profile` is `'unregistered'` is
+    /// [`StoreTaxProfile::Unregistered`] whatever its jurisdiction, and
+    /// otherwise its `tax_profile` names it. None of the three has a default,
+    /// so a spelling this build does not know is refused rather than read as
+    /// a plausible setting.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::approved_for_store`], and [`DbError::StoredTaxPolicyInvalid`]
+    /// for a price mode or profile this build does not know.
+    pub fn pricing_settings(&self, store: StoreId) -> Result<PricingSettings, DbError> {
+        let policy = self.approved_for_store(store)?;
+        let (price_mode, gst_profile, tax_profile): (String, String, String) = self
+            .conn
+            .query_row(
+                "SELECT price_mode, gst_profile, tax_profile FROM store WHERE id = ?1",
+                [store.as_uuid().as_bytes().as_slice()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?
+            .ok_or(DbError::TaxPolicyStoreUnknown(store))?;
+        let price_mode = match price_mode.as_str() {
+            "inclusive" => PriceMode::Inclusive,
+            "exclusive" => PriceMode::Exclusive,
+            other => {
+                return Err(invalid(format!(
+                    "price_mode {other:?} is not a mode this build knows"
+                )));
+            }
+        };
+        Ok(PricingSettings {
+            price_mode,
+            profile: store_tax_profile(&gst_profile, &tax_profile)?,
+            rule: policy.rounding_rule(),
+        })
+    }
+}
+
+/// The profile a store's two columns name (1.3.8): `Unregistered` while its
+/// `gst_profile` says so, whatever its `tax_profile`; otherwise, registered
+/// for either sales tax, the jurisdiction its `tax_profile` names. The
+/// spellings are `0003`'s `CHECK`s.
+fn store_tax_profile(gst_profile: &str, tax_profile: &str) -> Result<StoreTaxProfile, DbError> {
+    match (gst_profile, tax_profile) {
+        ("unregistered", _) => Ok(StoreTaxProfile::Unregistered),
+        ("general_sales" | "special_sales", "standard") => Ok(StoreTaxProfile::Standard),
+        ("general_sales" | "special_sales", "asez") => Ok(StoreTaxProfile::Asez),
+        ("general_sales" | "special_sales", "development_area") => {
+            Ok(StoreTaxProfile::DevelopmentArea)
+        }
+        (gst, tax) => Err(invalid(format!(
+            "gst_profile {gst:?} with tax_profile {tax:?} is not a profile this build knows"
+        ))),
     }
 }
 
@@ -664,5 +734,103 @@ mod tests {
                 found: 15
             }
         ));
+    }
+
+    /// A store's pricing settings are its own columns: the price mode as
+    /// stored, and its profile `Unregistered` while its GST registration says
+    /// so, whatever the jurisdiction, and the jurisdiction's once it is
+    /// registered for either sales tax (1.3.8). The rule is the approved
+    /// policy's.
+    #[test]
+    fn a_store_is_priced_under_its_own_mode_profile_and_approved_rule() {
+        let t = till();
+        let settings = |t: &Till| TaxPolicyRepository::new(&t.conn).pricing_settings(store(t));
+        let set = |gst: &str, tax: &str, mode: &str| {
+            t.conn
+                .execute(
+                    "UPDATE store SET gst_profile = ?1, tax_profile = ?2, price_mode = ?3
+                      WHERE id = ?4",
+                    params![gst, tax, mode, &t.chain.store],
+                )
+                .unwrap();
+        };
+
+        // The fixture's store is as `0003` defaults it: not registered.
+        assert_eq!(
+            settings(&t).unwrap(),
+            PricingSettings {
+                price_mode: PriceMode::Inclusive,
+                profile: StoreTaxProfile::Unregistered,
+                rule: RoundingRule::HalfEven,
+            }
+        );
+        // `0003` refuses a zone profile without its own approved pack, which
+        // the fixture does not hold; the zones are read below, column by column.
+        for (gst, tax, profile) in [
+            ("general_sales", "standard", StoreTaxProfile::Standard),
+            ("special_sales", "standard", StoreTaxProfile::Standard),
+            ("unregistered", "standard", StoreTaxProfile::Unregistered),
+        ] {
+            set(gst, tax, "exclusive");
+            assert_eq!(
+                settings(&t).unwrap(),
+                PricingSettings {
+                    price_mode: PriceMode::Exclusive,
+                    profile,
+                    rule: RoundingRule::HalfEven,
+                },
+                "{gst} / {tax}"
+            );
+        }
+
+        // A store this register does not hold has no settings at all.
+        let elsewhere = StoreId::from_uuid(Uuid::from_u128(0x5707e));
+        assert!(matches!(
+            TaxPolicyRepository::new(&t.conn).pricing_settings(elsewhere),
+            Err(DbError::TaxPolicyStoreUnknown(found)) if found == elsewhere
+        ));
+    }
+
+    /// The two columns name a profile together: an unregistered store charges
+    /// no GST in any jurisdiction, and a registered one is priced under its
+    /// own. A pair this build does not know is refused, never read as the
+    /// standard profile.
+    #[test]
+    fn a_stores_two_tax_columns_name_one_profile() {
+        for (gst, tax, profile) in [
+            ("unregistered", "standard", StoreTaxProfile::Unregistered),
+            ("unregistered", "asez", StoreTaxProfile::Unregistered),
+            (
+                "unregistered",
+                "development_area",
+                StoreTaxProfile::Unregistered,
+            ),
+            ("general_sales", "standard", StoreTaxProfile::Standard),
+            ("general_sales", "asez", StoreTaxProfile::Asez),
+            (
+                "general_sales",
+                "development_area",
+                StoreTaxProfile::DevelopmentArea,
+            ),
+            ("special_sales", "standard", StoreTaxProfile::Standard),
+            ("special_sales", "asez", StoreTaxProfile::Asez),
+            (
+                "special_sales",
+                "development_area",
+                StoreTaxProfile::DevelopmentArea,
+            ),
+        ] {
+            assert_eq!(
+                store_tax_profile(gst, tax).unwrap(),
+                profile,
+                "{gst} / {tax}"
+            );
+        }
+        for (gst, tax) in [("general_sales", "aqaba"), ("registered", "standard")] {
+            assert!(matches!(
+                store_tax_profile(gst, tax),
+                Err(DbError::StoredTaxPolicyInvalid { .. })
+            ));
+        }
     }
 }

@@ -2321,6 +2321,11 @@ VALUES
 -- complete-sale transaction. A claim IS an `active` row, which is what stops a
 -- second live session from claiming one already held, and what lets startup
 -- restore an `active` claim after a process death.
+-- Since 1.4.11 every working basket is on disk (the owner's decision of
+-- 5 November 2026): `hold` writes a till's new cart as `active` the moment it
+-- opens, with `parked_at` the moment it was opened, and `discard` deletes one
+-- only while its snapshot holds no line. A sign-out and start-up after a crash
+-- return a basket with lines to `parked`.
 CREATE TABLE parked_cart (
   id            BLOB PRIMARY KEY,
   register_id   BLOB NOT NULL REFERENCES register(id),
