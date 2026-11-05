@@ -61,7 +61,16 @@ pub fn authorize<C: Capability>(
             IpcError::from_source("session_unreadable", "error.session.unreadable", &error)
         })?;
     if !account.is_some_and(|account| account.is_live) {
-        sign_out(register, &mut db, &current, SignOutCause::UserInactive, at)?;
+        let mut cart = register.cart_after(&db, &session);
+        sign_out(
+            register,
+            &mut db,
+            &current,
+            &mut cart,
+            SignOutCause::UserInactive,
+            at,
+        )?;
+        drop(cart);
         *session = None;
         return Err(IpcError::new("user_inactive", "error.auth.user_inactive"));
     }

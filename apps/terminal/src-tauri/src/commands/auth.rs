@@ -14,11 +14,20 @@
 //!
 //! **What the webview sees** is [`SessionState`]: who is signed in, by staff
 //! number, name and role. Never the grants, a hash, a nonce or a token.
+//!
+//! **Sign-out sets the basket aside** (the owner's decision of 5 November
+//! 2026, 1.4.11). A working cart with lines goes to the parked list, where
+//! whoever signs in next can resume it; one with nothing in it is dropped.
+//! The same holds when the context signs out an account that stopped being
+//! live, which no one can refuse. The sign-out's audit row names the cart it
+//! set aside.
 
 use pos_db::auth::{ATTEMPT_POLICY, Admission, admission, hash_pin, needs_rehash, verify_pin};
+use pos_db::repo::parked_cart::ParkedCartRepository;
 use pos_db::repo::role::RoleRepository;
 use pos_db::repo::user::{SessionEnd, UserRepository};
-use pos_domain::{AuditIntent, Timestamp};
+use pos_domain::cart::park;
+use pos_domain::{AuditIntent, Cart, Timestamp};
 use rusqlite::Connection;
 use serde::Serialize;
 use serde_json::json;
@@ -260,32 +269,62 @@ pub fn login_pin(register: &Register, user_code: &str, pin: &str) -> IpcResult<S
     Ok(view)
 }
 
-/// `auth_logout`: end the signed-in session.
+/// `auth_logout`: end the signed-in session, setting aside its basket.
 ///
 /// # Errors
 ///
 /// `not_signed_in` when no one is, and `storage_failed`.
 pub fn logout(register: &Register) -> IpcResult<()> {
     let at = register.now();
-    let (mut db, mut session) = register.lock();
-    let Some(current) = session.clone() else {
+    let mut till = register.lock_till();
+    let Some(current) = till.session.clone() else {
         return Err(not_signed_in());
     };
-    sign_out(register, &mut db, &current, SignOutCause::Requested, at)?;
-    *session = None;
+    sign_out(
+        register,
+        &mut till.db,
+        &current,
+        &mut till.cart,
+        SignOutCause::Requested,
+        at,
+    )?;
+    *till.session = None;
     Ok(())
 }
 
-/// End `current`'s `user_session` row and audit it, in one transaction. The
-/// caller clears the session once this returns.
+/// End `current`'s `user_session` row and audit it, in one transaction, with
+/// the till's working cart `cart` set aside in the parked list when it has
+/// lines and dropped when it has none. The cart is cleared once that commits;
+/// the caller clears the session.
 pub(crate) fn sign_out(
     register: &Register,
     db: &mut Connection,
     current: &Session,
+    cart: &mut Option<Cart>,
     cause: SignOutCause,
     at: Timestamp,
 ) -> IpcResult<()> {
     let tx = db.transaction().map_err(sqlite)?;
+    let set_aside = match cart.as_ref() {
+        None => None,
+        Some(working) => {
+            let carts = ParkedCartRepository::new(&tx);
+            match park(working.clone()) {
+                Ok(parked) => {
+                    carts
+                        .repark(&tx, register.process_nonce(), &parked, None, at)
+                        .map_err(stored)?;
+                    Some(working.id)
+                }
+                Err(_) => {
+                    carts
+                        .discard(&tx, register.process_nonce(), working.id)
+                        .map_err(stored)?;
+                    None
+                }
+            }
+        }
+    };
     UserRepository::new(&tx)
         .end_session(&tx, current.id, SessionEnd::Logout, at)
         .map_err(stored)?;
@@ -300,11 +339,16 @@ pub(crate) fn sign_out(
             entity: "user_session",
             entity_id: current.id,
             reason: None,
-            payload: json!({ "cause": cause.as_str() }),
+            payload: json!({
+                "cause": cause.as_str(),
+                "parked_cart": set_aside.map(|sale| sale.as_uuid().to_string()),
+            }),
             at,
         },
     )?;
-    tx.commit().map_err(sqlite)
+    tx.commit().map_err(sqlite)?;
+    *cart = None;
+    Ok(())
 }
 
 fn refused() -> IpcError {
