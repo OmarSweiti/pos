@@ -183,16 +183,28 @@ Legend — **Ph**: phase introduced · **Cap**: required capability · **A**: wr
 | Command | Args → Returns | Ph | Cap | A | E |
 |---|---|---|---|---|---|
 | `session_state` | `()` → `SessionState` | 1 | — | | |
-| `auth_login_pin` | `{ user_code, pin }` → `Session` | 1 | — | ✓ | |
+| `auth_login_pin` | `{ user_code, pin }` → `SessionState` | 1 | — | ✓ | |
 | `auth_logout` | `()` → `()` | 1 | — | ✓ | |
 | `auth_switch_user` | `{ user_code, pin }` → `Session` | 1 | — | ✓ | |
 | `auth_verify_pin` | `{ user_code, pin, for_capability, entity_id, amount_minor, reason }` → `ApprovalRef` | 1 | — | ✓ | |
 | `user_reset_pin` | `{ user_id, new_pin, approval_id }` → `()` | 1 | `user.admin` | ✓ | ✓ |
 
-`session_state`, `auth_login_pin` and `auth_logout` land with 1.8.2c, which opens the register's
+`session_state`, `auth_login_pin` and `auth_logout` landed with 1.8.2c, which opens the register's
 database in the shell, holds the signed-in user and their role's grants, and resolves the
-`approval_id` every privileged command receives, through one command context. `auth_switch_user`
-waits on its policy test, which is 2.4.2's.
+`approval_id` every privileged command receives, through one command context
+(`ipc::context::authorize`). `auth_switch_user` waits on its policy test, which is 2.4.2's.
+
+> **As delivered at 1.8.2c.** Sign-in returns `SessionState`, the view `session_state` gives:
+> `{ "state": "signed_in", "code", "display_name", "role" }`, `{ "state": "signed_out" }`, or
+> `{ "state": "closed", "reason" }` when the till did not open. The internal `Session`, which holds
+> the grants, is never serialised. The codes a screen branches on are `auth_refused` (an unknown
+> staff number, an account that is not live, or a wrong PIN, alike), `auth_delayed`,
+> `auth_locked_out`, `auth_role_unresolved` (with `no role at this store` or `more than one role at
+> this store`), `auth_already_signed_in`, `not_signed_in`, `user_inactive` and `till_closed`. The
+> context adds `permission_denied`, `permission_outside_limit`, `approval_required`,
+> `approval_self`, `approval_mismatch` (with a detail naming the field), `approval_unknown`,
+> `approval_used`, `approval_expired`, `approval_not_yet_valid`, `approval_unreadable` and
+> `offline_auth_expired`, one for each `PermissionError`.
 
 `auth_verify_pin` is the manager-approval modal's backing call, and its arguments identify the
 binding. For a prepared intent, the Rust handler loads the row and recomputes its canonical

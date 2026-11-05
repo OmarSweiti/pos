@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **73 of 123 executable microsteps fully complete (~59%)**: `1.1.0`
+Phase 1 has **74 of 123 executable microsteps fully complete (~60%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -181,7 +181,12 @@ in the same transaction, or left whole when the rebuild fails), and `1.10.4` (ne
 flagged by default — a basket screened before tender, every product it would take below zero named, the
 sale completed and its event recording the position it left — and refused before tender, never at
 finalize, under a store's hard block; with two offline registers both selling the last unit, because
-each can screen only its own ledger).
+each can screen only its own ledger), and `1.8.2c` (the register's database opened once at start-up
+with its key, for the register this install is, or the till kept closed and the reason named; a
+crash-left session closed and parked carts reclaimed before the first command; a PIN sign-in under
+the attempt policy, recorded and audited, holding the grants of the user's one role at this store;
+and one command context that refuses a command with no one signed in, signs out a deactivated user,
+and resolves a stored approval by id and holds it to its binding).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
@@ -221,13 +226,15 @@ escalated above a threshold and always audited; its terminal half needs 1.4.11's
 department that can be stored, which #330 asks about. Group 1.6's `1.6.2` is **partially delivered**:
 PINs are hashed under a reviewed Argon2id profile, wrong PINs wait longer and then lock a user out
 until a manager releases them, as the owner decided, and the count survives a restart; the reset
-command waits for the database to reach the terminal. `1.6.3` is closed: its seed comparison landed against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
+command can now be written through 1.8.2c's command context. `1.6.3` is closed: its seed comparison landed against `0004`'s 128 rows. `1.6.4` is **partially delivered**: `Authorized<C>`,
 `authorize`, `ApprovalHandle` and `EscalationPolicy` are complete in `pos-domain`, with the two
 compile-fail proofs that a token cannot be forged or substituted across capabilities. Its
 persistence half now stores, validates, reloads and one-use consumes a handle through a
 caller-owned transaction, with restart and rollback coverage; the additional compile-fail proof
-prevents deserialization from bypassing that validated seam. Only the shell command that resolves
-the stored handle remains deferred until 1.8.x wires `pos-db` into the terminal. It is not **blocked on the merchant legal name or TIN**, which instead gate store
+prevents deserialization from bypassing that validated seam. Its terminal half landed with 1.8.2c:
+the command context resolves a stored handle by id and holds it to its binding. What remains is the
+`⚠️ OPEN` question in its section, whether deactivating an approver revokes a handle they already
+issued. It is not **blocked on the merchant legal name or TIN**, which instead gate store
 provisioning and the issuing of a valid tax receipt. `1.3.2`, the first code step on the phase's
 longest critical path, has landed. It was waiting on which zero-rating reasons the GST return
 distinguishes; the owner decided on 26 October that, while it is unknown whether the merchant makes
@@ -259,12 +266,12 @@ Group 1.9's `1.9.5` is **partially delivered**: a shift opens with a float count
 on a business date the clock derives when it is trusted and the operator confirms, audited, when it
 is not; one stays open per register; and only its opener closes it, with a fact of its own and no
 approval. A sale completes only in the open shift and on its business date. Its commands and screens
-wait on the same shell state as 1.10.5's, which `1.8.2c` creates.
+run in the shell state `1.8.2c` created, and can be written now.
 Group 1.10's `1.10.5` is **partially delivered**: stock moved by hand, with a reason from five, a
 note, and an approval bound to the exact request by its digest, posts its event, audit row and
 consumption together; opening stock is read from its three-column file and posted as ledger events,
-never cache rows. Its commands and screen wait on the shell's database and session state, which `1.8.2c`
-creates. That step was added on 4 November 2026 (#373), once two steps had stopped at the same
+never cache rows. Its commands and screen run in the shell's database and session state, which `1.8.2c`
+created. That step was added on 4 November 2026 (#373), once two steps had stopped at the same
 missing wiring.
 Repository-hardening and documentation work may land between numbered product steps, but it does
 not advance that frontier.

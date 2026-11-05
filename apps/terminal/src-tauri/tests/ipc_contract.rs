@@ -426,20 +426,21 @@ fn conditional_privilege_cannot_cross_threshold_without_approval() {
 /// adding a command without declaring what it requires looks like.
 #[test]
 fn a_registry_fixture_without_a_command_spec_is_refused() {
+    // The shell's own list, and one command more.
+    let with = |extra: &'static str| -> Vec<&'static str> {
+        REGISTERED.iter().copied().chain([extra]).collect()
+    };
     assert_eq!(
-        check(COMMANDS, &["split_tender", "cart_void_sale"]),
+        check(COMMANDS, &with("cart_void_sale")),
         Err(vec![RegistryError::Unspecified("cart_void_sale")])
     );
     // The handler registers a path under its last segment.
     assert_eq!(
-        check(
-            COMMANDS,
-            &["split_tender", "commands :: cart :: cart_void_sale"]
-        ),
+        check(COMMANDS, &with("commands :: cart :: cart_void_sale")),
         Err(vec![RegistryError::Unspecified("cart_void_sale")])
     );
     assert_eq!(
-        check(&[], REGISTERED),
+        check(&[], &["split_tender"]),
         Err(vec![RegistryError::Unspecified("split_tender")])
     );
     // The other direction: a row for a command nothing registers.
@@ -451,11 +452,11 @@ fn a_registry_fixture_without_a_command_spec_is_refused() {
     );
     // And neither list may name a command twice.
     assert_eq!(
-        check(&[split_tender(), split_tender()], REGISTERED),
+        check(&[split_tender(), split_tender()], &["split_tender"]),
         Err(vec![RegistryError::DuplicateSpec("split_tender")])
     );
     assert_eq!(
-        check(COMMANDS, &["split_tender", "split_tender"]),
+        check(&[split_tender()], &["split_tender", "split_tender"]),
         Err(vec![RegistryError::DuplicateRegistration("split_tender")])
     );
 }
