@@ -2,22 +2,24 @@
 //! approval a command takes is bound to one operation (`ref/ipc-contract.md`
 //! §2 and §5).
 //!
-//! The registry holds only commands the shell registers, and today none of
-//! them is privileged. The privileged rows below are taken from the contract's
-//! catalogue as the microsteps that register those commands will write them.
-//! The validator has to accept them, so each refusal here shows a rule rather
-//! than a validator that refuses every privileged row.
+//! The registry holds only commands the shell registers. Its one privileged
+//! row is `cart_override_price` (1.4.11), conditional on the merchant's
+//! escalation policy. The other privileged rows below are taken from the
+//! contract's catalogue as the microsteps that register those commands will
+//! write them. The validator has to accept them, so each refusal here shows a
+//! rule rather than a validator that refuses every privileged row.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use pos_domain::cart::{AddLine, add_department_line, open};
+use pos_domain::cart::{AddLine, add_department_line, add_line, open, override_price};
 use pos_domain::{
-    ApprovalBinding, ApprovalHandle, ApprovalId, Authorized, Capability, CartContext, CartError,
-    CategoryId, Currency, Department, DepartmentPolicy, EscalationPolicy, GrantSet, Money,
-    PermissionError, RegisterId, Role, SaleId, SaleLineId, ShiftId, TaxCategoryId, Timestamp,
-    UserId, authorize, cap,
+    ApprovalBinding, ApprovalHandle, ApprovalId, AuditIntent, Authorized, Capability, CartContext,
+    CartError, CategoryId, Currency, Department, DepartmentPolicy, EscalationPolicy, GrantSet,
+    Money, OverrideReason, PermissionError, Product, ProductId, Qty, RegisterId, RegulatedSaleForm,
+    Role, SaleId, SaleLineId, ShiftId, TaxCategoryId, Timestamp, UnitOfMeasure, UserId, authorize,
+    cap,
 };
 use terminal_lib::REGISTERED;
 use terminal_lib::ipc::registry::{
@@ -293,7 +295,13 @@ fn every_privileged_command_binds_its_approval() {
         .copied()
         .filter(is_privileged)
         .collect();
-    assert_eq!(privileged.len(), CONTRACT_ROWS.len());
+    // The registry's one privileged row, then the contract's.
+    let names: Vec<&str> = privileged.iter().map(|row| row.name).collect();
+    let expected: Vec<&str> = ["cart_override_price"]
+        .into_iter()
+        .chain(CONTRACT_ROWS.iter().map(|row| row.name))
+        .collect();
+    assert_eq!(names, expected);
     for row in &privileged {
         assert_eq!(refusals(&[*row]), Vec::new(), "{}", row.name);
     }
@@ -372,7 +380,10 @@ fn conditional_privilege_cannot_cross_threshold_without_approval() {
         .collect();
     assert_eq!(
         predicates,
-        vec![ApprovalPredicate::DepartmentAmountAboveEscalation]
+        vec![
+            ApprovalPredicate::PriceOverrideEscalatedByPolicy,
+            ApprovalPredicate::DepartmentAmountAboveEscalation,
+        ]
     );
     for predicate in predicates {
         holds_at_its_boundary(predicate);
@@ -768,27 +779,33 @@ fn no_command_argument_carries_a_price() {
     let uncontrolled = |command: &'static str, argument: &'static str| {
         RegistryError::PriceArgumentUncontrolled { command, argument }
     };
-    const OVERRIDE_ARGS: &[Arg] = &[
+    let override_row = *COMMANDS
+        .iter()
+        .find(|row| row.name == "cart_override_price")
+        .unwrap();
+    assert_eq!(refusals(&[override_row]), Vec::new());
+    // The price rule alone, on the row with its approval left out: it holds
+    // while the row keeps its capability and its audit, and not without
+    // either.
+    const BASE_ARGS: &[Arg] = &[
         Arg::required("line_id"),
         Arg::required("unit_price_minor"),
         Arg::required("reason"),
     ];
-    let override_price = CommandSpec {
-        name: "cart_override_price",
-        access: Access::Capability(cap::PriceOverride::NAME),
-        audited: true,
+    let unapproved = CommandSpec {
         approval_requirement: ApprovalRequirement::Never,
-        args: OVERRIDE_ARGS,
+        args: BASE_ARGS,
+        ..override_row
     };
-    assert_eq!(refusals(&[override_price]), Vec::new());
+    assert_eq!(refusals(&[unapproved]), Vec::new());
     for row in [
         CommandSpec {
             access: Access::Capability(cap::SaleCreate::NAME),
-            ..override_price
+            ..unapproved
         },
         CommandSpec {
             audited: false,
-            ..override_price
+            ..unapproved
         },
     ] {
         assert_eq!(
@@ -845,6 +862,7 @@ fn no_command_argument_carries_a_price() {
 fn holds_at_its_boundary(predicate: ApprovalPredicate) {
     match predicate {
         ApprovalPredicate::DepartmentAmountAboveEscalation => department_threshold(),
+        ApprovalPredicate::PriceOverrideEscalatedByPolicy => override_escalation(),
     }
 }
 
@@ -985,4 +1003,139 @@ fn department_threshold() {
         sell(10_001, Some(&approval(SALE, 10_001))),
         Err(CartError::DepartmentAmountAboveCap(..))
     ));
+}
+
+const SHIFT_LEAD: UserId = UserId::from_uuid(Uuid::from_u128(0x5e));
+const LINE: SaleLineId = SaleLineId::from_uuid(Uuid::from_u128(0x11f));
+const OTHER_LINE: SaleLineId = SaleLineId::from_uuid(Uuid::from_u128(0x120));
+
+/// A manager's approval of `actor`'s override of `line` to `amount_minor`,
+/// read back through `ApprovalHandle::restore`.
+fn override_approval(actor: UserId, line: SaleLineId, amount_minor: i64) -> ApprovalHandle {
+    let id = ApprovalId::from_uuid(Uuid::from_u128(0xa992));
+    let issued = ApprovalHandle::issue(
+        id,
+        actor,
+        &proof::<cap::PriceOverride>(MANAGER, Role::Manager),
+        &ApprovalBinding {
+            entity_id: line.as_uuid(),
+            amount_minor,
+            content_hash: None,
+        },
+        "damaged".to_owned(),
+        at(),
+        120_000,
+        *id.as_uuid().as_bytes(),
+    )
+    .unwrap();
+    ApprovalHandle::restore(issued.to_stored()).unwrap()
+}
+
+/// `price.override` under the merchant's escalation policy, through the
+/// proof `cart_override_price` takes and the transition it calls. Its
+/// binding is the command's: this line and this price.
+fn override_escalation() {
+    let till = CartContext {
+        register_id: RegisterId::from_uuid(Uuid::from_u128(0x7e9)),
+        shift_id: ShiftId::from_uuid(Uuid::from_u128(0x5f7)),
+        cashier_id: SHIFT_LEAD,
+        currency: Currency::JOD,
+        is_training: false,
+        opened_at: at(),
+    };
+    let oil = Product {
+        id: ProductId::from_uuid(Uuid::from_u128(0x011)),
+        sku: "SYN-OIL-1L".to_owned(),
+        name_ar: "زيت اصطناعي".to_owned(),
+        name_en: None,
+        category_id: None,
+        tax_category_id: TaxCategoryId::from_uuid(Uuid::from_u128(0x7a8)),
+        unit: UnitOfMeasure::Each,
+        unit_price: jod(1_250),
+        is_weighed: false,
+        is_service: false,
+        is_active: true,
+        min_age: None,
+        max_price: None,
+        reorder_point: None,
+        regulated_sale_form: RegulatedSaleForm::UNREGULATED_SEALED_PACK,
+    };
+    let price = 1_000;
+    let over = |actor: UserId,
+                role: Role,
+                policy: &EscalationPolicy,
+                approval: Option<&ApprovalHandle>|
+     -> Result<AuditIntent, PermissionError> {
+        let auth = authorize::<cap::PriceOverride>(
+            actor,
+            &GrantSet::of_role(role),
+            approval,
+            &ApprovalBinding {
+                entity_id: LINE.as_uuid(),
+                amount_minor: price,
+                content_hash: None,
+            },
+            policy,
+            at(),
+        )?;
+        let line = AddLine::from_product(LINE, &oil, Qty::ONE).unwrap();
+        let cart = add_line(open(SALE, &till), line).unwrap();
+        let reason = OverrideReason::from("damaged".to_owned());
+        let (_, intent, _) =
+            override_price(cart, LINE, jod(price), reason, Some(jod(100)), &auth).unwrap();
+        Ok(intent)
+    };
+    let alone = EscalationPolicy::empty();
+    let escalating = EscalationPolicy::empty().with_escalation::<cap::PriceOverride>();
+
+    // Where the policy names nothing, a shift lead overrides alone, and an
+    // approval offered anyway is not consumed.
+    let intent = over(SHIFT_LEAD, Role::ShiftLead, &alone, None).unwrap();
+    assert_eq!((intent.approver, intent.approval), (None, None));
+    let bound = override_approval(SHIFT_LEAD, LINE, price);
+    let offered = over(SHIFT_LEAD, Role::ShiftLead, &alone, Some(&bound)).unwrap();
+    assert_eq!((offered.approver, offered.approval), (None, None));
+
+    // Where it names `price.override`, the override is refused without a
+    // handle...
+    assert_eq!(
+        over(SHIFT_LEAD, Role::ShiftLead, &escalating, None).unwrap_err(),
+        PermissionError::EscalationRequired(cap::PriceOverride::NAME)
+    );
+    // ...and passes with one bound to this line and this price, which the
+    // audit intent then names, with the amount the schema compares.
+    let crossed = over(SHIFT_LEAD, Role::ShiftLead, &escalating, Some(&bound)).unwrap();
+    assert_eq!(
+        (crossed.approver, crossed.approval, crossed.entity_id),
+        (Some(MANAGER), Some(bound.id()), LINE.as_uuid())
+    );
+    assert_eq!(crossed.payload.get("amount_minor"), Some(&price.into()));
+    // A handle for another price, or another line, does not.
+    assert!(matches!(
+        over(
+            SHIFT_LEAD,
+            Role::ShiftLead,
+            &escalating,
+            Some(&override_approval(SHIFT_LEAD, LINE, price - 1))
+        ),
+        Err(PermissionError::ApprovalAmountMismatch(..))
+    ));
+    assert!(matches!(
+        over(
+            SHIFT_LEAD,
+            Role::ShiftLead,
+            &escalating,
+            Some(&override_approval(SHIFT_LEAD, OTHER_LINE, price))
+        ),
+        Err(PermissionError::ApprovalEntityMismatch(..))
+    ));
+    // An approval adds a second person, never the capability: a cashier is
+    // refused under either policy, with a handle made out to them.
+    let cashiers = override_approval(CASHIER, LINE, price);
+    for policy in [&alone, &escalating] {
+        assert!(matches!(
+            over(CASHIER, Role::Cashier, policy, Some(&cashiers)),
+            Err(PermissionError::Denied(..))
+        ));
+    }
 }

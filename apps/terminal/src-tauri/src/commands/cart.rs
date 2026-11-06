@@ -1,14 +1,18 @@
 //! Building a basket, and setting it aside: `cart_open`, `cart_current`,
 //! `cart_add_line`, `cart_add_scan` and `cart_confirm_age`, then `cart_park`,
-//! `cart_list_parked` and `cart_resume` (`ref/ipc-contract.md` §3, "Cart";
-//! microstep 1.4.11, its first two parts).
+//! `cart_list_parked` and `cart_resume`, then `cart_override_price`
+//! (`ref/ipc-contract.md` §3, "Cart"; microstep 1.4.11, its first three
+//! parts).
 //!
-//! **No command here takes a price.** A line's price comes from the catalogue,
-//! through `AddLine::from_product`, or from a label the scan handler resolved,
-//! through `AddLine::from_scan`. `PriceSource` cannot be built from an
-//! integer, so nothing the webview sends can become a line's price
-//! (`ref/ipc-contract.md` §1, rule 6). The commands that do take a price are
-//! later parts of this step, each controlled.
+//! **No base command here takes a price.** A line's price comes from the
+//! catalogue, through `AddLine::from_product`, or from a label the scan
+//! handler resolved, through `AddLine::from_scan`. `PriceSource` cannot be
+//! built from an integer, so nothing the webview sends can become a line's
+//! captured price (`ref/ipc-contract.md` §1, rule 6). The one command that
+//! takes a price is `cart_override_price`, under `price.override`, which the
+//! grid gives a shift lead and a manager and never a cashier. Every override
+//! is audited with its reason, a code from the store's list, and the line
+//! keeps the price it was captured at beside the price it now charges (I-5).
 //!
 //! **Every answer is the priced cart.** [`CartSnapshot`] is `price_cart`'s
 //! result under the store's own settings, in minor units, so the screen
@@ -42,17 +46,18 @@ use std::collections::BTreeSet;
 use pos_db::DbError;
 use pos_db::repo::parked_cart::ParkedCartRepository;
 use pos_db::repo::product::ProductRepository;
+use pos_db::repo::setting::SettingRepository;
 use pos_db::repo::shift::ShiftRepository;
 use pos_db::repo::stock::StockRepository;
 use pos_db::repo::user::UserRepository;
 use pos_db::tax_pack::TaxPackRepository;
 use pos_db::tax_policy::TaxPolicyRepository;
-use pos_domain::cart::{AddLine, add_line, confirm_age, open, park, price_cart};
+use pos_domain::cart::{AddLine, add_line, confirm_age, open, override_price, park, price_cart};
 use pos_domain::{
-    ApprovalBinding, AuditIntent, Authorized, Capability, Cart, CartContext, CartError,
-    ClockConfidence, Currency, EscalationPolicy, PricedCart, ProductId, Qty, SaleId, SaleLineId,
-    ScalePricingRefusal, ScanLookup, Shift, Shortfall, StockError, StoreId, StoreTaxProfile,
-    TaxBands, Timestamp, UnitOfMeasure, UserId, cap,
+    ApprovalBinding, ApprovalId, AuditIntent, Authorized, Capability, Cart, CartContext, CartError,
+    ClockConfidence, Currency, EscalationPolicy, Money, OverrideReason, PricedCart, ProductId, Qty,
+    SaleId, SaleLineId, ScalePricingRefusal, ScanLookup, Shift, Shortfall, StockError, StoreId,
+    StoreTaxProfile, TaxBands, Timestamp, UnitOfMeasure, UserId, cap,
 };
 use rusqlite::Connection;
 use serde::Serialize;
@@ -60,7 +65,7 @@ use tauri::State;
 use uuid::Uuid;
 
 use super::{audit, sqlite, stored};
-use crate::ipc::context::{authorize, not_signed_in, permission_refused};
+use crate::ipc::context::{authorize, merchant_policy, not_signed_in, permission_refused};
 use crate::ipc::{IpcError, IpcResult};
 use crate::scan::{ScanContext, ScanHandlerError, ScanOutcome, handle_scan};
 use crate::state::{Register, Session, Till};
@@ -99,8 +104,14 @@ pub struct LineSnapshot {
     pub name: String,
     pub qty_milli: i64,
     pub unit: UnitOfMeasure,
-    /// What the line charges a unit.
+    /// What the line charges a unit: the price it was captured at, or the
+    /// price an override set.
     pub unit_price_minor: i64,
+    /// The price the line was captured at (I-5), which an override leaves
+    /// beside the price it sets.
+    pub captured_price_minor: i64,
+    /// Why the line's price was overridden, by its reason code, when it was.
+    pub override_reason: Option<String>,
     pub gross_minor: i64,
     pub discount_minor: i64,
     pub tax_minor: i64,
@@ -167,6 +178,11 @@ impl CartSnapshot {
                     qty_milli: line.qty.milli(),
                     unit: line.unit,
                     unit_price_minor: line.price().minor(),
+                    captured_price_minor: line.unit_price.minor(),
+                    override_reason: line
+                        .price_override
+                        .as_ref()
+                        .map(|over| over.reason.code().to_owned()),
                     gross_minor: minor(|p| p.gross_before_discount.minor()),
                     discount_minor: minor(|p| {
                         p.discount_attributions
@@ -250,6 +266,26 @@ pub fn cart_confirm_age(
     confirmed: bool,
 ) -> IpcResult<CartSnapshot> {
     answer_age(till.register()?, line_id, confirmed)
+}
+
+#[tauri::command]
+pub fn cart_override_price(
+    till: State<'_, Till>,
+    line_id: SaleLineId,
+    unit_price_minor: i64,
+    reason: String,
+    approval_id: Option<ApprovalId>,
+) -> IpcResult<CartSnapshot> {
+    override_line_price(
+        till.register()?,
+        &PriceChange {
+            line_id,
+            unit_price_minor,
+            reason: &reason,
+            approval: approval_id,
+        },
+        &merchant_policy(),
+    )
 }
 
 #[tauri::command]
@@ -413,6 +449,84 @@ pub fn answer_age(
     })
 }
 
+/// What `cart_override_price` asks for: the line, the price it is to charge
+/// a unit, the reason by its code, and the approval when one is offered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PriceChange<'r> {
+    pub line_id: SaleLineId,
+    pub unit_price_minor: i64,
+    pub reason: &'r str,
+    pub approval: Option<ApprovalId>,
+}
+
+/// `cart_override_price`: the price `line_id` charges a unit, set to
+/// `unit_price_minor` for `reason`, under the signed-in user's
+/// `price.override`. Audited, in the transaction that saves the cart.
+///
+/// - **The reason is a code from the store's list** (merchant decision 3.7),
+///   never free text: free text is unreportable, and a customer's name typed
+///   there would stay in the audit chain for good.
+/// - **The floor is the product's cost** (merchant decision 3.4), read as
+///   `StockPosition::cost_basis`, so a product never costed has no cost and
+///   may not be lowered. A displayed price wins over it, and nothing passes
+///   the ministry ceiling. The domain's `override_price` holds all three.
+/// - **Where `policy` escalates `price.override`** the approval must be bound
+///   to this line and this price, and it is spent with the audit row. The
+///   register's policy escalates nothing yet ([`merchant_policy`]).
+/// - **A displayed price asks for the product's label to be printed again**,
+///   and `label_reprint_queue` arrives with migration `0014` (4.6.2). Until
+///   then the audit row, with the reason `displayed_price`, is the record
+///   that worklist will read.
+///
+/// # Errors
+///
+/// - What the context refuses: `permission_denied` for a role without
+///   `price.override`, and under an escalating policy `approval_required`,
+///   `approval_unknown`, `approval_used`, `approval_mismatch` or
+///   `approval_revoked`;
+/// - `cart_not_open`, `line_unknown` and `override_reason_unknown`;
+/// - `setting_invalid` when the store's list cannot be read;
+/// - the line's own: `price_label_not_overridable`,
+///   `department_price_not_overridable`, `price_negative`,
+///   `amount_discount_fixes_price`, `price_above_ceiling`,
+///   `displayed_price_not_lower`, `price_no_recorded_cost` and
+///   `price_below_floor`;
+/// - the pricing refusals, and `storage_failed`.
+pub fn override_line_price(
+    register: &Register,
+    change_to: &PriceChange<'_>,
+    policy: &EscalationPolicy,
+) -> IpcResult<CartSnapshot> {
+    let at = register.now();
+    let binding = ApprovalBinding {
+        entity_id: change_to.line_id.as_uuid(),
+        amount_minor: change_to.unit_price_minor,
+        content_hash: None,
+    };
+    let auth = authorize::<cap::PriceOverride>(register, change_to.approval, &binding, policy, at)?;
+    let store = register.store();
+    change(register, &auth, Screen::Flag, |conn, cart| {
+        let reason = override_reason(conn, store, change_to.reason)?;
+        let product = cart
+            .lines
+            .iter()
+            .find(|line| line.id == change_to.line_id)
+            .and_then(|line| line.product_id);
+        let cost = product
+            .map(|product| StockRepository::new(conn).position(product, store))
+            .transpose()
+            .map_err(stored)?
+            .and_then(|position| position.cost_basis());
+        let to = Money::from_minor(change_to.unit_price_minor, cart.currency);
+        // A displayed price's label reprint has nowhere to go before `0014`;
+        // the audit row names the reason it would have been queued for.
+        let (cart, intent, _reprint) =
+            override_price(cart, change_to.line_id, to, reason, cost, &auth)
+                .map_err(|e| cart_refused(&e))?;
+        Ok((cart, Some(intent)))
+    })
+}
+
 /// `cart_park`: set the till's basket aside under `label`, as it is, and
 /// leave the till free for the next customer. The basket keeps the business
 /// day it was opened in, and expires when that day ends.
@@ -549,9 +663,9 @@ enum Screen {
 /// returns the cart it becomes and any audit intent. The change is screened
 /// and priced before anything is written; then the saved snapshot and the
 /// audit row commit together, and only then does the till hold the new cart.
-fn change(
+fn change<C: Capability>(
     register: &Register,
-    auth: &Authorized<cap::SaleCreate>,
+    auth: &Authorized<C>,
     screen: Screen,
     work: impl FnOnce(&Connection, Cart) -> IpcResult<(Cart, Option<AuditIntent>)>,
 ) -> IpcResult<CartSnapshot> {
@@ -614,6 +728,29 @@ fn parked_ref(conn: &Connection, store: StoreId, listed: Listed<'_>) -> IpcResul
         currency: listed.cart.currency.code(),
         total_minor,
     })
+}
+
+/// `reason` as an override's reason: one of the codes the store lists for
+/// it, or its default list (merchant decision 3.7). Matched exactly, so a
+/// reason is never read as a code it only resembles.
+fn override_reason(conn: &Connection, store: StoreId, reason: &str) -> IpcResult<OverrideReason> {
+    let listed = SettingRepository::new(conn)
+        .price_override_reasons(store)
+        .map_err(|error| match error {
+            DbError::StoredSettingInvalid { .. } => {
+                IpcError::from_source("setting_invalid", "error.setting.invalid", &error)
+                    .with_detail("the store's list of override reasons cannot be read")
+            }
+            other => stored(other),
+        })?;
+    if listed.iter().any(|code| code == reason) {
+        Ok(OverrideReason::from(reason.to_owned()))
+    } else {
+        Err(IpcError::new(
+            "override_reason_unknown",
+            "error.cart.override_reason_unknown",
+        ))
+    }
 }
 
 /// A parked basket's label, trimmed; a blank one is no label. It is a name
@@ -829,6 +966,28 @@ fn cart_refused(error: &CartError) -> IpcError {
         CartError::NonPositiveQty => ("qty_not_positive", "error.cart.qty_not_positive"),
         CartError::FractionalQtyForDiscrete(..) => ("qty_not_whole", "error.cart.qty_not_whole"),
         CartError::AboveMaxPrice(..) => ("price_above_ceiling", "error.cart.price_above_ceiling"),
+        CartError::LabelPriceNotOverridable(_) => (
+            "price_label_not_overridable",
+            "error.cart.price_label_not_overridable",
+        ),
+        CartError::DepartmentPriceOutsideDepartmentSale => (
+            "department_price_not_overridable",
+            "error.cart.department_price_not_overridable",
+        ),
+        CartError::NegativeLine => ("price_negative", "error.cart.price_negative"),
+        CartError::AmountDiscountFixesPrice(_) => (
+            "amount_discount_fixes_price",
+            "error.cart.amount_discount_fixes_price",
+        ),
+        CartError::DisplayedPriceNotLower(..) => (
+            "displayed_price_not_lower",
+            "error.cart.displayed_price_not_lower",
+        ),
+        CartError::NoRecordedCost(..) => (
+            "price_no_recorded_cost",
+            "error.cart.price_no_recorded_cost",
+        ),
+        CartError::BelowPriceFloor(..) => ("price_below_floor", "error.cart.price_below_floor"),
         CartError::ScanNotOneProduct => ("scan_not_one_product", "error.scan.not_one_product"),
         CartError::LineNotFound(_) => ("line_unknown", "error.cart.line_unknown"),
         CartError::AgeConfirmationNotPending(_) => {
