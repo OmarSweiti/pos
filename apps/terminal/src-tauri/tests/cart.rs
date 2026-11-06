@@ -865,8 +865,6 @@ fn a_parked_basket_leaves_the_till_free_and_comes_back_as_it_was() {
             .iter()
             .all(|(_, cart)| cart.id != empty.sale_id)
     );
-    // Resuming the basket the till holds answers with it.
-    assert_eq!(resume_cart(&register, basket.sale_id).unwrap(), basket);
 
     // A resume onto a basket with lines parks that basket, in the same step.
     park_cart(&register, None).unwrap();
@@ -1102,7 +1100,8 @@ fn a_resumed_basket_changed_and_crashed_comes_back_as_it_was_left() {
     let changed = add_product(&register, product_id(BREAD), None).unwrap();
 
     // The process dies with nobody signing out. The next start-up sets the
-    // basket aside again, with the line added after it was resumed.
+    // basket aside again, under its label, with the line added after it was
+    // resumed.
     drop(register);
     let restarted = open(dir.path());
     assert_eq!(restarted.recovered().carts_set_aside, 1);
@@ -1111,8 +1110,13 @@ fn a_resumed_basket_changed_and_crashed_comes_back_as_it_was_left() {
     assert_eq!(listed.len(), 1);
     let waiting = listed.first().unwrap();
     assert_eq!(
-        (waiting.parked_id, waiting.line_count, waiting.total_minor),
-        (basket.sale_id, 2, changed.total_minor)
+        (
+            waiting.parked_id,
+            waiting.label.as_deref(),
+            waiting.line_count,
+            waiting.total_minor
+        ),
+        (basket.sale_id, Some("Blue bag"), 2, changed.total_minor)
     );
     assert_eq!(resume_cart(&restarted, basket.sale_id).unwrap(), changed);
 }

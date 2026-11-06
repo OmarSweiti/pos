@@ -494,8 +494,7 @@ pub fn list_parked(register: &Register) -> IpcResult<Vec<ParkedRef>> {
 /// were captured at. A basket the till already holds is set aside first, in
 /// the same transaction: parked if it has a line, dropped if not. Taking over
 /// another cashier's basket writes `sale.resume` with its envelope in that
-/// transaction; a cashier resuming their own writes nothing. Resuming the
-/// basket the till already holds answers with it.
+/// transaction; a cashier resuming their own writes nothing.
 ///
 /// # Errors
 ///
@@ -510,9 +509,6 @@ pub fn resume_cart(register: &Register, parked_id: SaleId) -> IpcResult<CartSnap
     let auth = proof::<cap::SaleResume>(register, at)?;
     let mut till = register.lock_till();
     signed_in_as(till.session.as_ref(), auth.actor())?;
-    if let Some(cart) = till.cart.as_ref().filter(|cart| cart.id == parked_id) {
-        return snapshot(&till.db, register.store(), cart);
-    }
     let shift = open_shift(&till.db, register)?;
     let context = CartContext {
         register_id: register.register(),
