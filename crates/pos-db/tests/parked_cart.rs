@@ -806,4 +806,28 @@ fn a_working_cart_is_set_aside_parked_or_dropped() {
         (basket.id, None, basket.cashier_id, at())
     );
     assert_eq!(entry.cart.cart(), &basket);
+
+    // A basket resumed from the parked list and set aside again keeps the
+    // label it was parked under: nothing that sets it aside asks for one.
+    let mut labelled = world.cart(0x60);
+    labelled.lines = vec![world.line(0x61, world.item, 1_000, 1_000)];
+    let labelled = park(labelled).unwrap();
+    park_committed(&world, &labelled, Some("Blue bag"));
+    let resumed = resume_committed(&world, labelled.cart().id, &till(world.cashier()), session);
+    let tx = world.conn.unchecked_transaction().unwrap();
+    assert_eq!(
+        parked_carts(&world)
+            .set_aside(&tx, session, &resumed.cart, at())
+            .unwrap(),
+        SetAside::Parked
+    );
+    tx.commit().unwrap();
+    let listed = parked_carts(&world)
+        .parked(RegisterId::from_uuid(uuid(REGISTER)), day())
+        .unwrap();
+    let entry = listed
+        .iter()
+        .find(|entry| entry.id == labelled.cart().id)
+        .unwrap();
+    assert_eq!(entry.label.as_deref(), Some("Blue bag"));
 }

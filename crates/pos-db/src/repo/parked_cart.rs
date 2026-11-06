@@ -235,11 +235,13 @@ impl<'c> ParkedCartRepository<'c> {
     }
 
     /// Set aside the working cart this session claimed, as the till holds it
-    /// now, at `at`: a basket with lines goes to the parked list, with no
-    /// label and under its cashier ([`Self::repark`]), and one with nothing in
-    /// it is dropped ([`Self::discard`]). A sign-out, a crash found at start-up
-    /// and a resume onto a till already holding a basket each set the till's
-    /// basket aside this way (the owner's decisions of 5 and 6 November 2026).
+    /// now, at `at`: a basket with lines goes to the parked list under its
+    /// cashier, keeping the label it was last parked under, if any
+    /// ([`Self::repark`]), and one with nothing in it is dropped
+    /// ([`Self::discard`]). A sign-out, a crash found at start-up and a resume
+    /// onto a till already holding a basket each set the till's basket aside
+    /// this way (the owner's decisions of 5 and 6 November 2026), and none of
+    /// them is asked for a label.
     ///
     /// # Errors
     ///
@@ -256,7 +258,16 @@ impl<'c> ParkedCartRepository<'c> {
     ) -> Result<SetAside, DbError> {
         match park(cart.clone()) {
             Ok(parked) => {
-                self.repark(tx, session_nonce, &parked, None, at)?;
+                let label: Option<String> = tx
+                    .query_row(
+                        "SELECT label FROM parked_cart
+                          WHERE id = ?1 AND state = 'active' AND session_nonce = ?2",
+                        params![bytes(cart.id.as_uuid()), bytes(session_nonce)],
+                        |row| row.get(0),
+                    )
+                    .optional()?
+                    .flatten();
+                self.repark(tx, session_nonce, &parked, label.as_deref(), at)?;
                 Ok(SetAside::Parked)
             }
             Err(_) => {
