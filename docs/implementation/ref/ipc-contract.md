@@ -374,8 +374,8 @@ capture and the return-box mapping would let a cashier zero-rate a sale that is 
 > - **`cart_resume` onto a till that holds a basket sets that basket aside first**, parked if it has
 >   a line and dropped if not, in the transaction that claims the resumed one (the owner's decision
 >   of 6 November 2026). A refusal changes nothing: `parked_cart_unknown`, `parked_cart_claimed`,
->   `parked_cart_expired`, `training_mode_mismatch`, `shift_not_open` or a pricing refusal. Resuming
->   the basket the till holds answers with it.
+>   `parked_cart_expired`, `training_mode_mismatch`, `shift_not_open` or a pricing refusal. A basket
+>   set aside this way, or by a sign-out or a crash, keeps the label it was last parked under.
 > - **The registry marks `cart_resume` `audited: false`**, because the flag means every call writes a
 >   row; the takeover row above is written by the domain's intent, and a cashier resuming their own
 >   basket writes none.
