@@ -23,10 +23,9 @@
 //! set aside.
 
 use pos_db::auth::{ATTEMPT_POLICY, Admission, admission, hash_pin, needs_rehash, verify_pin};
-use pos_db::repo::parked_cart::ParkedCartRepository;
+use pos_db::repo::parked_cart::{ParkedCartRepository, SetAside};
 use pos_db::repo::role::RoleRepository;
 use pos_db::repo::user::{SessionEnd, UserRepository};
-use pos_domain::cart::park;
 use pos_domain::{AuditIntent, Cart, Timestamp};
 use rusqlite::Connection;
 use serde::Serialize;
@@ -307,23 +306,13 @@ pub(crate) fn sign_out(
     let tx = db.transaction().map_err(sqlite)?;
     let set_aside = match cart.as_ref() {
         None => None,
-        Some(working) => {
-            let carts = ParkedCartRepository::new(&tx);
-            match park(working.clone()) {
-                Ok(parked) => {
-                    carts
-                        .repark(&tx, register.process_nonce(), &parked, None, at)
-                        .map_err(stored)?;
-                    Some(working.id)
-                }
-                Err(_) => {
-                    carts
-                        .discard(&tx, register.process_nonce(), working.id)
-                        .map_err(stored)?;
-                    None
-                }
-            }
-        }
+        Some(working) => match ParkedCartRepository::new(&tx)
+            .set_aside(&tx, register.process_nonce(), working, at)
+            .map_err(stored)?
+        {
+            SetAside::Parked => Some(working.id),
+            SetAside::Dropped => None,
+        },
     };
     UserRepository::new(&tx)
         .end_session(&tx, current.id, SessionEnd::Logout, at)

@@ -27,10 +27,9 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pos_db::DbError;
-use pos_db::repo::parked_cart::ParkedCartRepository;
+use pos_db::repo::parked_cart::{ParkedCartRepository, SetAside};
 use pos_db::repo::stock::{CacheDrift, StockRepository};
 use pos_db::repo::user::{SessionEnd, UserRepository};
-use pos_domain::cart::park;
 use pos_domain::{
     Cart, Clock, ClockConfidence, GrantSet, IdSource, RegisterId, Role, StoreId, Timestamp, UserId,
 };
@@ -445,18 +444,9 @@ fn recover(
         .reclaim_after_restart(&tx, register, nonce)
         .map_err(failed)?
     {
-        let id = cart.id;
-        match park(cart) {
-            Ok(parked) => {
-                carts
-                    .repark(&tx, nonce, &parked, None, at)
-                    .map_err(failed)?;
-                carts_set_aside += 1;
-            }
-            Err(_) => {
-                carts.discard(&tx, nonce, id).map_err(failed)?;
-                empty_carts_dropped += 1;
-            }
+        match carts.set_aside(&tx, nonce, &cart, at).map_err(failed)? {
+            SetAside::Parked => carts_set_aside += 1,
+            SetAside::Dropped => empty_carts_dropped += 1,
         }
     }
     tx.commit().map_err(sqlite)?;
