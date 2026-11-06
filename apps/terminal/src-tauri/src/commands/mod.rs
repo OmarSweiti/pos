@@ -7,6 +7,7 @@ pub mod auth;
 pub mod cart;
 
 use pos_db::DbError;
+use pos_db::repo::approval::ApprovalRepository;
 use pos_db::repo::audit::AuditRepository;
 use pos_db::repo::outbox::{CommitEnvelope, FactMember, OutboxRepository};
 use pos_domain::AuditIntent;
@@ -28,8 +29,23 @@ pub(crate) fn sqlite(error: rusqlite::Error) -> IpcError {
 
 /// Append `intent` to the register's audit chain inside `tx`, behind the
 /// ready delivery envelope `audit_log_has_ready_commit` requires (I-9). The
-/// audit row is the envelope's only member: what it audits is register-local
+/// audit row is the envelope's first member: what it audits is register-local
 /// or travels in an envelope of its own.
+///
+/// **An intent that names an approval spends it here** (`ref/ipc-contract.md`
+/// §1, rule 7). Its `approval_consumption` row joins the same envelope and
+/// names this audit row, and the intent's entity as the effect: the schema
+/// holds a consumption to an effect that is the approval's entity and the
+/// audit row's alike, so no other effect could pass. The caller's transaction
+/// holds the effect, so the three commit together or not at all.
+///
+/// # Errors
+///
+/// `approval_used` for an approval spent since the command was authorized;
+/// `approval_mismatch` for one the schema will not let this audit row spend,
+/// which is an approval given for another reason, since the command context
+/// already held it to its actor, entity, amount and moment; and
+/// `storage_failed`.
 pub(crate) fn audit(
     register: &Register,
     tx: &Transaction<'_>,
@@ -38,7 +54,25 @@ pub(crate) fn audit(
     let audit_id = register.next_id();
     let commit_id = register.next_id();
     let change_id = register.next_id();
+    // The approval's id, and the change that spends it on the wire.
+    let consumption = intent
+        .approval
+        .map(|id| (*id.as_uuid().as_bytes(), register.next_id()));
     let created_at = intent.at.to_iso8601();
+    let mut members = vec![FactMember {
+        change_id: change_id.as_bytes(),
+        entity: "audit_log",
+        entity_id: audit_id.as_bytes(),
+        payload: "{}",
+    }];
+    if let Some((approval, change)) = consumption.as_ref() {
+        members.push(FactMember {
+            change_id: change.as_bytes(),
+            entity: "approval_consumption",
+            entity_id: approval,
+            payload: "{}",
+        });
+    }
     OutboxRepository::new(tx)
         .write_commit(
             tx,
@@ -49,16 +83,25 @@ pub(crate) fn audit(
                 producer_version: PRODUCER_VERSION,
                 created_at: &created_at,
             },
-            &[FactMember {
-                change_id: change_id.as_bytes(),
-                entity: "audit_log",
-                entity_id: audit_id.as_bytes(),
-                payload: "{}",
-            }],
+            &members,
         )
         .map_err(stored)?;
     AuditRepository::new(tx)
         .append(tx, register.register(), audit_id, intent)
         .map_err(stored)?;
+    if let Some(approval) = intent.approval {
+        ApprovalRepository::new(tx)
+            .consume(tx, approval, intent.entity_id, audit_id, intent.at)
+            .map_err(|error| match error {
+                DbError::ApprovalAlreadyConsumed => {
+                    IpcError::from_source("approval_used", "error.approval.used", &error)
+                }
+                DbError::ApprovalConsumptionUnbound => {
+                    IpcError::from_source("approval_mismatch", "error.approval.mismatch", &error)
+                        .with_detail("the approval was given for another reason")
+                }
+                other => stored(other),
+            })?;
+    }
     Ok(())
 }

@@ -37,6 +37,7 @@ ipc::registry::commands![
     commands::cart::cart_add_line,
     commands::cart::cart_add_scan,
     commands::cart::cart_confirm_age,
+    commands::cart::cart_override_price,
     commands::cart::cart_park,
     commands::cart::cart_list_parked,
     commands::cart::cart_resume,

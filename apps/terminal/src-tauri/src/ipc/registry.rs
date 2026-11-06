@@ -108,6 +108,10 @@ pub enum ApprovalPredicate {
     /// The amount is above the store's `DepartmentPolicy::escalate_above`
     /// (`ref/domain-api.md` §6.5). `add_department_line` evaluates it.
     DepartmentAmountAboveEscalation,
+    /// The merchant's escalation policy names `price.override` (merchant
+    /// decision 1.8). `authorize` evaluates it against the policy the command
+    /// is given, which today names nothing (`ipc::context::merchant_policy`).
+    PriceOverrideEscalatedByPolicy,
 }
 
 impl ApprovalPredicate {
@@ -116,6 +120,7 @@ impl ApprovalPredicate {
     pub const fn capability(self) -> &'static str {
         match self {
             ApprovalPredicate::DepartmentAmountAboveEscalation => cap::DepartmentSale::NAME,
+            ApprovalPredicate::PriceOverrideEscalatedByPolicy => cap::PriceOverride::NAME,
         }
     }
 }
@@ -314,6 +319,29 @@ pub const COMMANDS: &[CommandSpec] = &[
         audited: false,
         approval_requirement: ApprovalRequirement::Never,
         args: &[Arg::required("raw_code")],
+    },
+    // Conditional on the merchant's policy, which escalates nothing yet. When
+    // it does, the approval names this line, this price and this reason, and
+    // is spent with the audit row every override writes.
+    CommandSpec {
+        name: "cart_override_price",
+        access: Access::Capability(cap::PriceOverride::NAME),
+        audited: true,
+        approval_requirement: ApprovalRequirement::Conditional {
+            predicate: ApprovalPredicate::PriceOverrideEscalatedByPolicy,
+            binding: ApprovalBindingSpec {
+                entity: EntityBindingSpec::Argument("line_id"),
+                amount: AmountBindingSpec::Argument("unit_price_minor"),
+                content: ContentBindingSpec::None,
+                reason: ReasonBindingSpec::Argument("reason"),
+            },
+        },
+        args: &[
+            Arg::required("line_id"),
+            Arg::required("unit_price_minor"),
+            Arg::required("reason"),
+            Arg::optional(APPROVAL_ARGUMENT),
+        ],
     },
     CommandSpec {
         name: "cart_confirm_age",

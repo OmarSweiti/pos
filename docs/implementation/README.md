@@ -228,8 +228,9 @@ has begun; `1.2.0` is its one partial step, waiting on milestone 5.8. Group 1.4'
 the cart priced under the store's own settings, no command taking a price, stock screened as each
 line is added, and every working basket on disk, so a crash or a sign-out sets it aside in the parked
 list. A cashier can now park a basket, list what is parked and resume one, and taking over another
-cashier's basket is audited. The price override and the department sale follow, as the owner
-decided. `1.4.12` is
+cashier's basket is audited. A shift lead or a manager can override a line's price, for a reason
+from the store's list, held to the cost floor and the ministry ceiling and audited every time. The
+department sale follows, as the owner decided, and waits on #330. `1.4.12` is
 **partially delivered**: its domain half sells goods with no product through a department, capped,
 escalated above a threshold and always audited; its terminal half needs a department that can be
 stored, which #330 asks about. Group 1.6's `1.6.2` is **partially delivered**:
