@@ -853,6 +853,47 @@ fn no_command_argument_carries_a_price() {
         }]),
         vec![uncontrolled("split_tender", "total_minor")]
     );
+    // Cash handed over keeps its amount only while its row stays the selling
+    // command's (1.8.3): another capability, or none, loses it.
+    let cash = *COMMANDS
+        .iter()
+        .find(|row| row.name == "tender_add_cash")
+        .unwrap();
+    assert_eq!(refusals(&[cash]), Vec::new());
+    for row in [
+        CommandSpec {
+            access: Access::Capability(cap::PriceOverride::NAME),
+            ..cash
+        },
+        CommandSpec {
+            access: Access::NoCapability {
+                reason: "a tender needs no proof",
+            },
+            ..cash
+        },
+    ] {
+        assert_eq!(
+            refusals(&[row]),
+            vec![uncontrolled("tender_add_cash", "amount_minor")]
+        );
+    }
+    // And the line is that command's alone: no other tender command takes an
+    // amount.
+    let remove = *COMMANDS
+        .iter()
+        .find(|row| row.name == "tender_remove")
+        .unwrap();
+    const REMOVE_WITH_AMOUNT: &[Arg] = &[Arg::required("tender_id"), Arg::required("amount_minor")];
+    assert_eq!(
+        refusals(&[CommandSpec {
+            args: REMOVE_WITH_AMOUNT,
+            ..remove
+        }]),
+        vec![RegistryError::PriceArgument {
+            command: "tender_remove",
+            argument: "amount_minor",
+        }]
+    );
 }
 
 // ── Each condition at its boundary ──────────────────────────────────────────
