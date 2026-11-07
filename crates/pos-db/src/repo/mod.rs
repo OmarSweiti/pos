@@ -40,5 +40,6 @@ pub mod setting;
 pub mod shift;
 pub mod stock;
 pub mod stock_adjustment;
+pub mod tender_type;
 pub mod trade_scale;
 pub mod user;
