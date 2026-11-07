@@ -15,8 +15,9 @@ mod shop;
 use pos_db::repo::checkout_operation::{CheckoutOperation, CheckoutOperationRepository};
 use pos_domain::{InFlight, SaleId, TenderId, UserId};
 use shop::{
-    BREAD, CASHIER_CODE, CASHIER_ID, CASHIER_PIN, CHEESE, OIL, OWNER_CODE, OWNER_ID, SECOND_CODE,
-    SECOND_ID, TOBACCO, add_staff, audited, field, open, product_id, refusal, seed, shop, states,
+    BREAD, CASHIER_CODE, CASHIER_ID, CASHIER_PIN, CHEESE, KEY, OIL, OWNER_CODE, OWNER_ID,
+    SECOND_CODE, SECOND_ID, TOBACCO, add_staff, audited, field, open, product_id, refusal, seed,
+    shop, states,
 };
 use terminal_lib::commands::auth::{login_pin, logout};
 use terminal_lib::commands::cart::{
@@ -25,7 +26,7 @@ use terminal_lib::commands::cart::{
 use terminal_lib::commands::tender::{
     PaymentSnapshot, RoundingLine, add_cash, back_to_cart, begin_payment, in_flight, take_back,
 };
-use terminal_lib::state::Register;
+use terminal_lib::state::{DATABASE_FILE, Register};
 use uuid::Uuid;
 
 /// The fixture policy's coin step, in fils.
@@ -432,6 +433,11 @@ fn a_sale_left_mid_payment_stays_journalled_for_recovery() {
         both.iter()
             .any(|sale| sale.sale_id == own.sale_id && sale.on_this_till)
     );
+    assert!(
+        both.iter()
+            .any(|sale| sale.sale_id == left.sale_id && !sale.on_this_till),
+        "the sale a forced sign-out left is on no till"
+    );
     drop(register);
 
     // A restart leaves both where they are, for the recovery half: neither
@@ -456,6 +462,42 @@ fn a_sale_left_mid_payment_stays_journalled_for_recovery() {
     let named = in_flight(&restarted).unwrap();
     assert_eq!(named.len(), 2);
     assert!(named.iter().all(|sale| !sale.on_this_till));
+}
+
+#[test]
+fn a_journal_row_this_build_cannot_read_is_left_for_recovery() {
+    let dir = tempfile::tempdir().unwrap();
+    seed(dir.path(), true);
+    let register = open(dir.path());
+    login_pin(&register, CASHIER_CODE, CASHIER_PIN).unwrap();
+    let basket = one_bottle(&register);
+    begin_payment(&register).unwrap();
+    drop(register);
+
+    // Between two processes the journalled snapshot stops being one this
+    // build can read.
+    let conn = pos_db::open(&dir.path().join(DATABASE_FILE), KEY).unwrap();
+    let damaged = conn
+        .execute(
+            "UPDATE checkout_operation SET priced_snapshot = '{}' WHERE sale_id = ?1",
+            [basket.sale_id.as_uuid().as_bytes().as_slice()],
+        )
+        .unwrap();
+    assert_eq!(damaged, 1);
+    drop(conn);
+
+    // Start-up still leaves the sale for recovery: its basket is claimed and
+    // not parked beside a journal that names it.
+    let restarted = open(dir.path());
+    assert_eq!(restarted.recovered().sales_in_flight, 1);
+    assert_eq!(restarted.recovered().carts_set_aside, 0);
+    assert_eq!(
+        states(&restarted),
+        vec![("active".to_owned(), basket.sale_id)]
+    );
+    // And the in-flight list says it cannot read it, rather than leave it out.
+    login_pin(&restarted, CASHIER_CODE, CASHIER_PIN).unwrap();
+    assert_eq!(refusal(in_flight(&restarted)).code, "checkout_unreadable");
 }
 
 #[test]
