@@ -228,14 +228,17 @@ impl CartSnapshot {
                 .filter(|line| line.min_age.is_some() && !line.age_confirmed)
                 .map(|line| line.id)
                 .collect(),
-            stock_flags: flags
-                .iter()
-                .map(|flag| StockFlag {
-                    product_id: flag.product_id,
-                    on_hand_milli: flag.on_hand.milli(),
-                    taken_milli: flag.taken.milli(),
-                })
-                .collect(),
+            stock_flags: flags.iter().map(StockFlag::from).collect(),
+        }
+    }
+}
+
+impl From<&Shortfall> for StockFlag {
+    fn from(flag: &Shortfall) -> StockFlag {
+        StockFlag {
+            product_id: flag.product_id,
+            on_hand_milli: flag.on_hand.milli(),
+            taken_milli: flag.taken.milli(),
         }
     }
 }
@@ -671,8 +674,9 @@ pub fn resume_cart(register: &Register, parked_id: SaleId) -> IpcResult<CartSnap
 
 /// Whether a stock shortfall refuses the change, or is only flagged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Screen {
-    /// A line is being added: the store's hard block refuses it.
+pub(super) enum Screen {
+    /// A line is being added, or payment begins (1.10.4's note): the store's
+    /// hard block refuses it.
     Refuse,
     /// Nothing is being added: a shortfall is shown, never refused.
     Flag,
@@ -872,7 +876,7 @@ fn open_shift(conn: &Connection, register: &Register) -> IpcResult<Shift> {
 /// What `cart` would leave below zero at `store`, per line as each line moves
 /// stock: its quantity, or a scale label's weight. Under the store's hard
 /// block a shortfall refuses a line being added; otherwise it is a flag.
-fn stock_flags(
+pub(super) fn stock_flags(
     conn: &Connection,
     store: StoreId,
     cart: &Cart,

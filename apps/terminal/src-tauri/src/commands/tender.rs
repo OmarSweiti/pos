@@ -2,10 +2,11 @@
 //! `tender_back_to_cart` and `sale_in_flight_state` (`ref/ipc-contract.md`
 //! §3, "Tender and finalize"; microstep 1.8.3, its first part).
 //!
-//! **Payment begins journalled.** `tender_begin` prices the till's basket
-//! under the store's own pack, policy and coin step, and journals the checkout
-//! in `checkout_operation` under a fresh idempotency key before any money is
-//! taken (1.8.4's note). Each tender is journalled in the transaction that
+//! **Payment begins journalled.** `tender_begin` screens the till's basket
+//! for stock once more, because another basket may have sold it since (1.10.4's
+//! note), prices it under the store's own pack, policy and coin step, and
+//! journals the checkout in `checkout_operation` under a fresh idempotency key
+//! before any money is taken (1.8.4's note). Each tender is journalled in the transaction that
 //! answers it, naming the version the till last wrote, so a power cut never
 //! loses a tender the screen showed.
 //!
@@ -35,14 +36,16 @@ use pos_db::tax_policy::TaxPolicyRepository;
 use pos_domain::cart::{add_tender, back_to_building, begin_tender, remove_tender};
 use pos_domain::{
     AuditIntent, CartError, CashRoundingPolicy, InFlight, InFlightSale, Money, MoneyError, SaleId,
-    Tender, TenderId, TenderState, Tendering, Timestamp, UserId, cap, change_due,
+    StoreId, Tender, TenderId, TenderState, Tendering, Timestamp, UserId, cap, change_due,
     final_tender_rounding, is_settled, remaining_due, standard_tender_type,
 };
+use rusqlite::Connection;
 use serde::Serialize;
 use tauri::State;
 
 use super::cart::{
-    CartSnapshot, building, cart_refused, pricing, pricing_refused, proof, signed_in_as, snapshot,
+    CartSnapshot, Screen, StockFlag, building, cart_refused, pricing, pricing_refused, proof,
+    signed_in_as, snapshot, stock_flags,
 };
 use super::{audit, sqlite, stored};
 use crate::ipc::{IpcError, IpcResult};
@@ -77,6 +80,9 @@ pub struct PaymentSnapshot {
     pub change_minor: i64,
     /// Whether the tenders settle the sale, so it may be finalized.
     pub settled: bool,
+    /// Products the basket would leave below zero now, which the screen shows
+    /// loudly. Once payment has begun a shortfall never blocks it.
+    pub stock_flags: Vec<StockFlag>,
 }
 
 /// One tender taken.
@@ -151,7 +157,8 @@ pub fn sale_in_flight_state(till: State<'_, Till>) -> IpcResult<Vec<InFlightSumm
     in_flight(till.register()?)
 }
 
-/// `tender_begin`: begin paying for the till's basket. It is priced under the
+/// `tender_begin`: begin paying for the till's basket. Its stock is screened
+/// once more, since another basket may have sold it; it is priced under the
 /// store's own pack and policy, and the store's coin step is fixed for every
 /// tender of the sale; then the checkout is journalled under a fresh
 /// idempotency key, before any money is taken.
@@ -160,7 +167,8 @@ pub fn sale_in_flight_state(till: State<'_, Till>) -> IpcResult<Vec<InFlightSumm
 ///
 /// What the context refuses; `cart_not_open`; `sale_being_paid` when payment
 /// has already begun; `nothing_to_tender` for a basket with no line;
-/// `age_unconfirmed` while a line's age is still to be confirmed; the pricing
+/// `age_unconfirmed` while a line's age is still to be confirmed;
+/// `stock_would_go_negative` under the store's hard block; the pricing
 /// refusals, `pricing_unavailable` and `tax_band_missing`; and
 /// `storage_failed`. A refused begin leaves the basket on the till.
 pub fn begin_payment(register: &Register) -> IpcResult<PaymentSnapshot> {
@@ -169,6 +177,7 @@ pub fn begin_payment(register: &Register) -> IpcResult<PaymentSnapshot> {
     let mut till = register.lock_till();
     signed_in_as(till.session.as_ref(), auth.actor())?;
     let cart = building(till.working.as_ref())?.clone();
+    stock_flags(&till.db, register.store(), &cart, Screen::Refuse)?;
     let (bands, settings) = pricing(&till.db, register.store(), &cart)?;
     let policy = TaxPolicyRepository::new(&till.db)
         .approved_for_store(register.store())
@@ -178,7 +187,7 @@ pub fn begin_payment(register: &Register) -> IpcResult<PaymentSnapshot> {
         direction: policy.cash_round_direction(),
     };
     let tendering = begin_tender(cart, &bands, &settings, coin).map_err(|e| cart_refused(&e))?;
-    let answer = payment(&tendering)?;
+    let answer = payment(&till.db, register.store(), &tendering)?;
     let key = register.next_id();
     let tx = till.db.transaction().map_err(sqlite)?;
     CheckoutOperationRepository::new(&tx)
@@ -339,7 +348,7 @@ fn journal(
     intent: Option<&AuditIntent>,
     at: Timestamp,
 ) -> IpcResult<PaymentSnapshot> {
-    let answer = payment(&next)?;
+    let answer = payment(&till.db, register.store(), &next)?;
     let step = InFlightSale {
         state: InFlight::Tendering(next.clone()),
         card_op: None,
@@ -362,9 +371,10 @@ fn journal(
     Ok(answer)
 }
 
-/// `t` as the tender screen shows it.
-fn payment(t: &Tendering) -> IpcResult<PaymentSnapshot> {
+/// `t` as the tender screen shows it, its stock screened at `store`.
+fn payment(conn: &Connection, store: StoreId, t: &Tendering) -> IpcResult<PaymentSnapshot> {
     let cart = t.cart();
+    let flags = stock_flags(conn, store, cart, Screen::Flag)?;
     let collected = counted(Money::sum(
         t.tenders().iter().map(|tender| tender.amount),
         cart.currency,
@@ -401,6 +411,7 @@ fn payment(t: &Tendering) -> IpcResult<PaymentSnapshot> {
         }),
         change_minor: counted(change_due(t))?.minor(),
         settled: is_settled(t),
+        stock_flags: flags.iter().map(StockFlag::from).collect(),
     })
 }
 

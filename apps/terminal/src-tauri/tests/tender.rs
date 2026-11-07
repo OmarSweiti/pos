@@ -15,7 +15,7 @@ mod shop;
 use pos_db::repo::checkout_operation::{CheckoutOperation, CheckoutOperationRepository};
 use pos_domain::{InFlight, SaleId, TenderId, UserId};
 use shop::{
-    CASHIER_CODE, CASHIER_ID, CASHIER_PIN, CHEESE, OIL, OWNER_CODE, OWNER_ID, SECOND_CODE,
+    BREAD, CASHIER_CODE, CASHIER_ID, CASHIER_PIN, CHEESE, OIL, OWNER_CODE, OWNER_ID, SECOND_CODE,
     SECOND_ID, TOBACCO, add_staff, audited, field, open, product_id, refusal, seed, shop, states,
 };
 use terminal_lib::commands::auth::{login_pin, logout};
@@ -154,6 +154,41 @@ fn paying_begins_journalled_and_the_basket_waits_for_it() {
     let shown = current(&register).unwrap().unwrap();
     assert_eq!((shown.sale_id, shown.total_minor), (basket.sale_id, 1_250));
     assert_eq!(journalled(&register, basket.sale_id), (0, 0));
+}
+
+#[test]
+fn payment_screens_the_basket_for_stock_once_more() {
+    let (_dir, register) = shop();
+    open_cart(&register).unwrap();
+    let basket = add_product(&register, product_id(BREAD), None).unwrap();
+
+    // The store allows and flags by default (C.7): bread, of which there is
+    // none, goes to payment, and every answer flags it.
+    let paying = begin_payment(&register).unwrap();
+    assert_eq!(paying.stock_flags.len(), 1);
+    let flag = paying.stock_flags.first().unwrap();
+    assert_eq!(
+        (flag.product_id, flag.on_hand_milli, flag.taken_milli),
+        (product_id(BREAD), 0, 1_000)
+    );
+    let part = add_cash(&register, 100).unwrap();
+    assert_eq!(part.stock_flags, paying.stock_flags);
+    take_back(&register, part.tenders.first().unwrap().tender_id).unwrap();
+    back_to_cart(&register).unwrap();
+
+    // Under the store's hard block, a basket that would take a product below
+    // zero is refused as payment begins, whoever sold the stock since, and
+    // stays on the till unpaid.
+    register.with_db(|conn| {
+        conn.execute("UPDATE store SET allow_negative_stock = 0", [])
+            .unwrap();
+    });
+    assert_eq!(
+        refusal(begin_payment(&register)).code,
+        "stock_would_go_negative"
+    );
+    assert!(journal(&register, basket.sale_id).is_none());
+    assert_eq!(current(&register).unwrap().unwrap().sale_id, basket.sale_id);
 }
 
 #[test]
