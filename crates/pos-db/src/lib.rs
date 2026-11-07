@@ -358,6 +358,13 @@ pub enum DbError {
     ResumeRefused(#[from] pos_domain::CartError),
     #[error("stored parked cart is malformed: {reason}")]
     StoredParkedCartInvalid { reason: String },
+    /// A stored setting is not the shape its key promises. The value is never
+    /// quoted: a merchant typed it.
+    #[error("stored setting {key} is malformed: {reason}")]
+    StoredSettingInvalid {
+        key: &'static str,
+        reason: &'static str,
+    },
     #[error("the checkout of sale {0} is already journalled")]
     CheckoutAlreadyJournalled(pos_domain::SaleId),
     #[error(

@@ -380,6 +380,32 @@ capture and the return-box mapping would let a cashier zero-rate a sale that is 
 >   row; the takeover row above is written by the domain's intent, and a cashier resuming their own
 >   basket writes none.
 
+> **As delivered at 1.4.11, its third part.** `cart_override_price { line_id, unit_price_minor,
+> reason, approval_id? }` is registered, under `price.override` and audited on every call. Five
+> things the table does not say:
+>
+> - **The reason is a code from the store's list**: setting `price.override_reasons`, or merchant
+>   decision 3.7's default. Any other reason is `override_reason_unknown`, and free text is never a
+>   code. `displayed_price` is always on the list. A list the store cannot have meant is
+>   `setting_invalid`, never read as the default.
+> - **The escalation is the merchant's policy's**, and the row is `Conditional` on
+>   `ApprovalPredicate::PriceOverrideEscalatedByPolicy`. No policy is stored yet, so it escalates
+>   nothing (the owner's decision of 6 November 2026). Where it does, the approval is bound to
+>   `line_id`, `unit_price_minor` and `reason`.
+> - **An approval is spent by the audit row that names it.** The shell's audit writer puts the
+>   `approval_consumption` row in the audit row's envelope and names the intent's entity as the
+>   effect, the only effect the schema's trigger accepts. The schema also holds the approval's
+>   reason to the row's: one given for another reason is `approval_mismatch`, and the saved cart,
+>   the audit row and the consumption are all taken back.
+> - **`CartSnapshot`'s lines carry `captured_price_minor` and `override_reason`** beside
+>   `unit_price_minor`, the price the line charges. That way the screen shows both prices, and why
+>   they differ.
+> - **Each refusal of the line's own is its own code**: `price_label_not_overridable`,
+>   `department_price_not_overridable`, `price_negative`, `amount_discount_fixes_price`,
+>   `price_above_ceiling`, `displayed_price_not_lower`, `price_no_recorded_cost` and
+>   `price_below_floor`. A displayed price's label reprint has no queue before migration `0014`, so
+>   the audit row with the reason `displayed_price` is its record.
+
 ### Tender and finalize
 
 | Command | Args → Returns | Ph | Cap | A | E |

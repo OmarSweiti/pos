@@ -1,5 +1,6 @@
-//! Building a basket through the cart commands, and setting it aside and
-//! bringing it back (microstep 1.4.11, its first two parts).
+//! Building a basket through the cart commands, setting it aside and bringing
+//! it back, and overriding a line's price (microstep 1.4.11, its first three
+//! parts).
 //!
 //! Every fixture is a fresh register file built through `pos_db::open`, the
 //! registered migration chain: the reference chain's store, registered for
@@ -15,23 +16,26 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use pos_db::fixtures::registered_chain::RegisteredChain;
+use pos_db::repo::approval::ApprovalRepository;
 use pos_db::repo::outbox::{CommitEnvelope, FactMember, OutboxRepository};
 use pos_db::repo::parked_cart::ParkedCartRepository;
 use pos_db::repo::product::ProductRepository;
 use pos_db::repo::trade_scale::{ENTITY, TradeScaleRepository, VerificationEvent};
 use pos_db::seed::opening_stock::{OpeningStockLoad, OpeningStockRow, load_opening_stock};
 use pos_domain::{
-    Barcode, BarcodeKind, BusinessDate, Cart, ClockConfidence, Currency, FixedClock, Money,
-    Product, ProductId, Qty, RegisterId, RegulatedSaleForm, SaleForm, SaleId, SeqIdSource, StoreId,
-    TaxCategoryId, Timestamp, UnitOfMeasure, UserId, VerificationState,
+    ApprovalBinding, ApprovalHandle, ApprovalId, Barcode, BarcodeKind, BusinessDate, Cart,
+    ClockConfidence, Currency, EscalationPolicy, FixedClock, GrantSet, Money, Product, ProductId,
+    Qty, RegisterId, RegulatedSaleForm, Role, SaleForm, SaleId, SaleLineId, SeqIdSource, StoreId,
+    TaxCategoryId, Timestamp, UnitOfMeasure, UserId, VerificationState, cap,
 };
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use terminal_lib::commands::auth::{login_pin, logout};
 use terminal_lib::commands::cart::{
-    CartSnapshot, PARK_LABEL_MAX_CHARS, ParkedRef, add_product, add_scan, answer_age, current,
-    list_parked, open_cart, park_cart, resume_cart,
+    CartSnapshot, PARK_LABEL_MAX_CHARS, ParkedRef, PriceChange, add_product, add_scan, answer_age,
+    current, list_parked, open_cart, override_line_price, park_cart, resume_cart,
 };
 use terminal_lib::ipc::IpcError;
+use terminal_lib::ipc::context::merchant_policy;
 use terminal_lib::state::{DATABASE_FILE, DEVICE_ID_FILE, Register, V7Ids};
 use uuid::Uuid;
 
@@ -48,6 +52,10 @@ const SECOND_ID: [u8; 16] = [0xC2; 16];
 const SECOND_CODE: &str = "C-200";
 const OWNER_ID: [u8; 16] = [0x0E; 16];
 const OWNER_CODE: &str = "O-100";
+const LEAD_ID: [u8; 16] = [0x5E; 16];
+const LEAD_CODE: &str = "L-100";
+const MANAGER_ID: [u8; 16] = [0xAA; 16];
+const MANAGER_CODE: &str = "M-100";
 
 const OIL: u128 = 1;
 const CHEESE: u128 = 2;
@@ -1119,4 +1127,510 @@ fn a_resumed_basket_changed_and_crashed_comes_back_as_it_was_left() {
         (basket.sale_id, Some("Blue bag"), 2, changed.total_minor)
     );
     assert_eq!(resume_cart(&restarted, basket.sale_id).unwrap(), changed);
+}
+
+// ── The price override ──────────────────────────────────────────────────────
+
+/// A shop whose shift lead is signed in, with no cart open yet. The shift
+/// lead holds `price.override`; the cashier does not.
+fn lead_shop() -> (tempfile::TempDir, Register) {
+    let (dir, register) = shop();
+    logout(&register).unwrap();
+    add_staff(
+        &register,
+        LEAD_ID,
+        LEAD_CODE,
+        "Synthetic Shift Lead",
+        "shift_lead",
+    );
+    login_pin(&register, LEAD_CODE, CASHIER_PIN).unwrap();
+    (dir, register)
+}
+
+/// `cart_override_price` as its Tauri wrapper calls it: under the register's
+/// own policy, with no approval.
+fn over(
+    register: &Register,
+    line_id: SaleLineId,
+    unit_price_minor: i64,
+    reason: &str,
+) -> Result<CartSnapshot, IpcError> {
+    override_line_price(
+        register,
+        &PriceChange {
+            line_id,
+            unit_price_minor,
+            reason,
+            approval: None,
+        },
+        &merchant_policy(),
+    )
+}
+
+/// One `price.override` row as the audit chain holds it.
+#[derive(Debug)]
+struct OverrideRow {
+    reason: Option<String>,
+    payload: serde_json::Value,
+    approver: Option<Vec<u8>>,
+    approval: Option<Vec<u8>>,
+    enveloped: bool,
+}
+
+/// Every `price.override` row, oldest first.
+fn overrides(register: &Register) -> Vec<OverrideRow> {
+    register.with_db(|conn| {
+        conn.prepare(
+            "SELECT a.reason, a.payload, a.approver_id, a.approval_handle_id,
+                    EXISTS (SELECT 1 FROM fact_commit_member m WHERE m.entity_id = a.id)
+               FROM audit_log a WHERE a.action = 'price.override' ORDER BY a.seq",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok(OverrideRow {
+                reason: row.get(0)?,
+                payload: serde_json::from_str(&row.get::<_, String>(1)?).unwrap(),
+                approver: row.get(2)?,
+                approval: row.get(3)?,
+                enveloped: row.get(4)?,
+            })
+        })
+        .unwrap()
+        .map(Result::unwrap)
+        .collect()
+    })
+}
+
+/// The store's own list of override reasons, as a merchant would set it.
+fn set_override_reasons(register: &Register, value_json: &str) {
+    register.with_db(|conn| {
+        conn.execute(
+            "INSERT INTO setting (scope, scope_id, key, value_json)
+             VALUES ('store', ?1, 'price.override_reasons', ?2)
+             ON CONFLICT (scope, scope_id, key) DO UPDATE SET value_json = excluded.value_json",
+            params![register.store().as_uuid().as_bytes().as_slice(), value_json],
+        )
+        .unwrap();
+    });
+}
+
+#[test]
+fn an_override_charges_its_price_for_a_listed_reason_and_is_audited() {
+    let (_dir, register) = lead_shop();
+    open_cart(&register).unwrap();
+    let line = the_line(&add_product(&register, product_id(OIL), Some(2_000)).unwrap()).line_id;
+
+    // Two damaged bottles at 1.000 each. The line keeps the 1.250 it was
+    // captured at beside the price it now charges (I-5).
+    let lowered = over(&register, line, 1_000, "damaged").unwrap();
+    let oil = the_line(&lowered);
+    assert_eq!(
+        (
+            oil.unit_price_minor,
+            oil.captured_price_minor,
+            oil.override_reason.as_deref(),
+            oil.line_total_minor
+        ),
+        (1_000, 1_250, Some("damaged"), 2_000)
+    );
+    assert_eq!(lowered.total_minor, 2_000);
+    // It is on disk as answered, and the till shows the same.
+    let (state, saved_cart) = saved(&register).into_iter().next().unwrap();
+    let saved_line = saved_cart.lines.first().unwrap();
+    assert_eq!(
+        (state.as_str(), saved_line.price(), saved_line.unit_price),
+        ("active", jod(1_000), jod(1_250))
+    );
+    assert_eq!(current(&register).unwrap(), Some(lowered));
+
+    // Audited, with its envelope: why, from what to what, and the floor it
+    // was held to, the oil's cost of 0.100. No second person was asked.
+    let rows = overrides(&register);
+    let row = rows.first().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        (
+            row.reason.as_deref(),
+            &row.approver,
+            &row.approval,
+            row.enveloped
+        ),
+        (Some("damaged"), &None, &None, true)
+    );
+    for (name, value) in [
+        ("amount_minor", serde_json::json!(1_000)),
+        ("captured_minor", serde_json::json!(1_250)),
+        ("previous_minor", serde_json::json!(1_250)),
+        ("floor_minor", serde_json::json!(100)),
+        ("qty_milli", serde_json::json!(2_000)),
+        ("displayed_price", serde_json::json!(false)),
+    ] {
+        assert_eq!(field(&row.payload, name), &value, "{name}");
+    }
+
+    // Back at the captured price the override is gone, and that is audited
+    // too. Raising a price is held to no floor.
+    let restored = over(&register, line, 1_250, "price_match").unwrap();
+    let oil = the_line(&restored);
+    assert_eq!(
+        (oil.unit_price_minor, oil.override_reason.as_deref()),
+        (1_250, None)
+    );
+    let rows = overrides(&register);
+    let row = rows.last().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(row.reason.as_deref(), Some("price_match"));
+    assert_eq!(
+        field(&row.payload, "previous_minor"),
+        &serde_json::json!(1_000)
+    );
+    assert_eq!(field(&row.payload, "floor_minor"), &serde_json::Value::Null);
+}
+
+#[test]
+fn an_override_names_what_it_refuses_and_changes_nothing() {
+    let (_dir, register) = lead_shop();
+    let line = SaleLineId::from_uuid(Uuid::from_u128(0x11e));
+    assert_eq!(
+        refusal(over(&register, line, 1_000, "damaged")).code,
+        "cart_not_open"
+    );
+
+    // The oil has a ministry ceiling of 1.500 and a cost of 0.100. The bread
+    // has no recorded cost at all, and the cheese is on a price label.
+    register.with_db(|conn| {
+        conn.execute(
+            "UPDATE product SET max_price_minor = 1500 WHERE id = ?1",
+            [id(OIL).as_slice()],
+        )
+        .unwrap();
+    });
+    open_cart(&register).unwrap();
+    let oil = the_line(&add_product(&register, product_id(OIL), None).unwrap()).line_id;
+    add_product(&register, product_id(BREAD), None).unwrap();
+    let basket = add_scan(
+        &register,
+        &label("22", CHEESE_PLU, 416),
+        ClockConfidence::Trusted,
+    )
+    .unwrap();
+    let line_of = |n: u128| {
+        basket
+            .lines
+            .iter()
+            .find(|line| line.product_id == Some(product_id(n)))
+            .unwrap()
+            .line_id
+    };
+    let (bread, cheese) = (line_of(BREAD), line_of(CHEESE));
+    let before = saved(&register);
+
+    for (line, price, reason, code) in [
+        (line, 1_000, "damaged", "line_unknown"),
+        (oil, 1_000, "damaged box", "override_reason_unknown"),
+        (oil, 1_000, "loyal_customer", "override_reason_unknown"),
+        (oil, 1_000, "", "override_reason_unknown"),
+        (oil, 1_501, "price_match", "price_above_ceiling"),
+        (oil, 1_501, "displayed_price", "price_above_ceiling"),
+        (oil, 99, "damaged", "price_below_floor"),
+        (oil, -1, "damaged", "price_negative"),
+        (oil, 1_250, "displayed_price", "displayed_price_not_lower"),
+        (oil, 1_300, "displayed_price", "displayed_price_not_lower"),
+        (bread, 300, "damaged", "price_no_recorded_cost"),
+        (
+            cheese,
+            400,
+            "displayed_price",
+            "price_label_not_overridable",
+        ),
+    ] {
+        assert_eq!(
+            refusal(over(&register, line, price, reason)).code,
+            code,
+            "{price} for {reason:?}"
+        );
+    }
+    // A list the store cannot have meant is refused by name, never read as
+    // the default.
+    set_override_reasons(&register, "not json");
+    let unreadable = refusal(over(&register, oil, 1_000, "damaged"));
+    assert_eq!(
+        (unreadable.code, unreadable.detail),
+        (
+            "setting_invalid",
+            Some("the store's list of override reasons cannot be read")
+        )
+    );
+
+    // Nothing was written, and the till holds what the file holds.
+    assert_eq!(saved(&register), before);
+    assert_eq!(current(&register).unwrap(), Some(basket));
+    assert!(overrides(&register).is_empty());
+}
+
+#[test]
+fn the_stores_list_decides_the_reasons_and_the_shelf_price_is_always_one() {
+    let (_dir, register) = lead_shop();
+    set_override_reasons(&register, r#"["loyalty_2026"]"#);
+    open_cart(&register).unwrap();
+    let oil = the_line(&add_product(&register, product_id(OIL), None).unwrap()).line_id;
+    let bread = add_product(&register, product_id(BREAD), None)
+        .unwrap()
+        .lines
+        .iter()
+        .find(|line| line.product_id == Some(product_id(BREAD)))
+        .unwrap()
+        .line_id;
+
+    // The store's list replaces the default, so `damaged` is not a reason
+    // here, and its own code is.
+    assert_eq!(
+        refusal(over(&register, oil, 1_000, "damaged")).code,
+        "override_reason_unknown"
+    );
+    over(&register, oil, 1_000, "loyalty_2026").unwrap();
+    // A product with no recorded cost may be raised, never lowered.
+    over(&register, bread, 400, "loyalty_2026").unwrap();
+
+    // The shelf showed 0.050, below the oil's cost: the customer pays it
+    // (J.3, E.70). No store's list can leave the shelf's price out, and the
+    // floor does not hold it. Its label reprint has no queue before `0014`,
+    // so the audit row is the record.
+    let shelf = over(&register, oil, 50, "displayed_price").unwrap();
+    let line = shelf.lines.iter().find(|line| line.line_id == oil).unwrap();
+    assert_eq!(
+        (line.unit_price_minor, line.override_reason.as_deref()),
+        (50, Some("displayed_price"))
+    );
+    let rows = overrides(&register);
+    let row = rows.last().unwrap();
+    assert_eq!(row.reason.as_deref(), Some("displayed_price"));
+    for (name, value) in [
+        ("displayed_price", serde_json::json!(true)),
+        ("floor_minor", serde_json::Value::Null),
+        ("previous_minor", serde_json::json!(1_000)),
+    ] {
+        assert_eq!(field(&row.payload, name), &value, "{name}");
+    }
+    assert_eq!(rows.len(), 3);
+}
+
+#[test]
+fn only_a_role_holding_price_override_may_override() {
+    // A cashier does not hold `price.override` (§8.2's grid).
+    let (_dir, register) = shop();
+    open_cart(&register).unwrap();
+    let line = the_line(&add_product(&register, product_id(OIL), None).unwrap()).line_id;
+    let before = saved(&register);
+    assert_eq!(
+        refusal(over(&register, line, 1_000, "damaged")).code,
+        "permission_denied"
+    );
+    assert_eq!(saved(&register), before);
+    assert!(overrides(&register).is_empty());
+
+    // A manager does. The cashier's basket is set aside at sign-out, and the
+    // manager overrides on their own basket.
+    logout(&register).unwrap();
+    add_staff(
+        &register,
+        MANAGER_ID,
+        MANAGER_CODE,
+        "Synthetic Manager",
+        "manager",
+    );
+    login_pin(&register, MANAGER_CODE, CASHIER_PIN).unwrap();
+    open_cart(&register).unwrap();
+    let line = the_line(&add_product(&register, product_id(OIL), None).unwrap()).line_id;
+    assert_eq!(
+        the_line(&over(&register, line, 1_000, "damaged").unwrap()).unit_price_minor,
+        1_000
+    );
+    assert_eq!(overrides(&register).len(), 1);
+}
+
+/// A manager's approval of the shift lead's override of `line` to
+/// `amount_minor` for `reason`, stored as the approval screen will store
+/// one, behind its envelope.
+fn override_approval(
+    register: &Register,
+    line: SaleLineId,
+    amount_minor: i64,
+    reason: &str,
+) -> ApprovalId {
+    let id = ApprovalId::from_uuid(register.next_id());
+    let binding = ApprovalBinding {
+        entity_id: line.as_uuid(),
+        amount_minor,
+        content_hash: None,
+    };
+    let manager = pos_domain::authorize::<cap::PriceOverride>(
+        UserId::from_uuid(Uuid::from_bytes(MANAGER_ID)),
+        &GrantSet::of_role(Role::Manager),
+        None,
+        &binding,
+        &EscalationPolicy::empty(),
+        at(),
+    )
+    .unwrap();
+    // The nonce is derived from a fresh id, never written as a literal.
+    let nonce = *register.next_id().as_bytes();
+    let handle = ApprovalHandle::issue::<cap::PriceOverride>(
+        id,
+        UserId::from_uuid(Uuid::from_bytes(LEAD_ID)),
+        &manager,
+        &binding,
+        reason.to_owned(),
+        at(),
+        60_000,
+        nonce,
+    )
+    .unwrap();
+    register.with_db(|conn| {
+        let tx = conn.transaction().unwrap();
+        let (change, commit) = (register.next_id(), register.next_id());
+        OutboxRepository::new(&tx)
+            .write_commit(
+                &tx,
+                &CommitEnvelope {
+                    commit_id: commit.as_bytes(),
+                    protocol_version: 1,
+                    schema_version: pos_db::SCHEMA_VERSION,
+                    producer_version: "cart-suite",
+                    created_at: AT,
+                },
+                &[FactMember {
+                    change_id: change.as_bytes(),
+                    entity: "approval_handle",
+                    entity_id: id.as_uuid().as_bytes(),
+                    payload: "{}",
+                }],
+            )
+            .unwrap();
+        ApprovalRepository::new(&tx).insert(&tx, &handle).unwrap();
+        tx.commit().unwrap();
+    });
+    id
+}
+
+/// The consumption that spent `approval`, as `(its effect, its audit row,
+/// whether its envelope holds it)`.
+fn consumption(register: &Register, approval: ApprovalId) -> Option<(Vec<u8>, Vec<u8>, bool)> {
+    register.with_db(|conn| {
+        conn.query_row(
+            "SELECT c.effect_id, c.audit_log_id,
+                    EXISTS (SELECT 1 FROM fact_commit_member m
+                             WHERE m.entity = 'approval_consumption' AND m.entity_id = c.handle_id)
+               FROM approval_consumption c WHERE c.handle_id = ?1",
+            [approval.as_uuid().as_bytes().as_slice()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .unwrap()
+    })
+}
+
+#[test]
+fn an_escalated_override_spends_one_bound_approval_with_its_audit_row() {
+    let (_dir, register) = lead_shop();
+    add_staff(
+        &register,
+        MANAGER_ID,
+        MANAGER_CODE,
+        "Synthetic Manager",
+        "manager",
+    );
+    open_cart(&register).unwrap();
+    let line = the_line(&add_product(&register, product_id(OIL), None).unwrap()).line_id;
+    let escalating = EscalationPolicy::empty().with_escalation::<cap::PriceOverride>();
+    let with =
+        |price: i64, reason: &str, approval: Option<ApprovalId>, policy: &EscalationPolicy| {
+            override_line_price(
+                &register,
+                &PriceChange {
+                    line_id: line,
+                    unit_price_minor: price,
+                    reason,
+                    approval,
+                },
+                policy,
+            )
+        };
+    let before = saved(&register);
+
+    // Where the merchant's policy escalates `price.override`, the shift lead
+    // needs a manager's approval of this line at this price.
+    assert_eq!(
+        refusal(with(1_000, "damaged", None, &escalating)).code,
+        "approval_required"
+    );
+    // One for another price, or given for another reason, is refused, and
+    // stays unspent. The reason is held by the schema's trigger as the
+    // approval is spent, so the transaction that would have saved the cart
+    // and written the audit row takes all of it back.
+    let other_price = override_approval(&register, line, 900, "damaged");
+    let mismatch = refusal(with(1_000, "damaged", Some(other_price), &escalating));
+    assert_eq!(
+        (mismatch.code, mismatch.detail),
+        (
+            "approval_mismatch",
+            Some("the approval is for another amount")
+        )
+    );
+    let other_reason = override_approval(&register, line, 1_000, "price_match");
+    let mismatch = refusal(with(1_000, "damaged", Some(other_reason), &escalating));
+    assert_eq!(
+        (mismatch.code, mismatch.detail),
+        (
+            "approval_mismatch",
+            Some("the approval was given for another reason")
+        )
+    );
+    assert_eq!(saved(&register), before);
+    assert!(overrides(&register).is_empty());
+    assert_eq!(consumption(&register, other_price), None);
+    assert_eq!(consumption(&register, other_reason), None);
+
+    // Bound to this line, this price and this reason, it passes. The audit
+    // row names the manager and the approval, and the consumption names the
+    // line as the effect and that row, inside the same envelope.
+    let bound = override_approval(&register, line, 1_000, "damaged");
+    let answer = with(1_000, "damaged", Some(bound), &escalating).unwrap();
+    assert_eq!(the_line(&answer).unit_price_minor, 1_000);
+    let rows = overrides(&register);
+    let row = rows.first().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        (row.approver.clone(), row.approval.clone(), row.enveloped),
+        (
+            Some(MANAGER_ID.to_vec()),
+            Some(bound.as_uuid().as_bytes().to_vec()),
+            true
+        )
+    );
+    let audit_id: Vec<u8> = register.with_db(|conn| {
+        conn.query_row(
+            "SELECT id FROM audit_log WHERE action = 'price.override'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    });
+    assert_eq!(
+        consumption(&register, bound),
+        Some((line.as_uuid().as_bytes().to_vec(), audit_id, true))
+    );
+
+    // It is spent: the same approval cannot carry a second override.
+    assert_eq!(
+        refusal(with(1_000, "damaged", Some(bound), &escalating)).code,
+        "approval_used"
+    );
+    // And where the policy escalates nothing, an approval offered is not
+    // used, so it stays unspent for nothing.
+    let unasked = override_approval(&register, line, 1_100, "damaged");
+    let alone = with(1_100, "damaged", Some(unasked), &merchant_policy()).unwrap();
+    assert_eq!(the_line(&alone).unit_price_minor, 1_100);
+    assert_eq!(overrides(&register).last().unwrap().approval, None);
+    assert_eq!(consumption(&register, unasked), None);
 }

@@ -93,6 +93,21 @@ pub fn authorize<C: Capability>(
     Ok(authorized)
 }
 
+/// The merchant's escalation policy: which capabilities a user who holds
+/// them may still use only with a second person's approval (merchant
+/// decision 1.8).
+///
+/// No merchant's policy is stored yet, so it names none. On 6 November 2026
+/// the owner decided that a price override needs no second person until one
+/// is: a shift lead or a manager overrides under their own `price.override`,
+/// audited. A command whose approval this policy decides takes the policy as
+/// an argument of its plain function, so its tests drive the branch that
+/// escalates, and the command's Tauri wrapper passes this one.
+#[must_use]
+pub const fn merchant_policy() -> EscalationPolicy {
+    EscalationPolicy::empty()
+}
+
 /// What a command answers when no one is signed in.
 pub fn not_signed_in() -> IpcError {
     IpcError::new("not_signed_in", "error.session.not_signed_in")
