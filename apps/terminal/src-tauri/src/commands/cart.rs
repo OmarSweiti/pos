@@ -25,6 +25,11 @@
 //! (the owner's decision of 5 November 2026). A change that is refused leaves
 //! both the row and the till's copy as they were.
 //!
+//! **A basket being paid for belongs to the tender commands** (1.8.3). While
+//! it is, every command here that would change the basket, open another or
+//! set it aside is refused `sale_being_paid`, and `cart_current` answers it at
+//! the prices it went to payment with.
+//!
 //! **Stock is screened as a line is added** (1.10.4's note). Under the store's
 //! hard block, a line that would take a product below zero is refused and the
 //! cart is unchanged. Otherwise the products it would leave short are flagged
@@ -55,9 +60,10 @@ use pos_db::tax_policy::TaxPolicyRepository;
 use pos_domain::cart::{AddLine, add_line, confirm_age, open, override_price, park, price_cart};
 use pos_domain::{
     ApprovalBinding, ApprovalId, AuditIntent, Authorized, Capability, Cart, CartContext, CartError,
-    ClockConfidence, Currency, EscalationPolicy, Money, OverrideReason, PricedCart, ProductId, Qty,
-    SaleId, SaleLineId, ScalePricingRefusal, ScanLookup, Shift, Shortfall, StockError, StoreId,
-    StoreTaxProfile, TaxBands, Timestamp, UnitOfMeasure, UserId, cap,
+    ClockConfidence, Currency, EscalationPolicy, Money, OverrideReason, PricedCart,
+    PricingSettings, ProductId, Qty, SaleId, SaleLineId, ScalePricingRefusal, ScanLookup, Shift,
+    Shortfall, StockError, StoreId, StoreTaxProfile, TaxBands, Tendering, Timestamp, UnitOfMeasure,
+    UserId, cap,
 };
 use rusqlite::Connection;
 use serde::Serialize;
@@ -68,7 +74,7 @@ use super::{audit, sqlite, stored};
 use crate::ipc::context::{authorize, merchant_policy, not_signed_in, permission_refused};
 use crate::ipc::{IpcError, IpcResult};
 use crate::scan::{ScanContext, ScanHandlerError, ScanOutcome, handle_scan};
-use crate::state::{Register, Session, Till};
+use crate::state::{Register, Session, Till, Working};
 
 /// The basket as the screen shows it: every number `price_cart` decided, and
 /// nothing the screen must compute.
@@ -309,8 +315,9 @@ pub fn cart_resume(till: State<'_, Till>, parked_id: SaleId) -> IpcResult<CartSn
 ///
 /// # Errors
 ///
-/// What the context refuses; `shift_not_open` when the register has no open
-/// shift, because a sale outside a shift has no business date; the pricing
+/// What the context refuses; `sale_being_paid` while the till's basket is
+/// being paid for; `shift_not_open` when the register has no open shift,
+/// because a sale outside a shift has no business date; the pricing
 /// refusals of [`CartSnapshot`], so no sale opens at a store that cannot
 /// price one; and `storage_failed`.
 pub fn open_cart(register: &Register) -> IpcResult<CartSnapshot> {
@@ -318,7 +325,8 @@ pub fn open_cart(register: &Register) -> IpcResult<CartSnapshot> {
     let auth = proof::<cap::SaleCreate>(register, at)?;
     let mut till = register.lock_till();
     signed_in_as(till.session.as_ref(), auth.actor())?;
-    if let Some(cart) = till.cart.as_ref() {
+    if till.working.is_some() {
+        let cart = building(till.working.as_ref())?;
         return snapshot(&till.db, register.store(), cart);
     }
     let shift = open_shift(&till.db, register)?;
@@ -341,12 +349,13 @@ pub fn open_cart(register: &Register) -> IpcResult<CartSnapshot> {
         .hold(&tx, &cart, register.process_nonce())
         .map_err(stored)?;
     tx.commit().map_err(sqlite)?;
-    *till.cart = Some(cart);
+    *till.working = Some(Working::Building(Box::new(cart)));
     Ok(answer)
 }
 
 /// `cart_current`: the till's working cart, priced, or `None` when it holds
-/// none.
+/// none. A basket being paid for is answered at the prices it went to payment
+/// with, which are the ones its tenders pay.
 ///
 /// # Errors
 ///
@@ -356,10 +365,13 @@ pub fn current(register: &Register) -> IpcResult<Option<CartSnapshot>> {
     let auth = proof::<cap::SaleCreate>(register, register.now())?;
     let till = register.lock_till();
     signed_in_as(till.session.as_ref(), auth.actor())?;
-    till.cart
-        .as_ref()
-        .map(|cart| snapshot(&till.db, register.store(), cart))
-        .transpose()
+    match till.working.as_ref() {
+        None => Ok(None),
+        Some(Working::Building(cart)) => snapshot(&till.db, register.store(), cart).map(Some),
+        Some(Working::Paying(paying)) => {
+            paid_for(&till.db, register.store(), &paying.tendering).map(Some)
+        }
+    }
 }
 
 /// `cart_add_line`: `qty_milli` of `product` at its catalogue price, one unit
@@ -367,10 +379,10 @@ pub fn current(register: &Register) -> IpcResult<Option<CartSnapshot>> {
 ///
 /// # Errors
 ///
-/// What the context refuses; `cart_not_open`; `product_unknown`; the cart's
-/// own refusals, such as `product_inactive`, `qty_not_whole` or
-/// `price_above_ceiling`; `stock_would_go_negative` under the store's hard
-/// block; the pricing refusals; and `storage_failed`.
+/// What the context refuses; `cart_not_open`; `sale_being_paid`;
+/// `product_unknown`; the cart's own refusals, such as `product_inactive`,
+/// `qty_not_whole` or `price_above_ceiling`; `stock_would_go_negative` under
+/// the store's hard block; the pricing refusals; and `storage_failed`.
 pub fn add_product(
     register: &Register,
     product: ProductId,
@@ -397,13 +409,14 @@ pub fn add_product(
 ///
 /// # Errors
 ///
-/// What the context refuses; `cart_not_open`; one refusal per scan that adds
-/// no line, each its own code so the screen can say what to do:
-/// `scan_unknown` (offer the department sale), `scan_ambiguous` (the cashier
-/// chooses), `scan_checksum_failed` and `scan_unreadable` (scan again),
-/// `scan_scale_refused` and `scan_layout_switched_off` (a commissioning
-/// matter, never a quick-add); then what `cart_add_line` refuses after the
-/// product is found; and `scan_failed` when the lookup itself fails.
+/// What the context refuses; `cart_not_open`; `sale_being_paid`; one refusal
+/// per scan that adds no line, each its own code so the screen can say what
+/// to do: `scan_unknown` (offer the department sale), `scan_ambiguous` (the
+/// cashier chooses), `scan_checksum_failed` and `scan_unreadable` (scan
+/// again), `scan_scale_refused` and `scan_layout_switched_off` (a
+/// commissioning matter, never a quick-add); then what `cart_add_line`
+/// refuses after the product is found; and `scan_failed` when the lookup
+/// itself fails.
 pub fn add_scan(
     register: &Register,
     raw_code: &str,
@@ -431,9 +444,9 @@ pub fn add_scan(
 ///
 /// # Errors
 ///
-/// What the context refuses; `cart_not_open`; `line_unknown`; `age_not_pending`
-/// for a line with no age to confirm, or one already answered; the pricing
-/// refusals; and `storage_failed`.
+/// What the context refuses; `cart_not_open`; `sale_being_paid`;
+/// `line_unknown`; `age_not_pending` for a line with no age to confirm, or one
+/// already answered; the pricing refusals; and `storage_failed`.
 pub fn answer_age(
     register: &Register,
     line_id: SaleLineId,
@@ -484,7 +497,8 @@ pub struct PriceChange<'r> {
 ///   `price.override`, and under an escalating policy `approval_required`,
 ///   `approval_unknown`, `approval_used`, `approval_mismatch` or
 ///   `approval_revoked`;
-/// - `cart_not_open`, `line_unknown` and `override_reason_unknown`;
+/// - `cart_not_open`, `sale_being_paid`, `line_unknown` and
+///   `override_reason_unknown`;
 /// - `setting_invalid` when the store's list cannot be read;
 /// - the line's own: `price_label_not_overridable`,
 ///   `department_price_not_overridable`, `price_negative`,
@@ -535,6 +549,7 @@ pub fn override_line_price(
 ///
 /// What the context refuses; `park_label_invalid` for a label longer than
 /// [`PARK_LABEL_MAX_CHARS`] or holding a control character; `cart_not_open`;
+/// `sale_being_paid`, because a parked basket carries no tender;
 /// `nothing_to_park` for a basket with no line, which stays on the till; the
 /// pricing refusals of [`CartSnapshot`]; and `storage_failed`. A refused park
 /// leaves the basket on the till.
@@ -544,10 +559,7 @@ pub fn park_cart(register: &Register, label: Option<&str>) -> IpcResult<ParkedRe
     let label = park_label(label)?;
     let mut till = register.lock_till();
     signed_in_as(till.session.as_ref(), auth.actor())?;
-    let working = till
-        .cart
-        .clone()
-        .ok_or_else(|| IpcError::new("cart_not_open", "error.cart.not_open"))?;
+    let working = building(till.working.as_ref())?.clone();
     let parked = park(working).map_err(|e| cart_refused(&e))?;
     let answer = parked_ref(
         &till.db,
@@ -565,7 +577,7 @@ pub fn park_cart(register: &Register, label: Option<&str>) -> IpcResult<ParkedRe
         .repark(&tx, register.process_nonce(), &parked, label.as_deref(), at)
         .map_err(stored)?;
     tx.commit().map_err(sqlite)?;
-    *till.cart = None;
+    *till.working = None;
     Ok(answer)
 }
 
@@ -612,17 +624,24 @@ pub fn list_parked(register: &Register) -> IpcResult<Vec<ParkedRef>> {
 ///
 /// # Errors
 ///
-/// What the context refuses; `shift_not_open`; `parked_cart_unknown` for no
-/// such basket parked at this register; `parked_cart_claimed` for one a till
-/// is working on; `parked_cart_expired` for one parked on an earlier business
-/// day; `training_mode_mismatch`; the pricing refusals of [`CartSnapshot`];
-/// and `storage_failed`. A refused resume changes nothing: the till keeps its
-/// basket, and the parked one stays parked.
+/// What the context refuses; `sale_being_paid` while the till's basket is
+/// being paid for, which cannot be set aside; `shift_not_open`;
+/// `parked_cart_unknown` for no such basket parked at this register;
+/// `parked_cart_claimed` for one a till is working on; `parked_cart_expired`
+/// for one parked on an earlier business day; `training_mode_mismatch`; the
+/// pricing refusals of [`CartSnapshot`]; and `storage_failed`. A refused
+/// resume changes nothing: the till keeps its basket, and the parked one stays
+/// parked.
 pub fn resume_cart(register: &Register, parked_id: SaleId) -> IpcResult<CartSnapshot> {
     let at = register.now();
     let auth = proof::<cap::SaleResume>(register, at)?;
     let mut till = register.lock_till();
     signed_in_as(till.session.as_ref(), auth.actor())?;
+    let held = till
+        .working
+        .as_ref()
+        .map(|working| building(Some(working)))
+        .transpose()?;
     let shift = open_shift(&till.db, register)?;
     let context = CartContext {
         register_id: register.register(),
@@ -635,7 +654,7 @@ pub fn resume_cart(register: &Register, parked_id: SaleId) -> IpcResult<CartSnap
     let nonce = register.process_nonce();
     let tx = till.db.transaction().map_err(sqlite)?;
     let carts = ParkedCartRepository::new(&tx);
-    if let Some(working) = till.cart.as_ref() {
+    if let Some(working) = held {
         carts.set_aside(&tx, nonce, working, at).map_err(stored)?;
     }
     let resumed = carts
@@ -646,7 +665,7 @@ pub fn resume_cart(register: &Register, parked_id: SaleId) -> IpcResult<CartSnap
         audit(register, &tx, intent)?;
     }
     tx.commit().map_err(sqlite)?;
-    *till.cart = Some(resumed.cart);
+    *till.working = Some(Working::Building(Box::new(resumed.cart)));
     Ok(answer)
 }
 
@@ -671,10 +690,7 @@ fn change<C: Capability>(
 ) -> IpcResult<CartSnapshot> {
     let mut till = register.lock_till();
     signed_in_as(till.session.as_ref(), auth.actor())?;
-    let working = till
-        .cart
-        .clone()
-        .ok_or_else(|| IpcError::new("cart_not_open", "error.cart.not_open"))?;
+    let working = building(till.working.as_ref())?.clone();
     let (next, intent) = work(&till.db, working)?;
     let flags = stock_flags(&till.db, register.store(), &next, screen)?;
     let priced = priced(&till.db, register.store(), &next)?;
@@ -687,15 +703,47 @@ fn change<C: Capability>(
     }
     tx.commit().map_err(sqlite)?;
     let answer = CartSnapshot::of(&next, &priced, &flags);
-    *till.cart = Some(next);
+    *till.working = Some(Working::Building(Box::new(next)));
     Ok(answer)
 }
 
+/// The basket the till is building. A basket being paid for changes only
+/// through the tender commands, until it goes back to the cart.
+///
+/// # Errors
+///
+/// `cart_not_open` when the till holds nothing, and `sale_being_paid` when its
+/// basket is being paid for.
+pub(super) fn building(working: Option<&Working>) -> IpcResult<&Cart> {
+    match working {
+        Some(Working::Building(cart)) => Ok(cart),
+        Some(Working::Paying(_)) => Err(IpcError::new(
+            "sale_being_paid",
+            "error.cart.sale_being_paid",
+        )),
+        None => Err(IpcError::new("cart_not_open", "error.cart.not_open")),
+    }
+}
+
 /// `cart`, screened and priced.
-fn snapshot(conn: &Connection, store: StoreId, cart: &Cart) -> IpcResult<CartSnapshot> {
+pub(super) fn snapshot(conn: &Connection, store: StoreId, cart: &Cart) -> IpcResult<CartSnapshot> {
     let flags = stock_flags(conn, store, cart, Screen::Flag)?;
     let priced = priced(conn, store, cart)?;
     Ok(CartSnapshot::of(cart, &priced, &flags))
+}
+
+/// A basket being paid for, screened, at the prices it went to payment with.
+pub(super) fn paid_for(
+    conn: &Connection,
+    store: StoreId,
+    tendering: &Tendering,
+) -> IpcResult<CartSnapshot> {
+    let flags = stock_flags(conn, store, tendering.cart(), Screen::Flag)?;
+    Ok(CartSnapshot::of(
+        tendering.cart(),
+        tendering.priced(),
+        &flags,
+    ))
 }
 
 /// What the resume list says of a parked basket.
@@ -792,7 +840,7 @@ fn resume_refused(error: &DbError) -> IpcError {
 /// The proof a command here takes: `sale.create`, `sale.park` or
 /// `sale.resume`. Each is held by every role that sells and escalates under no
 /// policy, so no approval is ever asked for.
-fn proof<C: Capability>(register: &Register, at: Timestamp) -> IpcResult<Authorized<C>> {
+pub(super) fn proof<C: Capability>(register: &Register, at: Timestamp) -> IpcResult<Authorized<C>> {
     let unbound = ApprovalBinding {
         entity_id: Uuid::nil(),
         amount_minor: 0,
@@ -805,7 +853,7 @@ fn proof<C: Capability>(register: &Register, at: Timestamp) -> IpcResult<Authori
 /// session ended, or changed hands, between the proof and the lock. The
 /// till's cart is always the signed-in cashier's, because every sign-out sets
 /// it aside under the same lock.
-fn signed_in_as(session: Option<&Session>, actor: UserId) -> IpcResult<()> {
+pub(super) fn signed_in_as(session: Option<&Session>, actor: UserId) -> IpcResult<()> {
     match session {
         Some(session) if session.user == actor => Ok(()),
         _ => Err(not_signed_in()),
@@ -851,11 +899,21 @@ fn stock_flags(
     }
 }
 
-/// `cart` priced under `store`'s settings: its price mode, its tax profile and
+/// `cart` priced under `store`'s settings: see [`pricing`].
+fn priced(conn: &Connection, store: StoreId, cart: &Cart) -> IpcResult<PricedCart> {
+    let (bands, settings) = pricing(conn, store, cart)?;
+    price_cart(cart, &bands, &settings).map_err(|e| cart_refused(&e))
+}
+
+/// What `cart` is priced under at `store`: its price mode, its tax profile and
 /// its approved policy's rule, with the components its pack charges on each
 /// category the cart holds on the shift's business date. A store not
 /// registered for GST charges no tax and needs no band.
-fn priced(conn: &Connection, store: StoreId, cart: &Cart) -> IpcResult<PricedCart> {
+pub(super) fn pricing(
+    conn: &Connection,
+    store: StoreId,
+    cart: &Cart,
+) -> IpcResult<(TaxBands, PricingSettings)> {
     let settings = TaxPolicyRepository::new(conn)
         .pricing_settings(store)
         .map_err(|e| pricing_refused(&e))?;
@@ -875,7 +933,7 @@ fn priced(conn: &Connection, store: StoreId, cart: &Cart) -> IpcResult<PricedCar
             bands.insert(category, components);
         }
     }
-    price_cart(cart, &bands, &settings).map_err(|e| cart_refused(&e))
+    Ok((bands, settings))
 }
 
 /// What a scan resolved to, when it is one product; every other answer is
@@ -933,7 +991,7 @@ fn scan_failed(error: &ScanHandlerError) -> IpcError {
 
 /// A store that cannot price a cart, as the screen is told it. The source,
 /// which names the store, goes to the scrubbed log.
-fn pricing_refused(error: &DbError) -> IpcError {
+pub(super) fn pricing_refused(error: &DbError) -> IpcError {
     let unavailable = |detail: &'static str| {
         IpcError::from_source("pricing_unavailable", "error.pricing.unavailable", error)
             .with_detail(detail)
@@ -959,7 +1017,7 @@ fn pricing_refused(error: &DbError) -> IpcError {
 /// on and a key to translate, never the error's text, which names products
 /// and amounts. A refusal these commands cannot meet, such as a tender's, is
 /// `cart_refused`; its source is in the scrubbed log under the trace id.
-fn cart_refused(error: &CartError) -> IpcError {
+pub(super) fn cart_refused(error: &CartError) -> IpcError {
     let (code, key) = match error {
         CartError::Permission(refusal) => return permission_refused(refusal),
         CartError::ProductInactive(_) => ("product_inactive", "error.cart.product_inactive"),
@@ -999,6 +1057,14 @@ fn cart_refused(error: &CartError) -> IpcError {
             "training_mode_mismatch",
             "error.cart.training_mode_mismatch",
         ),
+        CartError::AgeConfirmationRequired(_) => ("age_unconfirmed", "error.cart.age_unconfirmed"),
+        CartError::NothingToTender => ("nothing_to_tender", "error.tender.nothing_to_tender"),
+        CartError::AlreadySettled(_) => ("sale_settled", "error.tender.sale_settled"),
+        CartError::NonPositiveTender(_) => ("tender_not_positive", "error.tender.not_positive"),
+        CartError::OvertenderNotCash => ("overtender_not_cash", "error.tender.overtender_not_cash"),
+        CartError::Underpaid(..) => ("tender_underpaid", "error.tender.underpaid"),
+        CartError::TenderNotFound(_) => ("tender_unknown", "error.tender.unknown"),
+        CartError::TenderCollected(_) => ("tender_collected", "error.tender.collected"),
         _ => ("cart_refused", "error.cart.refused"),
     };
     IpcError::from_source(code, key, error)

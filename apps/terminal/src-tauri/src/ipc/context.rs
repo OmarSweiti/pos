@@ -35,7 +35,9 @@ use crate::state::Register;
 ///
 /// - `not_signed_in` when no one is.
 /// - `user_inactive` when the signed-in account is no longer live. The
-///   session is ended first, audited.
+///   session is ended first, audited, and what the till was working on is
+///   set aside, except a sale with money taken, which stays journalled for
+///   recovery.
 /// - `approval_unknown`, `approval_used` or `approval_unreadable` for an
 ///   `approval_id` that names no handle, a consumed one, or a row this build
 ///   cannot read.
@@ -61,16 +63,16 @@ pub fn authorize<C: Capability>(
             IpcError::from_source("session_unreadable", "error.session.unreadable", &error)
         })?;
     if !account.is_some_and(|account| account.is_live) {
-        let mut cart = register.cart_after(&db, &session);
+        let mut working = register.working_after(&db, &session);
         sign_out(
             register,
             &mut db,
             &current,
-            &mut cart,
+            &mut working,
             SignOutCause::UserInactive,
             at,
         )?;
-        drop(cart);
+        drop(working);
         *session = None;
         return Err(IpcError::new("user_inactive", "error.auth.user_inactive"));
     }
