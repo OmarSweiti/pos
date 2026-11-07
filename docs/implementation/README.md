@@ -273,7 +273,12 @@ printer and drawer profile says — refusing what a device would refuse, reporti
 where a profile does not know — and `just printer-emulator <profile>` prints to it before any
 printer exists; only its golden comparison waits for `1.7.5`'s goldens.
 `1.7.13` is **partially delivered** as well: one conformance suite runs against the emulated printer for every receipt-printer profile, refuses to reach a device that is not named, replays a synthetic capture, and is replayed through a pinned independent emulator in CI; only its golden replay waits for `1.7.5`.
-Group 1.8's `1.8.4` is **partially delivered**: its journal half has landed. A sale being paid for
+Group 1.8's `1.8.3` is **partially delivered**: a basket can now be paid for in cash. Payment begins
+journalled, after the basket's stock is screened once more; cash settles at the store's coin step,
+and only cash gives change; taking a tender back is audited; and a sale with money taken is never
+set aside. A cashier's sign-out waits for it, and a crash or a forced sign-out leaves it journalled
+for recovery, as the owner decided. Its receipt model and the finalize itself follow. `1.8.4` is
+**partially delivered**: its journal half has landed. A sale being paid for
 is journalled before its first irreversible effect, each tender advances the record under the version
 it read, and once its finalize begins only the finalize removes it, inside the finalize's own
 transaction. Its start-up recovery half follows 1.8.3, which it needs.
