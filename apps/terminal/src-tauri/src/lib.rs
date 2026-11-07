@@ -41,6 +41,11 @@ ipc::registry::commands![
     commands::cart::cart_park,
     commands::cart::cart_list_parked,
     commands::cart::cart_resume,
+    commands::tender::tender_begin,
+    commands::tender::tender_add_cash,
+    commands::tender::tender_remove,
+    commands::tender::tender_back_to_cart,
+    commands::tender::sale_in_flight_state,
 ];
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

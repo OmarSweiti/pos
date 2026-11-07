@@ -210,6 +210,13 @@ pub enum PriceControl {
     /// Phase 0's smoke command, which proves no capability and reads and
     /// writes nothing: the amount is a total being split, not a price.
     TouchesNoSale,
+    /// Money handed over toward the sale's own priced total (1.8.3). The
+    /// handler builds a tender, which the domain's `add_tender` holds to what
+    /// is owed, and no line or price is touched. The registry cannot see the
+    /// handler; what it holds is the row's shape: the command proves the
+    /// selling capability, `sale.create`, and takes no approval, because
+    /// taking payment is selling.
+    Tendered,
 }
 
 /// Every argument allowed to carry money, by command. Any other argument
@@ -238,6 +245,11 @@ pub const PRICE_ARGUMENTS: &[PriceArgument] = &[
         command: "split_tender",
         argument: "total_minor",
         control: PriceControl::TouchesNoSale,
+    },
+    PriceArgument {
+        command: "tender_add_cash",
+        argument: "amount_minor",
+        control: PriceControl::Tendered,
     },
 ];
 
@@ -373,6 +385,43 @@ pub const COMMANDS: &[CommandSpec] = &[
         audited: false,
         approval_requirement: ApprovalRequirement::Never,
         args: &[Arg::required("parked_id")],
+    },
+    // 1.8.3, its first part: paying for the basket.
+    CommandSpec {
+        name: "tender_begin",
+        access: Access::Capability(cap::SaleCreate::NAME),
+        audited: false,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[],
+    },
+    CommandSpec {
+        name: "tender_add_cash",
+        access: Access::Capability(cap::SaleCreate::NAME),
+        audited: false,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[Arg::required("amount_minor")],
+    },
+    // Taking a tender back reverses money, so every call is audited.
+    CommandSpec {
+        name: "tender_remove",
+        access: Access::Capability(cap::SaleCreate::NAME),
+        audited: true,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[Arg::required("tender_id")],
+    },
+    CommandSpec {
+        name: "tender_back_to_cart",
+        access: Access::Capability(cap::SaleCreate::NAME),
+        audited: false,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[],
+    },
+    CommandSpec {
+        name: "sale_in_flight_state",
+        access: Access::Capability(cap::SaleCreate::NAME),
+        audited: false,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[],
     },
 ];
 
@@ -628,6 +677,10 @@ fn check_price_arguments(spec: &CommandSpec, errors: &mut Vec<RegistryError>) {
             PriceControl::TouchesNoSale => {
                 matches!(spec.access, Access::NoCapability { .. })
                     && !spec.audited
+                    && spec.approval_requirement == ApprovalRequirement::Never
+            }
+            PriceControl::Tendered => {
+                spec.access == Access::Capability(cap::SaleCreate::NAME)
                     && spec.approval_requirement == ApprovalRequirement::Never
             }
         };
