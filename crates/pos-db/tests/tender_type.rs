@@ -51,3 +51,26 @@ fn a_kind_is_taken_exactly_while_its_row_is_active() {
     assert!(!kinds.is_active("CARD").unwrap());
     assert!(!kinds.is_active("car").unwrap());
 }
+
+/// 1.8.3's finalize prints each tender under its kind's name and opens the
+/// drawer for a kind that says so. Every kind the seed holds is read, taken
+/// or not, because a completed sale prints the kinds it was paid in.
+#[test]
+fn every_kind_reads_with_its_printed_names_and_whether_it_opens_the_drawer() {
+    let (_dir, conn) = register();
+    let kinds = TenderTypeRepository::new(&conn).kinds().unwrap();
+    let codes: Vec<&str> = kinds.iter().map(|kind| kind.code.as_str()).collect();
+    assert_eq!(
+        codes,
+        ["cash", "card", "cliq", "voucher", "store_credit", "exchange"],
+        "every seeded kind, in the grid's order"
+    );
+    let cash = kinds.iter().find(|kind| kind.code == "cash").unwrap();
+    assert_eq!(cash.name_ar, "نقدي");
+    assert_eq!(cash.name_en.as_deref(), Some("Cash"));
+    assert!(cash.opens_drawer, "cash opens the drawer");
+    assert!(
+        kinds.iter().filter(|kind| kind.opens_drawer).count() == 1,
+        "only cash does"
+    );
+}

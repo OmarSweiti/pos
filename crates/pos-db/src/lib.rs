@@ -217,6 +217,10 @@ pub enum DbError {
     StockRefused(#[from] pos_domain::StockError),
     #[error("no store {0} to move stock in")]
     StockStoreUnknown(pos_domain::StoreId),
+    #[error("no store {0} on this database")]
+    StoreUnknown(pos_domain::StoreId),
+    #[error("stored store record is malformed: {reason}")]
+    StoredStoreInvalid { reason: String },
     #[error("no product {0} to move stock of")]
     StockProductUnknown(pos_domain::ProductId),
     #[error(
