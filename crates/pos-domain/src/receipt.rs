@@ -1452,8 +1452,15 @@ mod tests {
             direction: RoundingDirection::Nearest,
         };
 
+        /// When the cart was opened.
         fn moment() -> Timestamp {
             Timestamp::from_epoch_milliseconds(1_762_329_600_000).unwrap()
+        }
+
+        /// When the sale completed, a minute and a half later, so a receipt
+        /// dated by its cart's opening cannot pass for one dated by its sale.
+        fn completed() -> Timestamp {
+            Timestamp::from_epoch_milliseconds(1_762_329_690_000).unwrap()
         }
 
         fn till(is_training: bool) -> CartContext {
@@ -1537,7 +1544,7 @@ mod tests {
             FinalizeEffects {
                 receipt_number: "REG01-000042".to_owned(),
                 business_date: BusinessDate::new(2026, 11, 5).unwrap(),
-                completed_at: moment(),
+                completed_at: completed(),
             }
         }
 
@@ -1612,7 +1619,7 @@ mod tests {
                     register_id: RegisterId::from_uuid(id(2)),
                     register_code: "REG01".to_owned(),
                     cashier_name: "Synthetic Cashier".to_owned(),
-                    issued_at: moment(),
+                    issued_at: completed(),
                     business_date: BusinessDate::new(2026, 11, 5).unwrap(),
                 }
             );
@@ -1667,6 +1674,16 @@ mod tests {
             assert_eq!(m.footer, context().footer);
             assert_eq!(m.locale, ReceiptLocale::new(Language::Arabic));
             assert_eq!(m.validate(), Ok(()));
+
+            // The language is the store's, and the direction follows it.
+            let english = ReceiptContext {
+                language: Language::English,
+                ..context()
+            };
+            assert_eq!(
+                build_receipt_model(&sale, &english).unwrap().locale,
+                ReceiptLocale::new(Language::English)
+            );
         }
 
         /// The heading is decided by the fiscal standing, for each of the
