@@ -3717,12 +3717,62 @@ pub struct ReceiptModel {
     pub locale: ReceiptLocale,           // language, direction, money decimals
 }
 
-pub fn build_receipt_model(sale: &CompletedSale, ctx: &ReceiptContext) -> ReceiptModel;
+pub fn build_receipt_model(
+    sale: &CompletedSale,
+    ctx: &ReceiptContext,
+) -> Result<ReceiptModel, ReceiptError>;   // as delivered at 1.8.3; see below
+
+/// What a receipt says that its sale does not. Every field arrives resolved.
+pub struct ReceiptContext {
+    pub merchant: MerchantBlock,
+    pub register_code: String,
+    pub cashier_name: String,
+    pub language: Language,                      // store.receipt_locale
+    pub fiscal: FiscalStanding,
+    pub tender_labels: BTreeMap<String, String>,   // tender_type.code → printed name
+    pub discount_labels: BTreeMap<String, String>, // reason code → printed name
+    pub loyalty: Option<LoyaltyBlock>,           // only with a customer attached
+    pub footer: FooterBlock,
+}
+
+/// Decides the heading, which is never a caller's choice.
+pub enum FiscalStanding {
+    Exempt,                  // store.fiscal_obligation = 'exempt' → Sale
+    Uncleared,               // owed, not cleared → Acknowledgement (fiscal-jofotara §2.1)
+    Cleared(FiscalBlock),    // → Sale, with its fiscal block
+}
 ```
 
 Every money field on a `ReceiptModel` renders through `Money::format_exact` (§1.2). The store's
 `money_decimals` governs shelf and catalogue display; it does not govern a document the customer is
 handed, because a receipt whose visible rows do not add to its own total is not proof of anything.
+
+> **As delivered at 1.8.3, 8 November 2026.** `build_receipt_model` lives in
+> `crates/pos-domain/src/receipt.rs` and departs from the line above in three ways, recorded here
+> rather than left to drift.
+>
+> - **It returns a `Result`.** A tender kind or a discount reason with no printed name in the
+>   document's language is refused by name (`TenderUnlabelled`, `DiscountUnlabelled`), because the
+>   alternative is printing a code or a blank on a customer's proof of purchase. A loyalty balance
+>   with no customer attached is `LoyaltyWithoutCustomer`, and a training sale handed a fiscal block
+>   is `TrainingSaleCleared`. The result has passed `ReceiptModel::validate`, so whatever it refuses,
+>   such as a blank buyer TIN, is refused here, before the sale completes, rather than at the printer.
+>   `ReceiptError` gains those four variants and `Money`, for which `MoneyError` now derives `Clone`.
+> - **`ReceiptContext` is specified above**, which this section had named and never shown.
+> - **The heading follows `FiscalStanding`.** `ReceiptModel.doc_kind` stays a public field, as 1.7.1
+>   kept it, but the builder never takes a heading as an argument, so it cannot be handed a sale
+>   invoice before JoFotara has cleared one.
+>
+> **Every amount is the sale's own.** A line prints its snapshot name, `CartLine::price`, an
+> override included, and `PricedLine::gross_before_discount` as its total. Beneath it go its
+> `DiscountAttribution`s, its own discount and its share of the basket's. The totals are
+> `price_cart`'s, and the rounding line is `CompletedSale::cash_rounding`'s adjustment, present only
+> when non-zero. `ReceiptTotals::total` is **what the customer was charged**: the priced total plus
+> that adjustment, the only figure the builder adds. The change prints when it is not zero. So the
+> document adds up on its face, which `prop_a_receipt_adds_up_to_its_own_total` holds it to. The
+> lines come to the subtotal, and their discounts to the discount total. The subtotal less the
+> discounts, plus the tax where prices exclude it, plus the rounding, is the total. The tenders
+> less the change come to the same total.
 
 ---
 

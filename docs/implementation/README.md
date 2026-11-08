@@ -277,7 +277,10 @@ Group 1.8's `1.8.3` is **partially delivered**: a basket can now be paid for in 
 journalled, after the basket's stock is screened once more; cash settles at the store's coin step,
 and only cash gives change; taking a tender back is audited; and a sale with money taken is never
 set aside. A cashier's sign-out waits for it, and a crash or a forced sign-out leaves it journalled
-for recovery, as the owner decided. Its receipt model and the finalize itself follow. `1.8.4` is
+for recovery, as the owner decided. Its receipt model has landed too: a completed sale becomes the
+one document the printer, the PDF and the email render, every amount read from the sale, adding up
+on its face, and headed as an invoice only where the store owes none or JoFotara has cleared it. The
+finalize itself follows. `1.8.4` is
 **partially delivered**: its journal half has landed. A sale being paid for
 is journalled before its first irreversible effect, each tender advances the record under the version
 it read, and once its finalize begins only the finalize removes it, inside the finalize's own
