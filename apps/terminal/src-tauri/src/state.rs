@@ -28,7 +28,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pos_db::DbError;
@@ -40,6 +40,9 @@ use pos_domain::{
     Cart, Clock, ClockConfidence, GrantSet, IdSource, RegisterId, Role, SaleId, StoreId, Tendering,
     Timestamp, UserId,
 };
+use pos_hardware::ReceiptPrinter;
+use pos_hardware::profile::PrinterProfile;
+use pos_hardware::render::PaperWidth;
 use rusqlite::{Connection, OptionalExtension};
 use uuid::Uuid;
 
@@ -245,6 +248,34 @@ pub enum CacheCheck {
     SpansRegisters,
 }
 
+/// The printer a register renders its receipts for, and the device itself
+/// when one is attached.
+///
+/// No step binds a register to a real printer yet. Until one does, every
+/// register renders for the 80 mm simulator profile with no device attached,
+/// by the owner's decision of 8 November 2026: each sale's receipt is still
+/// rendered and queued in its own transaction, and simply never reaches a
+/// device (`ref/hardware-and-receipts.md` §3a, selling never stops).
+pub struct ReceiptDevice {
+    /// The profile every original receipt is rendered for.
+    pub profile: PrinterProfile,
+    /// The printer the finalize sends a receipt to, and opens the drawer
+    /// through, once the sale has committed.
+    pub printer: Option<Arc<dyn ReceiptPrinter>>,
+}
+
+impl ReceiptDevice {
+    /// What a register renders for until a printer is bound: the 80 mm
+    /// simulator profile, and no device.
+    #[must_use]
+    pub fn unbound() -> Self {
+        Self {
+            profile: PrinterProfile::simulator(PaperWidth::Mm80),
+            printer: None,
+        }
+    }
+}
+
 /// The register, open.
 pub struct Register {
     db: Mutex<Connection>,
@@ -258,6 +289,7 @@ pub struct Register {
     session: Mutex<Option<Session>>,
     working: Mutex<Option<Working>>,
     recovered: Recovered,
+    receipt_device: ReceiptDevice,
 }
 
 /// The register's identity and what recovery did; never the session's
@@ -269,6 +301,8 @@ impl std::fmt::Debug for Register {
             .field("register", &self.register)
             .field("store", &self.store)
             .field("code", &self.code)
+            .field("printer_profile", &self.receipt_device.profile.profile_id)
+            .field("printer_attached", &self.receipt_device.printer.is_some())
             .field("recovered", &self.recovered)
             .finish_non_exhaustive()
     }
@@ -328,7 +362,23 @@ impl Register {
             session: Mutex::new(None),
             working: Mutex::new(None),
             recovered,
+            receipt_device: ReceiptDevice::unbound(),
         })
+    }
+
+    /// This register, rendering its receipts for `device` instead of
+    /// [`ReceiptDevice::unbound`].
+    #[must_use]
+    pub fn with_receipt_device(mut self, device: ReceiptDevice) -> Self {
+        self.receipt_device = device;
+        self
+    }
+
+    /// The printer the register renders its receipts for, and the device, if
+    /// one is attached.
+    #[must_use]
+    pub fn receipt_device(&self) -> &ReceiptDevice {
+        &self.receipt_device
     }
 
     #[must_use]

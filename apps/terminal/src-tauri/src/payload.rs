@@ -84,7 +84,7 @@ pub(crate) fn canonical(value: &Value) -> Result<String, serde_json::Error> {
             other => other.clone(),
         }
     }
-    Ok(serde_json::to_string(&sorted(value))?)
+    serde_json::to_string(&sorted(value))
 }
 
 const fn artifact_kind_text(kind: ArtifactKind) -> &'static str {

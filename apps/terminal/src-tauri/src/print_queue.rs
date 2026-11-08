@@ -719,7 +719,7 @@ fn render_duplicate(
 
 /// The paper a profile prints on, read from the dots it states — one source
 /// for the width, so a profile and a paper cannot be handed in disagreeing.
-fn paper_of(profile: &PrinterProfile) -> Result<PaperWidth, PrintQueueError> {
+pub(crate) fn paper_of(profile: &PrinterProfile) -> Result<PaperWidth, PrintQueueError> {
     let dots = match &profile.dot_width {
         Fact::Known(dots) => Some(dots.get()),
         _ => None,
