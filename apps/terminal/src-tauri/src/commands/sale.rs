@@ -1678,3 +1678,128 @@ mod tests {
         assert_eq!(finalize(&register).unwrap().total_minor, 1_250);
     }
 }
+
+#[cfg(test)]
+mod business_date_tests {
+    //! Microstep 1.9.4: a sale's business date is its shift's (conventions
+    //! §11). The shift's date was resolved once, when it opened, from the
+    //! store's zone and day cutover; the finalize copies it and never
+    //! recomputes it from the clock's midnight or a stored offset.
+    //!
+    //! The shop's shift opened on 5 November 2026 in Amman, UTC+3, whose day
+    //! cuts over at 04:00. Each register here is opened with its clock at the
+    //! instant a test names, so the sale is rung up then, under that shift.
+    //! Nothing in the shell, the domain or the database layer reads the
+    //! operating system's zone, so the only zone that could move a recomputed
+    //! date is the store's own, and that is the one a test moves.
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use pos_domain::{BusinessDate, FixedClock};
+
+    use super::*;
+    use crate::commands::auth::login_pin;
+    use crate::commands::cart::{add_product, open_cart};
+    use crate::commands::tender::{add_cash, begin_payment};
+    use crate::shop::{CASHIER_CODE, CASHIER_PIN, DAY, KEY, OIL, product_id, seed};
+    use crate::state::V7Ids;
+
+    /// A shop whose shift opened on `DAY`, its register's clock at `instant`
+    /// and its store as `store` leaves it, the cashier signed in.
+    fn shop_at(instant: &str, store: &str) -> (tempfile::TempDir, Register) {
+        let dir = tempfile::tempdir().unwrap();
+        seed(dir.path(), true);
+        let conn = pos_db::open(&dir.path().join(crate::state::DATABASE_FILE), KEY).unwrap();
+        conn.execute_batch(store).unwrap();
+        drop(conn);
+        let register = Register::open_with(
+            dir.path(),
+            KEY,
+            Box::new(FixedClock::new(Timestamp::parse_iso8601(instant).unwrap())),
+            Box::new(V7Ids::default()),
+        )
+        .unwrap();
+        login_pin(&register, CASHIER_CODE, CASHIER_PIN).unwrap();
+        (dir, register)
+    }
+
+    /// A bottle of oil, paid exactly in cash and finalized.
+    fn sell(register: &Register) -> SaleId {
+        open_cart(register).unwrap();
+        add_product(register, product_id(OIL), None).unwrap();
+        let paying = begin_payment(register).unwrap();
+        add_cash(register, paying.total_minor).unwrap();
+        finalize(register).unwrap().sale_id
+    }
+
+    /// The business date the sale completed under, and the one each of its
+    /// stock events was posted under.
+    fn dated(register: &Register, sale: SaleId) -> (BusinessDate, Vec<String>) {
+        register.with_db(|conn| {
+            let record = SaleRepository::new(conn).by_id(sale).unwrap().unwrap();
+            let stock: Vec<String> = conn
+                .prepare("SELECT business_date FROM stock_ledger WHERE ref_id = ?1")
+                .unwrap()
+                .query_map([sale.as_uuid().as_bytes().as_slice()], |row| row.get(0))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
+            (record.sale().business_date(), stock)
+        })
+    }
+
+    fn the_shifts_day() -> BusinessDate {
+        BusinessDate::parse(DAY).unwrap()
+    }
+
+    /// 01:00 in Amman on 6 November is 22:00 UTC on the 5th: past calendar
+    /// midnight, before the store's 04:00 cutover. The sale belongs to the
+    /// trading day that began the evening before, the shift's.
+    #[test]
+    fn sale_at_0100_belongs_to_previous_business_date() {
+        let (_dir, register) = shop_at("2026-11-05T22:00:00.000Z", "");
+        let sale = sell(&register);
+        let (date, stock) = dated(&register, sale);
+        assert_eq!(date, the_shifts_day());
+        assert_eq!(stock, [DAY], "its stock event is posted on the same day");
+    }
+
+    /// The store's zone moves fourteen hours, to Kiritimati, and the clock
+    /// runs on to 13:00 UTC on 6 November, 03:00 on the 7th there. A date
+    /// recomputed from either would move; the sale's stays the shift's.
+    #[test]
+    fn business_date_survives_timezone_change() {
+        let (_dir, register) = shop_at(
+            "2026-11-06T13:00:00.000Z",
+            "UPDATE store SET time_zone = 'Pacific/Kiritimati';",
+        );
+        let sale = sell(&register);
+        let (date, stock) = dated(&register, sale);
+        assert_eq!(date, the_shifts_day());
+        assert_eq!(stock, [DAY]);
+    }
+
+    /// A clock weeks from the date the shift opened on, as an untrusted
+    /// clock or an operator-confirmed date leaves it: the sale is dated by
+    /// its shift, and so are its receipt and its stock.
+    #[test]
+    fn a_sale_uses_its_shifts_business_date() {
+        let (_dir, register) = shop_at("2026-12-31T09:00:00.000Z", "");
+        let sale = sell(&register);
+        let (date, stock) = dated(&register, sale);
+        assert_eq!(date, the_shifts_day());
+        assert_eq!(stock, [DAY]);
+        let completed_at = register.with_db(|conn| {
+            SaleRepository::new(conn)
+                .by_id(sale)
+                .unwrap()
+                .unwrap()
+                .sale()
+                .completed_at()
+        });
+        assert_eq!(
+            completed_at.to_iso8601(),
+            "2026-12-31T09:00:00.000Z",
+            "the instant is the clock's; only the trading day is the shift's"
+        );
+    }
+}

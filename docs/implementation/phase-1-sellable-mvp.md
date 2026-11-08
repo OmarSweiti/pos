@@ -1592,10 +1592,17 @@ Bumped in the same transaction as the document it numbers, so a crash cannot con
 > Past 999 999 the counter grows a seventh digit rather than wrap. The finalize, 1.8.3's third part, allocates each sale's number through `next_receipt_number`.
 
 ### 1.9.4 — Business date at finalize
-**Files:** `apps/terminal/src-tauri/src/commands/sale.rs`
+**Files:** `apps/terminal/src-tauri/src/commands/sale.rs` · as delivered: `apps/terminal/src-tauri/src/commands/sale.rs` (`business_date_tests`) · `scripts/check-test-catalog.py` (two names: `PLANNED` → `PLANNED_RETIRED`) · [`README.md`](README.md) · this file (this `Files:` line and note)
 Copied from the open shift (conventions §11), whose date was resolved at open from the store's IANA zone and persisted `ClockState`; never recompute it from wall-clock midnight or a stored fixed offset during finalize.
 **Tests:** `sale_at_0100_belongs_to_previous_business_date` · `business_date_survives_timezone_change` · `a_sale_uses_its_shifts_business_date`
 **Done when:** `cargo nextest run -p terminal business_date_` passes after the OS zone and wall clock change between shift open and sale finalize.
+
+> **As delivered, 8 November 2026.** 1.8.3's finalize already copied the date from the cart's open shift: `ShiftRepository::by_id(cart.shift_id)`, refused as `shift_not_open` once the shift is closed. This step proves it, in `commands::sale::business_date_tests`, under three conditions that would move a date recomputed at finalize:
+> - **a sale at 01:00 in Amman**, past calendar midnight and before the store's 04:00 cutover;
+> - **the store's zone moved fourteen hours**, to Kiritimati, with the clock a day on;
+> - **a clock weeks from the shift's date**, as an untrusted clock or an operator-confirmed opening leaves it.
+>
+> In each, the sale and every stock event it posts keep the shift's date, while the sale's instant stays the clock's. **The operating system's zone is never read**: nothing in the shell, the domain or the database layer asks for it. So the only zone that could move a recomputed date is the store's own, and that is the one the test moves; the Done when's "OS zone" holds because no code reads it. The three tests sit in a module named `business_date_tests` so that the `Done when`'s substring filter selects all three: two of their names end in `business_date` with no trailing underscore.
 
 ### 1.9.5 — Minimal shift lifecycle
 **Scheduled in:** build the domain/repository/IPC half after 1.8.9; run its screen assertions after 1.11.0

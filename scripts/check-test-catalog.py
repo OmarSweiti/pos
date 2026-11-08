@@ -103,10 +103,6 @@ PLANNED: dict[str, tuple[str, ...]] = {
     ),
     "1.8.7": ("bad_key_yields_recovery_state_not_panic",),
     "1.8.8": ("low_disk_blocks_new_sales_and_alarms",),
-    "1.9.4": (
-        "business_date_survives_timezone_change",
-        "sale_at_0100_belongs_to_previous_business_date",
-    ),
     "1.11.10b": (
         "a_cashier_has_a_path_forward_without_product_edit",
         "a_department_sale_carries_its_own_tax_category_and_audits",
@@ -509,6 +505,7 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "an_altered_amount_is_refused",
         "an_expired_handle_is_refused",
         "an_unknown_print_outcome_never_auto_retries_the_drawer_pulse",
+        "business_date_survives_timezone_change",
         "card_charged_exact_unrounded_total",
         "catalog_save_above_ceiling_is_rejected",
         "clock_jump_back_reports_anomaly",
@@ -540,6 +537,7 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "prop_price_cart_is_invariant_under_line_reordering",
         "prop_zero_total_cart_is_valid",
         "sale_above_ceiling_is_hard_blocked",
+        "sale_at_0100_belongs_to_previous_business_date",
         "search_survives_every_fts5_metacharacter",
         "tail_deletion_is_detected_against_the_last_anchor",
         "the_effect_and_the_consumption_commit_together_or_not_at_all",
