@@ -410,16 +410,16 @@ capture and the return-box mapping would let a cashier zero-rate a sale that is 
 
 | Command | Args → Returns | Ph | Cap | A | E |
 |---|---|---|---|---|---|
-| `tender_begin` | `()` → `TenderState` | 1 | `sale.create` | | |
+| `tender_begin` | `()` → `PaymentSnapshot` | 1 | `sale.create` | | |
 | `tender_back_to_cart` | `()` → `CartSnapshot` | 1 | `sale.create` | | |
-| `tender_add_cash` | `{ amount_minor }` → `TenderState` | 1 | `sale.create` | | |
+| `tender_add_cash` | `{ amount_minor }` → `PaymentSnapshot` | 1 | `sale.create` | | |
 | `tender_start_card` | `{ amount_minor }` → `CardOpHandle` | 2 | `sale.create` | | |
-| `tender_cancel_card` | `{ handle }` → `TenderState` | 2 | `sale.create` | ✓ | |
-| `tender_remove` | `{ tender_id }` → `TenderState` | 1 | `sale.create` | ✓ | |
+| `tender_cancel_card` | `{ handle }` → `PaymentSnapshot` | 2 | `sale.create` | ✓ | |
+| `tender_remove` | `{ tender_id }` → `PaymentSnapshot` | 1 | `sale.create` | ✓ | |
 | `sale_finalize` | `()` → `CompletedSaleRef` | 1 | `sale.create` | ✓ | |
 | `sale_reprint` | `{ sale_id }` → `()` | 1 | `sale.reprint` | ✓ | |
 | `print_resolve_unknown` | `{ job_id, receipt_came_out }` → `()` | 1 | `sale.reprint` | ✓ | |
-| `sale_in_flight_state` | `()` → `Option<InFlightSummary>` | 1 | `sale.create` | | |
+| `sale_in_flight_state` | `()` → `Vec<InFlightSummary>` | 1 | `sale.create` | | |
 
 `tender_start_card` returns a handle and drives the flow through events (§4). The `Unknown`/timeout protocol — status-query before any retry (Phase 2, 2.1.3) — lives entirely on the Rust side. The UI **cannot** issue a second authorisation because no command exists that would let it.
 
@@ -456,6 +456,33 @@ microstep owns yet (`phase-1-sellable-mvp.md` 1.7.1). The command handler waits 
 `sale_in_flight_state` is what the recovery path reads after a restart. It reports the durable
 `InFlightSale` row (`domain-api.md` §6.6) — including whether a card operation was outstanding, which
 is the input E.2's status-query needs and which nothing previously persisted.
+
+> **As delivered at 1.8.3, its first part.** `tender_begin`, `tender_add_cash`, `tender_remove`,
+> `tender_back_to_cart` and `sale_in_flight_state` are registered, each under `sale.create`, and
+> `tender_remove` is audited on every call. Six things the table did not say:
+>
+> - **The answer is `PaymentSnapshot`**, which this table called `TenderState` until then:
+>   `pos_domain::TenderState` is one tender's own state. It carries the total, each tender, what is
+>   collected and still owed, what cash is asked for now at the store's coin step, the rounding line
+>   once a final cash tender makes one, the change, whether the sale is settled, and the stock
+>   flags, all in minor units.
+> - **`sale_in_flight_state` answers every journalled sale**, oldest first, not one. A forced
+>   sign-out, then another sale paid for, then a crash leaves two.
+> - **`amount_minor` is money handed over, not a price.** `PRICE_ARGUMENTS` allows it on
+>   `tender_add_cash` under `PriceControl::Tendered`: the row proves `sale.create` and takes no
+>   approval, and the amount becomes a tender that `add_tender` holds to the sale's own priced
+>   total. It is refused on every other command.
+> - **Payment begins journalled.** `tender_begin` screens the basket's stock once more, prices it
+>   and journals the checkout before any money is taken. Each tender is journalled before it is
+>   answered.
+> - **While a sale is being paid for, the cart commands leave it alone.** Every one that would
+>   change the basket, open another, park it or resume one is `sale_being_paid`. `auth_logout` is
+>   `tender_collected` once a tender is taken, and a basket with nothing taken goes back to the cart
+>   and is parked (the owner's decision of 7 November 2026).
+> - **The refusals are each their own code**: `payment_not_begun`, `nothing_to_tender`,
+>   `age_unconfirmed`, `stock_would_go_negative`, `tender_type_disabled`, `sale_settled`,
+>   `tender_not_positive`, `tender_underpaid`, `tender_amount_invalid`, `tender_unknown`,
+>   `tender_collected` and `checkout_unreadable`.
 
 ### Returns
 

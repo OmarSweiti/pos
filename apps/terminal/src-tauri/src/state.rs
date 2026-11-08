@@ -7,17 +7,22 @@
 //! the refusal instead, and every command answers with it, by name, so the
 //! screen can say why rather than show an empty till.
 //!
-//! **Lock order.** The database, the session and the till's working cart each
-//! sit behind a mutex. Code that needs more than one takes them through
+//! **Lock order.** The database, the session and what the till is working on
+//! each sit behind a mutex. Code that needs more than one takes them through
 //! [`Register::lock`] or [`Register::lock_till`], always database, then
-//! session, then cart, so no two commands can each hold one and wait for the
-//! other.
+//! session, then the working sale, so no two commands can each hold one and
+//! wait for the other.
 //!
 //! **The working cart** is the basket the till is building (1.4.11). It is on
 //! disk from the moment it opens, as an `active` `parked_cart` row under this
 //! process's nonce, and every change is saved before it is answered (the
 //! owner's decision of 5 November 2026). What the till holds in memory is that
 //! row's copy, never a basket only the process knows.
+//!
+//! **A basket being paid for** is journalled in `checkout_operation` before
+//! any money is taken, and each tender is journalled before it is answered
+//! (1.8.3, 1.8.4). The till holds it as [`Working::Paying`], so nothing that
+//! sets a basket aside can mistake it for one still being built.
 
 use std::fs;
 use std::io;
@@ -27,11 +32,13 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pos_db::DbError;
+use pos_db::repo::checkout_operation::CheckoutOperationRepository;
 use pos_db::repo::parked_cart::{ParkedCartRepository, SetAside};
 use pos_db::repo::stock::{CacheDrift, StockRepository};
 use pos_db::repo::user::{SessionEnd, UserRepository};
 use pos_domain::{
-    Cart, Clock, ClockConfidence, GrantSet, IdSource, RegisterId, Role, StoreId, Timestamp, UserId,
+    Cart, Clock, ClockConfidence, GrantSet, IdSource, RegisterId, Role, SaleId, StoreId, Tendering,
+    Timestamp, UserId,
 };
 use rusqlite::{Connection, OptionalExtension};
 use uuid::Uuid;
@@ -171,6 +178,42 @@ pub struct Session {
     pub signed_in_at: Timestamp,
 }
 
+/// What the till is working on for the signed-in cashier: a basket being
+/// built, or that basket being paid for (1.8.3). Each is boxed, so the till
+/// moves a pointer, not a sale, from one state to the next.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Working {
+    /// A basket being built, held by its `active` `parked_cart` row.
+    Building(Box<Cart>),
+    /// The basket being paid for, journalled in `checkout_operation`. Its
+    /// `parked_cart` row still holds the basket as payment began, which the
+    /// finalize consumes; the journal holds the tenders.
+    Paying(Box<Paying>),
+}
+
+impl Working {
+    /// The basket, whether it is being built or paid for.
+    #[must_use]
+    pub fn cart(&self) -> &Cart {
+        match self {
+            Working::Building(cart) => cart,
+            Working::Paying(paying) => paying.tendering.cart(),
+        }
+    }
+}
+
+/// A sale being paid for, as the till holds it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Paying {
+    pub tendering: Tendering,
+    /// The checkout attempt's idempotency key, which its journal row is
+    /// written under and its finalize will replay under (1.8.4).
+    pub idempotency_key: Uuid,
+    /// The journal's version this till last wrote. The next step names it,
+    /// so a copy another write has overtaken is refused, never written.
+    pub version: i64,
+}
+
 /// What start-up recovery found and did, before the first command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Recovered {
@@ -182,6 +225,11 @@ pub struct Recovered {
     pub carts_set_aside: usize,
     /// Working carts a crash left with nothing in them, dropped.
     pub empty_carts_dropped: usize,
+    /// Sales a restart found journalled mid-payment. Each is left where it
+    /// is, its basket not parked, for 1.8.4's recovery half to resume (the
+    /// owner's decision of 7 November 2026); `sale_in_flight_state` names
+    /// them.
+    pub sales_in_flight: usize,
     pub stock_cache: CacheCheck,
 }
 
@@ -206,7 +254,7 @@ pub struct Register {
     clock: Box<dyn Clock + Send + Sync>,
     ids: Box<dyn IdSource + Send + Sync>,
     session: Mutex<Option<Session>>,
-    cart: Mutex<Option<Cart>>,
+    working: Mutex<Option<Working>>,
     recovered: Recovered,
 }
 
@@ -274,7 +322,7 @@ impl Register {
             clock,
             ids,
             session: Mutex::new(None),
-            cart: Mutex::new(None),
+            working: Mutex::new(None),
             recovered,
         })
     }
@@ -334,21 +382,26 @@ impl Register {
         (db, session)
     }
 
-    /// The database, the session and the till's working cart, in that order.
+    /// The database, the session and what the till is working on, in that
+    /// order.
     pub fn lock_till(&self) -> Locked<'_> {
         let (db, session) = self.lock();
-        let cart = self.cart.lock().unwrap_or_else(PoisonError::into_inner);
-        Locked { db, session, cart }
+        let working = self.working.lock().unwrap_or_else(PoisonError::into_inner);
+        Locked {
+            db,
+            session,
+            working,
+        }
     }
 
-    /// The till's working cart, for a caller already holding the database and
-    /// the session, which it must have taken first.
-    pub(crate) fn cart_after(
+    /// What the till is working on, for a caller already holding the database
+    /// and the session, which it must have taken first.
+    pub(crate) fn working_after(
         &self,
         _db: &MutexGuard<'_, Connection>,
         _session: &MutexGuard<'_, Option<Session>>,
-    ) -> MutexGuard<'_, Option<Cart>> {
-        self.cart.lock().unwrap_or_else(PoisonError::into_inner)
+    ) -> MutexGuard<'_, Option<Working>> {
+        self.working.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// How far the register trusts its clock. No trusted time is held yet:
@@ -361,11 +414,11 @@ impl Register {
     }
 }
 
-/// Everything a cart command works under, taken in the one order.
+/// Everything a cart or tender command works under, taken in the one order.
 pub struct Locked<'r> {
     pub db: MutexGuard<'r, Connection>,
     pub session: MutexGuard<'r, Option<Session>>,
-    pub cart: MutexGuard<'r, Option<Cart>>,
+    pub working: MutexGuard<'r, Option<Working>>,
 }
 
 /// The install's device id, trimmed.
@@ -421,7 +474,10 @@ fn process_nonce(ids: &(dyn IdSource + Send + Sync)) -> Uuid {
 /// Sessions and carts first, in one transaction. Every basket a crash left
 /// being worked on is claimed and set aside in the parked list, where whoever
 /// signs in can resume it, and one with nothing in it is dropped: the session
-/// building it died with the process (1.4.11). Then the stock cache, in a
+/// building it died with the process (1.4.11). A basket whose sale is
+/// journalled mid-payment is claimed and left where it is, for the recovery
+/// half to resume from its journal (the owner's decision of 7 November 2026):
+/// parked, it could never be paid for again. Then the stock cache, in a
 /// transaction of its own, because a cache that spans registers is an alarm
 /// that leaves the cache as it was, not a reason to undo the rest.
 fn recover(
@@ -439,11 +495,16 @@ fn recover(
         .end_open_sessions(&tx, register, SessionEnd::Crash, at)
         .map_err(failed)?;
     let carts = ParkedCartRepository::new(&tx);
-    let (mut carts_set_aside, mut empty_carts_dropped) = (0, 0);
+    let journal = CheckoutOperationRepository::new(&tx);
+    let (mut carts_set_aside, mut empty_carts_dropped, mut sales_in_flight) = (0, 0, 0);
     for cart in carts
         .reclaim_after_restart(&tx, register, nonce)
         .map_err(failed)?
     {
+        if journalled(&journal, cart.id).map_err(failed)? {
+            sales_in_flight += 1;
+            continue;
+        }
         match carts.set_aside(&tx, nonce, &cart, at).map_err(failed)? {
             SetAside::Parked => carts_set_aside += 1,
             SetAside::Dropped => empty_carts_dropped += 1,
@@ -488,12 +549,30 @@ fn recover(
             "start-up set aside baskets a crash left being worked on"
         );
     }
+    if sales_in_flight > 0 {
+        tracing::warn!(
+            sales_in_flight,
+            "start-up left sales a crash interrupted mid-payment for recovery"
+        );
+    }
     Ok(Recovered {
         sessions_closed,
         carts_set_aside,
         empty_carts_dropped,
+        sales_in_flight,
         stock_cache,
     })
+}
+
+/// Whether `sale` is journalled mid-payment. A row this build cannot read is
+/// a sale in payment all the same: its basket is left for the recovery half
+/// rather than parked beside a journal that still names it.
+fn journalled(journal: &CheckoutOperationRepository<'_>, sale: SaleId) -> Result<bool, DbError> {
+    match journal.get(sale) {
+        Ok(found) => Ok(found.is_some()),
+        Err(DbError::StoredCheckoutInvalid { .. }) => Ok(true),
+        Err(other) => Err(other),
+    }
 }
 
 /// The system's wall clock, in UTC milliseconds.

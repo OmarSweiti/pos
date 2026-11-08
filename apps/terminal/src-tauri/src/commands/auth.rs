@@ -21,12 +21,20 @@
 //! The same holds when the context signs out an account that stopped being
 //! live, which no one can refuse. The sign-out's audit row names the cart it
 //! set aside.
+//!
+//! **A sale being paid for is set aside only while no money is taken** (the
+//! owner's decision of 7 November 2026, 1.8.3). With nothing taken it goes
+//! back to being a basket, and is set aside as one. Once a tender is taken a
+//! cashier's sign-out is refused until the sale is finished or the tender
+//! removed, and a forced one leaves the sale journalled for recovery. The
+//! audit row names the sale it left.
 
 use pos_db::auth::{ATTEMPT_POLICY, Admission, admission, hash_pin, needs_rehash, verify_pin};
+use pos_db::repo::checkout_operation::CheckoutOperationRepository;
 use pos_db::repo::parked_cart::{ParkedCartRepository, SetAside};
 use pos_db::repo::role::RoleRepository;
 use pos_db::repo::user::{SessionEnd, UserRepository};
-use pos_domain::{AuditIntent, Cart, Timestamp};
+use pos_domain::{AuditIntent, Timestamp};
 use rusqlite::Connection;
 use serde::Serialize;
 use serde_json::json;
@@ -35,7 +43,7 @@ use tauri::State;
 use super::{audit, sqlite, stored};
 use crate::ipc::context::not_signed_in;
 use crate::ipc::{IpcError, IpcResult};
-use crate::state::{Register, Session, Till};
+use crate::state::{Register, Session, Till, Working};
 
 /// Who is signed in, as the webview is told it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -272,7 +280,9 @@ pub fn login_pin(register: &Register, user_code: &str, pin: &str) -> IpcResult<S
 ///
 /// # Errors
 ///
-/// `not_signed_in` when no one is, and `storage_failed`.
+/// `not_signed_in` when no one is; `tender_collected` while the till's sale
+/// has a tender taken, which leaves the session signed in; and
+/// `storage_failed`.
 pub fn logout(register: &Register) -> IpcResult<()> {
     let at = register.now();
     let mut till = register.lock_till();
@@ -283,7 +293,7 @@ pub fn logout(register: &Register) -> IpcResult<()> {
         register,
         &mut till.db,
         &current,
-        &mut till.cart,
+        &mut till.working,
         SignOutCause::Requested,
         at,
     )?;
@@ -292,25 +302,57 @@ pub fn logout(register: &Register) -> IpcResult<()> {
 }
 
 /// End `current`'s `user_session` row and audit it, in one transaction, with
-/// the till's working cart `cart` set aside in the parked list when it has
-/// lines and dropped when it has none. The cart is cleared once that commits;
-/// the caller clears the session.
+/// what the till is working on, `working`, set aside. A basket goes to the
+/// parked list when it has lines and is dropped when it has none. One being
+/// paid for with nothing taken yet goes back to being a basket first: its
+/// journal is abandoned, and it is set aside the same way. Once money has been
+/// taken it is never set aside, because a parked basket carries no tender: a
+/// sign-out the cashier asked for is refused, and one the context forces, of
+/// an account no longer live, leaves the sale journalled for recovery, as a
+/// crash would (the owner's decision of 7 November 2026). The till is cleared
+/// once that commits; the caller clears the session.
+///
+/// # Errors
+///
+/// `tender_collected` for a sign-out asked for while a tender is taken, before
+/// anything is written; and `storage_failed`.
 pub(crate) fn sign_out(
     register: &Register,
     db: &mut Connection,
     current: &Session,
-    cart: &mut Option<Cart>,
+    working: &mut Option<Working>,
     cause: SignOutCause,
     at: Timestamp,
 ) -> IpcResult<()> {
+    let paid_for = match working.as_ref() {
+        Some(Working::Paying(paying)) if !paying.tendering.tenders().is_empty() => {
+            Some(paying.tendering.cart().id)
+        }
+        _ => None,
+    };
+    if paid_for.is_some() && cause == SignOutCause::Requested {
+        return Err(IpcError::new("tender_collected", "error.tender.collected"));
+    }
     let tx = db.transaction().map_err(sqlite)?;
-    let set_aside = match cart.as_ref() {
+    let basket = match working.as_ref() {
         None => None,
-        Some(working) => match ParkedCartRepository::new(&tx)
-            .set_aside(&tx, register.process_nonce(), working, at)
+        Some(Working::Building(cart)) => Some(&**cart),
+        Some(Working::Paying(_)) if paid_for.is_some() => None,
+        Some(Working::Paying(paying)) => {
+            let cart = paying.tendering.cart();
+            CheckoutOperationRepository::new(&tx)
+                .abandon(&tx, cart.id, paying.idempotency_key)
+                .map_err(stored)?;
+            Some(cart)
+        }
+    };
+    let set_aside = match basket {
+        None => None,
+        Some(cart) => match ParkedCartRepository::new(&tx)
+            .set_aside(&tx, register.process_nonce(), cart, at)
             .map_err(stored)?
         {
-            SetAside::Parked => Some(working.id),
+            SetAside::Parked => Some(cart.id),
             SetAside::Dropped => None,
         },
     };
@@ -331,12 +373,13 @@ pub(crate) fn sign_out(
             payload: json!({
                 "cause": cause.as_str(),
                 "parked_cart": set_aside.map(|sale| sale.as_uuid().to_string()),
+                "sale_in_flight": paid_for.map(|sale| sale.as_uuid().to_string()),
             }),
             at,
         },
     )?;
     tx.commit().map_err(sqlite)?;
-    *cart = None;
+    *working = None;
     Ok(())
 }
 
