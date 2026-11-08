@@ -327,7 +327,7 @@ pub fn in_flight(register: &Register) -> IpcResult<Vec<InFlightSummary>> {
 }
 
 /// The sale the till is paying for.
-fn paying(working: Option<&Working>) -> IpcResult<&Paying> {
+pub(super) fn paying(working: Option<&Working>) -> IpcResult<&Paying> {
     match working {
         Some(Working::Paying(paying)) => Ok(paying),
         Some(Working::Building(_)) => {

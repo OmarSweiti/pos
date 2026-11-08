@@ -423,6 +423,15 @@ pub const COMMANDS: &[CommandSpec] = &[
         approval_requirement: ApprovalRequirement::Never,
         args: &[],
     },
+    // 1.8.3, its third part: the sale completes. Audited: the row records what
+    // the sale does not, the drawer's opening asked for before it happens.
+    CommandSpec {
+        name: "sale_finalize",
+        access: Access::Capability(cap::SaleCreate::NAME),
+        audited: true,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[],
+    },
 ];
 
 /// Names the commands the shell registers, once.
