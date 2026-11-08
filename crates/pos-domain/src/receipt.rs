@@ -1452,15 +1452,16 @@ mod tests {
             direction: RoundingDirection::Nearest,
         };
 
-        /// When the cart was opened.
+        /// When the cart was opened: 2026-11-05 08:00 UTC, 11:00 in Amman,
+        /// on the business day the sale is dated by.
         fn moment() -> Timestamp {
-            Timestamp::from_epoch_milliseconds(1_762_329_600_000).unwrap()
+            Timestamp::from_epoch_milliseconds(1_793_865_600_000).unwrap()
         }
 
         /// When the sale completed, a minute and a half later, so a receipt
         /// dated by its cart's opening cannot pass for one dated by its sale.
         fn completed() -> Timestamp {
-            Timestamp::from_epoch_milliseconds(1_762_329_690_000).unwrap()
+            Timestamp::from_epoch_milliseconds(1_793_865_690_000).unwrap()
         }
 
         fn till(is_training: bool) -> CartContext {
