@@ -66,9 +66,10 @@ pub use pricing::{
     ProrationLine, prorate,
 };
 pub use receipt::{
-    BuyerBlock, DocKind, FiscalBlock, FooterBlock, Language, LoyaltyBlock, MerchantBlock,
-    ReceiptDiscount, ReceiptError, ReceiptHeader, ReceiptLine, ReceiptLocale, ReceiptModel,
-    ReceiptTender, ReceiptTotals, TextDirection, Watermark,
+    BuyerBlock, DocKind, FiscalBlock, FiscalStanding, FooterBlock, Language, LoyaltyBlock,
+    MerchantBlock, ReceiptContext, ReceiptDiscount, ReceiptError, ReceiptHeader, ReceiptLine,
+    ReceiptLocale, ReceiptModel, ReceiptTender, ReceiptTotals, TextDirection, Watermark,
+    build_receipt_model,
 };
 pub use sensitive::{SENSITIVE_FIELD_RULES, SensitiveFieldRules};
 pub use shift::{

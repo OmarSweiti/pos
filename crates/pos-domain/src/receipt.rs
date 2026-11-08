@@ -8,10 +8,12 @@
 //!
 //! Its shape is [`ref/domain-api.md`](../../../docs/implementation/ref/domain-api.md) §13 and its
 //! content order is [`ref/hardware-and-receipts.md`](../../../docs/implementation/ref/hardware-and-receipts.md)
-//! §2.3. It computes nothing. Every amount arrives already decided by
-//! `price_cart` (1.4.9) and every string already resolved by its caller, which
-//! is what makes this module trivially pure (I-8) and what stops a second
-//! rounding from happening at render time (I-1).
+//! §2.3. It rounds nothing. Every amount arrives already decided by
+//! `price_cart` (1.4.9) and the tender machine (1.5.3), and every string
+//! already resolved by its caller, which is what makes this module trivially
+//! pure (I-8) and what stops a second rounding from happening at render time
+//! (I-1). [`build_receipt_model`] (1.8.3) adds one figure, the total the
+//! customer was charged, and it is a sum of two amounts the sale already holds.
 //!
 //! # Three things this type deliberately cannot express
 //!
@@ -45,13 +47,15 @@
 //! here forces the call, and 1.7.3's entry point is where it becomes mandatory.
 
 use core::fmt;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::cart::CompletedSale;
 use crate::catalog::UnitOfMeasure;
 use crate::ids::{RegisterId, SaleId};
 use crate::money::Qty;
-use crate::money::{Currency, Money};
+use crate::money::{Currency, Money, MoneyError};
 use crate::tax::TaxSummaryRow;
 use crate::time::{BusinessDate, Timestamp};
 
@@ -370,6 +374,79 @@ pub enum ReceiptError {
     /// A printed line that describes nothing.
     #[error("line {index} has no name, so it describes nothing it was charged for")]
     UnnamedLine { index: usize },
+    /// A tender whose kind has no printed name in the document's language
+    /// (1.8.3). A tender kind's code is the store's configuration, not a
+    /// customer's, so the error names it.
+    #[error("the tender kind {code:?} has no printed name")]
+    TenderUnlabelled { code: String },
+    /// A discount whose reason has no printed name in the document's language
+    /// (1.8.3). The reason is a code from the store's list, so the error names
+    /// it.
+    #[error("the discount reason {code:?} has no printed name")]
+    DiscountUnlabelled { code: String },
+    /// A loyalty balance for a sale with no customer attached (1.8.3).
+    #[error("a loyalty balance is printed only for a sale with a customer attached")]
+    LoyaltyWithoutCustomer,
+    /// A training sale handed a cleared fiscal block (1.8.3). A training sale
+    /// never reaches the fiscal queue, so a block is one that belongs to
+    /// another sale.
+    #[error("a training sale is never a fiscal invoice")]
+    TrainingSaleCleared,
+    /// What adding the cash rounding to the priced total refuses (1.8.3). A
+    /// [`CompletedSale`] has already added the two, so this does not arise from
+    /// a sale `complete` made.
+    #[error(transparent)]
+    Money(#[from] MoneyError),
+}
+
+/// Whether the document a sale is handed over with is a tax invoice
+/// (`ref/fiscal-jofotara.md` §2.1, `ref/hardware-and-receipts.md` §2.3).
+///
+/// [`build_receipt_model`] reads the heading from this and takes no heading as
+/// a choice, so no caller can hand a customer a document that calls itself an
+/// invoice before JoFotara has cleared it. The shell reads which variant
+/// applies from the store's `fiscal_obligation` and the sale's fiscal result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FiscalStanding {
+    /// The store owes no fiscal invoice: `store.fiscal_obligation` is
+    /// `'exempt'`, with its evidence. The sale prints as a sale, with no fiscal
+    /// block.
+    Exempt,
+    /// The store owes one, and this sale has not cleared. Until the outage
+    /// ruling that 2.7.0 owns says otherwise, the customer is handed a clearly
+    /// marked non-fiscal payment acknowledgement.
+    Uncleared,
+    /// Cleared: the invoice JoFotara returned, printed with the sale.
+    Cleared(FiscalBlock),
+}
+
+/// What a receipt says that its sale does not (`ref/domain-api.md` §13).
+///
+/// Every field arrives resolved, as the model's own do: the shell reads the
+/// store, the register, the cashier and the store's lists, and this crate reads
+/// nothing (I-8). `Debug` is derived and reaches [`MerchantBlock`]'s own, so
+/// the merchant's phone stays redacted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReceiptContext {
+    pub merchant: MerchantBlock,
+    /// `register.code`.
+    pub register_code: String,
+    /// The cashier's name as the receipt prints it.
+    pub cashier_name: String,
+    /// The language the document is set in: `store.receipt_locale`.
+    pub language: Language,
+    /// Whether the document is a tax invoice, and its fiscal block once it is.
+    pub fiscal: FiscalStanding,
+    /// Each tender kind's printed name in `language`, by `tender_type.code`.
+    pub tender_labels: BTreeMap<String, String>,
+    /// Each discount reason's printed name in `language`, by its code.
+    pub discount_labels: BTreeMap<String, String>,
+    /// The attached customer's points balance, read only when the sale names a
+    /// customer.
+    pub loyalty: Option<LoyaltyBlock>,
+    /// The footer, resolved from the template version this receipt is written
+    /// under.
+    pub footer: FooterBlock,
 }
 
 impl ReceiptModel {
@@ -466,6 +543,160 @@ impl ReceiptModel {
             None => Ok(()),
         }
     }
+}
+
+/// The receipt for `sale`: the one document the printer, the PDF and the email
+/// all render (`ref/domain-api.md` §13, 1.8.3).
+///
+/// Every amount is the sale's own, read and never worked out again:
+/// - **A line** prints its snapshot name, its quantity, what it charges a unit
+///   ([`CartLine::price`](crate::cart::CartLine::price), an override
+///   included) and its gross before discounts, as `price_cart` priced it.
+///   Beneath it go its discount attributions, its own discount and its share
+///   of the basket's, each under its reason's printed name.
+/// - **The totals** are `price_cart`'s subtotal, discount total and tax rows.
+/// - **The cash-rounding line** is the final cash tender's adjustment, printed
+///   only when it adjusted something.
+/// - **The total** is what the customer was charged: the priced total plus that
+///   adjustment, the one figure this adds.
+/// - **The tenders** are the sale's, in the order they were taken. The change
+///   is printed when there was any.
+///
+/// So the document adds up on its face. Its lines come to its subtotal, and
+/// its line discounts to its discount total. The subtotal less the discounts,
+/// plus the tax where prices exclude it, plus the rounding, is its total, and
+/// its tenders less the change come to the same total.
+/// `prop_a_receipt_adds_up_to_its_own_total` holds it to that.
+///
+/// **The heading follows `ctx.fiscal`** ([`FiscalStanding`]). A training sale
+/// carries the TRAINING watermark, and a business buyer's block is printed
+/// whenever the sale captured a TIN.
+///
+/// The result has passed [`ReceiptModel::validate`]. A builder that could hand
+/// back a document its own validator refuses would leave the refusal to the
+/// printer, after the sale had completed.
+///
+/// # Errors
+///
+/// - [`ReceiptError::TrainingSaleCleared`]: a training sale given a fiscal
+///   block.
+/// - [`ReceiptError::LoyaltyWithoutCustomer`]: a loyalty balance for a sale
+///   with no customer.
+/// - [`ReceiptError::DiscountUnlabelled`] and
+///   [`ReceiptError::TenderUnlabelled`]: a reason or a tender kind with no
+///   printed name. A blank name is no name.
+/// - [`ReceiptError::Money`]: the rounding cannot be added to the total, which
+///   a sale `complete` made never meets.
+/// - Whatever [`ReceiptModel::validate`] refuses of the document, such as a
+///   buyer block whose TIN is blank.
+pub fn build_receipt_model(
+    sale: &CompletedSale,
+    ctx: &ReceiptContext,
+) -> Result<ReceiptModel, ReceiptError> {
+    let cart = sale.cart();
+    let priced = sale.priced();
+    if cart.is_training && matches!(ctx.fiscal, FiscalStanding::Cleared(_)) {
+        return Err(ReceiptError::TrainingSaleCleared);
+    }
+    if ctx.loyalty.is_some() && cart.customer_id.is_none() {
+        return Err(ReceiptError::LoyaltyWithoutCustomer);
+    }
+    let (doc_kind, fiscal) = match &ctx.fiscal {
+        FiscalStanding::Exempt => (DocKind::Sale, None),
+        FiscalStanding::Uncleared => (DocKind::Acknowledgement, None),
+        FiscalStanding::Cleared(block) => (DocKind::Sale, Some(block.clone())),
+    };
+
+    // A completed sale's prices are its cart's lines', one for one and in
+    // order: `CompletedSale::restore` refuses any other pairing, and `complete`
+    // never makes one.
+    let mut lines = Vec::with_capacity(cart.lines.len());
+    for (line, money) in cart.lines.iter().zip(&priced.lines) {
+        let mut discounts = Vec::with_capacity(money.discount_attributions.len());
+        for attribution in &money.discount_attributions {
+            let code = &attribution.reason.0;
+            discounts.push(ReceiptDiscount {
+                label: printed_name(&ctx.discount_labels, code)
+                    .ok_or_else(|| ReceiptError::DiscountUnlabelled { code: code.clone() })?,
+                amount: attribution.amount,
+            });
+        }
+        lines.push(ReceiptLine {
+            name: line.name_snapshot.clone(),
+            qty: line.qty,
+            unit: line.unit,
+            is_weighed: line.is_weighed,
+            unit_price: line.price(),
+            line_total: money.gross_before_discount,
+            discounts,
+        });
+    }
+
+    let mut tenders = Vec::with_capacity(sale.tenders().len());
+    for tender in sale.tenders() {
+        tenders.push(ReceiptTender {
+            label: printed_name(&ctx.tender_labels, &tender.type_code).ok_or_else(|| {
+                ReceiptError::TenderUnlabelled {
+                    code: tender.type_code.clone(),
+                }
+            })?,
+            amount: tender.amount,
+            masked_pan: tender.masked_pan.clone(),
+            scheme: tender.scheme.clone(),
+        });
+    }
+
+    let rounding_adjustment = sale
+        .cash_rounding()
+        .map(|rounding| rounding.adjustment)
+        .filter(|adjustment| !adjustment.is_zero());
+    let total = match rounding_adjustment {
+        Some(adjustment) => priced.total.checked_add(adjustment)?,
+        None => priced.total,
+    };
+
+    let model = ReceiptModel {
+        doc_kind,
+        watermark: cart.is_training.then_some(Watermark::Training),
+        merchant: ctx.merchant.clone(),
+        buyer: cart.buyer_tin.as_ref().map(|tin| BuyerBlock {
+            name: cart.buyer_name.clone(),
+            tin: tin.clone(),
+        }),
+        header: ReceiptHeader {
+            sale_id: cart.id,
+            receipt_no: sale.receipt_number().to_owned(),
+            register_id: cart.register_id,
+            register_code: ctx.register_code.clone(),
+            cashier_name: ctx.cashier_name.clone(),
+            issued_at: sale.completed_at(),
+            business_date: sale.business_date(),
+        },
+        lines,
+        totals: ReceiptTotals {
+            subtotal: priced.subtotal,
+            discount_total: priced.discount_total,
+            tax_summary: priced.tax_summary.clone(),
+            rounding_adjustment,
+            total,
+        },
+        tenders,
+        change: Some(sale.change()).filter(|change| !change.is_zero()),
+        loyalty: ctx.loyalty,
+        fiscal,
+        footer: ctx.footer.clone(),
+        locale: ReceiptLocale::new(ctx.language),
+    };
+    model.validate()?;
+    Ok(model)
+}
+
+/// `code`'s printed name in `labels`, when it has one that is not blank.
+fn printed_name(labels: &BTreeMap<String, String>, code: &str) -> Option<String> {
+    labels
+        .get(code)
+        .filter(|name| !name.trim().is_empty())
+        .cloned()
 }
 
 /// How a redacted field renders, for every type that holds one.
@@ -1152,6 +1383,758 @@ mod tests {
             };
 
             prop_assert_eq!(m.validate(), expected);
+        }
+    }
+
+    /// `build_receipt_model` (1.8.3): a completed sale, made through the
+    /// domain's own transitions, turned into its receipt.
+    mod built {
+        use super::*;
+        use crate::cart::{
+            Cart, CartContext, CartLine, CompletedSale, FinalizeEffects, PricingSettings, TaxBands,
+            add_tender, begin_finalize, begin_tender, complete, open, remaining_due,
+        };
+        use crate::catalog::PriceOrigin;
+        use crate::ids::{
+            CustomerId, ProductId, SaleLineId, ShiftId, TaxCategoryId, TenderId, UserId,
+        };
+        use crate::money::{RoundingDirection, RoundingRule};
+        use crate::pricing::{
+            BasketDiscount, DiscountKind, DiscountReason, LineDiscount, OverrideReason,
+            PriceOverride,
+        };
+        use crate::tax::{PriceMode, StoreTaxProfile, TaxBase, TaxBasis, TaxComponent};
+        use crate::tender::{
+            CashRoundingPolicy, Tender, TenderState, final_tender_rounding, standard_tender_type,
+        };
+
+        fn id(n: u128) -> Uuid {
+            Uuid::from_u128(n)
+        }
+
+        fn band(n: u8) -> TaxCategoryId {
+            TaxCategoryId::from_uuid(id(0x5000 + u128::from(n)))
+        }
+
+        fn gst(treatment: TaxTreatment, ppm: i64) -> Vec<TaxComponent> {
+            vec![TaxComponent {
+                code: "SYN_GST".to_owned(),
+                treatment,
+                basis: TaxBasis::Percentage {
+                    rate: Percent::from_ppm(ppm),
+                },
+                sequence: 1,
+                base: TaxBase::LineNet,
+                is_inclusive_capable: true,
+            }]
+        }
+
+        /// A synthetic pack: 16% standard, zero-rated and exempt.
+        fn bands() -> TaxBands {
+            TaxBands::from([
+                (band(0), gst(TaxTreatment::Standard, 160_000)),
+                (band(1), gst(TaxTreatment::Zero, 0)),
+                (band(2), gst(TaxTreatment::Exempt, 0)),
+            ])
+        }
+
+        fn settings(price_mode: PriceMode, rule: RoundingRule) -> PricingSettings {
+            PricingSettings {
+                price_mode,
+                profile: StoreTaxProfile::Standard,
+                rule,
+            }
+        }
+
+        /// The fixture store's coin: five fils, to the nearest.
+        const COIN: CashRoundingPolicy = CashRoundingPolicy {
+            step_minor: 5,
+            direction: RoundingDirection::Nearest,
+        };
+
+        /// When the cart was opened: 2026-11-05 08:00 UTC, 11:00 in Amman,
+        /// on the business day the sale is dated by.
+        fn moment() -> Timestamp {
+            Timestamp::from_epoch_milliseconds(1_793_865_600_000).unwrap()
+        }
+
+        /// When the sale completed, a minute and a half later, so a receipt
+        /// dated by its cart's opening cannot pass for one dated by its sale.
+        fn completed() -> Timestamp {
+            Timestamp::from_epoch_milliseconds(1_793_865_690_000).unwrap()
+        }
+
+        fn till(is_training: bool) -> CartContext {
+            CartContext {
+                register_id: RegisterId::from_uuid(id(2)),
+                shift_id: ShiftId::from_uuid(id(3)),
+                cashier_id: UserId::from_uuid(id(4)),
+                currency: Currency::JOD,
+                is_training,
+                opened_at: moment(),
+            }
+        }
+
+        fn basket(is_training: bool) -> Cart {
+            open(SaleId::from_uuid(id(1)), &till(is_training))
+        }
+
+        /// Line `n`: `milli` of `name` at `price` fils a unit, in tax band `b`.
+        fn item(n: u128, name: &str, price: i64, milli: i64, weighed: bool, b: u8) -> CartLine {
+            let product = ProductId::from_uuid(id(0x2000 + n));
+            CartLine {
+                id: SaleLineId::from_uuid(id(0x1000 + n)),
+                product_id: Some(product),
+                name_snapshot: name.to_owned(),
+                unit_price: jod(price),
+                price_origin: PriceOrigin::Catalog {
+                    product_id: product,
+                },
+                max_price: None,
+                qty: Qty::from_milli(milli),
+                unit: if weighed {
+                    UnitOfMeasure::Kilogram
+                } else {
+                    UnitOfMeasure::Each
+                },
+                is_weighed: weighed,
+                tax_category_id: band(b),
+                discount: None,
+                price_override: None,
+                min_age: None,
+                age_confirmed: false,
+                label: None,
+            }
+        }
+
+        fn oil() -> CartLine {
+            item(1, "زيت زيتون اصطناعي", 1_250, 1_000, false, 0)
+        }
+
+        /// 101 g of cheese at 8.500 a kilogram: 0.8585, priced once at 0.859.
+        fn cheese() -> CartLine {
+            item(2, "جبنة اصطناعية", 8_500, 101, true, 0)
+        }
+
+        fn tender(n: u128, code: &str, minor: i64) -> Tender {
+            Tender {
+                id: TenderId::from_uuid(id(0x3000 + n)),
+                type_code: code.to_owned(),
+                amount: jod(minor),
+                psp_ref: None,
+                masked_pan: None,
+                scheme: None,
+                state: TenderState::Collected,
+            }
+        }
+
+        fn cash(n: u128, minor: i64) -> Tender {
+            tender(n, "cash", minor)
+        }
+
+        fn card(n: u128, minor: i64) -> Tender {
+            Tender {
+                psp_ref: Some(format!("SYN-PSP-{n}")),
+                masked_pan: Some("**** **** **** 4242".to_owned()),
+                scheme: Some("visa".to_owned()),
+                ..tender(n, "card", minor)
+            }
+        }
+
+        fn effects() -> FinalizeEffects {
+            FinalizeEffects {
+                receipt_number: "REG01-000042".to_owned(),
+                business_date: BusinessDate::new(2026, 11, 5).unwrap(),
+                completed_at: completed(),
+            }
+        }
+
+        /// `cart` paid for by `tenders`, in order, and completed.
+        fn sold(cart: Cart, price_mode: PriceMode, tenders: Vec<Tender>) -> CompletedSale {
+            let settings = settings(price_mode, RoundingRule::HalfAwayFromZero);
+            let paying = begin_tender(cart, &bands(), &settings, COIN).unwrap();
+            let paid = tenders
+                .into_iter()
+                .fold(paying, |t, next| add_tender(t, next).unwrap());
+            complete(begin_finalize(paid).unwrap(), effects()).unwrap()
+        }
+
+        fn reason(code: &str) -> DiscountReason {
+            DiscountReason(code.to_owned())
+        }
+
+        fn context() -> ReceiptContext {
+            ReceiptContext {
+                merchant: MerchantBlock {
+                    legal_name: "مؤسسة اصطناعية للتجارة".to_owned(),
+                    store_name: "متجر اصطناعي".to_owned(),
+                    address: Some("عمان".to_owned()),
+                    phone: Some(MERCHANT_PHONE.to_owned()),
+                    tin: Some("123456789".to_owned()),
+                },
+                register_code: "REG01".to_owned(),
+                cashier_name: "Synthetic Cashier".to_owned(),
+                language: Language::Arabic,
+                fiscal: FiscalStanding::Uncleared,
+                tender_labels: BTreeMap::from([
+                    ("cash".to_owned(), "نقدًا".to_owned()),
+                    ("card".to_owned(), "بطاقة".to_owned()),
+                ]),
+                discount_labels: BTreeMap::from([
+                    ("damaged".to_owned(), "عبوة تالفة".to_owned()),
+                    ("regular".to_owned(), "زبون دائم".to_owned()),
+                ]),
+                loyalty: None,
+                footer: FooterBlock {
+                    return_policy: Some("الإرجاع خلال ١٤ يومًا".to_owned()),
+                    thank_you: Some("شكرًا لتسوقكم".to_owned()),
+                },
+            }
+        }
+
+        /// The sale the tender suite pays for: oil and 101 g of cheese, 2.109,
+        /// asked as 2.110 in cash. 1.000 is taken exactly, then 5.000 settles
+        /// the 1.110 still asked and gives 3.890 back.
+        fn the_cash_sale() -> CompletedSale {
+            let mut cart = basket(false);
+            cart.lines = vec![oil(), cheese()];
+            sold(
+                cart,
+                PriceMode::Inclusive,
+                vec![cash(1, 1_000), cash(2, 5_000)],
+            )
+        }
+
+        #[test]
+        fn a_cash_sale_prints_its_lines_totals_rounding_and_change() {
+            let sale = the_cash_sale();
+            let m = build_receipt_model(&sale, &context()).unwrap();
+
+            // The header is the sale's: its number and moment are the
+            // finalize's, its register the cart's, and the names the context's.
+            assert_eq!(
+                m.header,
+                ReceiptHeader {
+                    sale_id: SaleId::from_uuid(id(1)),
+                    receipt_no: "REG01-000042".to_owned(),
+                    register_id: RegisterId::from_uuid(id(2)),
+                    register_code: "REG01".to_owned(),
+                    cashier_name: "Synthetic Cashier".to_owned(),
+                    issued_at: completed(),
+                    business_date: BusinessDate::new(2026, 11, 5).unwrap(),
+                }
+            );
+
+            // Each line: its snapshot name, quantity, unit price and gross.
+            let printed: Vec<_> = m
+                .lines
+                .iter()
+                .map(|l| {
+                    (
+                        l.name.as_str(),
+                        l.qty.milli(),
+                        l.is_weighed,
+                        l.unit_price.minor(),
+                        l.line_total.minor(),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                printed,
+                [
+                    ("زيت زيتون اصطناعي", 1_000, false, 1_250, 1_250),
+                    ("جبنة اصطناعية", 101, true, 8_500, 859),
+                ]
+            );
+            assert!(m.lines.iter().all(|l| l.discounts.is_empty()));
+
+            // 2.109 owed, asked as 2.110: the rounding prints, and the total is
+            // what was charged.
+            assert_eq!(m.totals.subtotal, jod(2_109));
+            assert_eq!(m.totals.discount_total, jod(0));
+            assert_eq!(m.totals.tax_summary, sale.priced().tax_summary);
+            assert_eq!(m.totals.rounding_adjustment, Some(jod(1)));
+            assert_eq!(m.totals.total, jod(2_110));
+
+            // Both tenders, as taken, and the change.
+            let tenders: Vec<_> = m
+                .tenders
+                .iter()
+                .map(|t| (t.label.as_str(), t.amount.minor()))
+                .collect();
+            assert_eq!(tenders, [("نقدًا", 1_000), ("نقدًا", 5_000)]);
+            assert_eq!(m.change, Some(jod(3_890)));
+
+            // The rest is the context's.
+            assert_eq!(m.doc_kind, DocKind::Acknowledgement);
+            assert_eq!(
+                (m.watermark, m.buyer.clone(), m.loyalty, m.fiscal.clone()),
+                (None, None, None, None)
+            );
+            assert_eq!(m.merchant, context().merchant);
+            assert_eq!(m.footer, context().footer);
+            assert_eq!(m.locale, ReceiptLocale::new(Language::Arabic));
+            assert_eq!(m.validate(), Ok(()));
+
+            // The language is the store's, and the direction follows it.
+            let english = ReceiptContext {
+                language: Language::English,
+                ..context()
+            };
+            assert_eq!(
+                build_receipt_model(&sale, &english).unwrap().locale,
+                ReceiptLocale::new(Language::English)
+            );
+        }
+
+        /// The heading is decided by the fiscal standing, for each of the
+        /// three, and never chosen beside it.
+        #[test]
+        fn the_heading_is_an_invoice_only_once_cleared_or_exempt() {
+            for (standing, kind, block) in [
+                (FiscalStanding::Exempt, DocKind::Sale, None),
+                (FiscalStanding::Uncleared, DocKind::Acknowledgement, None),
+                (
+                    FiscalStanding::Cleared(fiscal()),
+                    DocKind::Sale,
+                    Some(fiscal()),
+                ),
+            ] {
+                let ctx = ReceiptContext {
+                    fiscal: standing.clone(),
+                    ..context()
+                };
+                let m = build_receipt_model(&the_cash_sale(), &ctx).unwrap();
+                assert_eq!((m.doc_kind, m.fiscal), (kind, block), "{standing:?}");
+            }
+        }
+
+        #[test]
+        fn a_training_sale_is_watermarked_and_never_cleared() {
+            let mut cart = basket(true);
+            cart.lines = vec![oil()];
+            let training = sold(cart, PriceMode::Inclusive, vec![cash(1, 1_250)]);
+
+            for standing in [FiscalStanding::Exempt, FiscalStanding::Uncleared] {
+                let ctx = ReceiptContext {
+                    fiscal: standing,
+                    ..context()
+                };
+                let m = build_receipt_model(&training, &ctx).unwrap();
+                assert_eq!(m.watermark, Some(Watermark::Training));
+            }
+
+            let cleared = ReceiptContext {
+                fiscal: FiscalStanding::Cleared(fiscal()),
+                ..context()
+            };
+            assert_eq!(
+                build_receipt_model(&training, &cleared),
+                Err(ReceiptError::TrainingSaleCleared)
+            );
+            // A live sale may carry one, and has no watermark.
+            let live = build_receipt_model(&the_cash_sale(), &cleared).unwrap();
+            assert_eq!(live.watermark, None);
+        }
+
+        /// Each line prints its gross, and beneath it its own discount, then
+        /// its share of the basket's, under each reason's printed name.
+        #[test]
+        fn discounts_print_beneath_their_line_under_their_reasons_name() {
+            let mut cart = basket(false);
+            let mut tea = item(3, "شاي اصطناعي", 2_000, 2_000, false, 0);
+            tea.discount = Some(LineDiscount {
+                kind: DiscountKind::Percent(Percent::from_ppm(100_000)),
+                reason: reason("damaged"),
+                by: UserId::from_uuid(id(4)),
+                approver: None,
+            });
+            cart.lines = vec![tea, oil()];
+            cart.basket_discount = Some(BasketDiscount {
+                kind: DiscountKind::Amount(jod(500)),
+                reason: reason("regular"),
+                by: UserId::from_uuid(id(4)),
+                approver: None,
+            });
+            // 4.000 less 0.400 is 3.600 of tea, and 1.250 of oil: 4.850, less
+            // 0.500 divided 3.600 : 1.250, is 4.350.
+            let sale = sold(cart, PriceMode::Inclusive, vec![cash(1, 4_350)]);
+            let m = build_receipt_model(&sale, &context()).unwrap();
+
+            let printed: Vec<_> = m
+                .lines
+                .iter()
+                .map(|l| {
+                    (
+                        l.line_total.minor(),
+                        l.discounts
+                            .iter()
+                            .map(|d| (d.label.as_str(), d.amount.minor()))
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                printed,
+                [
+                    (4_000, vec![("عبوة تالفة", 400), ("زبون دائم", 371)]),
+                    (1_250, vec![("زبون دائم", 129)]),
+                ]
+            );
+            assert_eq!(m.totals.subtotal, jod(5_250));
+            assert_eq!(m.totals.discount_total, jod(900));
+            assert_eq!(m.totals.total, jod(4_350));
+            assert_eq!((m.totals.rounding_adjustment, m.change), (None, None));
+        }
+
+        /// The line prints the price it charges, not the one it was captured
+        /// at.
+        #[test]
+        fn an_overridden_line_prints_the_price_it_charges() {
+            let mut cart = basket(false);
+            let mut over = oil();
+            over.price_override = Some(PriceOverride {
+                to: jod(1_000),
+                reason: OverrideReason::from("damaged".to_owned()),
+                by: UserId::from_uuid(id(4)),
+                approver: None,
+            });
+            cart.lines = vec![over];
+            let sale = sold(cart, PriceMode::Inclusive, vec![cash(1, 1_000)]);
+            let line = build_receipt_model(&sale, &context())
+                .unwrap()
+                .lines
+                .into_iter()
+                .next()
+                .expect("one line");
+            assert_eq!((line.unit_price, line.line_total), (jod(1_000), jod(1_000)));
+        }
+
+        /// Where prices exclude tax, the tax rows are added to the total.
+        #[test]
+        fn prices_excluding_tax_add_their_tax_to_the_total() {
+            let mut cart = basket(false);
+            cart.lines = vec![item(4, "خدمة اصطناعية", 1_000, 1_000, false, 0)];
+            let sale = sold(cart, PriceMode::Exclusive, vec![cash(1, 1_160)]);
+            let m = build_receipt_model(&sale, &context()).unwrap();
+            assert_eq!(m.totals.subtotal, jod(1_000));
+            let tax: Vec<_> = m.totals.tax_summary.iter().map(|r| r.tax.minor()).collect();
+            assert_eq!(tax, [160]);
+            assert_eq!(m.totals.total, jod(1_160));
+            assert_eq!((m.totals.rounding_adjustment, m.change), (None, None));
+        }
+
+        /// A card is charged exactly, so no rounding prints, and the masked
+        /// number the terminal returned prints with it.
+        #[test]
+        fn a_card_settles_exactly_and_prints_its_masked_number() {
+            let mut cart = basket(false);
+            cart.lines = vec![oil(), cheese()];
+            let sale = sold(
+                cart,
+                PriceMode::Inclusive,
+                vec![cash(1, 1_000), card(2, 1_109)],
+            );
+            let m = build_receipt_model(&sale, &context()).unwrap();
+
+            assert_eq!(m.totals.rounding_adjustment, None);
+            assert_eq!(m.totals.total, jod(2_109));
+            assert_eq!(m.change, None);
+            assert_eq!(
+                m.tenders.last(),
+                Some(&ReceiptTender {
+                    label: "بطاقة".to_owned(),
+                    amount: jod(1_109),
+                    masked_pan: Some("**** **** **** 4242".to_owned()),
+                    scheme: Some("visa".to_owned()),
+                })
+            );
+        }
+
+        /// A discount of everything is a sale of nothing (E.18), paid by no
+        /// tender, and its receipt still describes what was taken.
+        #[test]
+        fn a_sale_of_nothing_prints_its_lines_and_no_tender() {
+            let mut cart = basket(false);
+            let mut free = oil();
+            free.discount = Some(LineDiscount {
+                kind: DiscountKind::Percent(Percent::from_ppm(1_000_000)),
+                reason: reason("damaged"),
+                by: UserId::from_uuid(id(4)),
+                approver: None,
+            });
+            cart.lines = vec![free];
+            let sale = sold(cart, PriceMode::Inclusive, vec![]);
+            let m = build_receipt_model(&sale, &context()).unwrap();
+
+            assert_eq!(m.lines.len(), 1);
+            assert_eq!(m.totals.total, jod(0));
+            assert!(m.tenders.is_empty());
+            assert_eq!((m.totals.rounding_adjustment, m.change), (None, None));
+        }
+
+        #[test]
+        fn a_business_buyer_is_printed_when_a_tin_was_captured() {
+            let with = |tin: Option<&str>, name: Option<&str>| {
+                let mut cart = basket(false);
+                cart.lines = vec![oil()];
+                cart.buyer_tin = tin.map(str::to_owned);
+                cart.buyer_name = name.map(str::to_owned);
+                build_receipt_model(
+                    &sold(cart, PriceMode::Inclusive, vec![cash(1, 1_250)]),
+                    &context(),
+                )
+            };
+
+            assert_eq!(
+                with(Some("987654321"), Some(BUYER_NAME)).unwrap().buyer,
+                Some(BuyerBlock {
+                    name: Some(BUYER_NAME.to_owned()),
+                    tin: "987654321".to_owned(),
+                })
+            );
+            // A TIN alone is a buyer, and a name alone is not.
+            assert_eq!(
+                with(Some("987654321"), None).unwrap().buyer,
+                Some(BuyerBlock {
+                    name: None,
+                    tin: "987654321".to_owned(),
+                })
+            );
+            assert_eq!(with(None, Some(BUYER_NAME)).unwrap().buyer, None);
+            // A blank TIN is the validator's refusal, reached through the builder.
+            assert_eq!(
+                with(Some("  "), Some(BUYER_NAME)),
+                Err(ReceiptError::BuyerWithoutTin)
+            );
+        }
+
+        /// What the receipt cannot print, it names, rather than printing a
+        /// code or a blank in its place.
+        #[test]
+        fn a_receipt_names_what_it_cannot_print() {
+            let sale = the_cash_sale();
+
+            for labels in [
+                BTreeMap::new(),
+                BTreeMap::from([("cash".to_owned(), " ".to_owned())]),
+            ] {
+                let ctx = ReceiptContext {
+                    tender_labels: labels,
+                    ..context()
+                };
+                assert_eq!(
+                    build_receipt_model(&sale, &ctx),
+                    Err(ReceiptError::TenderUnlabelled {
+                        code: "cash".to_owned()
+                    })
+                );
+            }
+
+            let mut cart = basket(false);
+            let mut tea = item(3, "شاي اصطناعي", 2_000, 1_000, false, 0);
+            tea.discount = Some(LineDiscount {
+                kind: DiscountKind::Amount(jod(100)),
+                reason: reason("damaged"),
+                by: UserId::from_uuid(id(4)),
+                approver: None,
+            });
+            cart.lines = vec![tea];
+            let discounted = sold(cart, PriceMode::Inclusive, vec![cash(1, 1_900)]);
+            let ctx = ReceiptContext {
+                discount_labels: BTreeMap::new(),
+                ..context()
+            };
+            assert_eq!(
+                build_receipt_model(&discounted, &ctx),
+                Err(ReceiptError::DiscountUnlabelled {
+                    code: "damaged".to_owned()
+                })
+            );
+        }
+
+        /// A balance belongs to a customer, so it prints only for a sale with
+        /// one attached.
+        #[test]
+        fn a_loyalty_balance_prints_only_for_an_attached_customer() {
+            let ctx = ReceiptContext {
+                loyalty: Some(LoyaltyBlock {
+                    balance_points: 120,
+                }),
+                ..context()
+            };
+            assert_eq!(
+                build_receipt_model(&the_cash_sale(), &ctx),
+                Err(ReceiptError::LoyaltyWithoutCustomer)
+            );
+
+            let mut cart = basket(false);
+            cart.lines = vec![oil()];
+            cart.customer_id = Some(CustomerId::from_uuid(id(9)));
+            let sale = sold(cart, PriceMode::Inclusive, vec![cash(1, 1_250)]);
+            assert_eq!(
+                build_receipt_model(&sale, &ctx).unwrap().loyalty,
+                Some(LoyaltyBlock {
+                    balance_points: 120
+                })
+            );
+        }
+
+        #[test]
+        fn merchant_phone_never_reaches_the_contexts_debug_output() {
+            let rendered = format!("{:?}", context());
+            assert!(
+                !rendered.contains(MERCHANT_PHONE),
+                "the merchant's phone reached Debug output"
+            );
+        }
+
+        fn price_modes() -> impl Strategy<Value = PriceMode> {
+            prop::sample::select(vec![PriceMode::Inclusive, PriceMode::Exclusive])
+        }
+
+        fn rounding_rules() -> impl Strategy<Value = RoundingRule> {
+            prop::sample::select(vec![
+                RoundingRule::HalfAwayFromZero,
+                RoundingRule::HalfEven,
+                RoundingRule::Floor,
+                RoundingRule::Ceil,
+            ])
+        }
+
+        fn coins() -> impl Strategy<Value = CashRoundingPolicy> {
+            (
+                prop::sample::select(vec![1_i64, 5, 10, 50, 100]),
+                prop::sample::select(vec![
+                    RoundingDirection::Nearest,
+                    RoundingDirection::Up,
+                    RoundingDirection::Down,
+                ]),
+            )
+                .prop_map(|(step_minor, direction)| CashRoundingPolicy {
+                    step_minor,
+                    direction,
+                })
+        }
+
+        /// A line's price, its quantity in milli-units (or whole units when
+        /// it is not weighed), its tax band and its own discount, in ppm.
+        type LinePlan = (i64, i64, bool, u8, Option<i64>);
+
+        fn line_plans() -> impl Strategy<Value = Vec<LinePlan>> {
+            prop::collection::vec(
+                (
+                    1_i64..=50_000,
+                    1_i64..=20_000,
+                    any::<bool>(),
+                    0_u8..=2,
+                    prop::option::of(1_i64..=1_000_000),
+                ),
+                1..=6,
+            )
+        }
+
+        /// The tenders taken before the last: cash or a card, each a share of
+        /// what is still owed, in ppm.
+        fn partials() -> impl Strategy<Value = Vec<(bool, i64)>> {
+            prop::collection::vec((any::<bool>(), 1_i64..1_000_000), 0..=4)
+        }
+
+        /// A cart of `plans`, with a basket discount of `basket_ppm` when one
+        /// is drawn.
+        fn cart_of(plans: &[LinePlan], basket_ppm: Option<i64>) -> Cart {
+            let mut cart = basket(false);
+            for (n, &(price, qty, weighed, b, off)) in (1_u128..).zip(plans) {
+                let milli = if weighed { qty } else { (qty % 20 + 1) * 1_000 };
+                let mut line = item(n, &format!("صنف اصطناعي {n}"), price, milli, weighed, b);
+                line.discount = off.map(|ppm| LineDiscount {
+                    kind: DiscountKind::Percent(Percent::from_ppm(ppm)),
+                    reason: reason("damaged"),
+                    by: UserId::from_uuid(id(4)),
+                    approver: None,
+                });
+                cart.lines.push(line);
+            }
+            cart.basket_discount = basket_ppm.map(|ppm| BasketDiscount {
+                kind: DiscountKind::Percent(Percent::from_ppm(ppm)),
+                reason: reason("regular"),
+                by: UserId::from_uuid(id(4)),
+                approver: None,
+            });
+            cart
+        }
+
+        fn sum(amounts: impl Iterator<Item = Money>) -> i128 {
+            amounts.map(|a| i128::from(a.minor())).sum()
+        }
+
+        proptest! {
+            #![proptest_config(domain_proptest_config())]
+
+            /// A receipt adds up on its face (`ref/hardware-and-receipts.md`
+            /// §2.3): "a receipt whose visible rows do not add up to its own
+            /// printed total is not proof of anything". However a sale is
+            /// discounted, taxed, rounded and split across tenders, its lines
+            /// come to its subtotal and their discounts to its discount total;
+            /// the subtotal less the discounts, plus the tax where prices
+            /// exclude it, plus the cash rounding, is its total; and the
+            /// tenders less the change come to that same total.
+            #[test]
+            fn prop_a_receipt_adds_up_to_its_own_total(
+                plans in line_plans(),
+                basket_ppm in prop::option::of(1_i64..=1_000_000),
+                price_mode in price_modes(),
+                rule in rounding_rules(),
+                coin in coins(),
+                before in partials(),
+                last_in_cash in any::<bool>(),
+                extra in 0_i64..=20_000,
+            ) {
+                let cart = cart_of(&plans, basket_ppm);
+                let mut t = begin_tender(cart, &bands(), &settings(price_mode, rule), coin).unwrap();
+                let cash_kind = standard_tender_type("cash").unwrap();
+                for (n, &(in_cash, ppm)) in (1_u128..).zip(&before) {
+                    let left = remaining_due(&t).unwrap().minor();
+                    let part = left * ppm / 1_000_000;
+                    if part <= 0 || part >= left {
+                        continue;
+                    }
+                    // Cash short of the remainder is taken exactly; cash at or
+                    // past the coin step below it settles the sale with change.
+                    t = add_tender(t, if in_cash { cash(n, part) } else { card(n, part) }).unwrap();
+                }
+                let left = remaining_due(&t).unwrap();
+                if !left.is_zero() {
+                    let last = if last_in_cash {
+                        let asked = final_tender_rounding(&cash_kind, left, coin.step_minor, coin.direction)
+                            .unwrap()
+                            .map_or(left, |r| r.rounded);
+                        cash(99, asked.minor() + extra)
+                    } else {
+                        card(99, left.minor())
+                    };
+                    t = add_tender(t, last).unwrap();
+                }
+                let sale = complete(begin_finalize(t).unwrap(), effects()).unwrap();
+                let m = build_receipt_model(&sale, &context()).unwrap();
+
+                let total = i128::from(m.totals.total.minor());
+                let subtotal = i128::from(m.totals.subtotal.minor());
+                let off = i128::from(m.totals.discount_total.minor());
+                prop_assert_eq!(sum(m.lines.iter().map(|l| l.line_total)), subtotal);
+                prop_assert_eq!(
+                    sum(m.lines.iter().flat_map(|l| l.discounts.iter().map(|d| d.amount))),
+                    off
+                );
+                let tax = match price_mode {
+                    PriceMode::Exclusive => sum(m.totals.tax_summary.iter().map(|r| r.tax)),
+                    PriceMode::Inclusive => 0,
+                };
+                let rounding = sum(m.totals.rounding_adjustment.into_iter());
+                prop_assert_eq!(subtotal - off + tax + rounding, total);
+                let change = sum(m.change.into_iter());
+                prop_assert_eq!(sum(m.tenders.iter().map(|t| t.amount)) - change, total);
+            }
         }
     }
 }
