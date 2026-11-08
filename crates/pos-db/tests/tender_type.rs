@@ -62,7 +62,14 @@ fn every_kind_reads_with_its_printed_names_and_whether_it_opens_the_drawer() {
     let codes: Vec<&str> = kinds.iter().map(|kind| kind.code.as_str()).collect();
     assert_eq!(
         codes,
-        ["cash", "card", "cliq", "voucher", "store_credit", "exchange"],
+        [
+            "cash",
+            "card",
+            "cliq",
+            "voucher",
+            "store_credit",
+            "exchange"
+        ],
         "every seeded kind, in the grid's order"
     );
     let cash = kinds.iter().find(|kind| kind.code == "cash").unwrap();
