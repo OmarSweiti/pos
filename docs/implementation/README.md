@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **76 of 123 executable microsteps fully complete (~62%)**: `1.1.0`
+Phase 1 has **77 of 123 executable microsteps fully complete (~63%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -191,7 +191,10 @@ the one-use `ApprovalHandle` bound to one actor, operation and amount, stored an
 effect's transaction and resolved by the command context, and, as the owner decided on 5 November,
 refused once its approver is deactivated), and `1.4.3b` (an age-restricted line kept on screen and
 blocked until an operator answers, yes opening its gate and no removing it, each answer audited, now
-through the register's `cart_confirm_age`).
+through the register's `cart_confirm_age`), and `1.9.3` (receipt numbering — `REG01-000123`, the
+register's code and a hyphen before its own counter, so two registers counting offline to the same
+value never issue the same number, and a prefix fixed by the counter's first number, so a register
+whose code changes keeps numbering where its receipts left off).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on

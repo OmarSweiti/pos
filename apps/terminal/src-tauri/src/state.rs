@@ -250,6 +250,8 @@ pub struct Register {
     db: Mutex<Connection>,
     register: RegisterId,
     store: StoreId,
+    /// The register's code, `REG01`: its receipts' prefix (1.9.3).
+    code: String,
     process_nonce: Uuid,
     clock: Box<dyn Clock + Send + Sync>,
     ids: Box<dyn IdSource + Send + Sync>,
@@ -266,6 +268,7 @@ impl std::fmt::Debug for Register {
             .debug_struct("Register")
             .field("register", &self.register)
             .field("store", &self.store)
+            .field("code", &self.code)
             .field("recovered", &self.recovered)
             .finish_non_exhaustive()
     }
@@ -311,13 +314,14 @@ impl Register {
         let device_id = read_device_id(data_dir)?;
         let mut conn =
             pos_db::open(&data_dir.join(DATABASE_FILE), key).map_err(StartupError::Database)?;
-        let (register, store) = own_register(&conn, &device_id)?;
+        let (register, store, code) = own_register(&conn, &device_id)?;
         let process_nonce = process_nonce(ids.as_ref());
         let recovered = recover(&mut conn, register, store, process_nonce, clock.now())?;
         Ok(Register {
             db: Mutex::new(conn),
             register,
             store,
+            code,
             process_nonce,
             clock,
             ids,
@@ -335,6 +339,12 @@ impl Register {
     #[must_use]
     pub fn store(&self) -> StoreId {
         self.store
+    }
+
+    /// The register's code, as its row held it when the till opened: `REG01`.
+    #[must_use]
+    pub fn code(&self) -> &str {
+        &self.code
     }
 
     /// The nonce this process claims parked carts under (1.8.2b).
@@ -437,18 +447,22 @@ fn read_device_id(data_dir: &Path) -> Result<String, StartupError> {
     Ok(device_id.to_owned())
 }
 
-/// The live `register` row whose `device_id` is this install's, and its store.
-fn own_register(conn: &Connection, device_id: &str) -> Result<(RegisterId, StoreId), StartupError> {
-    let row: Option<(Vec<u8>, Vec<u8>, bool)> = conn
+/// The live `register` row whose `device_id` is this install's: its id, its
+/// store and its code.
+fn own_register(
+    conn: &Connection,
+    device_id: &str,
+) -> Result<(RegisterId, StoreId, String), StartupError> {
+    let row: Option<(Vec<u8>, Vec<u8>, bool, String)> = conn
         .query_row(
-            "SELECT id, store_id, is_active = 1 AND deleted_at IS NULL
+            "SELECT id, store_id, is_active = 1 AND deleted_at IS NULL, code
                FROM register WHERE device_id = ?1",
             [device_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .optional()
         .map_err(|error| StartupError::Database(error.into()))?;
-    let Some((id, store, is_live)) = row else {
+    let Some((id, store, is_live, code)) = row else {
         return Err(StartupError::RegisterUnknown);
     };
     if !is_live {
@@ -456,7 +470,7 @@ fn own_register(conn: &Connection, device_id: &str) -> Result<(RegisterId, Store
     }
     let id = Uuid::from_slice(&id).map_err(|_| StartupError::RegisterUnreadable)?;
     let store = Uuid::from_slice(&store).map_err(|_| StartupError::RegisterUnreadable)?;
-    Ok((RegisterId::from_uuid(id), StoreId::from_uuid(store)))
+    Ok((RegisterId::from_uuid(id), StoreId::from_uuid(store), code))
 }
 
 /// A random nonce for this process, or a fresh id if the OS has no randomness
