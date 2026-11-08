@@ -1531,10 +1531,18 @@ Bumped in the same transaction as the document it numbers, so a crash cannot con
 **Done when:** `cargo nextest run -p pos-db --test sequence` exits zero after the deterministic fault schedule covers one hundred rollback points without a receipt gap or duplicate.
 
 ### 1.9.3 — Receipt numbering
-**Files:** `apps/terminal/src-tauri/src/commands/sale.rs`, `apps/terminal/src-tauri/tests/receipt_number.rs` (new)
+**Files:** `apps/terminal/src-tauri/src/commands/sale.rs`, `apps/terminal/src-tauri/tests/receipt_number.rs` (new) · as delivered: `apps/terminal/src-tauri/src/commands/sale.rs` (new — `receipt_prefix`, `receipt_number` and `next_receipt_number`) · `apps/terminal/src-tauri/src/commands/mod.rs` · `apps/terminal/src-tauri/src/state.rs` (`Register::code`) · `crates/pos-db/src/repo/sequence.rs` (`SequenceRepository::next_prefixed` and `Issued`) · `crates/pos-db/src/lib.rs` (two refusals) · `crates/pos-db/tests/sequence.rs` · [`README.md`](README.md) · this file (this `Files:` line and note)
 `REG01-000123`: per-register prefix plus a zero-padded counter. Globally unique by prefix, because a central counter cannot exist offline.
 **Tests:** `receipt_number_format_is_stable` · `two_registers_never_collide`
 **Done when:** `cargo nextest run -p terminal --test receipt_number` exits zero for two register prefixes allocating the same local counter value without a document-number collision.
+
+> **As delivered, 8 November 2026.** 1.9.2 stored a prefix beside each counter, preserved it and stripped it in `gaps()`, but nothing set it, so two registers would both have issued `000001`. Three choices are recorded here.
+>
+> - **The prefix is the register's code and a hyphen.** `Register::code` is read with the register's row at open, and `next_receipt_number(tx, register, code)` takes the number inside the transaction of the document it numbers, so a rolled-back transaction spends none. The hyphen is what keeps `REG1`'s numbers from running into `REG10`'s.
+> - **The counter's first number fixes its prefix.** `SequenceRepository::next_prefixed` stores the prefix with the first number and returns the stored one on every later number, whatever it is handed. A register whose code changes keeps numbering under the prefix its receipts already carry, and the gap report keeps reading them all.
+> - **Two refusals, by name.** A prefix that is empty, or holds whitespace or a control character, is `SequencePrefixInvalid`, because a cashier types it back to find a sale. A receipt counter that already numbered without a prefix is `SequencePrefixMissing`, because putting one in front now would make its gap report a guess.
+>
+> Past 999 999 the counter grows a seventh digit rather than wrap. The finalize, 1.8.3's third part, allocates each sale's number through `next_receipt_number`.
 
 ### 1.9.4 — Business date at finalize
 **Files:** `apps/terminal/src-tauri/src/commands/sale.rs`
