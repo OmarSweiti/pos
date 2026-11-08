@@ -5,6 +5,7 @@
 
 pub mod auth;
 pub mod cart;
+pub mod sale;
 pub mod tender;
 
 use pos_db::DbError;
