@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **77 of 123 executable microsteps fully complete (~63%)**: `1.1.0`
+Phase 1 has **77 of 124 executable microsteps fully complete (~62%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -282,8 +282,16 @@ and only cash gives change; taking a tender back is audited; and a sale with mon
 set aside. A cashier's sign-out waits for it, and a crash or a forced sign-out leaves it journalled
 for recovery, as the owner decided. Its receipt model has landed too: a completed sale becomes the
 one document the printer, the PDF and the email render, every amount read from the sale, adding up
-on its face, and headed as an invoice only where the store owes none or JoFotara has cleared it. The
-finalize itself follows. `1.8.4` is
+on its face, and headed as an invoice only where the store owes none or JoFotara has cleared it. And
+the finalize has landed: a paid sale completes in one transaction, its envelope written before any
+fact it names and its completion last, numbered, its stock moved, its original receipt rendered and
+queued, its journal removed and its basket consumed, with a fault injected at every write it makes
+and nothing but the journal's own step left behind. The printer and the drawer run after the commit,
+and their failure never un-completes the sale. Two of its ten named tests wait, by the owner's
+decision of 8 November 2026: the approval one for the first command that brings an approval bound to
+the sale to payment, and the department one for #330. Until `1.7.14`, added that day, binds a
+register to its printer, every receipt is rendered for the 80 mm simulator profile and queued.
+`1.8.4` is
 **partially delivered**: its journal half has landed. A sale being paid for
 is journalled before its first irreversible effect, each tender advances the record under the version
 it read, and once its finalize begins only the finalize removes it, inside the finalize's own

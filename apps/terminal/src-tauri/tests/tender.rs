@@ -95,6 +95,48 @@ fn enveloped(register: &Register, action: &str) -> bool {
     })
 }
 
+/// The one audit row written for `action` as it is stored, and the payload
+/// its envelope member carries, each as JSON.
+fn travelling(register: &Register, action: &str) -> (serde_json::Value, serde_json::Value) {
+    register.with_db(|conn| {
+        let (id, actor, register_id, at, payload, member): (
+            Vec<u8>,
+            Vec<u8>,
+            Vec<u8>,
+            String,
+            String,
+            String,
+        ) = conn
+            .query_row(
+                "SELECT a.id, a.actor_id, a.register_id, a.at, a.payload, m.payload
+                   FROM audit_log a
+                   JOIN fact_commit_member m ON m.entity = 'audit_log' AND m.entity_id = a.id
+                  WHERE a.action = ?1",
+                [action],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .unwrap();
+        let text = |bytes: &[u8]| Uuid::from_slice(bytes).unwrap().to_string();
+        let stored = serde_json::json!({
+            "id": text(&id),
+            "actor_id": text(&actor),
+            "register_id": text(&register_id),
+            "at": at,
+            "payload": serde_json::from_str::<serde_json::Value>(&payload).unwrap(),
+        });
+        (stored, serde_json::from_str(&member).unwrap())
+    })
+}
+
 /// A tender id no sale holds.
 fn no_such_tender() -> TenderId {
     TenderId::from_uuid(Uuid::from_u128(0x7E))
@@ -284,6 +326,19 @@ fn a_removed_tender_is_audited_and_the_rest_are_taken_again() {
     assert_eq!(*field(payload, "amount_minor"), 1_000);
     assert_eq!(*field(payload, "remaining_minor"), 0);
     assert!(enveloped(&register, "tender.remove"));
+
+    // The row travels as the payload `ref/sync-protocol.md` §3 defines for an
+    // audit row: every column known before it is chained, never a stand-in.
+    let (stored, member) = travelling(&register, "tender.remove");
+    assert_eq!(*field(&member, "action"), "tender.remove");
+    for column in ["id", "actor_id", "register_id", "at", "payload"] {
+        assert_eq!(
+            field(&member, column),
+            field(&stored, column),
+            "the envelope carries the row's own {column}"
+        );
+    }
+    assert_eq!(*field(&member, "canonical_version"), 1);
 }
 
 #[test]

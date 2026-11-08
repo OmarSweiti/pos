@@ -38,8 +38,6 @@
 //! Time and ids come from the [`Clock`] and [`IdSource`] the shell hands in, so
 //! every instant a test asserts on is one it chose.
 
-use std::collections::BTreeMap;
-
 use pos_db::DbError;
 use pos_db::repo::audit::AuditRepository;
 use pos_db::repo::outbox::{CommitEnvelope, FactMember, OutboxRepository};
@@ -47,7 +45,6 @@ use pos_db::repo::receipt::{
     ArtifactKind, AttemptOutcome, Id, JobState, Lease, PrintAttempt, ReceiptArtifact,
     ReceiptRepository, StoredArtifact,
 };
-use pos_domain::audit::VERSION as AUDIT_CANONICAL_VERSION;
 use pos_domain::{
     AuditIntent, Authorized, Clock, IdSource, ReceiptModel, RegisterId, Timestamp, Watermark, cap,
 };
@@ -56,8 +53,10 @@ use pos_hardware::profile::{Fact, PrinterProfile};
 use pos_hardware::render::{PaperWidth, RenderError, render_receipt};
 use pos_hardware::{FailReason, PrintOutcome, ReceiptPrinter, RenderedReceipt};
 use rusqlite::{Connection, Transaction};
-use serde_json::{Map, Value, json};
+use serde_json::json;
 use uuid::Uuid;
+
+use crate::payload::{artifact_payload, audit_payload, uuid_text};
 
 /// The envelope shape every commit is written in. `ref/sync-protocol.md` §2
 /// freezes it in Phase 1, before the first outbox row exists.
@@ -720,7 +719,7 @@ fn render_duplicate(
 
 /// The paper a profile prints on, read from the dots it states — one source
 /// for the width, so a profile and a paper cannot be handed in disagreeing.
-fn paper_of(profile: &PrinterProfile) -> Result<PaperWidth, PrintQueueError> {
+pub(crate) fn paper_of(profile: &PrinterProfile) -> Result<PaperWidth, PrintQueueError> {
     let dots = match &profile.dot_width {
         Fact::Known(dots) => Some(dots.get()),
         _ => None,
@@ -730,99 +729,6 @@ fn paper_of(profile: &PrinterProfile) -> Result<PaperWidth, PrintQueueError> {
         .find(|paper| Some(paper.width_px()) == dots)
         .ok_or_else(|| PrintQueueError::NoPaper {
             profile_id: profile.profile_id.clone(),
-        })
-}
-
-/// A receipt artifact as it travels (`ref/sync-protocol.md` §3, "The payload a
-/// `receipt_artifact` travels as"): its own columns in the canonical form —
-/// sorted keys, no whitespace, ids as lower-case hyphenated UUIDs, instants as
-/// ISO-8601 UTC with milliseconds, bytes as lower-case hex.
-fn artifact_payload(
-    artifact: &ReceiptArtifact,
-    content_hash: &[u8; 32],
-) -> Result<String, PrintQueueError> {
-    canonical(&json!({
-        "artifact_kind": artifact_kind_text(artifact.kind),
-        "content_bytes": hex(&artifact.content_bytes),
-        "content_hash": hex(content_hash),
-        "fiscal_version": artifact.fiscal_version,
-        "format": artifact.format,
-        "generated_at": artifact.generated_at.to_iso8601(),
-        "id": uuid_text(&artifact.id),
-        "printer_profile": artifact.printer_profile,
-        "sale_id": uuid_text(&artifact.sale_id),
-        "source_artifact_id": artifact.source_artifact_id.as_ref().map(uuid_text),
-        "template_version": artifact.template_version,
-    }))
-}
-
-/// An audit row as it travels (`ref/sync-protocol.md` §3, "The payload an
-/// `audit_log` row travels as"): every column known before the row is chained.
-/// `seq`, `prev_hash` and `hash` are absent because `0004` refuses the row until
-/// this envelope exists, so they cannot be known when it is written.
-fn audit_payload(
-    id: Uuid,
-    register: RegisterId,
-    intent: &AuditIntent,
-) -> Result<String, PrintQueueError> {
-    canonical(&json!({
-        "action": intent.action,
-        "actor_id": intent.actor.as_uuid().hyphenated().to_string(),
-        "approval_handle_id": intent.approval.map(|a| a.as_uuid().hyphenated().to_string()),
-        "approver_id": intent.approver.map(|a| a.as_uuid().hyphenated().to_string()),
-        "at": intent.at.to_iso8601(),
-        "canonical_version": AUDIT_CANONICAL_VERSION,
-        "entity": intent.entity,
-        "entity_id": intent.entity_id.hyphenated().to_string(),
-        "id": id.hyphenated().to_string(),
-        "payload": intent.payload,
-        "reason": intent.reason,
-        "register_id": register.as_uuid().hyphenated().to_string(),
-    }))
-}
-
-/// Serialize with every object's keys sorted, at every depth, whatever order
-/// `serde_json` keeps them in — no whitespace, UTF-8.
-fn canonical(value: &Value) -> Result<String, PrintQueueError> {
-    fn sorted(value: &Value) -> Value {
-        match value {
-            Value::Object(object) => {
-                let ordered: BTreeMap<&String, Value> = object
-                    .iter()
-                    .map(|(key, item)| (key, sorted(item)))
-                    .collect();
-                let mut out = Map::new();
-                for (key, item) in ordered {
-                    out.insert(key.clone(), item);
-                }
-                Value::Object(out)
-            }
-            Value::Array(items) => Value::Array(items.iter().map(sorted).collect()),
-            other => other.clone(),
-        }
-    }
-    Ok(serde_json::to_string(&sorted(value))?)
-}
-
-const fn artifact_kind_text(kind: ArtifactKind) -> &'static str {
-    match kind {
-        ArtifactKind::Original => "original",
-        ArtifactKind::Duplicate => "duplicate",
-        ArtifactKind::FiscalSupplement => "fiscal_supplement",
-    }
-}
-
-fn uuid_text(id: &Id) -> String {
-    Uuid::from_bytes(*id).hyphenated().to_string()
-}
-
-fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    bytes
-        .iter()
-        .fold(String::with_capacity(bytes.len() * 2), |mut out, byte| {
-            let _ = write!(out, "{byte:02x}");
-            out
         })
 }
 
@@ -864,6 +770,8 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+    use crate::payload::{canonical, hex};
+    use serde_json::Value;
 
     const KEY: &str = "print-queue-test-key";
     const WORKER: &str = "print-worker-1";

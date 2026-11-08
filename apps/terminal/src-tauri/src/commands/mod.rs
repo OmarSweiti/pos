@@ -16,6 +16,7 @@ use pos_domain::AuditIntent;
 use rusqlite::Transaction;
 
 use crate::ipc::IpcError;
+use crate::payload::audit_payload;
 use crate::state::{PRODUCER_VERSION, Register, SYNC_PROTOCOL_VERSION};
 
 /// A storage failure, as the webview receives it: the code, and the source
@@ -32,7 +33,9 @@ pub(crate) fn sqlite(error: rusqlite::Error) -> IpcError {
 /// Append `intent` to the register's audit chain inside `tx`, behind the
 /// ready delivery envelope `audit_log_has_ready_commit` requires (I-9). The
 /// audit row is the envelope's first member: what it audits is register-local
-/// or travels in an envelope of its own.
+/// or travels in an envelope of its own. It travels as the payload
+/// `ref/sync-protocol.md` §3 defines for an audit row, every column known
+/// before the row is chained.
 ///
 /// **An intent that names an approval spends it here** (`ref/ipc-contract.md`
 /// §1, rule 7). Its `approval_consumption` row joins the same envelope and
@@ -61,11 +64,13 @@ pub(crate) fn audit(
         .approval
         .map(|id| (*id.as_uuid().as_bytes(), register.next_id()));
     let created_at = intent.at.to_iso8601();
+    let audited = audit_payload(audit_id, register.register(), intent)
+        .map_err(|error| IpcError::from_source("storage_failed", "error.storage.failed", &error))?;
     let mut members = vec![FactMember {
         change_id: change_id.as_bytes(),
         entity: "audit_log",
         entity_id: audit_id.as_bytes(),
-        payload: "{}",
+        payload: &audited,
     }];
     if let Some((approval, change)) = consumption.as_ref() {
         members.push(FactMember {

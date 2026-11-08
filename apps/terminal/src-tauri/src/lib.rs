@@ -3,11 +3,21 @@
 
 pub mod commands;
 pub mod ipc;
+pub(crate) mod payload;
 pub mod print_queue;
 pub mod scan;
 pub mod state;
 pub mod telemetry;
 pub mod time;
+
+// The integration suites' shop, for the finalize's own tests, which must
+// reach the crate's fault seam (1.8.3). The shop names this crate as the
+// suites do, `terminal_lib`.
+#[cfg(test)]
+extern crate self as terminal_lib;
+#[cfg(test)]
+#[path = "../tests/shop/mod.rs"]
+mod shop;
 
 use ipc::{IpcError, IpcResult};
 use tauri::Manager;
@@ -46,6 +56,7 @@ ipc::registry::commands![
     commands::tender::tender_remove,
     commands::tender::tender_back_to_cart,
     commands::tender::sale_in_flight_state,
+    commands::sale::sale_finalize,
 ];
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

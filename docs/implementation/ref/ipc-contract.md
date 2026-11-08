@@ -450,8 +450,8 @@ Its logic is `print_queue::Resolver::resolve_unknown` in the terminal (1.7.7). I
 approval rather than leave a handle unconsumed. **A duplicate is the original plus its watermark, and
 nothing else.** The handler supplies the original's `ReceiptModel`, which must re-render the original
 byte for byte without the watermark before the duplicate is rendered from it with one. Building that
-model from a completed sale is `build_receipt_model` ([`domain-api.md`](domain-api.md) §13), which no
-microstep owns yet (`phase-1-sellable-mvp.md` 1.7.1). The command handler waits on it.
+model from a completed sale is `build_receipt_model` ([`domain-api.md`](domain-api.md) §13), which
+1.8.3's second part delivered; the command handler reads its context as the finalize does.
 
 `sale_in_flight_state` is what the recovery path reads after a restart. It reports the durable
 `InFlightSale` row (`domain-api.md` §6.6) — including whether a card operation was outstanding, which
@@ -483,6 +483,31 @@ is the input E.2's status-query needs and which nothing previously persisted.
 >   `age_unconfirmed`, `stock_would_go_negative`, `tender_type_disabled`, `sale_settled`,
 >   `tender_not_positive`, `tender_underpaid`, `tender_amount_invalid`, `tender_unknown`,
 >   `tender_collected` and `checkout_unreadable`.
+
+> **As delivered at 1.8.3, its third part.** `sale_finalize` is registered under `sale.create`,
+> audited on every call, with no approval. It completes the sale the till is paying for in one
+> transaction (`phase-1-sellable-mvp.md` 1.8.3, its third note). Four things the table did not say:
+>
+> - **The answer is `CompletedSaleRef`:** the sale's id, its receipt number, the currency, the total
+>   charged (the priced total with the final cash tender's rounding), the change, and what became of
+>   the receipt and of the drawer once the sale committed.
+>   - **The receipt** is `queued` (no printer attached), `printed`, `refused` (the queue retries it),
+>     `unconfirmed` (a person answers through `print_resolve_unknown`) or `withheld`.
+>   - **The drawer** is `not_opened`, `no_device`, `opened` or `failed`.
+>
+>   Neither outcome un-completes the sale.
+> - **It takes no argument.** The sale is the one the till is paying for, settled by its tenders.
+> - **The refusals are each their own code**:
+>   - before anything is written: `payment_not_begun`, `sale_not_settled`,
+>     `store_not_gst_registered`, `fiscal_obligation_undecided`, `shift_not_open` and the pricing
+>     refusals;
+>   - inside its transaction: `user_inactive` and `receipt_unprintable`.
+>
+>   A refusal inside the transaction leaves only the journal's `Finalizing` step, and the next
+>   finalize completes the sale under the same key.
+> - **Its audit row is `sale.finalize`**, and it records whether the drawer was asked to open. Every
+>   audited command's row now travels as the payload [`sync-protocol.md`](sync-protocol.md) §3
+>   defines, where the shell had sent a stand-in `{}`.
 
 ### Returns
 
