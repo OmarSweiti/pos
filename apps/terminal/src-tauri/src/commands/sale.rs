@@ -1500,24 +1500,14 @@ mod tests {
                 .artifact;
             assert_eq!(original.printer_profile, "simulator-80mm");
             assert_eq!(original.template_version, TEMPLATE_VERSION);
-            let kinds = TenderTypeRepository::new(conn).kinds().unwrap();
-            let profile = StoreRepository::new(conn).profile(store).unwrap();
-            let context = receipt_context(
-                &profile,
-                &kinds,
-                "REG01",
-                "Synthetic Cashier".to_owned(),
-                FiscalStanding::Exempt,
-            );
-            let model = build_receipt_model(done, &context).unwrap();
-            assert_eq!(model.totals.total.minor(), 2_110);
-            let device = PrinterProfile::simulator(PaperWidth::Mm80);
-            let expected =
-                escpos::encode(&render_receipt(&model, PaperWidth::Mm80).unwrap(), &device)
-                    .unwrap();
             assert!(
-                original.content_bytes == expected,
-                "the original is the sale's own receipt, rendered for the register's profile"
+                original.content_bytes
+                    == rendered(
+                        done,
+                        &expected_context(Language::Arabic, "متجر الاختبار", "نقدي")
+                    ),
+                "the original is the sale's own receipt, as the fixture's merchant prints it in \
+                 Arabic, rendered for the register's profile"
             );
             assert_eq!(
                 receipts.unprinted().unwrap().len(),
@@ -1542,6 +1532,95 @@ mod tests {
                 "cash opens the drawer"
             );
         });
+    }
+
+    /// The context the fixture's merchant prints under, written out by hand
+    /// rather than read through the code under test: its organisation, its
+    /// store's name, the register, the cashier, an exempt store, and cash's
+    /// printed name.
+    fn expected_context(language: Language, store_name: &str, cash: &str) -> ReceiptContext {
+        ReceiptContext {
+            merchant: MerchantBlock {
+                legal_name: "Registered Chain Fixture".to_owned(),
+                store_name: store_name.to_owned(),
+                address: None,
+                phone: None,
+                tin: None,
+            },
+            register_code: "REG01".to_owned(),
+            cashier_name: "Synthetic Cashier".to_owned(),
+            language,
+            fiscal: FiscalStanding::Exempt,
+            tender_labels: BTreeMap::from([("cash".to_owned(), cash.to_owned())]),
+            discount_labels: BTreeMap::new(),
+            loyalty: None,
+            footer: FooterBlock {
+                return_policy: None,
+                thank_you: None,
+            },
+        }
+    }
+
+    /// `sale`'s receipt under `context`, as the 80 mm simulator receives it.
+    fn rendered(sale: &CompletedSale, context: &ReceiptContext) -> Vec<u8> {
+        let model = build_receipt_model(sale, context).unwrap();
+        assert_eq!(
+            model.totals.total.minor(),
+            2_110,
+            "what the customer was charged"
+        );
+        escpos::encode(
+            &render_receipt(&model, PaperWidth::Mm80).unwrap(),
+            &PrinterProfile::simulator(PaperWidth::Mm80),
+        )
+        .unwrap()
+    }
+
+    /// The original receipt of `sale`, and the sale as it was completed.
+    fn original_of(register: &Register, sale: SaleId) -> (Vec<u8>, CompletedSale) {
+        register.with_db(|conn| {
+            let record = SaleRepository::new(conn).by_id(sale).unwrap().unwrap();
+            let bytes = ReceiptRepository::new(conn)
+                .artifact(&record.original_receipt().unwrap().into_bytes())
+                .unwrap()
+                .unwrap()
+                .artifact
+                .content_bytes;
+            (bytes, record.sale().clone())
+        })
+    }
+
+    /// A store whose receipts are set in English prints its English name and
+    /// each tender under its kind's English name; a kind with none prints its
+    /// Arabic one rather than stopping the sale.
+    #[test]
+    fn an_english_receipt_prints_each_tender_under_its_english_name() {
+        for (cash_en, printed) in [(Some("Cash"), "Cash"), (None, "نقدي")] {
+            let (_dir, register) = shop();
+            register.with_db(|conn| {
+                conn.execute(
+                    "UPDATE store SET receipt_locale = 'en', name_en = 'Synthetic Store'",
+                    [],
+                )
+                .unwrap();
+                conn.execute(
+                    "UPDATE tender_type SET name_en = ?1 WHERE code = 'cash'",
+                    [cash_en],
+                )
+                .unwrap();
+            });
+            let sale = settled(&register);
+            finalize(&register).unwrap();
+            let (bytes, done) = original_of(&register, sale);
+            assert!(
+                bytes
+                    == rendered(
+                        &done,
+                        &expected_context(Language::English, "Synthetic Store", printed)
+                    ),
+                "cash prints as {printed}"
+            );
+        }
     }
 
     /// What could never complete is refused before the journal is touched, so
