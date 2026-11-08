@@ -8,10 +8,12 @@
 //!
 //! Its shape is [`ref/domain-api.md`](../../../docs/implementation/ref/domain-api.md) §13 and its
 //! content order is [`ref/hardware-and-receipts.md`](../../../docs/implementation/ref/hardware-and-receipts.md)
-//! §2.3. It computes nothing. Every amount arrives already decided by
-//! `price_cart` (1.4.9) and every string already resolved by its caller, which
-//! is what makes this module trivially pure (I-8) and what stops a second
-//! rounding from happening at render time (I-1).
+//! §2.3. It rounds nothing. Every amount arrives already decided by
+//! `price_cart` (1.4.9) and the tender machine (1.5.3), and every string
+//! already resolved by its caller, which is what makes this module trivially
+//! pure (I-8) and what stops a second rounding from happening at render time
+//! (I-1). [`build_receipt_model`] (1.8.3) adds one figure, the total the
+//! customer was charged, and it is a sum of two amounts the sale already holds.
 //!
 //! # Three things this type deliberately cannot express
 //!
@@ -45,13 +47,15 @@
 //! here forces the call, and 1.7.3's entry point is where it becomes mandatory.
 
 use core::fmt;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::cart::CompletedSale;
 use crate::catalog::UnitOfMeasure;
 use crate::ids::{RegisterId, SaleId};
 use crate::money::Qty;
-use crate::money::{Currency, Money};
+use crate::money::{Currency, Money, MoneyError};
 use crate::tax::TaxSummaryRow;
 use crate::time::{BusinessDate, Timestamp};
 
@@ -370,6 +374,79 @@ pub enum ReceiptError {
     /// A printed line that describes nothing.
     #[error("line {index} has no name, so it describes nothing it was charged for")]
     UnnamedLine { index: usize },
+    /// A tender whose kind has no printed name in the document's language
+    /// (1.8.3). A tender kind's code is the store's configuration, not a
+    /// customer's, so the error names it.
+    #[error("the tender kind {code:?} has no printed name")]
+    TenderUnlabelled { code: String },
+    /// A discount whose reason has no printed name in the document's language
+    /// (1.8.3). The reason is a code from the store's list, so the error names
+    /// it.
+    #[error("the discount reason {code:?} has no printed name")]
+    DiscountUnlabelled { code: String },
+    /// A loyalty balance for a sale with no customer attached (1.8.3).
+    #[error("a loyalty balance is printed only for a sale with a customer attached")]
+    LoyaltyWithoutCustomer,
+    /// A training sale handed a cleared fiscal block (1.8.3). A training sale
+    /// never reaches the fiscal queue, so a block is one that belongs to
+    /// another sale.
+    #[error("a training sale is never a fiscal invoice")]
+    TrainingSaleCleared,
+    /// What adding the cash rounding to the priced total refuses (1.8.3). A
+    /// [`CompletedSale`] has already added the two, so this does not arise from
+    /// a sale `complete` made.
+    #[error(transparent)]
+    Money(#[from] MoneyError),
+}
+
+/// Whether the document a sale is handed over with is a tax invoice
+/// (`ref/fiscal-jofotara.md` §2.1, `ref/hardware-and-receipts.md` §2.3).
+///
+/// [`build_receipt_model`] reads the heading from this and takes no heading as
+/// a choice, so no caller can hand a customer a document that calls itself an
+/// invoice before JoFotara has cleared it. The shell reads which variant
+/// applies from the store's `fiscal_obligation` and the sale's fiscal result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FiscalStanding {
+    /// The store owes no fiscal invoice: `store.fiscal_obligation` is
+    /// `'exempt'`, with its evidence. The sale prints as a sale, with no fiscal
+    /// block.
+    Exempt,
+    /// The store owes one, and this sale has not cleared. Until the outage
+    /// ruling that 2.7.0 owns says otherwise, the customer is handed a clearly
+    /// marked non-fiscal payment acknowledgement.
+    Uncleared,
+    /// Cleared: the invoice JoFotara returned, printed with the sale.
+    Cleared(FiscalBlock),
+}
+
+/// What a receipt says that its sale does not (`ref/domain-api.md` §13).
+///
+/// Every field arrives resolved, as the model's own do: the shell reads the
+/// store, the register, the cashier and the store's lists, and this crate reads
+/// nothing (I-8). `Debug` is derived and reaches [`MerchantBlock`]'s own, so
+/// the merchant's phone stays redacted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReceiptContext {
+    pub merchant: MerchantBlock,
+    /// `register.code`.
+    pub register_code: String,
+    /// The cashier's name as the receipt prints it.
+    pub cashier_name: String,
+    /// The language the document is set in: `store.receipt_locale`.
+    pub language: Language,
+    /// Whether the document is a tax invoice, and its fiscal block once it is.
+    pub fiscal: FiscalStanding,
+    /// Each tender kind's printed name in `language`, by `tender_type.code`.
+    pub tender_labels: BTreeMap<String, String>,
+    /// Each discount reason's printed name in `language`, by its code.
+    pub discount_labels: BTreeMap<String, String>,
+    /// The attached customer's points balance, read only when the sale names a
+    /// customer.
+    pub loyalty: Option<LoyaltyBlock>,
+    /// The footer, resolved from the template version this receipt is written
+    /// under.
+    pub footer: FooterBlock,
 }
 
 impl ReceiptModel {
@@ -466,6 +543,160 @@ impl ReceiptModel {
             None => Ok(()),
         }
     }
+}
+
+/// The receipt for `sale`: the one document the printer, the PDF and the email
+/// all render (`ref/domain-api.md` §13, 1.8.3).
+///
+/// Every amount is the sale's own, read and never worked out again:
+/// - **A line** prints its snapshot name, its quantity, what it charges a unit
+///   ([`CartLine::price`](crate::cart::CartLine::price), an override
+///   included) and its gross before discounts, as `price_cart` priced it.
+///   Beneath it go its discount attributions, its own discount and its share
+///   of the basket's, each under its reason's printed name.
+/// - **The totals** are `price_cart`'s subtotal, discount total and tax rows.
+/// - **The cash-rounding line** is the final cash tender's adjustment, printed
+///   only when it adjusted something.
+/// - **The total** is what the customer was charged: the priced total plus that
+///   adjustment, the one figure this adds.
+/// - **The tenders** are the sale's, in the order they were taken. The change
+///   is printed when there was any.
+///
+/// So the document adds up on its face. Its lines come to its subtotal, and
+/// its line discounts to its discount total. The subtotal less the discounts,
+/// plus the tax where prices exclude it, plus the rounding, is its total, and
+/// its tenders less the change come to the same total.
+/// `prop_a_receipt_adds_up_to_its_own_total` holds it to that.
+///
+/// **The heading follows `ctx.fiscal`** ([`FiscalStanding`]). A training sale
+/// carries the TRAINING watermark, and a business buyer's block is printed
+/// whenever the sale captured a TIN.
+///
+/// The result has passed [`ReceiptModel::validate`]. A builder that could hand
+/// back a document its own validator refuses would leave the refusal to the
+/// printer, after the sale had completed.
+///
+/// # Errors
+///
+/// - [`ReceiptError::TrainingSaleCleared`]: a training sale given a fiscal
+///   block.
+/// - [`ReceiptError::LoyaltyWithoutCustomer`]: a loyalty balance for a sale
+///   with no customer.
+/// - [`ReceiptError::DiscountUnlabelled`] and
+///   [`ReceiptError::TenderUnlabelled`]: a reason or a tender kind with no
+///   printed name. A blank name is no name.
+/// - [`ReceiptError::Money`]: the rounding cannot be added to the total, which
+///   a sale `complete` made never meets.
+/// - Whatever [`ReceiptModel::validate`] refuses of the document, such as a
+///   buyer block whose TIN is blank.
+pub fn build_receipt_model(
+    sale: &CompletedSale,
+    ctx: &ReceiptContext,
+) -> Result<ReceiptModel, ReceiptError> {
+    let cart = sale.cart();
+    let priced = sale.priced();
+    if cart.is_training && matches!(ctx.fiscal, FiscalStanding::Cleared(_)) {
+        return Err(ReceiptError::TrainingSaleCleared);
+    }
+    if ctx.loyalty.is_some() && cart.customer_id.is_none() {
+        return Err(ReceiptError::LoyaltyWithoutCustomer);
+    }
+    let (doc_kind, fiscal) = match &ctx.fiscal {
+        FiscalStanding::Exempt => (DocKind::Sale, None),
+        FiscalStanding::Uncleared => (DocKind::Acknowledgement, None),
+        FiscalStanding::Cleared(block) => (DocKind::Sale, Some(block.clone())),
+    };
+
+    // A completed sale's prices are its cart's lines', one for one and in
+    // order: `CompletedSale::restore` refuses any other pairing, and `complete`
+    // never makes one.
+    let mut lines = Vec::with_capacity(cart.lines.len());
+    for (line, money) in cart.lines.iter().zip(&priced.lines) {
+        let mut discounts = Vec::with_capacity(money.discount_attributions.len());
+        for attribution in &money.discount_attributions {
+            let code = &attribution.reason.0;
+            discounts.push(ReceiptDiscount {
+                label: printed_name(&ctx.discount_labels, code)
+                    .ok_or_else(|| ReceiptError::DiscountUnlabelled { code: code.clone() })?,
+                amount: attribution.amount,
+            });
+        }
+        lines.push(ReceiptLine {
+            name: line.name_snapshot.clone(),
+            qty: line.qty,
+            unit: line.unit,
+            is_weighed: line.is_weighed,
+            unit_price: line.price(),
+            line_total: money.gross_before_discount,
+            discounts,
+        });
+    }
+
+    let mut tenders = Vec::with_capacity(sale.tenders().len());
+    for tender in sale.tenders() {
+        tenders.push(ReceiptTender {
+            label: printed_name(&ctx.tender_labels, &tender.type_code).ok_or_else(|| {
+                ReceiptError::TenderUnlabelled {
+                    code: tender.type_code.clone(),
+                }
+            })?,
+            amount: tender.amount,
+            masked_pan: tender.masked_pan.clone(),
+            scheme: tender.scheme.clone(),
+        });
+    }
+
+    let rounding_adjustment = sale
+        .cash_rounding()
+        .map(|rounding| rounding.adjustment)
+        .filter(|adjustment| !adjustment.is_zero());
+    let total = match rounding_adjustment {
+        Some(adjustment) => priced.total.checked_add(adjustment)?,
+        None => priced.total,
+    };
+
+    let model = ReceiptModel {
+        doc_kind,
+        watermark: cart.is_training.then_some(Watermark::Training),
+        merchant: ctx.merchant.clone(),
+        buyer: cart.buyer_tin.as_ref().map(|tin| BuyerBlock {
+            name: cart.buyer_name.clone(),
+            tin: tin.clone(),
+        }),
+        header: ReceiptHeader {
+            sale_id: cart.id,
+            receipt_no: sale.receipt_number().to_owned(),
+            register_id: cart.register_id,
+            register_code: ctx.register_code.clone(),
+            cashier_name: ctx.cashier_name.clone(),
+            issued_at: sale.completed_at(),
+            business_date: sale.business_date(),
+        },
+        lines,
+        totals: ReceiptTotals {
+            subtotal: priced.subtotal,
+            discount_total: priced.discount_total,
+            tax_summary: priced.tax_summary.clone(),
+            rounding_adjustment,
+            total,
+        },
+        tenders,
+        change: Some(sale.change()).filter(|change| !change.is_zero()),
+        loyalty: ctx.loyalty,
+        fiscal,
+        footer: ctx.footer.clone(),
+        locale: ReceiptLocale::new(ctx.language),
+    };
+    model.validate()?;
+    Ok(model)
+}
+
+/// `code`'s printed name in `labels`, when it has one that is not blank.
+fn printed_name(labels: &BTreeMap<String, String>, code: &str) -> Option<String> {
+    labels
+        .get(code)
+        .filter(|name| !name.trim().is_empty())
+        .cloned()
 }
 
 /// How a redacted field renders, for every type that holds one.

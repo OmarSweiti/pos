@@ -123,7 +123,7 @@ pub struct Money {
     currency: Currency,
 }
 
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 pub enum MoneyError {
     #[error("arithmetic overflow")]
     Overflow,
