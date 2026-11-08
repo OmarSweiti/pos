@@ -90,7 +90,6 @@ PLANNED: dict[str, tuple[str, ...]] = {
         "a_sale_completes_with_no_printer_and_queues_the_artifact",
         "the_missing_printer_is_an_alarm_not_a_modal",
     ),
-    "1.8.3": ("finalize_is_atomic_under_injected_failure",),
     "1.8.4": (
         "a_checkout_operation_row_never_outlives_its_commit",
         "an_interrupted_tendering_is_recovered_and_status_queried",
@@ -515,6 +514,7 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "clock_jump_back_reports_anomaly",
         "displayed_price_override_queues_a_label_reprint",
         "exact_spelling_outranks_a_folded_variant",
+        "finalize_is_atomic_under_injected_failure",
         "fts_ignores_tatweel",
         "fts_matches_alef_and_yaa_spelling_variants",
         "fts_matches_arabic_with_and_without_diacritics",
