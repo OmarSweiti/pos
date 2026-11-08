@@ -890,3 +890,712 @@ impl pos_domain::Clock for RegisterClock<'_> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    //! 1.8.3's ten named tests, eight of which land with this part:
+    //! `department_line_writes_no_stock_event` waits on #330, and
+    //! `approval_effect_audit_and_consumption_commit_together` on the first
+    //! command that brings a sale-bound approval to payment (the owner's
+    //! decision of 8 November 2026).
+    //!
+    //! The shop is the integration suites' (`tests/shop/mod.rs`): the
+    //! reference chain's store, exempt from e-invoicing with its evidence and
+    //! registered for GST, whose approved policy rounds cash to the nearest
+    //! 5 fils. Every figure is worked out by hand, never read back from the
+    //! code under test.
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use std::cell::RefCell;
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::sync::Arc;
+
+    use pos_db::repo::receipt::JobState;
+    use pos_hardware::profile::PrinterProfile;
+    use pos_hardware::render::PaperWidth;
+    use pos_hardware::{
+        Fault, HwError, PrintOutcome, PrinterStatus, ReceiptPrinter, RenderedReceipt,
+        SimulatedPrinter,
+    };
+    use rusqlite::{OptionalExtension, params};
+
+    use super::*;
+    use crate::commands::cart::{add_product, current, open_cart};
+    use crate::commands::tender::{add_cash, begin_payment};
+    use crate::shop::{
+        CASHIER_CODE, CASHIER_ID, CASHIER_PIN, CHEESE, OIL, field, open, product_id, refusal, seed,
+        shop,
+    };
+    use crate::state::ReceiptDevice;
+
+    /// What the fault seam saw, and what it was told to do.
+    #[derive(Default)]
+    struct Seam {
+        seen: RefCell<Vec<FinalizeWritePoint>>,
+        fail_at: Option<FinalizeWritePoint>,
+        /// Run against the register's connection at this point: a change
+        /// that lands between the command's context and its commit.
+        meddle_at: Option<(FinalizeWritePoint, &'static str)>,
+        drop_entity: Option<&'static str>,
+    }
+
+    impl FinalizeFaults for Seam {
+        fn before(&self, point: FinalizeWritePoint, conn: &Connection) -> Result<(), Injected> {
+            self.seen.borrow_mut().push(point);
+            if let Some((at, sql)) = self.meddle_at
+                && at == point
+            {
+                conn.execute(sql, [CASHIER_ID.as_slice()]).unwrap();
+            }
+            if self.fail_at == Some(point) {
+                return Err(Injected(point));
+            }
+            Ok(())
+        }
+
+        fn members(&self, members: &mut Vec<Member>) {
+            if let Some(entity) = self.drop_entity {
+                let at = members
+                    .iter()
+                    .position(|(name, _, _)| *name == entity)
+                    .unwrap_or_else(|| panic!("the envelope holds no {entity}"));
+                members.remove(at);
+            }
+        }
+    }
+
+    /// Oil at 1.250 and 101 g of cheese at 8.500 a kilogram, 0.8585, which the
+    /// fixture policy's half-even rule prices at 0.858: 2.108, which the coin
+    /// step asks of cash as 2.110. Paid with 1.000 and then 5.000, so the
+    /// second settles it with 3.890 change.
+    fn settled(register: &Register) -> SaleId {
+        open_cart(register).unwrap();
+        add_product(register, product_id(OIL), None).unwrap();
+        add_product(register, product_id(CHEESE), Some(101)).unwrap();
+        let paying = begin_payment(register).unwrap();
+        assert_eq!(paying.total_minor, 2_108);
+        add_cash(register, 1_000).unwrap();
+        let paid = add_cash(register, 5_000).unwrap();
+        assert!(paid.settled);
+        paying.sale_id
+    }
+
+    /// A shop whose register renders for the 80 mm simulator profile and has
+    /// `printer` attached, its cashier signed in.
+    fn shop_with(printer: Arc<dyn ReceiptPrinter>) -> (tempfile::TempDir, Register) {
+        let dir = tempfile::tempdir().unwrap();
+        seed(dir.path(), true);
+        let register = open(dir.path()).with_receipt_device(ReceiptDevice {
+            profile: PrinterProfile::simulator(PaperWidth::Mm80),
+            printer: Some(printer),
+        });
+        crate::commands::auth::login_pin(&register, CASHIER_CODE, CASHIER_PIN).unwrap();
+        (dir, register)
+    }
+
+    /// Every table a finalize writes to, with how many rows each holds, and
+    /// the register's receipt counter: what an atomic failure leaves exactly
+    /// as it found.
+    fn written(register: &Register) -> BTreeMap<&'static str, i64> {
+        const TABLES: [&str; 17] = [
+            "sale",
+            "sale_supply_tax_context",
+            "sale_line",
+            "sale_line_tax",
+            "sale_line_discount",
+            "sale_tax_summary",
+            "sale_tender",
+            "tender_status_event",
+            "stock_ledger",
+            "receipt_artifact",
+            "print_job",
+            "approval_consumption",
+            "audit_log",
+            "sync_commit",
+            "fact_commit_member",
+            "sync_outbox",
+            "doc_sequence",
+        ];
+        register.with_db(|conn| {
+            let mut counts: BTreeMap<&'static str, i64> = TABLES
+                .iter()
+                .map(|table| {
+                    let n = conn
+                        .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                            row.get(0)
+                        })
+                        .unwrap();
+                    (*table, n)
+                })
+                .collect();
+            let next: Option<i64> = conn
+                .query_row(
+                    "SELECT next_value FROM doc_sequence WHERE kind = 'receipt'",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()
+                .unwrap();
+            counts.insert("receipt counter", next.unwrap_or(1));
+            counts
+        })
+    }
+
+    /// The journal's state for `sale`, `None` when it holds no row.
+    fn journal(register: &Register, sale: SaleId) -> Option<&'static str> {
+        register.with_db(|conn| {
+            CheckoutOperationRepository::new(conn)
+                .get(sale)
+                .unwrap()
+                .map(|operation| match operation.in_flight.state {
+                    InFlight::Tendering(_) => "tendering",
+                    InFlight::Finalizing(_) => "finalizing",
+                })
+        })
+    }
+
+    /// The working basket's row for `sale`, by its state.
+    fn basket(register: &Register, sale: SaleId) -> Option<String> {
+        register.with_db(|conn| {
+            conn.query_row(
+                "SELECT state FROM parked_cart WHERE id = ?1",
+                [sale.as_uuid().as_bytes().as_slice()],
+                |row| row.get(0),
+            )
+            .optional()
+            .unwrap()
+        })
+    }
+
+    fn completed(register: &Register, sale: SaleId) -> bool {
+        register.with_db(|conn| SaleRepository::new(conn).by_id(sale).unwrap().is_some())
+    }
+
+    fn still_paying(register: &Register) -> bool {
+        matches!(
+            register.lock_till().working.as_ref(),
+            Some(Working::Paying(_))
+        )
+    }
+
+    /// The finalize asks the seam before every write point, in the catalog's
+    /// order, and before nothing else: `ALL` is every write it makes, once.
+    #[test]
+    fn finalize_write_point_catalog_is_exhaustive() {
+        let (_dir, register) = shop();
+        settled(&register);
+        let seam = Seam::default();
+        finalize_with(&register, &seam).unwrap();
+        assert_eq!(seam.seen.borrow().as_slice(), FinalizeWritePoint::ALL);
+        let distinct: BTreeSet<_> = FinalizeWritePoint::ALL.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            FinalizeWritePoint::ALL.len(),
+            "no point twice"
+        );
+    }
+
+    /// A failure before any write point leaves no financial fact, artifact,
+    /// job, consumption, delivery row or receipt number: only the journal's
+    /// own step, once the journal has been reached. The till still holds the
+    /// sale, and the next finalize completes it, replaying the journal under
+    /// the same key.
+    #[test]
+    fn finalize_is_atomic_under_injected_failure() {
+        for &point in FinalizeWritePoint::ALL {
+            let (_dir, register) = shop();
+            let sale = settled(&register);
+            let before = written(&register);
+            let seam = Seam {
+                fail_at: Some(point),
+                ..Seam::default()
+            };
+            let failed = refusal(finalize_with(&register, &seam));
+            assert_eq!(failed.code, "storage_failed", "at {point:?}");
+            assert_eq!(written(&register), before, "nothing written at {point:?}");
+            assert!(!completed(&register, sale), "at {point:?}");
+            let expected = if point == FinalizeWritePoint::Journal {
+                "tendering"
+            } else {
+                "finalizing"
+            };
+            assert_eq!(journal(&register, sale), Some(expected), "at {point:?}");
+            assert_eq!(
+                basket(&register, sale).as_deref(),
+                Some("active"),
+                "at {point:?}"
+            );
+            assert!(still_paying(&register), "at {point:?}");
+
+            let answer = finalize(&register).unwrap();
+            assert_eq!(answer.receipt_number, "REG01-000001", "at {point:?}");
+            assert!(completed(&register, sale), "at {point:?}");
+            assert_eq!(journal(&register, sale), None, "at {point:?}");
+        }
+    }
+
+    /// The commit, its whole manifest and its delivery rows are written before
+    /// any fact the schema guards, and the completion is the last write. Temp
+    /// triggers on the register's own connection log every insert in the order
+    /// SQLite performs it.
+    #[test]
+    fn manifest_and_delivery_rows_precede_guarded_facts() {
+        const ENVELOPE: [&str; 3] = ["sync_commit", "fact_commit_member", "sync_outbox"];
+        const GUARDED: [&str; 11] = [
+            "sale",
+            "sale_supply_tax_context",
+            "sale_line",
+            "sale_line_tax",
+            "sale_tax_summary",
+            "sale_tender",
+            "tender_status_event",
+            "stock_ledger",
+            "receipt_artifact",
+            "print_job",
+            "audit_log",
+        ];
+        let (_dir, register) = shop();
+        settled(&register);
+        register.with_db(|conn| {
+            conn.execute_batch(
+                "CREATE TEMP TABLE write_log (n INTEGER PRIMARY KEY, what TEXT NOT NULL);",
+            )
+            .unwrap();
+            for table in ENVELOPE.iter().chain(&GUARDED) {
+                conn.execute_batch(&format!(
+                    "CREATE TEMP TRIGGER log_{table} AFTER INSERT ON main.{table}
+                     BEGIN INSERT INTO write_log (what) VALUES ('{table}'); END;"
+                ))
+                .unwrap();
+            }
+            conn.execute_batch(
+                "CREATE TEMP TRIGGER log_completion AFTER UPDATE OF status ON main.sale
+                 BEGIN INSERT INTO write_log (what) VALUES ('completion'); END;",
+            )
+            .unwrap();
+        });
+        finalize(&register).unwrap();
+        let log: Vec<String> = register.with_db(|conn| {
+            conn.prepare("SELECT what FROM write_log ORDER BY n")
+                .unwrap()
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        });
+        let last_envelope = log
+            .iter()
+            .rposition(|what| ENVELOPE.contains(&what.as_str()))
+            .unwrap();
+        let first_guarded = log
+            .iter()
+            .position(|what| GUARDED.contains(&what.as_str()))
+            .unwrap();
+        assert!(
+            last_envelope < first_guarded,
+            "every envelope row precedes every guarded fact: {log:?}"
+        );
+        assert_eq!(
+            log.last().map(String::as_str),
+            Some("completion"),
+            "{log:?}"
+        );
+        assert_eq!(
+            log.iter().filter(|what| *what == "sync_commit").count(),
+            1,
+            "one commit"
+        );
+    }
+
+    /// A printer that refuses the receipt, and a drawer that does not open,
+    /// never un-complete the sale: the receipt waits in the queue for its
+    /// retry, the drawer is not kicked again, and the answer says both.
+    #[test]
+    fn hardware_failure_after_commit_leaves_sale_complete() {
+        /// The simulator, behind a drawer that is jammed.
+        struct Jammed(Arc<SimulatedPrinter>);
+
+        impl ReceiptPrinter for Jammed {
+            fn print(&self, doc: &RenderedReceipt) -> PrintOutcome {
+                self.0.print(doc)
+            }
+            fn open_drawer(&self) -> Result<(), HwError> {
+                Err(HwError::Offline)
+            }
+            fn status(&self) -> PrinterStatus {
+                self.0.status()
+            }
+        }
+
+        let printer = Arc::new(SimulatedPrinter::new());
+        *printer.force_status.lock().unwrap() = PrinterStatus::PaperOut;
+        let (_dir, register) = shop_with(Arc::new(Jammed(Arc::clone(&printer))));
+        let sale = settled(&register);
+        let answer = finalize(&register).unwrap();
+        assert_eq!(answer.receipt, ReceiptOutcome::Refused);
+        assert_eq!(answer.drawer, DrawerOutcome::Failed);
+        assert!(completed(&register, sale));
+        assert!(printer.printed.lock().unwrap().is_empty());
+        let job = register.with_db(|conn| {
+            ReceiptRepository::new(conn)
+                .unprinted()
+                .unwrap()
+                .into_iter()
+                .next()
+                .unwrap()
+        });
+        assert_eq!(
+            job.state,
+            JobState::Failed,
+            "the printer took no byte of it"
+        );
+        assert!(
+            job.next_attempt_at.is_some(),
+            "the refused receipt waits in the queue for its retry"
+        );
+
+        // A printer that goes silent mid-receipt: paper may exist, so a
+        // person answers, and the drawer, which works, opens once.
+        let printer = Arc::new(SimulatedPrinter::new());
+        printer.script(Fault::SilentAfter(16));
+        let (_dir, register) = shop_with(Arc::clone(&printer) as Arc<dyn ReceiptPrinter>);
+        let sale = settled(&register);
+        let answer = finalize(&register).unwrap();
+        assert_eq!(answer.receipt, ReceiptOutcome::Unconfirmed);
+        assert_eq!(answer.drawer, DrawerOutcome::Opened);
+        assert_eq!(*printer.drawer_opens.lock().unwrap(), 1);
+        assert!(completed(&register, sale));
+    }
+
+    /// A completed sale's facts are named by exactly one commit, and that
+    /// commit is ready: its manifest names the sale, its supply context, each
+    /// line, tax component, summary row, tender and first tender event, each
+    /// line's stock event, the original receipt and the audit row, and each
+    /// member has its delivery row.
+    #[test]
+    fn a_complete_sale_has_one_ready_commit_manifest() {
+        let (_dir, register) = shop();
+        let sale = settled(&register);
+        finalize(&register).unwrap();
+        register.with_db(|conn| {
+            let id = sale.as_uuid().as_bytes().to_vec();
+            let commit: Vec<u8> = conn
+                .query_row("SELECT sync_commit_id FROM sale WHERE id = ?1", [&id], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            let ready: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM sync_commit_ready WHERE id = ?1",
+                    [&commit],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(ready, 1, "the sale's commit is ready");
+            let mut by_entity: BTreeMap<String, i64> = BTreeMap::new();
+            let mut statement = conn
+                .prepare("SELECT entity, count(*) FROM fact_commit_member WHERE commit_id = ?1 GROUP BY entity")
+                .unwrap();
+            for row in statement
+                .query_map([&commit], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+            {
+                let (entity, n) = row.unwrap();
+                by_entity.insert(entity, n);
+            }
+            let expected: BTreeMap<String, i64> = [
+                ("audit_log", 1),
+                ("receipt_artifact", 1),
+                ("sale", 1),
+                ("sale_line", 2),
+                ("sale_line_tax", 2),
+                ("sale_supply_tax_context", 1),
+                ("sale_tax_summary", 1),
+                ("sale_tender", 2),
+                ("stock_ledger", 2),
+                ("tender_status_event", 2),
+            ]
+            .into_iter()
+            .map(|(entity, n)| (entity.to_owned(), n))
+            .collect();
+            assert_eq!(by_entity, expected);
+            let members: i64 = expected.values().sum();
+            let delivered: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM sync_outbox o
+                       JOIN fact_commit_member m ON m.change_id = o.change_id
+                      WHERE m.commit_id = ?1",
+                    [&commit],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(delivered, members, "every member has its delivery row");
+            for (table, key) in [
+                ("sale_line", "sale_id"),
+                ("receipt_artifact", "sale_id"),
+                ("stock_ledger", "ref_id"),
+            ] {
+                let missing: i64 = conn
+                    .query_row(
+                        &format!(
+                            "SELECT count(*) FROM {table} f WHERE f.{key} = ?1 AND NOT EXISTS (
+                               SELECT 1 FROM fact_commit_member m
+                                WHERE m.commit_id = ?2 AND m.entity = '{table}'
+                                  AND m.entity_id = f.id)"
+                        ),
+                        params![&id, &commit],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(missing, 0, "every {table} row of the sale is in its manifest");
+            }
+            let commits: i64 = conn
+                .query_row(
+                    "SELECT count(DISTINCT commit_id) FROM fact_commit_member WHERE entity_id = ?1",
+                    [&id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(commits, 1, "one commit names the sale");
+        });
+    }
+
+    /// An envelope that leaves out any one of the sale's facts never becomes
+    /// a ready commit beside a completed sale: the finalize is refused, and
+    /// nothing is written.
+    #[test]
+    fn no_ready_commit_omits_a_required_member() {
+        for entity in [
+            "sale",
+            "sale_supply_tax_context",
+            "sale_line",
+            "sale_line_tax",
+            "sale_tax_summary",
+            "sale_tender",
+            "tender_status_event",
+            "stock_ledger",
+            "receipt_artifact",
+            "audit_log",
+        ] {
+            let (_dir, register) = shop();
+            let sale = settled(&register);
+            let before = written(&register);
+            let seam = Seam {
+                drop_entity: Some(entity),
+                ..Seam::default()
+            };
+            assert!(
+                finalize_with(&register, &seam).is_err(),
+                "an envelope without its {entity} is refused"
+            );
+            assert_eq!(
+                written(&register),
+                before,
+                "nothing written without {entity}"
+            );
+            assert!(!completed(&register, sale), "without {entity}");
+        }
+    }
+
+    /// The finalize reads the acting user again inside its transaction: an
+    /// account deactivated, or deleted, after the command's context let it in
+    /// is refused before any financial write.
+    #[test]
+    fn deactivated_user_denied() {
+        for meddle in [
+            "UPDATE app_user SET is_active = 0 WHERE id = ?1",
+            "UPDATE app_user SET deleted_at = '2026-11-05T09:00:00.000Z' WHERE id = ?1",
+        ] {
+            let (_dir, register) = shop();
+            let sale = settled(&register);
+            let before = written(&register);
+            let seam = Seam {
+                meddle_at: Some((FinalizeWritePoint::Journal, meddle)),
+                ..Seam::default()
+            };
+            assert_eq!(
+                refusal(finalize_with(&register, &seam)).code,
+                "user_inactive",
+                "{meddle}"
+            );
+            assert_eq!(written(&register), before, "{meddle}");
+            assert!(!completed(&register, sale), "{meddle}");
+        }
+    }
+
+    /// The journal's row goes in the transaction that completes the sale:
+    /// gone with the sale, and still there, as the finalize left it, when the
+    /// commit itself fails.
+    #[test]
+    fn finalize_removes_the_checkout_operation_in_the_same_commit() {
+        let (_dir, register) = shop();
+        let sale = settled(&register);
+        let seam = Seam {
+            fail_at: Some(FinalizeWritePoint::Commit),
+            ..Seam::default()
+        };
+        assert!(finalize_with(&register, &seam).is_err());
+        assert_eq!(journal(&register, sale), Some("finalizing"));
+        assert!(!completed(&register, sale));
+
+        finalize(&register).unwrap();
+        assert_eq!(journal(&register, sale), None);
+        assert_eq!(basket(&register, sale), None, "the basket became the sale");
+        assert!(completed(&register, sale));
+    }
+
+    /// The tender suite's cash sale, end to end with no printer attached: the
+    /// sale reads back as it was paid for, numbered, with its stock moved, its
+    /// original receipt rendered for the register's profile and queued, its
+    /// audit row recording the drawer it asked for, and the till free.
+    #[test]
+    fn a_cash_sale_completes_with_its_receipt_rendered_and_queued() {
+        let (_dir, register) = shop();
+        let sale = settled(&register);
+        let answer = finalize(&register).unwrap();
+        assert_eq!(
+            answer,
+            CompletedSaleRef {
+                sale_id: sale,
+                receipt_number: "REG01-000001".to_owned(),
+                currency: "JOD",
+                total_minor: 2_110,
+                change_minor: 3_890,
+                receipt: ReceiptOutcome::Queued,
+                drawer: DrawerOutcome::NoDevice,
+            }
+        );
+        assert_eq!(current(&register).unwrap(), None, "the till is free");
+
+        register.with_db(|conn| {
+            let record = SaleRepository::new(conn).by_id(sale).unwrap().unwrap();
+            let done = record.sale();
+            assert_eq!(done.receipt_number(), "REG01-000001");
+            assert_eq!(done.change().minor(), 3_890);
+            assert_eq!(done.tenders().len(), 2);
+
+            let stock = StockRepository::new(conn);
+            let store = register.store();
+            assert_eq!(
+                stock
+                    .position(product_id(OIL), store)
+                    .unwrap()
+                    .on_hand
+                    .milli(),
+                9_000
+            );
+            assert_eq!(
+                stock
+                    .position(product_id(CHEESE), store)
+                    .unwrap()
+                    .on_hand
+                    .milli(),
+                399
+            );
+
+            let receipts = ReceiptRepository::new(conn);
+            let original = receipts
+                .artifact(&record.original_receipt().unwrap().into_bytes())
+                .unwrap()
+                .unwrap()
+                .artifact;
+            assert_eq!(original.printer_profile, "simulator-80mm");
+            assert_eq!(original.template_version, TEMPLATE_VERSION);
+            let kinds = TenderTypeRepository::new(conn).kinds().unwrap();
+            let profile = StoreRepository::new(conn).profile(store).unwrap();
+            let context = receipt_context(
+                &profile,
+                &kinds,
+                "REG01",
+                "Synthetic Cashier".to_owned(),
+                FiscalStanding::Exempt,
+            );
+            let model = build_receipt_model(done, &context).unwrap();
+            assert_eq!(model.totals.total.minor(), 2_110);
+            let device = PrinterProfile::simulator(PaperWidth::Mm80);
+            let expected =
+                escpos::encode(&render_receipt(&model, PaperWidth::Mm80).unwrap(), &device)
+                    .unwrap();
+            assert!(
+                original.content_bytes == expected,
+                "the original is the sale's own receipt, rendered for the register's profile"
+            );
+            assert_eq!(
+                receipts.unprinted().unwrap().len(),
+                1,
+                "queued for a printer"
+            );
+
+            let (action, payload): (String, String) = conn
+                .query_row(
+                    "SELECT action, payload FROM audit_log WHERE entity_id = ?1",
+                    [sale.as_uuid().as_bytes().as_slice()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(action, FINALIZE_ACTION);
+            let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+            assert_eq!(*field(&payload, "receipt_number"), "REG01-000001");
+            assert_eq!(*field(&payload, "total_minor"), 2_110);
+            assert_eq!(
+                *field(&payload, "drawer"),
+                "requested",
+                "cash opens the drawer"
+            );
+        });
+    }
+
+    /// What could never complete is refused before the journal is touched, so
+    /// the sale is still being paid for, exactly as it was.
+    #[test]
+    fn a_finalize_refuses_what_could_never_complete_and_writes_nothing() {
+        let (_dir, register) = shop();
+        open_cart(&register).unwrap();
+        add_product(&register, product_id(OIL), None).unwrap();
+        let paying = begin_payment(&register).unwrap();
+        add_cash(&register, 1_000).unwrap();
+        let before = written(&register);
+        assert_eq!(refusal(finalize(&register)).code, "sale_not_settled");
+        assert_eq!(written(&register), before);
+        assert_eq!(journal(&register, paying.sale_id), Some("tendering"));
+        add_cash(&register, 250).unwrap();
+
+        for (meddle, code) in [
+            (
+                "UPDATE store SET gst_profile = 'unregistered'",
+                "store_not_gst_registered",
+            ),
+            (
+                "UPDATE store SET fiscal_obligation = 'pending_evidence', \
+                 fiscal_obligation_evidence_ref = NULL",
+                "fiscal_obligation_undecided",
+            ),
+        ] {
+            let before = written(&register);
+            let saved: (String, String, Option<String>) = register.with_db(|conn| {
+                conn.query_row(
+                    "SELECT gst_profile, fiscal_obligation, fiscal_obligation_evidence_ref FROM store",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap()
+            });
+            register.with_db(|conn| conn.execute(meddle, []).unwrap());
+            assert_eq!(refusal(finalize(&register)).code, code);
+            assert_eq!(written(&register), before, "{code}");
+            assert_eq!(
+                journal(&register, paying.sale_id),
+                Some("tendering"),
+                "{code}"
+            );
+            register.with_db(|conn| {
+                conn.execute(
+                    "UPDATE store SET gst_profile = ?1, fiscal_obligation = ?2,
+                                      fiscal_obligation_evidence_ref = ?3",
+                    params![saved.0, saved.1, saved.2],
+                )
+                .unwrap()
+            });
+        }
+        assert_eq!(finalize(&register).unwrap().total_minor, 1_250);
+    }
+}

@@ -379,6 +379,16 @@ mod tests {
                 "total_minor": 1_250,
             });
             tracing::info!(receipt = %receipt, price_mode = ?PriceMode::Inclusive, profile = ?StoreTaxProfile::Standard, rule = ?RoundingRule::HalfAwayFromZero, "receipt built");
+            // The finalize's own line (1.8.3), as it logs a completed sale.
+            crate::commands::sale::trace_finalized(&crate::commands::sale::CompletedSaleRef {
+                sale_id: cart.id,
+                receipt_number: "REG01-000001".to_owned(),
+                currency: "JOD",
+                total_minor: 1_250,
+                change_minor: 0,
+                receipt: crate::commands::sale::ReceiptOutcome::Queued,
+                drawer: crate::commands::sale::DrawerOutcome::NoDevice,
+            });
             let failure = crate::ipc::IpcError::from_source(
                 "sale_finalize_failed",
                 "error.sale.finalize",
@@ -396,6 +406,10 @@ mod tests {
         assert!(
             log.contains("SYNTH-TIN-999") && log.contains("sale_finalize_failed"),
             "{log}"
+        );
+        assert!(
+            log.contains("sale finalized") && log.contains("REG01-000001"),
+            "the finalize's own line is in the trace: {log}"
         );
         assert!(log.lines().count() >= 5, "{log}");
     }
