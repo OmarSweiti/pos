@@ -122,6 +122,14 @@ impl SequenceScope {
     }
 }
 
+/// A number a prefixed counter issued, and the prefix the counter carries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Issued {
+    pub value: u64,
+    /// The prefix the counter's first number fixed.
+    pub prefix: String,
+}
+
 /// Reads and advances the register's owned counters.
 pub struct SequenceRepository<'c> {
     conn: &'c Connection,
@@ -171,6 +179,69 @@ impl<'c> SequenceRepository<'c> {
         )?;
 
         u64::try_from(issued).map_err(|_| DbError::SequenceValueInvalid { found: issued })
+    }
+
+    /// Take the next number for `scope`/`kind` under `prefix`, inside the
+    /// caller's transaction, as [`Self::next`] does.
+    ///
+    /// **The prefix is fixed by the counter's first number** (1.9.3). The
+    /// first allocation stores `prefix` beside the counter; every later one
+    /// returns the prefix stored there, whatever `prefix` it is handed. So a
+    /// register whose code changes keeps numbering under the prefix its
+    /// receipts already carry, and [`Self::gaps`] keeps reading every one of
+    /// them.
+    ///
+    /// # Errors
+    ///
+    /// What [`Self::next`] refuses; [`DbError::SequencePrefixInvalid`] for an
+    /// empty prefix, or one holding whitespace or a control character, which a
+    /// cashier could not type back to find the document; and
+    /// [`DbError::SequencePrefixMissing`] for a counter that already issued
+    /// numbers with no prefix, which no prefix can now be put in front of
+    /// without making its gap report a guess. On an error the caller rolls its
+    /// transaction back, and the number is not spent.
+    pub fn next_prefixed(
+        &self,
+        tx: &Transaction<'_>,
+        scope: SequenceScope,
+        kind: SeqKind,
+        prefix: &str,
+    ) -> Result<Issued, DbError> {
+        if prefix.is_empty() || prefix.chars().any(|c| c.is_whitespace() || c.is_control()) {
+            return Err(DbError::SequencePrefixInvalid {
+                kind: kind.as_str(),
+            });
+        }
+        if kind == SeqKind::FiscalIcv {
+            return Err(DbError::SequenceNotYetAllocatable {
+                kind: kind.as_str(),
+            });
+        }
+        self.check_scope(scope, kind)?;
+
+        // One statement, as in `next`: the insert branch stores the prefix
+        // with the first number, and the update branch advances the counter
+        // and leaves the stored prefix as it is.
+        let (issued, stored): (i64, String) = tx.query_row(
+            "INSERT INTO doc_sequence (scope_kind, scope_id, kind, next_value, prefix)
+             VALUES (?1, ?2, ?3, 2, ?4)
+             ON CONFLICT (scope_kind, scope_id, kind)
+             DO UPDATE SET next_value = next_value + 1
+             RETURNING next_value - 1, prefix",
+            params![scope.as_str(), scope.id_bytes(), kind.as_str(), prefix],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if stored.is_empty() {
+            return Err(DbError::SequencePrefixMissing {
+                kind: kind.as_str(),
+            });
+        }
+        let value =
+            u64::try_from(issued).map_err(|_| DbError::SequenceValueInvalid { found: issued })?;
+        Ok(Issued {
+            value,
+            prefix: stored,
+        })
     }
 
     /// The numbers this counter issued that no document carries.

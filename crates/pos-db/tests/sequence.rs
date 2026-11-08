@@ -449,6 +449,102 @@ fn next_preserves_the_row_it_does_not_own() {
     );
 }
 
+/// 1.9.3: the counter's first number fixes its prefix. A later allocation
+/// handed another prefix, as a register whose code changed would hand it,
+/// keeps numbering under the one its receipts already carry, and the gap
+/// report still reads every number.
+#[test]
+fn next_prefixed_fixes_the_prefix_at_the_first_number() {
+    let r = register("prefix-fixed.db");
+    let sequences = SequenceRepository::new(&r.conn);
+
+    let tx = r.conn.unchecked_transaction().unwrap();
+    let first = sequences
+        .next_prefixed(&tx, r.scope, SeqKind::Receipt, "REG01-")
+        .unwrap();
+    let second = sequences
+        .next_prefixed(&tx, r.scope, SeqKind::Receipt, "REG07-")
+        .unwrap();
+    tx.commit().unwrap();
+    assert_eq!(
+        (first.value, first.prefix.as_str()),
+        (1, "REG01-"),
+        "the first number stores the prefix it was handed"
+    );
+    assert_eq!(
+        (second.value, second.prefix.as_str()),
+        (2, "REG01-"),
+        "a later number keeps the stored prefix, whatever it is handed"
+    );
+
+    write_sale(&r.conn, 1, "REG01-000001");
+    assert_eq!(
+        SequenceRepository::new(&r.conn)
+            .gaps(r.scope, SeqKind::Receipt)
+            .unwrap(),
+        vec![2],
+        "the gap report strips the stored prefix off every number it reads"
+    );
+}
+
+/// A prefix is printed on every receipt and typed back to find one, so an
+/// empty one, or one with a space or a control character in it, is refused
+/// before the counter moves.
+#[test]
+fn next_prefixed_refuses_a_prefix_a_cashier_cannot_type() {
+    let r = register("prefix-invalid.db");
+    let sequences = SequenceRepository::new(&r.conn);
+    for prefix in ["", "REG 01-", "REG01-\n", "REG01-\u{7}"] {
+        let tx = r.conn.unchecked_transaction().unwrap();
+        let refused = sequences
+            .next_prefixed(&tx, r.scope, SeqKind::Receipt, prefix)
+            .expect_err("a prefix a cashier cannot type back is refused");
+        assert!(
+            matches!(refused, DbError::SequencePrefixInvalid { kind: "receipt" }),
+            "{prefix:?} is refused by name, not as {}",
+            message(&refused)
+        );
+        tx.rollback().unwrap();
+    }
+    let rows: i64 = r
+        .conn
+        .query_row("SELECT count(*) FROM doc_sequence", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(rows, 0, "no refused prefix started a counter");
+}
+
+/// A counter that already numbered documents with no prefix cannot have one
+/// put in front of it: the numbers it issued would no longer carry the prefix
+/// its gap report strips. Refused by name, and once the caller rolls back the
+/// number is not spent.
+#[test]
+fn next_prefixed_refuses_a_counter_that_numbered_without_a_prefix() {
+    let r = register("prefix-missing.db");
+    let sequences = SequenceRepository::new(&r.conn);
+    let tx = r.conn.unchecked_transaction().unwrap();
+    sequences.next(&tx, r.scope, SeqKind::Receipt).unwrap();
+    tx.commit().unwrap();
+
+    let tx = r.conn.unchecked_transaction().unwrap();
+    let refused = sequences
+        .next_prefixed(&tx, r.scope, SeqKind::Receipt, "REG01-")
+        .expect_err("an unprefixed counter cannot gain a prefix");
+    assert!(
+        matches!(refused, DbError::SequencePrefixMissing { kind: "receipt" }),
+        "refused by name, not as {}",
+        message(&refused)
+    );
+    tx.rollback().unwrap();
+
+    let tx = r.conn.unchecked_transaction().unwrap();
+    assert_eq!(
+        sequences.next(&tx, r.scope, SeqKind::Receipt).unwrap(),
+        2,
+        "the refused allocation spent no number"
+    );
+    tx.rollback().unwrap();
+}
+
 /// `doc_sequence_monotonic` accepts exactly `+1`, which is what makes the
 /// upsert in `next()` legal and every other step illegal.
 #[test]

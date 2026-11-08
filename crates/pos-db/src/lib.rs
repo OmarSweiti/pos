@@ -110,6 +110,16 @@ pub enum DbError {
     )]
     SequenceNumberUnreadable { found: String },
     #[error(
+        "a {kind} prefix must be non-empty and hold no whitespace or control \
+         character, because a cashier types it back to find the document"
+    )]
+    SequencePrefixInvalid { kind: &'static str },
+    #[error(
+        "this {kind} counter already issued numbers with no prefix, and none can \
+         be put in front of them now without making its gap report a guess"
+    )]
+    SequencePrefixMissing { kind: &'static str },
+    #[error(
         "refusing to write a delivery envelope with no members: a business \
          transaction that produced no fact has nothing to deliver (I-9)"
     )]
