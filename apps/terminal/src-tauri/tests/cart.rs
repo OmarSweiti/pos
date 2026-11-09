@@ -27,6 +27,8 @@ use terminal_lib::commands::cart::{
     CartSnapshot, PARK_LABEL_MAX_CHARS, ParkedRef, PriceChange, add_product, add_scan, answer_age,
     current, list_parked, open_cart, override_line_price, park_cart, resume_cart,
 };
+use terminal_lib::commands::sale::finalize;
+use terminal_lib::commands::tender::{add_cash, begin_payment};
 use terminal_lib::ipc::IpcError;
 use terminal_lib::ipc::context::merchant_policy;
 use terminal_lib::state::Register;
@@ -625,6 +627,44 @@ fn another_cashiers_basket_is_resumed_on_the_record() {
     assert_eq!(actor, SECOND_ID.to_vec());
     assert_eq!(entity_id, basket.sale_id.as_uuid().as_bytes().to_vec());
     assert_eq!(enveloped, 1);
+}
+
+/// #397: a basket taken over from another cashier is paid for and completes.
+/// The takeover's row names the basket, `parked_cart`, under the sale's id: a
+/// row naming the `sale` would have to travel in the sale's own commit, which
+/// a row written before the finalize cannot, and the completion would be
+/// refused for ever.
+#[test]
+fn a_basket_taken_over_from_another_cashier_still_completes() {
+    let (_dir, register) = shop();
+    add_staff(
+        &register,
+        SECOND_ID,
+        SECOND_CODE,
+        "Synthetic Second Cashier",
+        "cashier",
+    );
+    open_cart(&register).unwrap();
+    let basket = add_product(&register, product_id(OIL), None).unwrap();
+    logout(&register).unwrap();
+    login_pin(&register, SECOND_CODE, CASHIER_PIN).unwrap();
+    resume_cart(&register, basket.sale_id).unwrap();
+    begin_payment(&register).unwrap();
+    assert!(add_cash(&register, 1_250).unwrap().settled);
+
+    let done = finalize(&register).unwrap();
+    assert_eq!(done.sale_id, basket.sale_id);
+    assert_eq!(done.receipt_number, "REG01-000001");
+    let (entity, entity_id): (String, Vec<u8>) = register.with_db(|conn| {
+        conn.query_row(
+            "SELECT entity, entity_id FROM audit_log WHERE action = 'sale.resume'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap()
+    });
+    assert_eq!(entity, "parked_cart");
+    assert_eq!(entity_id, basket.sale_id.as_uuid().as_bytes().to_vec());
 }
 
 #[test]

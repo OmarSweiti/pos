@@ -322,8 +322,9 @@ through `cart_add_scan` as a typed `ScanLookup::PriceEmbedded`.
 **`cart_resume` is audited only when it takes over another cashier's cart.** Whoever holds
 `sale.resume` at the cart's own register may resume any cart parked there, whoever parked it (the
 owner's decision on #363); there is no manager escalation, so **E** stays blank. A cashier coming back
-to their own customer writes nothing. Resuming another's basket writes `sale.resume` on the `sale`,
-naming who parked it and how many lines it held, in the same transaction as the claim and with its
+to their own customer writes nothing. Resuming another's basket writes `sale.resume` on the basket,
+`parked_cart`, under the sale's id (#397: a row naming the `sale` must travel in the sale's own
+commit, which a row written before the finalize cannot), naming who parked it and how many lines it held, in the same transaction as the claim and with its
 delivery envelope, so the handover is on the record the moment the basket changes hands. A cart
 parked on an earlier business day is refused as expired (master plan C.2) and is not offered by
 `cart_list_parked`.
