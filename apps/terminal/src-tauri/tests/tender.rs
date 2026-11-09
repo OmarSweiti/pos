@@ -23,6 +23,7 @@ use terminal_lib::commands::auth::{login_pin, logout};
 use terminal_lib::commands::cart::{
     CartSnapshot, add_product, answer_age, current, open_cart, park_cart, resume_cart,
 };
+use terminal_lib::commands::sale::finalize;
 use terminal_lib::commands::tender::{
     PaymentSnapshot, RoundingLine, add_cash, back_to_cart, begin_payment, in_flight, take_back,
 };
@@ -285,6 +286,34 @@ fn cash_settles_at_the_coin_step_and_gives_change() {
     // Nothing more is owed.
     assert_eq!(refusal(add_cash(&register, COIN)).code, "sale_settled");
     assert_eq!(journalled(&register, sale), (2, 2));
+}
+
+/// #397: a sale with a tender taken back still completes. The removal's row
+/// names the sale's basket, `parked_cart`, under the sale's id: a row naming
+/// the `sale` would have to travel in the sale's own commit, which a row
+/// written before the finalize cannot, and the completion would be refused for
+/// ever with the money taken.
+#[test]
+fn a_sale_with_a_tender_taken_back_still_completes() {
+    let (_dir, register) = shop();
+    let paying = odd_basket(&register);
+    let taken = add_cash(&register, 1_000).unwrap();
+    take_back(&register, taken.tenders.first().unwrap().tender_id).unwrap();
+    assert!(add_cash(&register, 5_000).unwrap().settled);
+
+    let done = finalize(&register).unwrap();
+    assert_eq!(done.sale_id, paying.sale_id);
+    assert_eq!(done.receipt_number, "REG01-000001");
+    let (entity, entity_id): (String, Vec<u8>) = register.with_db(|conn| {
+        conn.query_row(
+            "SELECT entity, entity_id FROM audit_log WHERE action = 'tender.remove'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap()
+    });
+    assert_eq!(entity, "parked_cart");
+    assert_eq!(entity_id, paying.sale_id.as_uuid().as_bytes().to_vec());
 }
 
 #[test]

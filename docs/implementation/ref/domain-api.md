@@ -1659,6 +1659,16 @@ pub struct CartLine {
 > }
 > ```
 
+> **Fixed, 9 November 2026 (#397): an intent made before a sale completes names its basket.**
+> `discount.manual` on the basket, `sale.department`, `sale.resume` and `tender.remove` each name
+> `BASKET_ENTITY`, `parked_cart`, under the sale's own id, by the owner's decision of 9 November
+> 2026. Each had named the `sale`. But `0005`'s `sale_commit_base_complete` holds a completing sale
+> to every audit row naming it, each a member of the sale's own commit. A row written while the
+> basket is built or paid for is already in a commit of its own, as `audit_log` requires the moment
+> it is written, so a tender taken back, or a basket taken over, refused that sale's completion for
+> ever. The completion rule is unchanged, and so is every approval binding, which is by id.
+> `sale.void` still names the `sale`, because a void ends one.
+
 ### 6.1 Transitions — [1.4.3 … 1.4.8]
 
 Every one is a free function taking the state by value and returning the next state or an error. No method mutates in place; no transition is reachable from the wrong state because the wrong state is a different type.
@@ -1786,7 +1796,8 @@ pub fn apply_line_discount(cart: Cart, line: SaleLineId, request: DiscountReques
 /// cap on its own. A line's discount and the basket's may both apply, each within
 /// the cap (the owner's decision, 29 October 2026). Above the cap it needs a
 /// handle bound to the sale (`entity_id` is the sale's id) and the amount, and its
-/// intent is `discount.manual` on the `sale`. A share keeps its share as the
+/// intent is `discount.manual` on the sale's basket (`BASKET_ENTITY`). A share keeps its share
+/// as the
 /// basket changes. An amount off is cleared by any change that lowers the basket's
 /// value, `void_line`, a declining `confirm_age`, a lower `set_qty` or a line
 /// discount (the owner's decision), so it never outgrows the basket or its cap.
@@ -1836,7 +1847,8 @@ pub fn override_price(cart: Cart, line: SaleLineId, to: Money, reason: OverrideR
 /// As delivered at 1.4.12 it takes the `approval` a line above the threshold
 /// needs, as the discounts do (1.4.5), bound to the sale and the amount and
 /// checked at `auth.at()` for `auth.actor()`. The phase file's `actor` and `now`
-/// are the proof's. The intent is `sale.department` on the `sale`. See §6.5.
+/// are the proof's. The intent is `sale.department` on the sale's basket
+/// (`BASKET_ENTITY`). See §6.5.
 pub fn add_department_line(cart: Cart, req: AddLine, policy: &DepartmentPolicy,
                            auth: &Authorized<cap::DepartmentSale>,
                            approval: Option<&ApprovalHandle>)
@@ -1869,7 +1881,7 @@ pub fn resume(parked: ParkedCart, till: &CartContext, auth: &Authorized<cap::Sal
 /// As delivered at 1.8.2b. `resume` takes the till cashier's proof of
 /// `sale.resume`: whoever holds it at the cart's own register may resume the
 /// cart, whoever parked it (the owner's decision on #363). A cart parked by
-/// another cashier comes back with a `sale.resume` intent on the `sale`, whose
+/// another cashier comes back with a `sale.resume` intent on its basket (`BASKET_ENTITY`), whose
 /// payload names who parked it (`parked_by`) and its `line_count`; a cashier's
 /// own cart comes back with none. A proof that is not the till's own cashier's
 /// is `ResumedByAnotherThanTheTill`.
@@ -1895,7 +1907,8 @@ pub fn add_tender(t: Tendering, tender: Tender)      -> Result<Tendering, CartEr
 /// is decided again. A tender the removal leaves unable to stand is refused
 /// until it is removed first. As delivered at 1.4.10: taking back a collected
 /// tender reverses money, so it takes `sale.create`'s proof, as `tender_remove`
-/// requires, and returns a `tender.remove` intent on the `sale`. Its payload is
+/// requires, and returns a `tender.remove` intent on the sale's basket (`BASKET_ENTITY`). Its
+/// payload is
 /// the tender, its kind, amount and provider reference, and what is owed once
 /// it is gone.
 pub fn remove_tender(t: Tendering, id: TenderId, auth: &Authorized<cap::SaleCreate>)
@@ -2188,7 +2201,9 @@ Tests: `department_line_carries_its_department_tax_category` · `department_line
 > `escalate_above` with no approval as `DepartmentNeedsApproval`. With an approval, the line goes in
 > only when the handle is the department sale's, for this actor, this sale and this amount. Every line
 > returns its intent, `sale.department` on the `sale`. That is the entity a handle is bound to, and
-> its reason is the handle's when one was consumed. Its payload is the line, the department, the tax
+> its reason is the handle's when one was consumed. *(Since #397 the intent names the sale's basket,
+> `parked_cart`, under the same id; a handle binds the id, so nothing else changed. §6's note on
+> `BASKET_ENTITY` says why.)* Its payload is the line, the department, the tax
 > category, the amount, the scanned code and both limits, and it joins 1.4.10's list as privileged.
 > `department_line_writes_no_stock_event` is 1.8.3's, where stock is written; this step's
 > `department_line_is_marked_non_stock` holds the domain's half. **Nothing stores a department yet.**
