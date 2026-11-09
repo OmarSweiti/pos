@@ -13,7 +13,7 @@ use pos_db::DbError;
 use pos_db::fixtures::registered_chain::Member;
 use pos_db::repo::audit::AuditRepository;
 use pos_db::repo::parked_cart::{ParkedCartRepository, Resumed, SetAside};
-use pos_domain::cart::{ParkedCart, park, set_qty};
+use pos_domain::cart::{BASKET_ENTITY, ParkedCart, park, set_qty};
 use pos_domain::{
     ApprovalBinding, Authorized, CartContext, CartError, Currency, EscalationPolicy, GrantSet,
     PermissionError, Qty, RegisterId, Role, SaleId, ShiftId, Tender, TenderId, TenderState, UserId,
@@ -404,8 +404,11 @@ fn another_actor_cannot_resume_without_the_required_grant() {
     let audited: (Vec<u8>, String) = world
         .conn
         .query_row(
-            "SELECT actor_id, action FROM audit_log WHERE entity = 'sale' AND entity_id = ?1",
-            [theirs.cart().id.as_uuid().as_bytes().as_slice()],
+            "SELECT actor_id, action FROM audit_log WHERE entity = ?1 AND entity_id = ?2",
+            params![
+                BASKET_ENTITY,
+                theirs.cart().id.as_uuid().as_bytes().as_slice()
+            ],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
