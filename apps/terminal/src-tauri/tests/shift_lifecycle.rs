@@ -22,7 +22,7 @@ use shop::{
     add_staff, audited, field, product_id, refusal, seed, states,
 };
 use terminal_lib::commands::auth::{login_pin, logout};
-use terminal_lib::commands::cart::{add_product, list_parked, open_cart, resume_cart};
+use terminal_lib::commands::cart::{add_product, current, list_parked, open_cart, resume_cart};
 use terminal_lib::commands::sale::{CompletedSaleRef, finalize};
 use terminal_lib::commands::shift::{
     DenominationCount, ShiftSnapshot, begin_shift, current_shift, end_shift,
@@ -603,6 +603,7 @@ fn closing_sets_the_tills_basket_aside_for_the_next_shift() {
     add_product(&register, product_id(OIL), None).unwrap();
     let closed = end_shift(&register, first.shift_id).unwrap();
     assert_eq!(closed.parked_cart, Some(basket.sale_id));
+    assert_eq!(current(&register).unwrap(), None, "the till holds nothing");
     assert_eq!(
         states(&register),
         vec![("parked".to_owned(), basket.sale_id)]
@@ -639,6 +640,7 @@ fn closing_sets_the_tills_basket_aside_for_the_next_shift() {
     begin_payment(&register).unwrap();
     let closed = end_shift(&register, second.shift_id).unwrap();
     assert_eq!(closed.parked_cart, Some(unpaid.sale_id));
+    assert_eq!(current(&register).unwrap(), None, "the till holds nothing");
     assert!(
         in_flight(&register).unwrap().is_empty(),
         "its checkout is abandoned"
