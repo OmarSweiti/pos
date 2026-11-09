@@ -466,8 +466,8 @@ pub fn add_line(cart: Cart, req: AddLine) -> Result<Cart, CartError> {
 ///   names its approver, its id and the reason it was given for. Below the
 ///   threshold none is needed and none is consumed.
 ///
-/// The intent is `sale.department` on the `sale`, the entity a handle is
-/// bound to. Its payload carries the line, the department, the tax category,
+/// The intent is `sale.department` on the sale's basket ([`BASKET_ENTITY`]),
+/// under the sale's id, which is what a handle is bound to. Its payload carries the line, the department, the tax category,
 /// the amount, the scanned code and the two limits it was held to. It is an
 /// amount a person typed, so a report of typed amounts reads it beside price
 /// overrides.
@@ -583,7 +583,7 @@ pub fn add_department_line(
         approver,
         approval: approval_id,
         action: cap::DepartmentSale::NAME,
-        entity: "sale",
+        entity: BASKET_ENTITY,
         entity_id: cart.id.as_uuid(),
         reason,
         payload: json!({
@@ -990,7 +990,7 @@ pub fn apply_basket_discount(
         approver,
         approval: approval_id,
         action: cap::DiscountManual::NAME,
-        entity: "sale",
+        entity: BASKET_ENTITY,
         entity_id: cart.id.as_uuid(),
         reason: Some(reason),
         payload: json!({
@@ -1487,6 +1487,19 @@ impl ParkedCart {
     }
 }
 
+/// The entity every audit intent made before a sale completes names: its
+/// basket, the register's `parked_cart` row, whose id is the sale's own.
+///
+/// A row naming the `sale` belongs to the sale's fact graph: `0005`'s
+/// `sale_commit_base_complete` holds a completing sale to every such row, each
+/// a member of the sale's own commit. A row written while the basket is built
+/// or paid for is already in a commit of its own, as `audit_log` requires the
+/// moment it is written, so naming the `sale` would refuse that sale's
+/// completion for ever. The basket's row is what the act changed, and the same
+/// id finds it beside the sale (#397, the owner's decision of 9 November
+/// 2026). A void names the `sale`, because it ends one.
+pub const BASKET_ENTITY: &str = "parked_cart";
+
 /// `cart` set aside exactly as it is, so the cashier can serve the next
 /// customer.
 ///
@@ -1518,8 +1531,8 @@ pub fn park(cart: Cart) -> Result<ParkedCart, CartError> {
 ///
 /// Whoever holds `sale.resume` at the cart's own register may resume it,
 /// whoever parked it (the owner's decision on #363, 1.8.2b). A cart another
-/// cashier parked comes back with a `sale.resume` intent on the `sale`, naming
-/// who parked it, so a report reads whose basket was taken over and by whom. A
+/// cashier parked comes back with a `sale.resume` intent on its basket
+/// ([`BASKET_ENTITY`]), naming who parked it, so a report reads whose basket was taken over and by whom. A
 /// cashier's own cart comes back with none.
 ///
 /// # Errors
@@ -1562,7 +1575,7 @@ pub fn resume(
         approver: auth.approver(),
         approval: auth.approval(),
         action: cap::SaleResume::NAME,
-        entity: "sale",
+        entity: BASKET_ENTITY,
         entity_id: cart.id.as_uuid(),
         reason: None,
         payload: json!({
@@ -2092,8 +2105,9 @@ pub fn add_tender(t: Tendering, tender: Tender) -> Result<Tendering, CartError> 
 /// proof of `sale.create`, as `tender_remove` requires, and it is audited.
 /// Cash taken, its tender removed and the sale then emptied line by line is
 /// how a sale leaves the drawer with nothing on record; the intent is the
-/// record. It names the sale, and in its payload the tender, its kind, amount
-/// and provider reference, and what is owed once it is gone. `tender_remove`
+/// record. It names the sale's basket ([`BASKET_ENTITY`]) under the sale's id,
+/// and in its payload the tender, its kind, amount and provider reference, and
+/// what is owed once it is gone. `tender_remove`
 /// takes no approval (`ref/ipc-contract.md` §3), and no handle could be
 /// consumed against this intent: its action is the act's own verb, not a
 /// capability.
@@ -2144,7 +2158,7 @@ pub fn remove_tender(
         approver: auth.approver(),
         approval: auth.approval(),
         action: "tender.remove",
-        entity: "sale",
+        entity: BASKET_ENTITY,
         entity_id: sale.as_uuid(),
         reason: None,
         payload: json!({
@@ -3656,7 +3670,7 @@ mod tests {
                 approver: None,
                 approval: None,
                 action: "sale.resume",
-                entity: "sale",
+                entity: BASKET_ENTITY,
                 entity_id: cart.id.as_uuid(),
                 reason: None,
                 payload: json!({
@@ -4211,7 +4225,10 @@ mod tests {
             (intent.actor, intent.approver, intent.approval),
             (cashier(), None, None)
         );
-        assert_eq!((intent.action, intent.entity), ("discount.manual", "sale"));
+        assert_eq!(
+            (intent.action, intent.entity),
+            ("discount.manual", BASKET_ENTITY)
+        );
         assert_eq!(intent.entity_id, sale());
         assert_eq!(intent.reason.as_deref(), Some("loyal_customer"));
         // 5% of 6.250 is 312.5 fils, which the store's rule rounds to 313.
@@ -6612,7 +6629,7 @@ mod tests {
         assert_eq!(rest.tenders(), &[tender(2, "cash", 300)]);
         assert_eq!(
             (intent.action, intent.entity, intent.entity_id),
-            ("tender.remove", "sale", id(1))
+            ("tender.remove", BASKET_ENTITY, id(1))
         );
         assert_eq!(
             (intent.actor, intent.approver, intent.approval, intent.at),
@@ -7166,7 +7183,7 @@ mod tests {
             let (_, intent) = sell(two_teas(), department_line(2, 2_500, code), None).unwrap();
             assert_eq!(
                 (intent.action, intent.entity, intent.entity_id),
-                ("sale.department", "sale", id(1))
+                ("sale.department", BASKET_ENTITY, id(1))
             );
             assert_eq!(
                 (intent.actor, intent.approver, intent.approval, intent.at),
