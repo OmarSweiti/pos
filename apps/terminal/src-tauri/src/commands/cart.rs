@@ -824,7 +824,7 @@ fn park_label(label: Option<&str>) -> IpcResult<Option<String>> {
 /// A resume the repository refused, as the screen is told it. A basket
 /// parked at another register is not this register's to offer, so it is
 /// answered as unknown here.
-fn resume_refused(error: &DbError) -> IpcError {
+pub(super) fn resume_refused(error: &DbError) -> IpcError {
     match error {
         DbError::ParkedCartNotFound(_)
         | DbError::ResumeRefused(CartError::ParkedOnAnotherRegister(_)) => {
@@ -866,7 +866,7 @@ pub(super) fn signed_in_as(session: Option<&Session>, actor: UserId) -> IpcResul
 
 /// The register's open shift: a sale is opened and resumed only in one,
 /// because a sale outside a shift has no business date.
-fn open_shift(conn: &Connection, register: &Register) -> IpcResult<Shift> {
+pub(super) fn open_shift(conn: &Connection, register: &Register) -> IpcResult<Shift> {
     ShiftRepository::new(conn)
         .current(register.register())
         .map_err(stored)?

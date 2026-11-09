@@ -57,6 +57,7 @@ ipc::registry::commands![
     commands::tender::tender_remove,
     commands::tender::tender_back_to_cart,
     commands::tender::sale_in_flight_state,
+    commands::tender::sale_resume_in_flight,
     commands::sale::sale_finalize,
 ];
 

@@ -25,27 +25,46 @@
 //! basket is allowed only while nothing is taken, and abandons the journal.
 //!
 //! **A sale left mid-payment** by a crash, or by the forced sign-out of an
-//! account no longer live, stays journalled until 1.8.4's recovery half
-//! resumes it (the owner's decision of 7 November 2026).
-//! `sale_in_flight_state` names every one at the register.
+//! account no longer live, stays journalled (the owner's decision of
+//! 7 November 2026). `sale_in_flight_state` names every one at the register,
+//! and `sale_resume_in_flight` takes one up on the till (1.8.4's recovery
+//! half, by the owner's decision of 9 November 2026). What it becomes is the
+//! domain's [`resume_in_flight`], from the journal alone:
+//!
+//! - **Nothing collected:** the checkout is abandoned, audited as
+//!   `checkout.abandon`, and the basket comes back to the till being built,
+//!   exactly as `cart_resume` brings back a parked one.
+//! - **Tenders taken:** the tender screen, with every one of them.
+//! - **The finalize begun:** the tender screen, settled, and `sale_finalize`
+//!   completes it under the journal's own idempotency key.
+//!
+//! Whoever can resume a basket at this register may take up another
+//! cashier's sale, and doing so writes `sale.resume` on the `sale`, as
+//! `cart_resume` does (#363). A sale with money taken stays its cashier's,
+//! because the journal and every tender in it are theirs.
 
 use pos_db::DbError;
 use pos_db::repo::checkout_operation::{CheckoutOperation, CheckoutOperationRepository};
+use pos_db::repo::parked_cart::ParkedCartRepository;
 use pos_db::repo::tender_type::TenderTypeRepository;
 use pos_db::tax_policy::TaxPolicyRepository;
-use pos_domain::cart::{add_tender, back_to_building, begin_tender, remove_tender};
+use pos_domain::cart::{
+    add_tender, back_to_building, begin_tender, remove_tender, resume_in_flight,
+};
 use pos_domain::{
-    AuditIntent, CartError, CashRoundingPolicy, InFlight, InFlightSale, Money, MoneyError, SaleId,
-    StoreId, Tender, TenderId, TenderState, Tendering, Timestamp, UserId, cap, change_due,
-    final_tender_rounding, is_settled, remaining_due, standard_tender_type,
+    AuditIntent, Authorized, Capability, CartContext, CartError, CashRoundingPolicy, Currency,
+    InFlight, InFlightSale, Money, MoneyError, Resumption, SaleId, StoreId, Tender, TenderId,
+    TenderState, Tendering, Timestamp, UserId, cap, change_due, final_tender_rounding, is_settled,
+    remaining_due, standard_tender_type,
 };
 use rusqlite::Connection;
 use serde::Serialize;
+use serde_json::json;
 use tauri::State;
 
 use super::cart::{
-    CartSnapshot, Screen, StockFlag, building, cart_refused, pricing, pricing_refused, proof,
-    signed_in_as, snapshot, stock_flags,
+    CartSnapshot, Screen, StockFlag, building, cart_refused, open_shift, pricing, pricing_refused,
+    proof, resume_refused, signed_in_as, snapshot, stock_flags,
 };
 use super::{audit, sqlite, stored};
 use crate::ipc::{IpcError, IpcResult};
@@ -53,6 +72,18 @@ use crate::state::{Locked, Paying, Register, Till, Working};
 
 /// The tender kind `tender_add_cash` takes.
 const CASH: &str = "cash";
+
+/// The entity every audit row written before a sale completes names: its
+/// basket's row, whose id is the sale's. A row naming the `sale` must travel
+/// in the sale's own commit (`0005`'s `sale_commit_base_complete`), which a
+/// row written before the finalize cannot (the owner's decision of
+/// 9 November 2026).
+const BASKET: &str = "parked_cart";
+
+/// The audit action a checkout abandoned at its resumption is recorded under:
+/// the act's own verb, because `sale.resume`, which the command takes, names
+/// the hand-over and not the discarding (1.4.10).
+pub const ABANDON_ACTION: &str = "checkout.abandon";
 
 /// A sale being paid for, as the tender screen shows it: every figure is the
 /// domain's, in the sale's minor units.
@@ -132,6 +163,21 @@ pub struct InFlightSummary {
     pub updated_at: Timestamp,
 }
 
+/// A journalled sale taken up on the till, as `sale_resume_in_flight` answers
+/// it: what the till now holds, by the stage the sale is at.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "stage", rename_all = "snake_case")]
+pub enum ResumedSale {
+    /// Nothing had been collected. The checkout was abandoned, and its basket
+    /// is on the till, being built.
+    Building { cart: CartSnapshot },
+    /// Tenders had been taken: the tender screen, with every one.
+    Tendering { payment: PaymentSnapshot },
+    /// The finalize had begun. `sale_finalize` completes it under the
+    /// checkout's own idempotency key, without taking another tender.
+    Finalizing { payment: PaymentSnapshot },
+}
+
 #[tauri::command]
 pub fn tender_begin(till: State<'_, Till>) -> IpcResult<PaymentSnapshot> {
     begin_payment(till.register()?)
@@ -155,6 +201,11 @@ pub fn tender_back_to_cart(till: State<'_, Till>) -> IpcResult<CartSnapshot> {
 #[tauri::command]
 pub fn sale_in_flight_state(till: State<'_, Till>) -> IpcResult<Vec<InFlightSummary>> {
     in_flight(till.register()?)
+}
+
+#[tauri::command]
+pub fn sale_resume_in_flight(till: State<'_, Till>, sale_id: SaleId) -> IpcResult<ResumedSale> {
+    resume_journalled(till.register()?, sale_id)
 }
 
 /// `tender_begin`: begin paying for the till's basket. Its stock is screened
@@ -313,17 +364,207 @@ pub fn in_flight(register: &Register) -> IpcResult<Vec<InFlightSummary>> {
     };
     CheckoutOperationRepository::new(&till.db)
         .in_flight(register.register())
-        .map_err(|error| match error {
-            DbError::StoredCheckoutInvalid { .. } => IpcError::from_source(
-                "checkout_unreadable",
-                "error.tender.checkout_unreadable",
-                &error,
-            ),
-            other => stored(other),
-        })?
+        .map_err(journal_refused)?
         .iter()
         .map(|operation| summary(operation, on_till))
         .collect()
+}
+
+/// `sale_resume_in_flight`: take up `sale_id`, journalled mid-payment at this
+/// register by a crash or a forced sign-out, on this till. A basket the till
+/// is building is set aside first, in the same transaction, as `cart_resume`
+/// sets it aside. What the sale becomes is [`resume_in_flight`]'s answer:
+///
+/// - **Nothing collected:** the checkout is abandoned and `checkout.abandon`
+///   audited. The basket is parked and resumed onto the till in the same
+///   transaction, through `cart_resume`'s own rules: on the open shift,
+///   under the signed-in cashier, refused once its business day has passed,
+///   and a takeover audited as `sale.resume`.
+/// - **Tenders taken, or the finalize begun:** the till holds the sale under
+///   the journal's key and version, and nothing is written but a takeover's
+///   `sale.resume`. The journal, the basket's row and every tender stay as
+///   they are, so `sale_finalize` replays the begun finalize rather than
+///   begin another.
+///
+/// # Errors
+///
+/// What the context refuses; `sale_being_paid` while the till is paying for
+/// a sale, which cannot be set aside; `sale_not_in_flight` for no such sale
+/// journalled at this register; `checkout_unreadable` for a journal row this
+/// build cannot read or resume, including a finalize its tenders do not
+/// settle; `training_mode_mismatch`; for a basket brought back, what
+/// `cart_resume` refuses of it, `shift_not_open` and `parked_cart_expired`
+/// among them; the pricing refusals; and `storage_failed`. A refused resume
+/// changes nothing.
+pub fn resume_journalled(register: &Register, sale_id: SaleId) -> IpcResult<ResumedSale> {
+    let at = register.now();
+    let auth = proof::<cap::SaleResume>(register, at)?;
+    let mut till = register.lock_till();
+    signed_in_as(till.session.as_ref(), auth.actor())?;
+    let held = till
+        .working
+        .as_ref()
+        .map(|working| building(Some(working)).cloned())
+        .transpose()?;
+    let operation = CheckoutOperationRepository::new(&till.db)
+        .get(sale_id)
+        .map_err(journal_refused)?
+        .filter(|operation| operation.in_flight.register_id() == register.register())
+        .ok_or_else(|| IpcError::new("sale_not_in_flight", "error.tender.not_in_flight"))?;
+    let journalled = operation.in_flight.tendering().clone();
+    let cart = journalled.cart();
+    if cart.is_training {
+        return Err(cart_refused(&CartError::TrainingModeMismatch(
+            cart.id, true,
+        )));
+    }
+    let key = operation.in_flight.idempotency_key;
+    let resumption = resume_in_flight(operation.in_flight).map_err(|error| {
+        IpcError::from_source(
+            "checkout_unreadable",
+            "error.tender.checkout_unreadable",
+            &error,
+        )
+    })?;
+    let nonce = register.process_nonce();
+    let (stage, tendering) = match resumption {
+        Resumption::Abandon { cart, reason } => {
+            let shift = open_shift(&till.db, register)?;
+            let context = CartContext {
+                register_id: register.register(),
+                shift_id: shift.id,
+                cashier_id: auth.actor(),
+                currency: Currency::JOD,
+                is_training: false,
+                opened_at: at,
+            };
+            let abandon = abandoned(&auth, &journalled, reason);
+            let tx = till.db.transaction().map_err(sqlite)?;
+            let carts = ParkedCartRepository::new(&tx);
+            if let Some(working) = held.as_ref() {
+                carts.set_aside(&tx, nonce, working, at).map_err(stored)?;
+            }
+            CheckoutOperationRepository::new(&tx)
+                .abandon(&tx, sale_id, key)
+                .map_err(journal_refused)?;
+            carts.set_aside(&tx, nonce, &cart, at).map_err(stored)?;
+            let resumed = carts
+                .resume(&tx, sale_id, &context, &auth, nonce)
+                .map_err(|e| resume_refused(&e))?;
+            let answer = snapshot(&tx, register.store(), &resumed.cart)?;
+            audit(register, &tx, &abandon)?;
+            if let Some(intent) = resumed.audit.as_ref() {
+                audit(register, &tx, intent)?;
+            }
+            tx.commit().map_err(sqlite)?;
+            *till.working = Some(Working::Building(Box::new(resumed.cart)));
+            return Ok(ResumedSale::Building { cart: answer });
+        }
+        Resumption::ResumeTendering(t) => ("tendering", t),
+        Resumption::ReplayFinalize(f) => ("finalizing", f.tendering().clone()),
+        Resumption::QueryCardFirst { .. } => {
+            // The journal refuses to read a row with a card operation, and
+            // no Phase-1 tender has one (2.1.3).
+            return Err(
+                IpcError::new("checkout_unreadable", "error.tender.checkout_unreadable")
+                    .with_detail("a card operation is outstanding and cannot be queried"),
+            );
+        }
+    };
+    let payment = payment(&till.db, register.store(), &tendering)?;
+    let takeover = taken_over(&auth, &tendering, stage)?;
+    let tx = till.db.transaction().map_err(sqlite)?;
+    if let Some(working) = held.as_ref() {
+        ParkedCartRepository::new(&tx)
+            .set_aside(&tx, nonce, working, at)
+            .map_err(stored)?;
+    }
+    if let Some(intent) = takeover.as_ref() {
+        audit(register, &tx, intent)?;
+    }
+    tx.commit().map_err(sqlite)?;
+    *till.working = Some(Working::Paying(Box::new(Paying {
+        tendering,
+        idempotency_key: key,
+        version: operation.version,
+    })));
+    Ok(match stage {
+        "finalizing" => ResumedSale::Finalizing { payment },
+        _ => ResumedSale::Tendering { payment },
+    })
+}
+
+/// What `checkout.abandon` records: whose checkout it was, what it was
+/// priced at, and why it was discarded. No tender was taken, so none is named.
+fn abandoned(
+    auth: &Authorized<cap::SaleResume>,
+    journalled: &Tendering,
+    reason: &'static str,
+) -> AuditIntent {
+    let cart = journalled.cart();
+    AuditIntent {
+        actor: auth.actor(),
+        approver: auth.approver(),
+        approval: auth.approval(),
+        action: ABANDON_ACTION,
+        entity: BASKET,
+        entity_id: cart.id.as_uuid(),
+        reason: None,
+        payload: json!({
+            "cashier_id": cart.cashier_id.as_uuid().to_string(),
+            "currency": cart.currency.code(),
+            "reason": reason,
+            "total_minor": journalled.priced().total.minor(),
+        }),
+        at: auth.at(),
+    }
+}
+
+/// `sale.resume` when `auth`'s actor takes up another cashier's sale with
+/// money taken: whose it is, the stage it was at, and what they collected.
+/// A cashier taking up their own sale writes nothing.
+fn taken_over(
+    auth: &Authorized<cap::SaleResume>,
+    t: &Tendering,
+    stage: &'static str,
+) -> IpcResult<Option<AuditIntent>> {
+    let cart = t.cart();
+    if cart.cashier_id == auth.actor() {
+        return Ok(None);
+    }
+    let collected = counted(Money::sum(
+        t.tenders().iter().map(|tender| tender.amount),
+        cart.currency,
+    ))?;
+    Ok(Some(AuditIntent {
+        actor: auth.actor(),
+        approver: auth.approver(),
+        approval: auth.approval(),
+        action: cap::SaleResume::NAME,
+        entity: BASKET,
+        entity_id: cart.id.as_uuid(),
+        reason: None,
+        payload: json!({
+            "cashier_id": cart.cashier_id.as_uuid().to_string(),
+            "collected_minor": collected.minor(),
+            "currency": cart.currency.code(),
+            "stage": stage,
+            "tender_count": t.tenders().len(),
+        }),
+        at: auth.at(),
+    }))
+}
+
+/// A journal the resume could not read or change, as the screen is told it.
+fn journal_refused(error: DbError) -> IpcError {
+    match error {
+        DbError::StoredCheckoutInvalid { .. } => IpcError::from_source(
+            "checkout_unreadable",
+            "error.tender.checkout_unreadable",
+            &error,
+        ),
+        other => stored(other),
+    }
 }
 
 /// The sale the till is paying for.

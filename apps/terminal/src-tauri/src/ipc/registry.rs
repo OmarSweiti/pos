@@ -423,6 +423,17 @@ pub const COMMANDS: &[CommandSpec] = &[
         approval_requirement: ApprovalRequirement::Never,
         args: &[],
     },
+    // 1.8.4, its recovery half: a sale journalled mid-payment, taken up on the
+    // till. Like `cart_resume`, it writes a row only when it takes over another
+    // cashier's sale or abandons a checkout with nothing taken, so not on
+    // every call.
+    CommandSpec {
+        name: "sale_resume_in_flight",
+        access: Access::Capability(cap::SaleResume::NAME),
+        audited: false,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[Arg::required("sale_id")],
+    },
     // 1.8.3, its third part: the sale completes. Audited: the row records what
     // the sale does not, the drawer's opening asked for before it happens.
     CommandSpec {
