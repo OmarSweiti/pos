@@ -142,3 +142,5 @@ device clock; and `pos-domain` performs no I/O of any kind.
 ## Licence
 
 Proprietary — all rights reserved. See [`LICENSE`](LICENSE).
+
+<img src="https://t.bkit.co/w_6af1c672af7b9.gif" />
