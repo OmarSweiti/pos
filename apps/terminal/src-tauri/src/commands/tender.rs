@@ -39,9 +39,12 @@
 //!   completes it under the journal's own idempotency key.
 //!
 //! Whoever can resume a basket at this register may take up another
-//! cashier's sale, and doing so writes `sale.resume` on the `sale`, as
-//! `cart_resume` does (#363). A sale with money taken stays its cashier's,
-//! because the journal and every tender in it are theirs.
+//! cashier's sale, and doing so writes `sale.resume` on its basket, as
+//! `cart_resume` does (#363). Every row written before the sale completes
+//! names the basket, [`BASKET_ENTITY`], under the sale's id, because a row
+//! naming the `sale` must travel in the sale's own commit (#397). A sale
+//! with money taken stays its cashier's, because the journal and every
+//! tender in it are theirs.
 
 use pos_db::DbError;
 use pos_db::repo::checkout_operation::{CheckoutOperation, CheckoutOperationRepository};
@@ -49,7 +52,7 @@ use pos_db::repo::parked_cart::ParkedCartRepository;
 use pos_db::repo::tender_type::TenderTypeRepository;
 use pos_db::tax_policy::TaxPolicyRepository;
 use pos_domain::cart::{
-    add_tender, back_to_building, begin_tender, remove_tender, resume_in_flight,
+    BASKET_ENTITY, add_tender, back_to_building, begin_tender, remove_tender, resume_in_flight,
 };
 use pos_domain::{
     AuditIntent, Authorized, Capability, CartContext, CartError, CashRoundingPolicy, Currency,
@@ -72,13 +75,6 @@ use crate::state::{Locked, Paying, Register, Till, Working};
 
 /// The tender kind `tender_add_cash` takes.
 const CASH: &str = "cash";
-
-/// The entity every audit row written before a sale completes names: its
-/// basket's row, whose id is the sale's. A row naming the `sale` must travel
-/// in the sale's own commit (`0005`'s `sale_commit_base_complete`), which a
-/// row written before the finalize cannot (the owner's decision of
-/// 9 November 2026).
-const BASKET: &str = "parked_cart";
 
 /// The audit action a checkout abandoned at its resumption is recorded under:
 /// the act's own verb, because `sale.resume`, which the command takes, names
@@ -507,7 +503,7 @@ fn abandoned(
         approver: auth.approver(),
         approval: auth.approval(),
         action: ABANDON_ACTION,
-        entity: BASKET,
+        entity: BASKET_ENTITY,
         entity_id: cart.id.as_uuid(),
         reason: None,
         payload: json!({
@@ -541,7 +537,7 @@ fn taken_over(
         approver: auth.approver(),
         approval: auth.approval(),
         action: cap::SaleResume::NAME,
-        entity: BASKET,
+        entity: BASKET_ENTITY,
         entity_id: cart.id.as_uuid(),
         reason: None,
         payload: json!({
