@@ -55,3 +55,7 @@ serde_json = "1"
 pos-db = { workspace = true, features = ["fixtures"] }
 # The queue must survive a restart, so one test reopens a database file.
 tempfile.workspace = true
+# 1.8.4's recovery property restarts a register at every step a checkout can
+# be cut at, under the shared I/O case count and recorded seed.
+proptest.workspace = true
+pos-test-support.workspace = true

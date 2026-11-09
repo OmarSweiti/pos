@@ -5081,6 +5081,8 @@ dependencies = [
  "pos-db",
  "pos-domain",
  "pos-hardware",
+ "pos-test-support",
+ "proptest",
  "rusqlite",
  "serde",
  "serde_json",
