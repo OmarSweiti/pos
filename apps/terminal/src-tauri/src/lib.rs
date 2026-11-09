@@ -5,6 +5,7 @@ pub mod commands;
 pub mod ipc;
 pub(crate) mod payload;
 pub mod print_queue;
+pub mod recovery;
 pub mod scan;
 pub mod state;
 pub mod telemetry;

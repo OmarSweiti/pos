@@ -32,12 +32,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pos_db::DbError;
-use pos_db::repo::checkout_operation::CheckoutOperationRepository;
-use pos_db::repo::parked_cart::{ParkedCartRepository, SetAside};
-use pos_db::repo::stock::{CacheDrift, StockRepository};
-use pos_db::repo::user::{SessionEnd, UserRepository};
 use pos_domain::{
-    Cart, Clock, ClockConfidence, GrantSet, IdSource, RegisterId, Role, SaleId, StoreId, Tendering,
+    Cart, Clock, ClockConfidence, GrantSet, IdSource, RegisterId, Role, StoreId, Tendering,
     Timestamp, UserId,
 };
 use pos_hardware::ReceiptPrinter;
@@ -47,6 +43,10 @@ use rusqlite::{Connection, OptionalExtension};
 use uuid::Uuid;
 
 use crate::ipc::IpcError;
+use crate::recovery;
+// What start-up recovery reports lives with it, and is named here too, where
+// the register that holds it is.
+pub use crate::recovery::{CacheCheck, Recovered};
 
 /// The register's database, in the app's data directory.
 pub const DATABASE_FILE: &str = "register.db";
@@ -217,37 +217,6 @@ pub struct Paying {
     pub version: i64,
 }
 
-/// What start-up recovery found and did, before the first command.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Recovered {
-    /// Sessions a crash left open, now ended with `end_reason = 'crash'`.
-    pub sessions_closed: usize,
-    /// Baskets a crash left being worked on, now waiting in the parked list.
-    /// The session that was building each one died with the process, so none
-    /// is handed to whoever signs in next without being resumed.
-    pub carts_set_aside: usize,
-    /// Working carts a crash left with nothing in them, dropped.
-    pub empty_carts_dropped: usize,
-    /// Sales a restart found journalled mid-payment. Each is left where it
-    /// is, its basket not parked, for 1.8.4's recovery half to resume (the
-    /// owner's decision of 7 November 2026); `sale_in_flight_state` names
-    /// them.
-    pub sales_in_flight: usize,
-    pub stock_cache: CacheCheck,
-}
-
-/// What holding the stock cache to its ledger found (1.10.3's note).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CacheCheck {
-    /// The cache is what the ledger says.
-    True,
-    /// It was not, and was rebuilt in the same transaction. An alarm.
-    Rebuilt(Vec<CacheDrift>),
-    /// The ledger holds another register's events, which a register's own
-    /// database never should. The cache was left as it was. An alarm.
-    SpansRegisters,
-}
-
 /// The printer a register renders its receipts for, and the device itself
 /// when one is attached.
 ///
@@ -350,7 +319,7 @@ impl Register {
             pos_db::open(&data_dir.join(DATABASE_FILE), key).map_err(StartupError::Database)?;
         let (register, store, code) = own_register(&conn, &device_id)?;
         let process_nonce = process_nonce(ids.as_ref());
-        let recovered = recover(&mut conn, register, store, process_nonce, clock.now())?;
+        let recovered = recovery::recover(&mut conn, register, store, process_nonce, clock.now())?;
         Ok(Register {
             db: Mutex::new(conn),
             register,
@@ -530,112 +499,6 @@ fn process_nonce(ids: &(dyn IdSource + Send + Sync)) -> Uuid {
     match getrandom::fill(&mut bytes) {
         Ok(()) => uuid::Builder::from_random_bytes(bytes).into_uuid(),
         Err(_) => ids.next(),
-    }
-}
-
-/// 1.8.4's start-up recovery, as far as the steps before it left work for it.
-///
-/// Sessions and carts first, in one transaction. Every basket a crash left
-/// being worked on is claimed and set aside in the parked list, where whoever
-/// signs in can resume it, and one with nothing in it is dropped: the session
-/// building it died with the process (1.4.11). A basket whose sale is
-/// journalled mid-payment is claimed and left where it is, for the recovery
-/// half to resume from its journal (the owner's decision of 7 November 2026):
-/// parked, it could never be paid for again. Then the stock cache, in a
-/// transaction of its own, because a cache that spans registers is an alarm
-/// that leaves the cache as it was, not a reason to undo the rest.
-fn recover(
-    conn: &mut Connection,
-    register: RegisterId,
-    store: StoreId,
-    nonce: Uuid,
-    at: Timestamp,
-) -> Result<Recovered, StartupError> {
-    let failed = |error: DbError| StartupError::Recovery(error);
-    let sqlite = |error: rusqlite::Error| StartupError::Recovery(error.into());
-
-    let tx = conn.transaction().map_err(sqlite)?;
-    let sessions_closed = UserRepository::new(&tx)
-        .end_open_sessions(&tx, register, SessionEnd::Crash, at)
-        .map_err(failed)?;
-    let carts = ParkedCartRepository::new(&tx);
-    let journal = CheckoutOperationRepository::new(&tx);
-    let (mut carts_set_aside, mut empty_carts_dropped, mut sales_in_flight) = (0, 0, 0);
-    for cart in carts
-        .reclaim_after_restart(&tx, register, nonce)
-        .map_err(failed)?
-    {
-        if journalled(&journal, cart.id).map_err(failed)? {
-            sales_in_flight += 1;
-            continue;
-        }
-        match carts.set_aside(&tx, nonce, &cart, at).map_err(failed)? {
-            SetAside::Parked => carts_set_aside += 1,
-            SetAside::Dropped => empty_carts_dropped += 1,
-        }
-    }
-    tx.commit().map_err(sqlite)?;
-
-    let tx = conn.transaction().map_err(sqlite)?;
-    let checked = StockRepository::new(&tx).reconcile_cache(&tx, store);
-    let stock_cache = match checked {
-        Ok(drift) => {
-            tx.commit().map_err(sqlite)?;
-            if drift.is_empty() {
-                CacheCheck::True
-            } else {
-                tracing::warn!(
-                    drift = ?drift,
-                    "start-up found the stock cache off its ledger and rebuilt it"
-                );
-                CacheCheck::Rebuilt(drift)
-            }
-        }
-        Err(DbError::StockReplayAcrossRegisters) => {
-            drop(tx);
-            tracing::warn!(
-                "start-up found another register's stock events; the cache is unchanged"
-            );
-            CacheCheck::SpansRegisters
-        }
-        Err(other) => return Err(failed(other)),
-    };
-
-    if sessions_closed > 0 {
-        tracing::warn!(
-            sessions_closed,
-            "start-up closed sessions a crash left open"
-        );
-    }
-    if carts_set_aside > 0 {
-        tracing::warn!(
-            carts_set_aside,
-            "start-up set aside baskets a crash left being worked on"
-        );
-    }
-    if sales_in_flight > 0 {
-        tracing::warn!(
-            sales_in_flight,
-            "start-up left sales a crash interrupted mid-payment for recovery"
-        );
-    }
-    Ok(Recovered {
-        sessions_closed,
-        carts_set_aside,
-        empty_carts_dropped,
-        sales_in_flight,
-        stock_cache,
-    })
-}
-
-/// Whether `sale` is journalled mid-payment. A row this build cannot read is
-/// a sale in payment all the same: its basket is left for the recovery half
-/// rather than parked beside a journal that still names it.
-fn journalled(journal: &CheckoutOperationRepository<'_>, sale: SaleId) -> Result<bool, DbError> {
-    match journal.get(sale) {
-        Ok(found) => Ok(found.is_some()),
-        Err(DbError::StoredCheckoutInvalid { .. }) => Ok(true),
-        Err(other) => Err(other),
     }
 }
 
