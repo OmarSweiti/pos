@@ -35,6 +35,8 @@ const DEPUTY_CODE: &str = "M-200";
 /// Another register of the same store, whose attempt state a reset here
 /// leaves alone.
 const OTHER_REGISTER: [u8; 16] = [0x53; 16];
+/// A live account that holds no role at this store.
+const ROLELESS_ID: [u8; 16] = [0xC3; 16];
 const NEW_PIN: &str = "735104";
 const REASON: &str = "forgot their PIN";
 
@@ -419,15 +421,30 @@ fn a_reset_reaches_only_the_accounts_it_may() {
     assert_eq!(refused.code, "permission_outside_limit");
     assert!(!spent(&register, deputys));
 
-    // An account that is not live, or not an account at all.
+    // An account that is not live, one live with no role at this store, and
+    // no account at all.
+    add_staff(
+        &register,
+        SECOND_ID,
+        SECOND_CODE,
+        "Synthetic Second",
+        "cashier",
+    );
     register.with_db(|conn| {
         conn.execute(
             "UPDATE app_user SET is_active = 0 WHERE id = ?1",
             [SECOND_ID.as_slice()],
         )
         .unwrap();
+        conn.execute(
+            "INSERT INTO app_user (id, org_id, code, display_name, pin_hash, pin_set_at)
+             SELECT ?1, org_id, 'C-300', 'Synthetic Roleless', pin_hash, pin_set_at
+               FROM app_user WHERE id = ?2",
+            params![ROLELESS_ID.as_slice(), CASHIER_ID.as_slice()],
+        )
+        .unwrap();
     });
-    for gone in [SECOND_ID, [0x5A; 16]] {
+    for gone in [SECOND_ID, ROLELESS_ID, [0x5A; 16]] {
         let granted = owners_approval(&register, gone);
         assert_eq!(
             refusal(reset_pin(&register, user(gone), NEW_PIN, granted)).code,
