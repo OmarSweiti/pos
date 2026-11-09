@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **78 of 124 executable microsteps fully complete (~63%)**: `1.1.0`
+Phase 1 has **79 of 124 executable microsteps fully complete (~64%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -196,7 +196,12 @@ register's code and a hyphen before its own counter, so two registers counting o
 value never issue the same number, and a prefix fixed by the counter's first number, so a register
 whose code changes keeps numbering where its receipts left off), and `1.9.4` (a sale dated by its
 shift's business day, never by the clock at finalize — a sale at 01:00 belongs to the trading day that
-began the evening before, and neither a zone that moves nor a clock that is wrong moves it).
+began the evening before, and neither a zone that moves nor a clock that is wrong moves it), and
+`1.8.4` (crash recovery for a sale mid-payment — journalled before its first irreversible effect,
+each step under the version it read, and after a restart taken up by a cashier from its journal
+alone: a checkout with nothing taken goes back to its basket, one with tenders taken comes back with
+every one, and a finalize begun replays under its own key, never posting a stock event or a delivery
+row twice).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
@@ -293,11 +298,6 @@ and their failure never un-completes the sale. Two of its ten named tests wait, 
 decision of 8 November 2026: the approval one for the first command that brings an approval bound to
 the sale to payment, and the department one for #330. Until `1.7.14`, added that day, binds a
 register to its printer, every receipt is rendered for the 80 mm simulator profile and queued.
-`1.8.4` is
-**partially delivered**: its journal half has landed. A sale being paid for
-is journalled before its first irreversible effect, each tender advances the record under the version
-it read, and once its finalize begins only the finalize removes it, inside the finalize's own
-transaction. Its start-up recovery half follows 1.8.3, which it needs.
 Group 1.9's `1.9.5` is **partially delivered**: a shift opens with a float counted by denomination,
 on a business date the clock derives when it is trusted and the operator confirms, audited, when it
 is not; one stays open per register; and only its opener closes it, with a fact of its own and no

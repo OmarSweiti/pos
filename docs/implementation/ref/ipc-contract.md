@@ -420,6 +420,7 @@ capture and the return-box mapping would let a cashier zero-rate a sale that is 
 | `sale_reprint` | `{ sale_id }` → `()` | 1 | `sale.reprint` | ✓ | |
 | `print_resolve_unknown` | `{ job_id, receipt_came_out }` → `()` | 1 | `sale.reprint` | ✓ | |
 | `sale_in_flight_state` | `()` → `Vec<InFlightSummary>` | 1 | `sale.create` | | |
+| `sale_resume_in_flight` | `{ sale_id }` → `ResumedSale` | 1 | `sale.resume` | another's sale, or an abandon | |
 
 `tender_start_card` returns a handle and drives the flow through events (§4). The `Unknown`/timeout protocol — status-query before any retry (Phase 2, 2.1.3) — lives entirely on the Rust side. The UI **cannot** issue a second authorisation because no command exists that would let it.
 
@@ -508,6 +509,36 @@ is the input E.2's status-query needs and which nothing previously persisted.
 > - **Its audit row is `sale.finalize`**, and it records whether the drawer was asked to open. Every
 >   audited command's row now travels as the payload [`sync-protocol.md`](sync-protocol.md) §3
 >   defines, where the shell had sent a stand-in `{}`.
+
+> **As delivered at 1.8.4, its recovery half.** `sale_resume_in_flight { sale_id }` is registered
+> under `sale.resume`, as `cart_resume` is, with no approval. It takes up a sale journalled
+> mid-payment at this register, left by a crash or a forced sign-out, onto the till, by the owner's
+> decisions of 9 November 2026 (`phase-1-sellable-mvp.md` 1.8.4, the recovery half's note). Five
+> things the table does not say:
+>
+> - **The answer is `ResumedSale`, tagged by `stage`.** Which stage comes from the journal alone,
+>   through the domain's `resume_in_flight`:
+>   - `building`, with a `CartSnapshot`: nothing had been collected, the checkout was abandoned, and
+>     the basket is on the till;
+>   - `tendering`, with a `PaymentSnapshot`: every tender taken is on it;
+>   - `finalizing`, with a settled `PaymentSnapshot`: `sale_finalize` completes it under the
+>     checkout's own idempotency key.
+> - **A basket the till is building is set aside first,** parked or dropped as `cart_resume` sets
+>   it aside. A till paying for a sale is `sale_being_paid`.
+> - **The registry marks it `audited: false`**, as it marks `cart_resume`, because not every call
+>   writes a row:
+>   - an abandon writes `checkout.abandon`, with the cashier whose checkout it was, its total and
+>     `nothing_collected`;
+>   - a takeover of another cashier's sale with money taken writes `sale.resume`, with whose it is,
+>     its stage, its tender count and what they collected. The sale stays theirs;
+>   - a basket brought back from another cashier writes `cart_resume`'s own `sale.resume`.
+>
+>   Each names the basket, `parked_cart`, under the sale's id (#397).
+> - **The refusals are each their own code:** `sale_not_in_flight` for no such sale journalled at
+>   this register; `checkout_unreadable` for a row this build cannot read or resume; and
+>   `training_mode_mismatch`. A basket brought back is refused for whatever `cart_resume` refuses,
+>   `shift_not_open` and `parked_cart_expired` among them.
+> - **A refused resume changes nothing.**
 
 ### Returns
 
