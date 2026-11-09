@@ -38,7 +38,7 @@ pub use audit::{
 };
 pub use cart::{
     CardOpRef, Cart, CartContext, CartError, CartLine, CompletedSale, FinalizeEffects, Finalizing,
-    InFlight, InFlightSale, ParkedCart, PricedCart, PricedLine, PricingSettings, Sale,
+    InFlight, InFlightSale, ParkedCart, PricedCart, PricedLine, PricingSettings, Resumption, Sale,
     StoredCompletedSale, TaxBands, Tendering, VoidedSale, change_due, is_settled, remaining_due,
 };
 pub use catalog::{

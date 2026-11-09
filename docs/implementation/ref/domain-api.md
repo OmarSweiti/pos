@@ -2238,19 +2238,20 @@ pub enum Resumption {
     QueryCardFirst { t: Tendering, op: CardOpRef },
     /// Finalize had begun. Replay it under the same idempotency key.
     ReplayFinalize(Finalizing),
-    /// Nothing was collected and nothing is outstanding. Discard, audited.
-    Abandon { reason: &'static str },
+    /// Nothing was collected and nothing is outstanding. Discard, audited,
+    /// and build the basket again.
+    Abandon { cart: Cart, reason: &'static str },
 }
 
-pub fn resume_in_flight(row: InFlightSale, now: Timestamp) -> Result<Resumption, CartError>;
+pub fn resume_in_flight(row: InFlightSale) -> Result<Resumption, CartError>;
 ```
 
 A parked cart is not this. A park is a deliberate cashier action with a label and an expiry, and it
 never syncs; an in-flight row is machinery that exists for at most the length of one checkout.
 
-Tests: `an_interrupted_tendering_is_recovered_and_status_queried` (E.2) ·
+Tests: `an_interrupted_tendering_is_recovered_and_status_queried` (E.2; 2.1.3) ·
 `a_checkout_operation_row_never_outlives_its_commit` · `finalize_replays_under_the_same_idempotency_key` ·
-`a_card_approval_before_a_power_cut_is_found_and_attached` ·
+`a_card_approval_before_a_power_cut_is_found_and_attached` (2.1.3) ·
 `prop_resume_never_produces_a_second_authorisation`.
 
 > **As delivered at 1.8.4, the journal half.** `InFlightSale`, `InFlight` and `CardOpRef` are in
@@ -2264,6 +2265,35 @@ Tests: `an_interrupted_tendering_is_recovered_and_status_queried` (E.2) ·
 >
 > `Resumption` and `resume_in_flight` belong to the recovery half, after 1.8.3. So do this section's
 > tests: `an_in_flight_sale_is_identified_by_its_own_cart` is the journal half's own.
+
+> **As delivered at 1.8.4, the recovery half, 9 November 2026.** `Resumption` and
+> `resume_in_flight` are in `cart.rs`. Two departures from the draft, both shown above:
+> - **`resume_in_flight` takes no `now`.** No answer depends on the time: it reads the journal
+>   alone. The shell stamps the audit rows that recovery writes.
+> - **`Abandon` carries the basket.** A checkout with nothing taken goes back to being built
+>   (`back_to_building`'s rule), so the resumption hands the shell the cart it resumes. Its reason
+>   is `NOTHING_COLLECTED`, `nothing_collected`.
+>
+> What it answers, in order:
+> 1. **A card operation outstanding** is `QueryCardFirst`, in either state, before anything else.
+> 2. **A finalize begun** is `ReplayFinalize`. It is refused as `Underpaid` if its tenders do not
+>    settle it: a `Finalizing` is stored as the `Tendering` it wraps, so storage can hold one that
+>    `begin_finalize` never made.
+> 3. **Tenders taken** is `ResumeTendering`, with every one.
+> 4. **Nothing taken** is `Abandon`.
+>
+> **The tests.** The domain's own are `resume_in_flight_answers_each_journalled_state`,
+> `an_unsettled_finalize_read_back_is_never_replayed` and
+> `prop_resume_keeps_every_tender_and_queries_a_card_first`.
+>
+> The section's named tests are the shell's, in `recovery::tests`. They restart a register in every
+> persisted state. `prop_resume_never_produces_a_second_authorisation` is one of them: whatever step a
+> restart cuts a checkout at, the sale completes once, with each tender collected once.
+>
+> **The two card tests moved to 2.1.3,** by the owner's decision of 9 November 2026:
+> `an_interrupted_tendering_is_recovered_and_status_queried` and
+> `a_card_approval_before_a_power_cut_is_found_and_attached`. 2.1.3 first journals a card operation.
+> Until then, `QueryCardFirst` is proven here and reached by nothing in the shell.
 
 ---
 
