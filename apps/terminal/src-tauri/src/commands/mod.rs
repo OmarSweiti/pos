@@ -6,6 +6,7 @@
 pub mod auth;
 pub mod cart;
 pub mod sale;
+pub mod shift;
 pub mod tender;
 
 use pos_db::DbError;
@@ -14,6 +15,7 @@ use pos_db::repo::audit::AuditRepository;
 use pos_db::repo::outbox::{CommitEnvelope, FactMember, OutboxRepository};
 use pos_domain::AuditIntent;
 use rusqlite::Transaction;
+use uuid::Uuid;
 
 use crate::ipc::IpcError;
 use crate::payload::audit_payload;
@@ -33,7 +35,8 @@ pub(crate) fn sqlite(error: rusqlite::Error) -> IpcError {
 /// Append `intent` to the register's audit chain inside `tx`, behind the
 /// ready delivery envelope `audit_log_has_ready_commit` requires (I-9). The
 /// audit row is the envelope's first member: what it audits is register-local
-/// or travels in an envelope of its own. It travels as the payload
+/// or travels in an envelope of its own. A fact that must travel with its row
+/// is written through [`audit_fact`] instead. It travels as the payload
 /// `ref/sync-protocol.md` §3 defines for an audit row, every column known
 /// before the row is chained.
 ///
@@ -58,6 +61,50 @@ pub(crate) fn audit(
 ) -> Result<(), IpcError> {
     let audit_id = register.next_id();
     let commit_id = register.next_id();
+    chain(register, tx, audit_id, commit_id, None, intent)
+}
+
+/// A fact a command writes beside its audit row, as its delivery envelope
+/// carries it: its entity, its id, and the payload it travels as.
+pub(crate) struct Fact<'p> {
+    pub entity: &'static str,
+    pub id: Uuid,
+    pub payload: &'p str,
+}
+
+/// [`audit`], for an effect that is a fact of its own, such as a shift's
+/// opening or its close (1.9.5): `fact` and the audit row travel in one
+/// envelope, `commit_id`, the fact first (I-9). The caller writes the fact's
+/// row after this, inside `tx`, and its repository refuses it without this
+/// envelope or with any payload but `fact.payload`. `commit_id` is the
+/// caller's, because a fact can name the commit it travels in.
+///
+/// # Errors
+///
+/// As [`audit`].
+pub(crate) fn audit_fact(
+    register: &Register,
+    tx: &Transaction<'_>,
+    commit_id: Uuid,
+    fact: &Fact<'_>,
+    intent: &AuditIntent,
+) -> Result<(), IpcError> {
+    let audit_id = register.next_id();
+    chain(register, tx, audit_id, commit_id, Some(fact), intent)
+}
+
+/// Write the envelope `commit_id`, `fact` first when there is one, then the
+/// audit row `audit_id` and any approval it spends; then chain the row and
+/// spend the approval.
+fn chain(
+    register: &Register,
+    tx: &Transaction<'_>,
+    audit_id: Uuid,
+    commit_id: Uuid,
+    fact: Option<&Fact<'_>>,
+    intent: &AuditIntent,
+) -> Result<(), IpcError> {
+    let fact = fact.map(|fact| (fact, register.next_id(), *fact.id.as_bytes()));
     let change_id = register.next_id();
     // The approval's id, and the change that spends it on the wire.
     let consumption = intent
@@ -66,12 +113,21 @@ pub(crate) fn audit(
     let created_at = intent.at.to_iso8601();
     let audited = audit_payload(audit_id, register.register(), intent)
         .map_err(|error| IpcError::from_source("storage_failed", "error.storage.failed", &error))?;
-    let mut members = vec![FactMember {
+    let mut members: Vec<FactMember<'_>> = fact
+        .iter()
+        .map(|(fact, change, id)| FactMember {
+            change_id: change.as_bytes(),
+            entity: fact.entity,
+            entity_id: id,
+            payload: fact.payload,
+        })
+        .collect();
+    members.push(FactMember {
         change_id: change_id.as_bytes(),
         entity: "audit_log",
         entity_id: audit_id.as_bytes(),
         payload: &audited,
-    }];
+    });
     if let Some((approval, change)) = consumption.as_ref() {
         members.push(FactMember {
             change_id: change.as_bytes(),
