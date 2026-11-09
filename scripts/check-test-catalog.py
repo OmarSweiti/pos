@@ -80,7 +80,6 @@ KNOWN_KINDS = RUST_KINDS | {"web", "fuzz", "drill"}
 # absent-test failure.
 PLANNED: dict[str, tuple[str, ...]] = {
     "1.4.12": ("queue_never_stalls_on_unknown_code",),
-    "1.6.2": ("manager_reset_retires_old_hash_and_audits",),
     "1.7.5": (
         "golden_receipt_ar_58mm",
         "golden_receipt_ar_80mm",
@@ -517,6 +516,7 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "inactive_product_cannot_be_added_but_can_be_refunded",
         "interrupted_finalize_resumes_without_double_outbox_row",
         "interrupted_finalize_resumes_without_double_stock_event",
+        "manager_reset_retires_old_hash_and_audits",
         "manager_self_approval_denied_when_policy_bans_it",
         "mutating_an_identity_column_breaks_the_chain",
         "narrow_profile_reflows_rather_than_truncates",
