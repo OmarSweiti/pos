@@ -6872,6 +6872,7 @@ mod tests {
         RemoveTender,
         BeginFinalize,
         Complete,
+        ResumeInFlight,
         VoidSale,
     }
 
@@ -6898,7 +6899,7 @@ mod tests {
     ];
 
     impl Transition {
-        const ALL: [Transition; 18] = [
+        const ALL: [Transition; 19] = [
             Transition::Open,
             Transition::AddLine,
             Transition::AddDepartmentLine,
@@ -6916,6 +6917,7 @@ mod tests {
             Transition::RemoveTender,
             Transition::BeginFinalize,
             Transition::Complete,
+            Transition::ResumeInFlight,
             Transition::VoidSale,
         ];
 
@@ -7087,6 +7089,14 @@ mod tests {
                         complete;
                     ("complete", Duty::Unaudited)
                 }
+                // What a journalled checkout becomes, decided from the row
+                // alone (1.8.4). Like `complete`, it returns no intent:
+                // `sale_resume_in_flight` audits the abandon and a takeover,
+                // because who takes the sale up is the shell's to know.
+                Transition::ResumeInFlight => {
+                    let _: fn(InFlightSale) -> Result<Resumption, CartError> = resume_in_flight;
+                    ("resume_in_flight", Duty::Unaudited)
+                }
                 Transition::VoidSale => {
                     let _: fn(
                         Sale,
@@ -7115,7 +7125,8 @@ mod tests {
                 | Transition::BackToBuilding
                 | Transition::AddTender
                 | Transition::BeginFinalize
-                | Transition::Complete => return None,
+                | Transition::Complete
+                | Transition::ResumeInFlight => return None,
                 Transition::AddDepartmentLine => {
                     sell(two_teas(), department_line(2, 2_500, Some(SCANNED)), None)
                         .unwrap()
