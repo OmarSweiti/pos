@@ -443,6 +443,40 @@ pub const COMMANDS: &[CommandSpec] = &[
         approval_requirement: ApprovalRequirement::Never,
         args: &[],
     },
+    // 1.9.5, its terminal half: a shift opened, read and closed. Opening and
+    // closing each write their fact and its audit row in one envelope. The
+    // float is cash counted into the drawer, not a price, and its argument's
+    // name says so: see `PRICE_ARGUMENTS`.
+    CommandSpec {
+        name: "shift_open",
+        access: Access::Capability(cap::ShiftOpen::NAME),
+        audited: true,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[
+            Arg::required("float_by_denomination"),
+            Arg::optional("business_date"),
+        ],
+    },
+    CommandSpec {
+        name: "shift_current",
+        access: Access::NoCapability {
+            reason: "the lock screen names whose shift is open before anyone signs in, and \
+                     the answer is the opening fact, with no grant, PIN or key",
+        },
+        audited: false,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[],
+    },
+    // The opener's own close takes no approval: closing your own work is not
+    // an escalation. Another user's stale shift is Phase 2's
+    // `shift_force_close_stale`.
+    CommandSpec {
+        name: "shift_close",
+        access: Access::Capability(cap::ShiftClose::NAME),
+        audited: true,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[Arg::required("shift_id")],
+    },
 ];
 
 /// Names the commands the shell registers, once.

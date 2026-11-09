@@ -552,7 +552,7 @@ fn taken_over(
 }
 
 /// A journal the resume could not read or change, as the screen is told it.
-fn journal_refused(error: DbError) -> IpcError {
+pub(super) fn journal_refused(error: DbError) -> IpcError {
     match error {
         DbError::StoredCheckoutInvalid { .. } => IpcError::from_source(
             "checkout_unreadable",

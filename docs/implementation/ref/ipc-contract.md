@@ -573,8 +573,8 @@ their goods nor their money.
 
 | Command | Args → Returns | Ph | Cap | A | E |
 |---|---|---|---|---|---|
-| `shift_open` | `{ float_by_denomination, business_date? }` → `Shift` | 1 | `shift.open` | ✓ | |
-| `shift_current` | `()` → `Option<Shift>` | 1 | — | | |
+| `shift_open` | `{ float_by_denomination, business_date? }` → `ShiftSnapshot` | 1 | `shift.open` | ✓ | |
+| `shift_current` | `()` → `Option<ShiftSnapshot>` | 1 | — | | |
 | `shift_close` | `{ shift_id }` → `ShiftCloseEvent` | 1 | `shift.close` | ✓ | |
 | `shift_close_begin` | `()` → `CloseSession` | 2 | `shift.close` | | |
 | `shift_close_submit_count` | `{ session_id, count_by_denomination }` → `CloseResult` | 2 | `shift.close` | ✓ | |
@@ -590,6 +590,37 @@ refuses any other shift. Closing your own work is not an escalation and therefor
 `ApprovalHandle`. `shift_force_close_stale` is the only cross-user close path. It is `Always`, binds
 the stale `shift_id`, exact zero and the supplied reason, and preserves the unconditional
 actor-versus-approver separation that applies to every handle path.
+
+> **As delivered at 1.9.5, its terminal half (9 November 2026).** `shift_open` and `shift_close`
+> are registered under `shift.open` and `shift.close`, each audited on every call, and
+> `shift_current` under no capability. Seven things the table did not say:
+>
+> - **The answer is `ShiftSnapshot`**, which this table called `Shift` until then, because
+>   `pos_domain::Shift` is the opening fact itself: the shift's id, its business date as
+>   `YYYY-MM-DD`, who opened it and when, and the float in minor units with its currency.
+>   `ShiftCloseEvent` carries the close's id, the shift, its business date, when it closed and the
+>   basket it set aside, if any.
+> - **`float_by_denomination` is `[{ denomination_minor, count }]`,** each piece one of the store
+>   currency's own. Any other is `float_not_a_denomination`; a float too large to count is
+>   `float_invalid`. The float is cash counted into the drawer, not a price, so its name is not one
+>   `PRICE_ARGUMENTS` controls.
+> - **`business_date` is `YYYY-MM-DD`,** or `business_date_invalid`. The register trusts no clock
+>   yet, so today every opening needs one, and none is `business_date_required`. Under a trusted
+>   clock one is `business_date_not_accepted`, and the date is derived from the store's own zone
+>   and cutover. A zone or cutover that cannot date a shift is `store_day_unreadable`. A second
+>   opening is `shift_already_open`.
+> - **Each fact travels with its audit row,** one envelope holding the opening and its `shift.open`
+>   row, or the close and its `shift.close` row.
+> - **A sale in flight keeps the shift open.** A sale journalled mid-payment in the shift, on this
+>   till or left by a crash, is `sale_in_flight`: once the shift closed it could never complete.
+> - **The till's basket is set aside,** as `auth_logout` sets it aside: parked with its lines,
+>   dropped without one, and a sale being paid for with nothing taken goes back to its basket first.
+>   The `shift.close` row names it as `parked_cart`.
+> - **The close's other refusals:** `shift_not_open` with no open shift, `shift_not_current` for any
+>   shift but the register's open one, `shift_not_yours` for anyone but its opener, and
+>   `shift_closed_before_opened` when the register's clock reads earlier than the opening.
+>   `shift_current` needs no sign-in, because the lock screen names whose shift is open before anyone
+>   signs in (1.11.4).
 
 **`shift_open` and `shift_current` move to Phase 1.** `Cart` carries a non-optional `shift_id`,
 `sale.business_date` is `NOT NULL`, and conventions §11 *defines* the business date as the business

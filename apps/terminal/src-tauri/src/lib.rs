@@ -59,6 +59,9 @@ ipc::registry::commands![
     commands::tender::sale_in_flight_state,
     commands::tender::sale_resume_in_flight,
     commands::sale::sale_finalize,
+    commands::shift::shift_open,
+    commands::shift::shift_current,
+    commands::shift::shift_close,
 ];
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

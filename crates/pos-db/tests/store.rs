@@ -1,12 +1,13 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! What the finalize reads of a store (1.8.3), against the exact registered
 //! migration chain: the merchant its receipt names, the language it prints
-//! in, and whether it may complete a live sale at all.
+//! in, and whether it may complete a live sale at all. And what a shift's
+//! opening reads of it (1.9.5): the day it trades on.
 
 use pos_db::DbError;
 use pos_db::fixtures::registered_chain::RegisteredChain;
-use pos_db::repo::store::{FiscalDecision, StoreRepository};
-use pos_domain::{Language, StoreId};
+use pos_db::repo::store::{FiscalDecision, StoreRepository, TradingDay};
+use pos_domain::{Currency, Language, StoreId};
 use rusqlite::{Connection, params};
 use uuid::Uuid;
 
@@ -101,4 +102,59 @@ fn an_unknown_store_and_an_unprintable_language_are_refused() {
         StoreRepository::new(&conn).profile(id),
         Err(DbError::StoredStoreInvalid { .. })
     ));
+}
+
+/// A shift opens on the day its store trades on: the currency its float is
+/// counted in, and the zone and the local minute its business day turns at,
+/// each read from the row as it stands. The zone stays its IANA name.
+#[test]
+fn a_store_reads_with_the_day_it_trades_on() {
+    let (_dir, conn, id) = store();
+    let stores = StoreRepository::new(&conn);
+    assert_eq!(
+        stores.trading_day(id).unwrap(),
+        TradingDay {
+            currency: Currency::JOD,
+            time_zone: "Asia/Amman".to_owned(),
+            cutover_minutes: 240,
+        },
+        "the schema's defaults: the dinar, Amman, 04:00"
+    );
+
+    set(
+        &conn,
+        "time_zone = 'Pacific/Kiritimati', day_cutover_minutes = 0",
+    );
+    let day = stores.trading_day(id).unwrap();
+    assert_eq!(day.time_zone, "Pacific/Kiritimati");
+    assert_eq!(day.cutover_minutes, 0);
+    set(&conn, "day_cutover_minutes = 1439");
+    assert_eq!(stores.trading_day(id).unwrap().cutover_minutes, 1_439);
+}
+
+/// A store this database does not hold is refused by name, and so is a row
+/// whose currency this build does not know or whose cutover is not a minute
+/// of the day, rather than a day guessed for it.
+#[test]
+fn a_trading_day_this_build_cannot_read_is_refused() {
+    let (_dir, conn, id) = store();
+    let elsewhere = StoreId::from_uuid(Uuid::from_u128(0xE15E));
+    assert!(matches!(
+        StoreRepository::new(&conn).trading_day(elsewhere),
+        Err(DbError::StoreUnknown(found)) if found == elsewhere
+    ));
+    for assignments in [
+        "day_cutover_minutes = 1440",
+        "day_cutover_minutes = -1",
+        "day_cutover_minutes = 240, currency = 'XYZ'",
+    ] {
+        set(&conn, assignments);
+        assert!(
+            matches!(
+                StoreRepository::new(&conn).trading_day(id),
+                Err(DbError::StoredStoreInvalid { .. })
+            ),
+            "{assignments} is refused"
+        );
+    }
 }
