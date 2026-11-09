@@ -202,6 +202,7 @@ mod tests {
     use std::path::Path;
 
     use pos_db::repo::sale::SaleRepository;
+    use pos_domain::cart::BASKET_ENTITY;
     use pos_domain::{InFlight, TenderId, UserId};
     use pos_test_support::io_proptest_config;
     use proptest::prelude::*;
@@ -491,6 +492,23 @@ mod tests {
         })
     }
 
+    /// The entity and id each audit row under `action` names, in order.
+    fn named(register: &Register, action: &str) -> Vec<(String, Uuid)> {
+        register.with_db(|conn| {
+            conn.prepare("SELECT entity, entity_id FROM audit_log WHERE action = ?1 ORDER BY rowid")
+                .unwrap()
+                .query_map([action], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+                })
+                .unwrap()
+                .map(|row| {
+                    let (entity, id) = row.unwrap();
+                    (entity, Uuid::from_slice(&id).unwrap())
+                })
+                .collect()
+        })
+    }
+
     fn cashier() -> UserId {
         UserId::from_uuid(Uuid::from_bytes(CASHIER_ID))
     }
@@ -730,7 +748,8 @@ mod tests {
     /// Another cashier may take up a sale a crash left: with money taken it
     /// stays the first cashier's, whose tenders it holds, and the takeover is
     /// audited; with nothing taken its basket becomes theirs, as a parked one
-    /// would, audited the same way.
+    /// would, audited the same way. Either way each row names the basket, and
+    /// the sale still completes.
     #[test]
     fn another_cashiers_sale_is_taken_over_and_audited() {
         let dir = tempfile::tempdir().unwrap();
@@ -748,6 +767,11 @@ mod tests {
         assert_eq!(field(row, "stage"), "tendering");
         assert_eq!(*field(row, "tender_count"), 1);
         assert_eq!(*field(row, "collected_minor"), 1_000);
+        assert_eq!(
+            named(&register, "sale.resume"),
+            vec![(BASKET_ENTITY.to_owned(), sale.as_uuid())],
+            "on the basket, so the finalize can complete it (#397)"
+        );
         add_cash(&register, 1_110).unwrap();
         finalize(&register).unwrap();
         let cashier_of_sale: Vec<u8> = register.with_db(|conn| {
@@ -788,6 +812,18 @@ mod tests {
             .as_ref()
             .map(|w| w.cart().cashier_id);
         assert_eq!(on_till, Some(second()), "the basket is theirs now");
+        for action in [ABANDON_ACTION, "sale.resume"] {
+            assert_eq!(
+                named(&register, action),
+                vec![(BASKET_ENTITY.to_owned(), sale.as_uuid())],
+                "{action} names the basket"
+            );
+        }
+        begin_payment(&register).unwrap();
+        add_cash(&register, CASH_DUE).unwrap();
+        finalize(&register).unwrap();
+        assert!(completed(&register, sale), "and it still completes");
+        assert_eq!(journal(&register, sale), None);
     }
 
     /// The till's own basket is set aside before a sale is taken up, and a
