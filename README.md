@@ -2,6 +2,7 @@
 
 [![ci](https://github.com/OmarSweiti/pos/actions/workflows/ci.yml/badge.svg?branch=development)](https://github.com/OmarSweiti/pos/actions/workflows/ci.yml)
 [![security](https://github.com/OmarSweiti/pos/actions/workflows/security.yml/badge.svg?branch=development)](https://github.com/OmarSweiti/pos/actions/workflows/security.yml)
+![visitors](https://img.shields.io/endpoint?url=https%3A%2F%2Fgist.githubusercontent.com%2FOmarSweiti%2F2de2330292fa11590357044821f43967%2Fraw%2Fvisitors.json)
 
 Cross-platform, offline-first point of sale for the Jordanian market.
 
