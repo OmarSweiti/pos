@@ -62,6 +62,7 @@ ipc::registry::commands![
     commands::shift::shift_open,
     commands::shift::shift_current,
     commands::shift::shift_close,
+    commands::user::user_reset_pin,
 ];
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

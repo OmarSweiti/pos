@@ -477,6 +477,27 @@ pub const COMMANDS: &[CommandSpec] = &[
         approval_requirement: ApprovalRequirement::Never,
         args: &[Arg::required("shift_id")],
     },
+    // 1.6.2, its command: a forgotten PIN reset. Privileged on every call: the
+    // approval names the account being reset, exactly zero, and the
+    // approver's reason, which the audit row repeats as it spends it.
+    CommandSpec {
+        name: "user_reset_pin",
+        access: Access::Capability(cap::UserAdmin::NAME),
+        audited: true,
+        approval_requirement: ApprovalRequirement::Always {
+            binding: ApprovalBindingSpec {
+                entity: EntityBindingSpec::Argument("user_id"),
+                amount: AmountBindingSpec::Exact(0),
+                content: ContentBindingSpec::None,
+                reason: ReasonBindingSpec::Approval,
+            },
+        },
+        args: &[
+            Arg::required("user_id"),
+            Arg::required("new_pin"),
+            Arg::required(APPROVAL_ARGUMENT),
+        ],
+    },
 ];
 
 /// Names the commands the shell registers, once.

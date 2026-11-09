@@ -295,9 +295,10 @@ fn every_privileged_command_binds_its_approval() {
         .copied()
         .filter(is_privileged)
         .collect();
-    // The registry's one privileged row, then the contract's.
+    // The registry's privileged rows, the conditional override and the
+    // always-privileged reset, then the contract's.
     let names: Vec<&str> = privileged.iter().map(|row| row.name).collect();
-    let expected: Vec<&str> = ["cart_override_price"]
+    let expected: Vec<&str> = ["cart_override_price", "user_reset_pin"]
         .into_iter()
         .chain(CONTRACT_ROWS.iter().map(|row| row.name))
         .collect();
