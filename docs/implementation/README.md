@@ -301,8 +301,10 @@ register to its printer, every receipt is rendered for the 80 mm simulator profi
 Group 1.9's `1.9.5` is **partially delivered**: a shift opens with a float counted by denomination,
 on a business date the clock derives when it is trusted and the operator confirms, audited, when it
 is not; one stays open per register; and only its opener closes it, with a fact of its own and no
-approval. A sale completes only in the open shift and on its business date. Its commands and screens
-run in the shell state `1.8.2c` created, and can be written now.
+approval. A sale completes only in the open shift and on its business date. Its three commands landed
+on 9 November 2026: `shift_open`, `shift_current` and `shift_close` open, read and close a shift
+from the till, a close refused while a sale in the shift is mid-payment, and the till's basket set
+aside as a sign-out sets it aside. Its two screens wait for `1.11.3b`'s design direction.
 Group 1.10's `1.10.5` is **partially delivered**: stock moved by hand, with a reason from five, a
 note, and an approval bound to the exact request by its digest, posts its event, audit row and
 consumption together; opening stock is read from its three-column file and posted as ledger events,
