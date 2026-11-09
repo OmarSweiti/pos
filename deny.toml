@@ -53,6 +53,27 @@ ignore = [
   # Revisit when Tauri moves off GTK3, which also closes 16 of the unmaintained
   # advisories the rule above is quiet about.
   { id = "RUSTSEC-2024-0429", reason = "glib 0.18 pinned by gtk 0.18 <- tauri; no upgrade exists; Linux-only, and unreachable from this workspace" },
+  # SQLite before 3.54.0 can return uninitialized page-cache memory when it
+  # opens a database with a sibling `-wal` file of another page size, so a
+  # crafted pair of files makes ordinary queries return stale process memory
+  # (CVE-2026-119375). Published 9 November 2026. The register links SQLite
+  # 3.50.4 inside SQLCipher 4.10.0, through libsqlite3-sys 0.37: affected.
+  #
+  # No upgrade fixes it yet. The advisory's fix, libsqlite3-sys 0.39 (rusqlite
+  # 0.41), still builds `bundled-sqlcipher` on sqlcipher-src =419.0.6, which is
+  # SQLite 3.53.4; the advisory says so. Taking it would turn this gate green
+  # while the register still ran an affected SQLite. sqlcipher-src 420 (SQLite
+  # 3.54.1) is published, but no libsqlite3-sys release builds on it yet.
+  #
+  # The attack is local: someone must write the file pair the process opens.
+  # The till opens only its own database, in its own data directory. The
+  # forensic `verify-audit` opens a copy someone hands it, and stays exposed
+  # until the upgrade: its operator should not trust a copy's `-wal` file.
+  #
+  # Accepted by the owner on 9 November 2026. #403 removes this entry with the
+  # first binding that builds SQLCipher on SQLite 3.54 or later, and re-reviews
+  # 1.8.0's engine pins (crates/pos-db/src/storage_version.rs) for it.
+  { id = "RUSTSEC-2026-0459", reason = "no libsqlite3-sys release builds SQLCipher on SQLite >= 3.54 yet; local vector; accepted 2026-11-09, removed by #403" },
 ]
 
 [licenses]
