@@ -107,8 +107,10 @@ Unknown  →  poll last_transaction_status(sale_ref), backoff, up to N times
          →  still Unknown after N ⇒ manager flow, sale stays in Tendering,
                                     NEVER a blind retry
 ```
-**Tests:** `unknown_triggers_status_query_before_any_retry` · `unknown_never_produces_two_authorizations` · `status_query_approved_attaches_tender` · `prop_no_input_sequence_yields_two_tenders_for_one_auth`
+**Tests:** `unknown_triggers_status_query_before_any_retry` · `unknown_never_produces_two_authorizations` · `status_query_approved_attaches_tender` · `prop_no_input_sequence_yields_two_tenders_for_one_auth` · `an_interrupted_tendering_is_recovered_and_status_queried` (E.2) · `a_card_approval_before_a_power_cut_is_found_and_attached`
 **Done when:** no code path exists in which a second `authorize` is issued after an `Unknown` without a `last_transaction_status` in between — asserted by a state-machine test, not by reading the code.
+> **Moved here from 1.8.4, by the owner's decision of 9 November 2026.** `an_interrupted_tendering_is_recovered_and_status_queried` and `a_card_approval_before_a_power_cut_is_found_and_attached` each restart a register with a card operation outstanding. No Phase-1 tender carries one, and 1.8.4's journal stores a terminal reference and state but not `CardOpRef`'s amount and start time. So the step that journals the first card operation runs them, and adds those columns in a migration or decides otherwise. `pos_domain::cart::resume_in_flight` already answers `QueryCardFirst` for such a row, in either state, before anything else (1.8.4).
+
 > **This is the single most important rule in the phase.** A double charge is a chargeback, a refund, an angry customer, and an accounting hole. Everything else here is recoverable.
 
 ### 2.1.4 — Simulated terminal with fault injection

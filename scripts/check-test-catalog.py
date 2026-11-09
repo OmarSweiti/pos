@@ -90,12 +90,6 @@ PLANNED: dict[str, tuple[str, ...]] = {
         "a_sale_completes_with_no_printer_and_queues_the_artifact",
         "the_missing_printer_is_an_alarm_not_a_modal",
     ),
-    "1.8.4": (
-        "a_checkout_operation_row_never_outlives_its_commit",
-        "an_interrupted_tendering_is_recovered_and_status_queried",
-        "interrupted_finalize_resumes_without_double_outbox_row",
-        "interrupted_finalize_resumes_without_double_stock_event",
-    ),
     "1.8.5b": (
         "a_backup_opens_with_the_recovery_code_alone",
         "key_generation_refuses_when_a_database_already_exists",
@@ -111,6 +105,7 @@ PLANNED: dict[str, tuple[str, ...]] = {
     "1.11.12": ("sale_screen_min_size_guard",),
     "1.12.5": ("training_sales_are_excluded_with_a_visible_count",),
     "2.1.3": (
+        "an_interrupted_tendering_is_recovered_and_status_queried",
         "prop_no_input_sequence_yields_two_tenders_for_one_auth",
         "status_query_approved_attaches_tender",
         "unknown_triggers_status_query_before_any_retry",
@@ -492,6 +487,7 @@ zero_due_tender_completes_and_issues_a_fiscal_doc
 # the initial ceiling into a monotonic history rather than a one-time maximum.
 PLANNED_RETIRED: frozenset[str] = frozenset(
     {
+        "a_checkout_operation_row_never_outlives_its_commit",
         "a_consumed_handle_is_still_consumed_after_restart",
         "a_different_actor_is_refused",
         "a_different_sale_is_refused",
@@ -519,6 +515,8 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "fts_prefix_search_works_at_two_characters",
         "half_migrated_db_refuses_to_open_with_a_named_error",
         "inactive_product_cannot_be_added_but_can_be_refunded",
+        "interrupted_finalize_resumes_without_double_outbox_row",
+        "interrupted_finalize_resumes_without_double_stock_event",
         "manager_self_approval_denied_when_policy_bans_it",
         "mutating_an_identity_column_breaks_the_chain",
         "narrow_profile_reflows_rather_than_truncates",

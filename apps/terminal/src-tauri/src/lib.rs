@@ -5,6 +5,7 @@ pub mod commands;
 pub mod ipc;
 pub(crate) mod payload;
 pub mod print_queue;
+pub mod recovery;
 pub mod scan;
 pub mod state;
 pub mod telemetry;
@@ -56,6 +57,7 @@ ipc::registry::commands![
     commands::tender::tender_remove,
     commands::tender::tender_back_to_cart,
     commands::tender::sale_in_flight_state,
+    commands::tender::sale_resume_in_flight,
     commands::sale::sale_finalize,
 ];
 

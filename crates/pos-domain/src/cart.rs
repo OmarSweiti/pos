@@ -1724,6 +1724,27 @@ pub struct CardOpRef {
     pub started_at: Timestamp,
 }
 
+/// What a journalled checkout becomes when a till takes it up again
+/// ([`resume_in_flight`], 1.8.4).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Resumption {
+    /// Back to the tender screen, with the tenders already collected.
+    ResumeTendering(Tendering),
+    /// A card operation was outstanding: query its status before anything
+    /// else, then attach or discard it (E.2). The terminal is Phase 2's
+    /// (2.1.3); no Phase-1 checkout has one.
+    QueryCardFirst { t: Tendering, op: CardOpRef },
+    /// The finalize had begun. Replay it under the same idempotency key.
+    ReplayFinalize(Finalizing),
+    /// Nothing was collected and nothing is outstanding. The checkout is
+    /// discarded, audited, and the basket goes back to being built.
+    Abandon { cart: Cart, reason: &'static str },
+}
+
+/// Why a checkout with nothing collected is abandoned: the reason
+/// [`Resumption::Abandon`] carries.
+pub const NOTHING_COLLECTED: &str = "nothing_collected";
+
 /// What finalizing gives a sale that the domain cannot make for itself
 /// (1.8.3): the receipt number its register's counter spent in the finalize
 /// transaction, the business date of its shift, and the moment it completed.
@@ -2214,6 +2235,51 @@ pub fn complete(f: Finalizing, effects: FinalizeEffects) -> Result<CompletedSale
         business_date,
         completed_at,
     })
+}
+
+/// What a checkout journalled mid-payment becomes when a till takes it up
+/// after a restart, or after the forced sign-out of its cashier (§6.6, 1.8.4).
+///
+/// The answer comes from the journal alone, and keeps every tender it holds.
+/// A tender already collected is carried, never asked for again, and a
+/// finalize already begun is replayed, never sent back to take more tenders.
+///
+/// - **A card operation outstanding comes first,** whatever state the sale
+///   reached: [`Resumption::QueryCardFirst`]. The terminal may have taken the
+///   money, so its status is asked before anything else (E.2).
+/// - **A finalize begun** is [`Resumption::ReplayFinalize`], under the
+///   journal's own idempotency key.
+/// - **A sale with tenders taken** is [`Resumption::ResumeTendering`], with
+///   every one of them.
+/// - **A sale with nothing taken** is [`Resumption::Abandon`]: the checkout is
+///   discarded and its basket is built again, at the prices it is priced at
+///   when payment begins again.
+///
+/// # Errors
+///
+/// [`CartError::Underpaid`]: a finalizing sale whose tenders do not settle it.
+/// [`begin_finalize`] never makes one, but a journal is read back from
+/// storage, and an unpaid sale must never be replayed toward completion.
+pub fn resume_in_flight(row: InFlightSale) -> Result<Resumption, CartError> {
+    let InFlightSale { state, card_op, .. } = row;
+    if let Some(op) = card_op {
+        let t = match state {
+            InFlight::Tendering(t) => t,
+            InFlight::Finalizing(Finalizing(t)) => t,
+        };
+        return Ok(Resumption::QueryCardFirst { t, op });
+    }
+    match state {
+        InFlight::Finalizing(f) => {
+            check_settled(&f.0)?;
+            Ok(Resumption::ReplayFinalize(f))
+        }
+        InFlight::Tendering(t) if t.tenders.is_empty() => Ok(Resumption::Abandon {
+            cart: t.cart,
+            reason: NOTHING_COLLECTED,
+        }),
+        InFlight::Tendering(t) => Ok(Resumption::ResumeTendering(t)),
+    }
 }
 
 /// `sale` voided before it completed, and the audit intent that records it
@@ -5769,6 +5835,142 @@ mod tests {
         }
     }
 
+    fn journalled(state: InFlight, card_op: Option<CardOpRef>) -> InFlightSale {
+        InFlightSale {
+            state,
+            card_op,
+            idempotency_key: id(0x77),
+            updated_at: moment(),
+        }
+    }
+
+    fn card_op(minor: i64) -> CardOpRef {
+        CardOpRef {
+            sale_ref: "SYNTH-PSP-REF-1".to_owned(),
+            amount: jod(minor),
+            started_at: moment(),
+        }
+    }
+
+    /// 1.8.4: each journalled state resumes as what it was. Nothing taken is
+    /// abandoned back to its basket; tenders taken are carried; a finalize
+    /// begun replays; a card operation outstanding is queried first, in
+    /// either state.
+    #[test]
+    fn resume_in_flight_answers_each_journalled_state() {
+        let begun = paying(one_item(1_247), qirsh());
+        let part = pay(begun.clone(), 1, "cash", 500).unwrap();
+        let paid = pay(part.clone(), 2, "cash", 750).unwrap();
+        let finalizing = begin_finalize(paid.clone()).unwrap();
+
+        assert_eq!(
+            resume_in_flight(journalled(InFlight::Tendering(begun.clone()), None)),
+            Ok(Resumption::Abandon {
+                cart: begun.cart().clone(),
+                reason: NOTHING_COLLECTED,
+            })
+        );
+        for t in [part, paid] {
+            assert_eq!(
+                resume_in_flight(journalled(InFlight::Tendering(t.clone()), None)),
+                Ok(Resumption::ResumeTendering(t))
+            );
+        }
+        assert_eq!(
+            resume_in_flight(journalled(InFlight::Finalizing(finalizing.clone()), None)),
+            Ok(Resumption::ReplayFinalize(finalizing.clone()))
+        );
+        for state in [
+            InFlight::Tendering(begun.clone()),
+            InFlight::Finalizing(finalizing.clone()),
+        ] {
+            let t = match &state {
+                InFlight::Tendering(t) => t.clone(),
+                InFlight::Finalizing(f) => f.tendering().clone(),
+            };
+            assert_eq!(
+                resume_in_flight(journalled(state, Some(card_op(1_250)))),
+                Ok(Resumption::QueryCardFirst {
+                    t,
+                    op: card_op(1_250)
+                })
+            );
+        }
+    }
+
+    /// 1.8.4: a finalizing sale read back from storage is replayed only if
+    /// its tenders settle it. Its stored form is the `Tendering` it wraps, so
+    /// storage can hold one `begin_finalize` would never have made.
+    #[test]
+    fn an_unsettled_finalize_read_back_is_never_replayed() {
+        let part = pay(paying(one_item(1_247), qirsh()), 1, "cash", 500).unwrap();
+        let stored = serde_json::to_string(&part).unwrap();
+        let read_back: Finalizing = serde_json::from_str(&stored).unwrap();
+        assert!(matches!(
+            resume_in_flight(journalled(InFlight::Finalizing(read_back), None)),
+            Err(CartError::Underpaid(..))
+        ));
+    }
+
+    proptest! {
+        #![proptest_config(domain_proptest_config())]
+
+        /// 1.8.4, E.2: whatever a checkout had reached when the power went,
+        /// resuming it carries exactly the tenders the journal holds, so no
+        /// money is asked for twice and none is forgotten. A card operation the
+        /// terminal never answered is always queried before anything else; a
+        /// finalize begun always replays rather than taking more tenders; and
+        /// only a checkout with nothing taken is abandoned, back to its own
+        /// basket.
+        #[test]
+        fn prop_resume_keeps_every_tender_and_queries_a_card_first(
+            price in 1i64..=50_000,
+            policy in policies(),
+            takes in proptest::collection::vec(takes(), 0..=4),
+            finalize in any::<bool>(),
+            card in proptest::option::of(1i64..=50_000),
+        ) {
+            let mut t = paying(one_item(price), policy);
+            for (n, take) in (1u128..).zip(&takes) {
+                let tender = taken(&t, n, take);
+                match add_tender(t.clone(), tender) {
+                    Ok(next) => t = next,
+                    Err(e) => prop_assert!(refused_honestly(&e), "refused: {e:?}"),
+                }
+            }
+            let state = if finalize && is_settled(&t) {
+                InFlight::Finalizing(begin_finalize(t.clone()).unwrap())
+            } else {
+                InFlight::Tendering(t.clone())
+            };
+            let row = journalled(state.clone(), card.map(card_op));
+            let resumed = resume_in_flight(row).unwrap();
+            match (card, &state, resumed) {
+                (Some(minor), _, Resumption::QueryCardFirst { t: carried, op }) => {
+                    prop_assert_eq!(&carried, &t);
+                    prop_assert_eq!(op, card_op(minor));
+                }
+                (None, InFlight::Finalizing(f), Resumption::ReplayFinalize(replayed)) => {
+                    prop_assert_eq!(&replayed, f);
+                }
+                (None, InFlight::Tendering(_), Resumption::ResumeTendering(carried)) => {
+                    prop_assert!(!t.tenders().is_empty());
+                    prop_assert_eq!(&carried, &t);
+                }
+                (None, InFlight::Tendering(_), Resumption::Abandon { cart, reason }) => {
+                    prop_assert!(t.tenders().is_empty());
+                    prop_assert_eq!(&cart, t.cart());
+                    prop_assert_eq!(reason, NOTHING_COLLECTED);
+                }
+                (_, _, other) => {
+                    return Err(TestCaseError::fail(format!(
+                        "card {card:?} in {state:?} resumed as {other:?}"
+                    )));
+                }
+            }
+        }
+    }
+
     /// 1.4.3b's second half: a sealed pack of tobacco reaches tendering only
     /// once an operator has confirmed the customer's age, and the intent that
     /// confirmation returned names them.
@@ -6670,6 +6872,7 @@ mod tests {
         RemoveTender,
         BeginFinalize,
         Complete,
+        ResumeInFlight,
         VoidSale,
     }
 
@@ -6696,7 +6899,7 @@ mod tests {
     ];
 
     impl Transition {
-        const ALL: [Transition; 18] = [
+        const ALL: [Transition; 19] = [
             Transition::Open,
             Transition::AddLine,
             Transition::AddDepartmentLine,
@@ -6714,6 +6917,7 @@ mod tests {
             Transition::RemoveTender,
             Transition::BeginFinalize,
             Transition::Complete,
+            Transition::ResumeInFlight,
             Transition::VoidSale,
         ];
 
@@ -6885,6 +7089,14 @@ mod tests {
                         complete;
                     ("complete", Duty::Unaudited)
                 }
+                // What a journalled checkout becomes, decided from the row
+                // alone (1.8.4). Like `complete`, it returns no intent:
+                // `sale_resume_in_flight` audits the abandon and a takeover,
+                // because who takes the sale up is the shell's to know.
+                Transition::ResumeInFlight => {
+                    let _: fn(InFlightSale) -> Result<Resumption, CartError> = resume_in_flight;
+                    ("resume_in_flight", Duty::Unaudited)
+                }
                 Transition::VoidSale => {
                     let _: fn(
                         Sale,
@@ -6913,7 +7125,8 @@ mod tests {
                 | Transition::BackToBuilding
                 | Transition::AddTender
                 | Transition::BeginFinalize
-                | Transition::Complete => return None,
+                | Transition::Complete
+                | Transition::ResumeInFlight => return None,
                 Transition::AddDepartmentLine => {
                     sell(two_teas(), department_line(2, 2_500, Some(SCANNED)), None)
                         .unwrap()
