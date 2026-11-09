@@ -218,6 +218,23 @@ database in the shell, holds the signed-in user and their role's grants, and res
 > 5 November 2026), `approval_revoked`, with the detail `the approver's account is no longer
 > active`, refuses a handle whose approver has been deactivated or deleted since approving.
 
+> **As delivered at 1.6.2, its command (9 November 2026).** `user_reset_pin` is registered under
+> `user.admin`, audited, and privileged on every call: the shell's first `Always` row. Its approval
+> names the account being reset (`user_id`), exactly zero, and the approver's own reason, which the
+> `user.admin` audit row repeats as it spends the approval. Five things the table did not say:
+>
+> - **A store's administrator does not reset the organisation's.** A holder of `user.admin` limited
+>   to their own store is refused, as `permission_outside_limit`, an account holding `user.admin`
+>   without that limit, such as the owner's.
+> - **The account is live and holds a role at this store,** or the reset is `user_unknown`.
+> - **The new PIN is all ASCII digits, as long as its account's grants need,** or `pin_shape`, with
+>   the detail `this account needs six digits or more` or `four digits or more`. Under the shipped
+>   grid every account needs six, because a cashier holds `refund.receipted`.
+> - **The old hash is retired and the account's lockout on this register released,** in the
+>   transaction that writes the audit row and spends the approval. Nothing else is cleared.
+> - **It is not usable at the counter yet.** No command issues an approval until `auth_verify_pin`
+>   lands with 1.11.4b.
+
 `auth_verify_pin` is the manager-approval modal's backing call, and its arguments identify the
 binding. For a prepared intent, the Rust handler loads the row and recomputes its canonical
 `content_hash`; JavaScript cannot submit or replace that digest.

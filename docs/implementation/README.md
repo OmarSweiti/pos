@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **79 of 124 executable microsteps fully complete (~64%)**: `1.1.0`
+Phase 1 has **80 of 124 executable microsteps fully complete (~65%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -201,7 +201,9 @@ began the evening before, and neither a zone that moves nor a clock that is wron
 each step under the version it read, and after a restart taken up by a cashier from its journal
 alone: a checkout with nothing taken goes back to its basket, one with tenders taken comes back with
 every one, and a finalize begun replays under its own key, never posting a stock event or a delivery
-row twice).
+row twice), and `1.6.2` (PINs under a reviewed Argon2id profile, with wrong PINs waiting longer and
+then locking a user out until a manager releases them, and a forgotten PIN reset by a manager with a
+second person's approval, the old hash retired and the reset audited).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
@@ -243,10 +245,9 @@ from the store's list, held to the cost floor and the ministry ceiling and audit
 department sale follows, as the owner decided, and waits on #330. `1.4.12` is
 **partially delivered**: its domain half sells goods with no product through a department, capped,
 escalated above a threshold and always audited; its terminal half needs a department that can be
-stored, which #330 asks about. Group 1.6's `1.6.2` is **partially delivered**:
-PINs are hashed under a reviewed Argon2id profile, wrong PINs wait longer and then lock a user out
-until a manager releases them, as the owner decided, and the count survives a restart; the reset
-command can now be written through 1.8.2c's command context. `1.6.3` is closed: its seed comparison landed against `0004`'s 128 rows. `1.6.4` is **complete**: `Authorized<C>`,
+stored, which #330 asks about. Group 1.6's `1.6.2` is **complete**: its reset command landed on
+9 November 2026, under merchant decision 9.6's default while #233 waits for the merchant's answer
+on a second factor. `1.6.3` is closed: its seed comparison landed against `0004`'s 128 rows. `1.6.4` is **complete**: `Authorized<C>`,
 `authorize`, `ApprovalHandle` and `EscalationPolicy` are complete in `pos-domain`, with the two
 compile-fail proofs that a token cannot be forged or substituted across capabilities. Its
 persistence half now stores, validates, reloads and one-use consumes a handle through a

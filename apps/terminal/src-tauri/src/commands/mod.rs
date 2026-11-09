@@ -8,6 +8,7 @@ pub mod cart;
 pub mod sale;
 pub mod shift;
 pub mod tender;
+pub mod user;
 
 use pos_db::DbError;
 use pos_db::repo::approval::ApprovalRepository;
