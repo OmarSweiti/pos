@@ -1,8 +1,16 @@
-//! What the finalize reads of a store (`ref/schema.md` §0003, §0005).
+//! What the finalize and a shift's opening read of a store (`ref/schema.md`
+//! §0003, §0005).
 //!
 //! A completed sale's receipt names its merchant, and 1.8.3's finalize must
 //! know before it writes anything whether the store may complete a sale at
 //! all. Both come from the store's row and its organisation's.
+//!
+//! **A shift opens on the store's trading day** (1.9.5, conventions §11): its
+//! float is counted in the store's currency, and its business date, when the
+//! clock is trusted to derive one, turns at the store's own cutover in its
+//! own zone. [`TradingDay`] is those three columns, read as stored. The zone
+//! stays its IANA name: resolving it to an offset at an instant is the
+//! shell's, with the time-zone database it ships.
 //!
 //! **The fiscal decision is the schema's own rule.** `0005`'s
 //! `sale_completed_requires_fiscal_decision_*` triggers refuse a live sale
@@ -14,7 +22,7 @@
 
 use std::fmt;
 
-use pos_domain::{Language, StoreId};
+use pos_domain::{Currency, Language, StoreId};
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::DbError;
@@ -76,6 +84,20 @@ impl fmt::Debug for StoreProfile {
             .finish_non_exhaustive()
     }
 }
+
+/// The day a store trades on, as a shift's opening reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TradingDay {
+    /// The currency the store sells in, and a shift's float is counted in.
+    pub currency: Currency,
+    /// Its IANA time zone, `Asia/Amman`, unresolved.
+    pub time_zone: String,
+    /// The local minute its business day turns at: `240` is 04:00.
+    pub cutover_minutes: u16,
+}
+
+/// The minutes in a day: a cutover is a minute before the next midnight.
+const MINUTES_PER_DAY: u16 = 1_440;
 
 /// Reads stores. It writes nothing.
 pub struct StoreRepository<'c> {
@@ -164,6 +186,48 @@ impl<'c> StoreRepository<'c> {
             receipt_language,
             gst_registered: gst,
             fiscal,
+        })
+    }
+
+    /// The day `store` trades on: its currency, its time zone and its cutover.
+    ///
+    /// # Errors
+    ///
+    /// [`DbError::StoreUnknown`] for a store this database does not hold;
+    /// [`DbError::StoredStoreInvalid`] for a currency this build does not
+    /// know, or a cutover that is not a minute of the day; and
+    /// [`DbError::Sqlite`] if the read fails.
+    pub fn trading_day(&self, store: StoreId) -> Result<TradingDay, DbError> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT currency, time_zone, day_cutover_minutes FROM store WHERE id = ?1",
+                [store.as_uuid().as_bytes().as_slice()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((currency, time_zone, cutover)) = row else {
+            return Err(DbError::StoreUnknown(store));
+        };
+        let currency = Currency::from_code(&currency).map_err(|_| DbError::StoredStoreInvalid {
+            reason: format!("currency {currency:?} is not one this build knows"),
+        })?;
+        let cutover_minutes = u16::try_from(cutover)
+            .ok()
+            .filter(|minutes| *minutes < MINUTES_PER_DAY)
+            .ok_or_else(|| DbError::StoredStoreInvalid {
+                reason: format!("day_cutover_minutes {cutover} is not a minute of the day"),
+            })?;
+        Ok(TradingDay {
+            currency,
+            time_zone,
+            cutover_minutes,
         })
     }
 }
