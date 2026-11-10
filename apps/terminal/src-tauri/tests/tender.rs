@@ -2,7 +2,8 @@
 //! first part): payment journalled before any money is taken, cash settled at
 //! the store's coin step, a tender taken back and audited, a way back to the
 //! basket while nothing is taken, and the owner's two decisions of
-//! 7 November 2026 on a sale left mid-payment.
+//! 7 November 2026 on a sale left mid-payment. And the printer, read at Pay
+//! before any money is taken (1.7.6).
 //!
 //! The shop is `shop/mod.rs`'s. Its store's approved policy rounds cash to the
 //! nearest 5 fils. Every command is driven through the plain function its
@@ -12,8 +13,13 @@
 
 mod shop;
 
+use std::sync::Arc;
+
 use pos_db::repo::checkout_operation::{CheckoutOperation, CheckoutOperationRepository};
 use pos_domain::{InFlight, SaleId, TenderId, UserId};
+use pos_hardware::profile::PrinterProfile;
+use pos_hardware::render::PaperWidth;
+use pos_hardware::{PrinterAtPay, PrinterStatus, ReceiptPrinter, SimulatedPrinter};
 use shop::{
     BREAD, CASHIER_CODE, CASHIER_ID, CASHIER_PIN, CHEESE, KEY, OIL, OWNER_CODE, OWNER_ID,
     SECOND_CODE, SECOND_ID, TOBACCO, add_staff, audited, field, open, product_id, refusal, seed,
@@ -23,11 +29,11 @@ use terminal_lib::commands::auth::{login_pin, logout};
 use terminal_lib::commands::cart::{
     CartSnapshot, add_product, answer_age, current, open_cart, park_cart, resume_cart,
 };
-use terminal_lib::commands::sale::finalize;
+use terminal_lib::commands::sale::{ReceiptOutcome, finalize};
 use terminal_lib::commands::tender::{
     PaymentSnapshot, RoundingLine, add_cash, back_to_cart, begin_payment, in_flight, take_back,
 };
-use terminal_lib::state::{DATABASE_FILE, Register};
+use terminal_lib::state::{DATABASE_FILE, ReceiptDevice, Register};
 use uuid::Uuid;
 
 /// The fixture policy's coin step, in fils.
@@ -63,6 +69,22 @@ fn odd_basket(register: &Register) -> PaymentSnapshot {
         "the basket must need rounding"
     );
     paying
+}
+
+/// The shop, its register attached to `printer` in `status`, its cashier
+/// signed in.
+fn shop_with(status: PrinterStatus) -> (tempfile::TempDir, Register, Arc<SimulatedPrinter>) {
+    let dir = tempfile::tempdir().unwrap();
+    seed(dir.path(), true);
+    let printer = Arc::new(SimulatedPrinter::new());
+    *printer.force_status.lock().unwrap() = status;
+    let attached: Arc<dyn ReceiptPrinter> = printer.clone();
+    let register = open(dir.path()).with_receipt_device(ReceiptDevice {
+        profile: PrinterProfile::simulator(PaperWidth::Mm80),
+        printer: Some(attached),
+    });
+    login_pin(&register, CASHIER_CODE, CASHIER_PIN).unwrap();
+    (dir, register, printer)
 }
 
 /// The checkout journalled for `sale`, if any.
@@ -656,4 +678,76 @@ fn paying_needs_a_role_that_sells() {
     assert_eq!(refusal(back_to_cart(&register)).code, "permission_denied");
     assert_eq!(refusal(in_flight(&register)).code, "permission_denied");
     assert!(journal(&register, basket.sale_id).is_none());
+}
+
+/// `ref/hardware-and-receipts.md` §3 rule 1: the printer is polled at Pay, so
+/// paper-out warns before the money is taken, not after. The warning refuses
+/// nothing: the sale is paid for and completes, and the receipt the printer
+/// cannot take waits in the queue.
+#[test]
+fn paper_out_warns_before_tender_not_after() {
+    let (_dir, register, printer) = shop_with(PrinterStatus::PaperOut);
+    one_bottle(&register);
+    let paying = begin_payment(&register).unwrap();
+    assert_eq!(paying.printer, Some(PrinterAtPay::PaperOut));
+    assert!(
+        paying.tenders.is_empty() && paying.collected_minor == 0,
+        "told before any money is taken"
+    );
+    assert_eq!(journalled(&register, paying.sale_id), (0, 0));
+
+    // The commands that take money do not ask the printer again.
+    let paid = add_cash(&register, paying.cash_due_minor).unwrap();
+    assert!(paid.settled);
+    assert_eq!(paid.printer, None);
+    let sold = finalize(&register).unwrap();
+    assert_eq!(
+        sold.receipt,
+        ReceiptOutcome::Refused,
+        "kept, to print later"
+    );
+    assert!(printer.printed.lock().unwrap().is_empty());
+
+    // Paper back in, the next sale's Pay reads a ready printer.
+    *printer.force_status.lock().unwrap() = PrinterStatus::Ready;
+    one_bottle(&register);
+    assert_eq!(
+        begin_payment(&register).unwrap().printer,
+        Some(PrinterAtPay::Ready)
+    );
+}
+
+/// Pay reads whatever printer the register has, and no printer at all, into
+/// what the cashier is told. Reading it prints nothing and opens no drawer.
+#[test]
+fn pay_reads_the_printer_the_register_has_or_says_it_has_none() {
+    for (status, read) in [
+        (PrinterStatus::Ready, PrinterAtPay::Ready),
+        (PrinterStatus::CoverOpen, PrinterAtPay::CoverOpen),
+        (PrinterStatus::Offline, PrinterAtPay::Offline),
+        (PrinterStatus::Unsupported, PrinterAtPay::NoStatus),
+    ] {
+        let (_dir, register, printer) = shop_with(status);
+        one_bottle(&register);
+        assert_eq!(
+            begin_payment(&register).unwrap().printer,
+            Some(read),
+            "{status:?}"
+        );
+        assert!(printer.printed.lock().unwrap().is_empty());
+        assert_eq!(*printer.drawer_opens.lock().unwrap(), 0);
+        // Back to the basket and paying again reads it again.
+        back_to_cart(&register).unwrap();
+        *printer.force_status.lock().unwrap() = PrinterStatus::Ready;
+        assert_eq!(
+            begin_payment(&register).unwrap().printer,
+            Some(PrinterAtPay::Ready)
+        );
+    }
+    let (_dir, register) = shop();
+    one_bottle(&register);
+    assert_eq!(
+        begin_payment(&register).unwrap().printer,
+        Some(PrinterAtPay::NoPrinter)
+    );
 }
