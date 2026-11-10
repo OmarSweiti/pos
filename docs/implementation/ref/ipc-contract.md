@@ -197,7 +197,7 @@ Legend — **Ph**: phase introduced · **Cap**: required capability · **A**: wr
 | `auth_logout` | `()` → `()` | 1 | — | ✓ | |
 | `auth_switch_user` | `{ user_code, pin }` → `Session` | 1 | — | ✓ | |
 | `auth_verify_pin` | `{ user_code, pin, for_capability, entity_id, amount_minor, reason }` → `ApprovalRef` | 1 | — | ✓ | |
-| `user_reset_pin` | `{ user_id, new_pin, approval_id }` → `()` | 1 | `user.admin` | ✓ | ✓ |
+| `user_reset_pin` | `{ user_id, new_pin, reason, approval_id? }` → `()` | 1 | `user.admin` | ✓ | ✓ |
 
 `session_state`, `auth_login_pin` and `auth_logout` landed with 1.8.2c, which opens the register's
 database in the shell, holds the signed-in user and their role's grants, and resolves the
@@ -234,6 +234,17 @@ database in the shell, holds the signed-in user and their role's grants, and res
 >   transaction that writes the audit row and spends the approval. Nothing else is cleared.
 > - **It is not usable at the counter yet.** No command issues an approval until `auth_verify_pin`
 >   lands with 1.11.4b.
+
+> **The owner's decisions of 10 November 2026.** `user_reset_pin { user_id, new_pin, reason,
+> approval_id? }` needs one person unless the merchant's policy names `user.admin` (D1 B), as
+> `cart_override_price` does. The row is `Conditional` on
+> `ApprovalPredicate::UserAdminEscalatedByPolicy`, and no policy is stored yet, so a holder of
+> `user.admin` resets alone and the reset is usable at the counter now. The reason is a code:
+> `forgot_pin`, `locked_out` or `pin_disclosed`. The audit row records it, and any other reason is
+> `pin_reset_reason_unknown`. Where a policy escalates, the approval is bound to `user_id`, exactly
+> zero and `reason`, and one given for another reason is `approval_mismatch`. A store's manager
+> still may not reset the owner's PIN (D2), and every account under the shipped grid still needs
+> six digits (D3).
 
 `auth_verify_pin` is the manager-approval modal's backing call, and its arguments identify the
 binding. For a prepared intent, the Rust handler loads the row and recomputes its canonical

@@ -112,6 +112,10 @@ pub enum ApprovalPredicate {
     /// decision 1.8). `authorize` evaluates it against the policy the command
     /// is given, which today names nothing (`ipc::context::merchant_policy`).
     PriceOverrideEscalatedByPolicy,
+    /// The merchant's escalation policy names `user.admin` (the owner's
+    /// decision of 10 November 2026 for a PIN reset). `authorize` evaluates
+    /// it against the policy the command is given, as for a price override.
+    UserAdminEscalatedByPolicy,
 }
 
 impl ApprovalPredicate {
@@ -121,6 +125,7 @@ impl ApprovalPredicate {
         match self {
             ApprovalPredicate::DepartmentAmountAboveEscalation => cap::DepartmentSale::NAME,
             ApprovalPredicate::PriceOverrideEscalatedByPolicy => cap::PriceOverride::NAME,
+            ApprovalPredicate::UserAdminEscalatedByPolicy => cap::UserAdmin::NAME,
         }
     }
 }
@@ -477,25 +482,29 @@ pub const COMMANDS: &[CommandSpec] = &[
         approval_requirement: ApprovalRequirement::Never,
         args: &[Arg::required("shift_id")],
     },
-    // 1.6.2, its command: a forgotten PIN reset. Privileged on every call: the
-    // approval names the account being reset, exactly zero, and the
-    // approver's reason, which the audit row repeats as it spends it.
+    // 1.6.2, its command: a forgotten PIN reset, audited with its reason.
+    // Conditional on the merchant's policy, which escalates nothing yet (the
+    // owner's decision of 10 November 2026). When it does, the approval names
+    // the account being reset, exactly zero, and this reason, and is spent
+    // with the audit row.
     CommandSpec {
         name: "user_reset_pin",
         access: Access::Capability(cap::UserAdmin::NAME),
         audited: true,
-        approval_requirement: ApprovalRequirement::Always {
+        approval_requirement: ApprovalRequirement::Conditional {
+            predicate: ApprovalPredicate::UserAdminEscalatedByPolicy,
             binding: ApprovalBindingSpec {
                 entity: EntityBindingSpec::Argument("user_id"),
                 amount: AmountBindingSpec::Exact(0),
                 content: ContentBindingSpec::None,
-                reason: ReasonBindingSpec::Approval,
+                reason: ReasonBindingSpec::Argument("reason"),
             },
         },
         args: &[
             Arg::required("user_id"),
             Arg::required("new_pin"),
-            Arg::required(APPROVAL_ARGUMENT),
+            Arg::required("reason"),
+            Arg::optional(APPROVAL_ARGUMENT),
         ],
     },
     // 1.10.5, its terminal half: stock read, and moved by hand. Preparing
