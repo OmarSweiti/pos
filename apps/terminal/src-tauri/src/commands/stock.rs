@@ -424,8 +424,8 @@ mod tests {
     use crate::commands::sale::finalize;
     use crate::commands::tender::{add_cash, begin_payment};
     use crate::shop::{
-        AT, BREAD, CASHIER_CODE, CASHIER_PIN, CHEESE, MANAGER_CODE, MANAGER_ID, OIL, OWNER_CODE,
-        OWNER_ID, add_staff, at, field, open, product_id, refusal, seed, shop,
+        AT, BREAD, CASHIER_CODE, CASHIER_PIN, CHEESE, LEAD_CODE, LEAD_ID, MANAGER_CODE, MANAGER_ID,
+        OIL, OWNER_CODE, OWNER_ID, add_staff, at, field, open, product_id, refusal, seed, shop,
     };
 
     /// A second manager, who can ask for an adjustment and approve another's.
@@ -861,6 +861,74 @@ mod tests {
             refusal(on_hand(&register, product_id(OIL))).code,
             "not_signed_in"
         );
+    }
+
+    /// The owner's decision of 10 November 2026 (D5): a cashier reads what
+    /// the shelf holds, under `sale.create`, and never what it cost, and
+    /// neither does a shift lead. A manager, who holds `stock.adjust`, is
+    /// shown it. What the user holds decides, not their role's name: once
+    /// the merchant grants the cashier `stock.adjust`, the cashier's next
+    /// sign-in is shown the cost too.
+    #[test]
+    fn a_cashier_reads_stock_but_never_its_cost() {
+        let (_dir, register) = shop();
+        staff(&register);
+        add_staff(
+            &register,
+            LEAD_ID,
+            LEAD_CODE,
+            "Synthetic Lead",
+            "shift_lead",
+        );
+        let costs = |register: &Register| -> [Option<StockCost>; 3] {
+            [OIL, CHEESE, BREAD].map(|product| on_hand(register, product_id(product)).unwrap().cost)
+        };
+        let hidden: [Option<StockCost>; 3] = [None, None, None];
+        let shown = [
+            carried_at(Some(100), false),
+            carried_at(Some(100), false),
+            carried_at(None, true),
+        ];
+
+        assert_eq!(costs(&register), hidden, "the cashier");
+        // On the wire the cost is absent as a whole, its currency with it.
+        let wire = serde_json::to_value(on_hand(&register, product_id(OIL)).unwrap()).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({
+                "product_id": product_id(OIL).as_uuid().hyphenated().to_string(),
+                "on_hand_milli": 10_000,
+                "cost": null,
+            })
+        );
+        for (code, seen) in [(LEAD_CODE, hidden.clone()), (MANAGER_CODE, shown.clone())] {
+            logout(&register).unwrap();
+            login_pin(&register, code, CASHIER_PIN).unwrap();
+            assert_eq!(costs(&register), seen, "{code}");
+        }
+        let wire = serde_json::to_value(on_hand(&register, product_id(BREAD)).unwrap()).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({
+                "product_id": product_id(BREAD).as_uuid().hyphenated().to_string(),
+                "on_hand_milli": 0,
+                "cost": { "currency": "JOD", "wac_minor": null, "is_wac_estimated": true },
+            }),
+            "a cost never recorded is shown as unknown, never as hidden"
+        );
+
+        register.with_db(|conn| {
+            conn.execute(
+                "UPDATE role_capability SET decision = 'granted', limit_json = NULL
+                  WHERE capability = 'stock.adjust'
+                    AND role_id = (SELECT id FROM role WHERE code = 'cashier')",
+                [],
+            )
+            .unwrap()
+        });
+        logout(&register).unwrap();
+        login_pin(&register, CASHIER_CODE, CASHIER_PIN).unwrap();
+        assert_eq!(costs(&register), shown, "the cashier, granted stock.adjust");
     }
 
     /// Only a holder of `stock.adjust` asks or posts; a cashier holds it
