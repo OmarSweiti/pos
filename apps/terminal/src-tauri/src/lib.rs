@@ -2,6 +2,7 @@
 //! Business rules live in `pos-domain`; this crate only marshals.
 
 pub mod commands;
+pub mod health;
 pub mod ipc;
 pub(crate) mod payload;
 pub mod print_queue;
@@ -66,6 +67,7 @@ ipc::registry::commands![
     commands::stock::stock_on_hand,
     commands::stock::stock_adjust_prepare,
     commands::stock::stock_adjust,
+    health::health_status,
 ];
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

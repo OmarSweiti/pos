@@ -545,6 +545,18 @@ pub const COMMANDS: &[CommandSpec] = &[
             Arg::required(APPROVAL_ARGUMENT),
         ],
     },
+    // 1.7.6b: the register's device health, which the lock screen shows.
+    CommandSpec {
+        name: "health_status",
+        access: Access::NoCapability {
+            reason: "the lock screen shows the register's health before anyone signs in: the \
+                     printer as read now and how many receipts wait, with no grant, PIN, key \
+                     or receipt content",
+        },
+        audited: false,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[],
+    },
 ];
 
 /// Names the commands the shell registers, once.
