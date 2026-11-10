@@ -686,3 +686,43 @@ fn shift_current_answers_before_anyone_signs_in() {
         "not_signed_in"
     );
 }
+
+/// The owner's decision of 10 November 2026: with the operator typing the
+/// date, a shift dated earlier than the register's last is refused, and
+/// nothing is written. The same day again is a second shift that day, and the
+/// next day opens as ever.
+#[test]
+fn an_opening_dated_before_the_registers_last_shift_is_refused() {
+    let (_dir, _hands, register) = till();
+    let first = confirmed(&register, NEXT_DAY);
+    end_shift(&register, first.shift_id).unwrap();
+    let before = written(&register);
+
+    let earlier = refusal(begin_shift(
+        &register,
+        register.clock_confidence(),
+        &float(),
+        Some(DAY),
+    ));
+    assert_eq!(
+        (earlier.code, earlier.detail),
+        (
+            "business_date_before_last_shift",
+            Some("the register's last shift is on a later day")
+        )
+    );
+    assert_eq!(
+        written(&register),
+        before,
+        "the refused opening wrote nothing"
+    );
+    assert_eq!(current_shift(&register).unwrap(), None);
+
+    let again = confirmed(&register, NEXT_DAY);
+    assert_eq!(again.business_date, NEXT_DAY, "a second shift that day");
+    end_shift(&register, again.shift_id).unwrap();
+    assert_eq!(
+        confirmed(&register, "2026-11-07").business_date,
+        "2026-11-07"
+    );
+}

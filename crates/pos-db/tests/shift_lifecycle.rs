@@ -689,3 +689,60 @@ fn an_opening_and_a_close_travel_as_their_rows() {
         None
     );
 }
+
+/// The owner's decision of 10 November 2026: a register's business days never
+/// run backwards. A shift dated earlier than the register's last is refused by
+/// name and leaves nothing behind; the same day again is a second shift that
+/// day; another register's days are its own.
+#[test]
+fn a_shift_is_never_dated_before_the_registers_last() {
+    let w = world();
+    let untrusted = |id, at, date| {
+        open(
+            &w,
+            OTHER_REGISTER,
+            id,
+            w.cashier(),
+            at,
+            ClockConfidence::Untrusted,
+            Some(date),
+        )
+    };
+    // Another register's days are its own: the fixture register has a shift
+    // open on 2026-08-25, and this one opens a day earlier.
+    let (eve, _) = untrusted(0x5E, "2026-08-24T06:00:00.000Z", "2026-08-24").unwrap();
+    close(&w, &eve, w.cashier(), "2026-08-24T18:00:00.000Z", 0x6E).unwrap();
+
+    let (monday, _) = untrusted(0x60, "2026-11-09T06:00:00.000Z", "2026-11-09").unwrap();
+    close(&w, &monday, w.cashier(), "2026-11-09T18:00:00.000Z", 0x70).unwrap();
+
+    // Tuesday morning, the operator types Monday's eve by mistake.
+    assert!(matches!(
+        untrusted(0x61, "2026-11-10T06:00:00.000Z", "2026-11-08"),
+        Err(DbError::ShiftDateBeforePrevious { previous, asked, .. })
+            if previous == BusinessDate::parse("2026-11-09").unwrap()
+                && asked == BusinessDate::parse("2026-11-08").unwrap()
+    ));
+    for (table, id) in [
+        ("sync_commit", [0x61_u8; 16]),
+        ("shift", *uuid(0x61).as_bytes()),
+    ] {
+        assert_eq!(
+            w.conn
+                .query_row(
+                    &format!("SELECT count(*) FROM {table} WHERE id = ?1"),
+                    [id.as_slice()],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0,
+            "the refused opening left nothing in {table}"
+        );
+    }
+
+    // A second shift on Monday is a second shift that day.
+    let (again, _) = untrusted(0x62, "2026-11-09T19:00:00.000Z", "2026-11-09").unwrap();
+    close(&w, &again, w.cashier(), "2026-11-09T22:00:00.000Z", 0x71).unwrap();
+    // Tuesday, typed right.
+    untrusted(0x63, "2026-11-10T06:00:00.000Z", "2026-11-10").unwrap();
+}
