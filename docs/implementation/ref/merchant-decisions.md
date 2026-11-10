@@ -110,6 +110,8 @@ Print this. Sit with the merchant. Fill it in. Date it. A decision made by a dev
 > The default on 4.1 is deliberate: blocking a sale because the ledger is wrong punishes the customer at the register for a back-office error. Hard block only for tightly run stores that have said they want it.
 >
 > **4.4 and 4.5 exist because "allow and flag" is worthless without a stock-in path.** Every path that *increases* stock arrived in Phase 4, so from the first sale every product goes negative and stays negative: a 1 500-SKU minimarket generates 1 500 negative-stock rows in a fortnight, the flag is a hundred-per-cent false positive, and the merchant learns to ignore it — permanently, including after it starts meaning something. `stock_adjust` lands in Phase 1 with the ledger for the same reason.
+>
+> **Decided by the owner on 10 November 2026, for 1.10.5.** A cashier is shown a product's stock, never what it cost: only a holder of `stock.adjust`, a manager under the shipped grid, is shown the cost, because beside the shelf price it is the shop's margin. Granting a role `stock.adjust` in `role_capability` shows it the cost too. A stock adjustment is dated by the register's open shift and waits for one, until the register trusts its clock.
 
 ---
 

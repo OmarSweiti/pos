@@ -31,6 +31,13 @@
 //! `stock_on_hand` reads the store's projection, `stock_cache`, under
 //! `sale.create`: what the shelf should hold, and the cost a unit is carried
 //! at, which is unknown rather than zero when no cost was ever recorded.
+//!
+//! **Only a holder of `stock.adjust` is shown the cost** (the owner's
+//! decision of 10 November 2026). A product's cost is what the shop paid for
+//! it, and beside the shelf price it is the shop's margin, so a cashier is
+//! shown what the shelf holds and never what it cost. What the signed-in user
+//! holds decides, never their role's name, so a merchant who grants a
+//! cashier `stock.adjust` shows them the cost as well.
 
 use pos_db::DbError;
 use pos_db::repo::outbox::{CommitEnvelope, FactMember, OutboxRepository};
@@ -38,8 +45,8 @@ use pos_db::repo::product::ProductRepository;
 use pos_db::repo::stock::StockRepository;
 use pos_db::repo::stock_adjustment::StockAdjustmentRepository;
 use pos_domain::{
-    ApprovalBinding, ApprovalId, EscalationPolicy, ProductId, Qty, StockAdjustmentReason,
-    StockAdjustmentRequest, StockError, StockEventId, StockPosition, cap,
+    ApprovalBinding, ApprovalId, Capability, EscalationPolicy, ProductId, Qty,
+    StockAdjustmentReason, StockAdjustmentRequest, StockError, StockEventId, StockPosition, cap,
 };
 use serde::Serialize;
 use tauri::State;
@@ -59,6 +66,17 @@ pub struct StockSnapshot {
     /// On hand, in milli-units. Below zero when more was sold than was ever
     /// recorded arriving.
     pub on_hand_milli: i64,
+    /// What a unit is carried at, or `None` for anyone who does not hold
+    /// `stock.adjust`, who is never shown it. A cost that was never recorded
+    /// is shown inside it as unknown, so a hidden cost is never mistaken for
+    /// an unknown one.
+    pub cost: Option<StockCost>,
+}
+
+/// The cost a unit of stock is carried at, as a holder of `stock.adjust` is
+/// shown it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StockCost {
     /// The currency `wac_minor` is in, by its ISO code.
     pub currency: &'static str,
     /// The weighted average cost of one unit, in minor units, or `None` when
@@ -69,13 +87,17 @@ pub struct StockSnapshot {
 }
 
 impl StockSnapshot {
-    fn of(product_id: ProductId, position: &StockPosition) -> StockSnapshot {
+    /// What `position` holds of `product_id`, its cost only when
+    /// `sees_cost`.
+    fn of(product_id: ProductId, position: &StockPosition, sees_cost: bool) -> StockSnapshot {
         StockSnapshot {
             product_id,
             on_hand_milli: position.on_hand.milli(),
-            currency: position.wac.currency().code(),
-            wac_minor: position.cost_basis().map(|wac| wac.minor()),
-            is_wac_estimated: position.is_wac_estimated,
+            cost: sees_cost.then(|| StockCost {
+                currency: position.wac.currency().code(),
+                wac_minor: position.cost_basis().map(|wac| wac.minor()),
+                is_wac_estimated: position.is_wac_estimated,
+            }),
         }
     }
 }
@@ -127,7 +149,8 @@ pub fn stock_adjust(
 }
 
 /// `stock_on_hand`: what the store holds of `product_id`, from its
-/// projection.
+/// projection. Its cost is `None` unless the signed-in user holds
+/// `stock.adjust`.
 ///
 /// # Errors
 ///
@@ -138,6 +161,11 @@ pub fn on_hand(register: &Register, product_id: ProductId) -> IpcResult<StockSna
     let auth = proof::<cap::SaleCreate>(register, register.now())?;
     let (db, session) = register.lock();
     signed_in_as(session.as_ref(), auth.actor())?;
+    // What the signed-in user holds decides, read from the grants they
+    // signed in with, as every proof is.
+    let sees_cost = session
+        .as_ref()
+        .is_some_and(|session| session.grants.holds(cap::StockAdjust::NAME));
     drop(session);
     ProductRepository::new(&db)
         .by_id(product_id)
@@ -146,7 +174,7 @@ pub fn on_hand(register: &Register, product_id: ProductId) -> IpcResult<StockSna
     let position = StockRepository::new(&db)
         .position(product_id, register.store())
         .map_err(stored)?;
-    Ok(StockSnapshot::of(product_id, &position))
+    Ok(StockSnapshot::of(product_id, &position, sees_cost))
 }
 
 /// `stock_adjust_prepare`: store the signed-in user's request to move
@@ -291,9 +319,11 @@ pub fn adjust(
         .commit(&tx, &approved)
         .map_err(|e| adjustment_refused(&e))?;
     tx.commit().map_err(sqlite)?;
+    // Only a holder of `stock.adjust` posts, so the cost is shown.
     Ok(StockSnapshot::of(
         approved.event().event().product_id,
         &after,
+        true,
     ))
 }
 
@@ -394,8 +424,8 @@ mod tests {
     use crate::commands::sale::finalize;
     use crate::commands::tender::{add_cash, begin_payment};
     use crate::shop::{
-        AT, BREAD, CASHIER_CODE, CASHIER_PIN, CHEESE, MANAGER_CODE, MANAGER_ID, OIL, OWNER_CODE,
-        OWNER_ID, add_staff, at, field, open, product_id, refusal, seed, shop,
+        AT, BREAD, CASHIER_CODE, CASHIER_PIN, CHEESE, LEAD_CODE, LEAD_ID, MANAGER_CODE, MANAGER_ID,
+        OIL, OWNER_CODE, OWNER_ID, add_staff, at, field, open, product_id, refusal, seed, shop,
     };
 
     /// A second manager, who can ask for an adjustment and approve another's.
@@ -565,24 +595,31 @@ mod tests {
         Uuid::from_bytes(id).hyphenated().to_string()
     }
 
+    /// The cost a holder of `stock.adjust` is shown, in dinars.
+    fn carried_at(wac_minor: Option<i64>, is_wac_estimated: bool) -> Option<StockCost> {
+        Some(StockCost {
+            currency: "JOD",
+            wac_minor,
+            is_wac_estimated,
+        })
+    }
+
     /// The `Done when` through the shell: the shop's ten bottles of oil, one
     /// sold, nine on hand; one written off as damaged with the owner's
     /// approval, eight on hand; and the sale's event still carries the cost
     /// it captured. The adjustment's event, its audit row and the approval's
-    /// consumption travel in one envelope, and the request is gone.
+    /// consumption travel in one envelope, and the request is gone. The
+    /// cashier is shown the shelf, the manager its cost as well.
     #[test]
     fn a_sale_and_an_approved_adjustment_move_stock_and_keep_the_sales_cost() {
         let (_dir, register) = shop();
         let oil = product_id(OIL);
-        let stocked = on_hand(&register, oil).unwrap();
         assert_eq!(
-            stocked,
+            on_hand(&register, oil).unwrap(),
             StockSnapshot {
                 product_id: oil,
                 on_hand_milli: 10_000,
-                currency: "JOD",
-                wac_minor: Some(100),
-                is_wac_estimated: false,
+                cost: None,
             }
         );
         sell_one_bottle(&register);
@@ -603,9 +640,14 @@ mod tests {
             ),
             (oil, -1_000, "damage", Some(NOTE))
         );
+        let stocked = StockSnapshot {
+            product_id: oil,
+            on_hand_milli: 9_000,
+            cost: carried_at(Some(100), false),
+        };
         assert_eq!(
-            on_hand(&register, oil).unwrap().on_hand_milli,
-            9_000,
+            on_hand(&register, oil).unwrap(),
+            stocked,
             "asking moves nothing"
         );
         let approval = owners(&register, asked.stock_event_id);
@@ -789,19 +831,17 @@ mod tests {
         assert_eq!(delivering, 3, "each member waits to travel");
     }
 
-    /// A cashier reads stock, under `sale.create`. A product never stocked
-    /// holds nothing, at a cost nobody knows, which is never shown as zero.
+    /// A manager reads stock and what it cost. A product never stocked holds
+    /// nothing, at a cost nobody knows, which is never shown as zero.
     #[test]
     fn stock_on_hand_answers_the_stores_projection() {
-        let (_dir, register) = shop();
+        let (_dir, register) = back_office();
         assert_eq!(
             on_hand(&register, product_id(CHEESE)).unwrap(),
             StockSnapshot {
                 product_id: product_id(CHEESE),
                 on_hand_milli: 500,
-                currency: "JOD",
-                wac_minor: Some(100),
-                is_wac_estimated: false,
+                cost: carried_at(Some(100), false),
             }
         );
         assert_eq!(
@@ -809,9 +849,7 @@ mod tests {
             StockSnapshot {
                 product_id: product_id(BREAD),
                 on_hand_milli: 0,
-                currency: "JOD",
-                wac_minor: None,
-                is_wac_estimated: true,
+                cost: carried_at(None, true),
             }
         );
         assert_eq!(
@@ -823,6 +861,74 @@ mod tests {
             refusal(on_hand(&register, product_id(OIL))).code,
             "not_signed_in"
         );
+    }
+
+    /// The owner's decision of 10 November 2026 (D5): a cashier reads what
+    /// the shelf holds, under `sale.create`, and never what it cost, and
+    /// neither does a shift lead. A manager, who holds `stock.adjust`, is
+    /// shown it. What the user holds decides, not their role's name: once
+    /// the merchant grants the cashier `stock.adjust`, the cashier's next
+    /// sign-in is shown the cost too.
+    #[test]
+    fn a_cashier_reads_stock_but_never_its_cost() {
+        let (_dir, register) = shop();
+        staff(&register);
+        add_staff(
+            &register,
+            LEAD_ID,
+            LEAD_CODE,
+            "Synthetic Lead",
+            "shift_lead",
+        );
+        let costs = |register: &Register| -> [Option<StockCost>; 3] {
+            [OIL, CHEESE, BREAD].map(|product| on_hand(register, product_id(product)).unwrap().cost)
+        };
+        let hidden: [Option<StockCost>; 3] = [None, None, None];
+        let shown = [
+            carried_at(Some(100), false),
+            carried_at(Some(100), false),
+            carried_at(None, true),
+        ];
+
+        assert_eq!(costs(&register), hidden, "the cashier");
+        // On the wire the cost is absent as a whole, its currency with it.
+        let wire = serde_json::to_value(on_hand(&register, product_id(OIL)).unwrap()).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({
+                "product_id": product_id(OIL).as_uuid().hyphenated().to_string(),
+                "on_hand_milli": 10_000,
+                "cost": null,
+            })
+        );
+        for (code, seen) in [(LEAD_CODE, hidden.clone()), (MANAGER_CODE, shown.clone())] {
+            logout(&register).unwrap();
+            login_pin(&register, code, CASHIER_PIN).unwrap();
+            assert_eq!(costs(&register), seen, "{code}");
+        }
+        let wire = serde_json::to_value(on_hand(&register, product_id(BREAD)).unwrap()).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({
+                "product_id": product_id(BREAD).as_uuid().hyphenated().to_string(),
+                "on_hand_milli": 0,
+                "cost": { "currency": "JOD", "wac_minor": null, "is_wac_estimated": true },
+            }),
+            "a cost never recorded is shown as unknown, never as hidden"
+        );
+
+        register.with_db(|conn| {
+            conn.execute(
+                "UPDATE role_capability SET decision = 'granted', limit_json = NULL
+                  WHERE capability = 'stock.adjust'
+                    AND role_id = (SELECT id FROM role WHERE code = 'cashier')",
+                [],
+            )
+            .unwrap()
+        });
+        logout(&register).unwrap();
+        login_pin(&register, CASHIER_CODE, CASHIER_PIN).unwrap();
+        assert_eq!(costs(&register), shown, "the cashier, granted stock.adjust");
     }
 
     /// Only a holder of `stock.adjust` asks or posts; a cashier holds it
