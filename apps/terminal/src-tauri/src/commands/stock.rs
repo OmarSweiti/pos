@@ -1,6 +1,6 @@
-//! A store's stock at the till: `stock_on_hand`, `stock_adjust_prepare` and
-//! `stock_adjust` (`ref/ipc-contract.md` §3, "Stock"; microstep 1.10.5, its
-//! terminal half).
+//! A store's stock at the till: `stock_on_hand`, `stock_adjust_now`,
+//! `stock_adjust_prepare` and `stock_adjust` (`ref/ipc-contract.md` §3,
+//! "Stock"; microstep 1.10.5, its terminal half).
 //!
 //! Each is a thin call into the domain and database half 1.10.5 delivered on
 //! 4 November 2026, run in the shell state 1.8.2c created: the register's
@@ -8,7 +8,16 @@
 //!
 //! Every path that increases stock arrives in Phase 4, so without an
 //! adjustment every product goes negative from its first sale, and the
-//! negative-stock flag means nothing. Stock is moved by hand in two steps:
+//! negative-stock flag means nothing.
+//!
+//! **One person moves stock by hand, unless the merchant's policy names
+//! `stock.adjust`** (the owner's decision of 10 November 2026, as for a price
+//! override and a PIN reset). `stock_adjust_now` posts the movement at once,
+//! under the actor's own `stock.adjust`: the event and its audit row travel
+//! in one envelope, and no request is stored. Otherwise a shop with one
+//! manager could never correct its stock, since nobody approves their own
+//! request. Where the policy names `stock.adjust`, `stock_adjust_now` is
+//! refused, and stock moves in two steps:
 //!
 //! - **`stock_adjust_prepare` stores what was asked for.** A holder of
 //!   `stock.adjust` names a product, a signed quantity, one of five reasons
@@ -42,18 +51,20 @@
 use pos_db::DbError;
 use pos_db::repo::outbox::{CommitEnvelope, FactMember, OutboxRepository};
 use pos_db::repo::product::ProductRepository;
+use pos_db::repo::stock;
 use pos_db::repo::stock::StockRepository;
 use pos_db::repo::stock_adjustment::StockAdjustmentRepository;
 use pos_domain::{
-    ApprovalBinding, ApprovalId, Capability, EscalationPolicy, ProductId, Qty,
+    ApprovalBinding, ApprovalId, AuditIntent, Capability, EscalationPolicy, ProductId, Qty,
     StockAdjustmentReason, StockAdjustmentRequest, StockError, StockEventId, StockPosition, cap,
 };
 use serde::Serialize;
+use serde_json::json;
 use tauri::State;
 
 use super::cart::{open_shift, proof, signed_in_as};
-use super::{sqlite, stored};
-use crate::ipc::context::{authorize, permission_refused};
+use super::{Fact, audit_fact, sqlite, stored};
+use crate::ipc::context::{authorize, merchant_policy, permission_refused};
 use crate::ipc::{IpcError, IpcResult};
 use crate::payload::audit_payload;
 use crate::state::{PRODUCER_VERSION, Register, SYNC_PROTOCOL_VERSION, Till};
@@ -123,6 +134,26 @@ pub fn stock_on_hand(till: State<'_, Till>, product_id: ProductId) -> IpcResult<
 }
 
 #[tauri::command]
+pub fn stock_adjust_now(
+    till: State<'_, Till>,
+    product_id: ProductId,
+    qty_delta_milli: i64,
+    reason_code: String,
+    note: Option<String>,
+) -> IpcResult<StockSnapshot> {
+    adjust_now(
+        till.register()?,
+        &Adjustment {
+            product_id,
+            qty_delta_milli,
+            reason_code: &reason_code,
+            note,
+        },
+        &merchant_policy(),
+    )
+}
+
+#[tauri::command]
 pub fn stock_adjust_prepare(
     till: State<'_, Till>,
     product_id: ProductId,
@@ -175,6 +206,124 @@ pub fn on_hand(register: &Register, product_id: ProductId) -> IpcResult<StockSna
         .position(product_id, register.store())
         .map_err(stored)?;
     Ok(StockSnapshot::of(product_id, &position, sees_cost))
+}
+
+/// A movement of stock by hand, as `stock_adjust_now` is asked for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Adjustment<'a> {
+    pub product_id: ProductId,
+    /// Signed, in milli-units: negative leaves the shelf, positive arrives.
+    pub qty_delta_milli: i64,
+    /// One of the five reasons, by its wire code.
+    pub reason_code: &'a str,
+    pub note: Option<String>,
+}
+
+/// `stock_adjust_now`: post `asked` at once, under the signed-in user's
+/// `stock.adjust`, where `policy` does not name `stock.adjust`. Answers the
+/// position the event leaves, with its cost, as `stock_adjust` does.
+///
+/// The event is the one an approved request posts: an `adjust` event naming
+/// its reason and note, by the person signed in, dated by the register's open
+/// shift, and stock that arrives is valued at the cost basis in force, marked
+/// projected. The event and its `stock.adjust` audit row, whose reason is the
+/// reason code, travel in one envelope (I-9). Nothing is stored for anyone to
+/// approve.
+///
+/// # Errors
+///
+/// - What the context refuses: `not_signed_in`, `permission_denied` without
+///   `stock.adjust`, and `approval_required` where `policy` names
+///   `stock.adjust`, whose way is `stock_adjust_prepare` then `stock_adjust`.
+/// - `stock_reason_unknown` for a code that names none of the five, and
+///   `stock_adjustment_against_reason` for a movement its reason does not
+///   allow, a movement of nothing among them.
+/// - `shift_not_open` when the register has no open shift to date it by.
+/// - `product_unknown`; `qty_not_whole` for a quantity that is not a whole
+///   number of the product's steps; and `storage_failed`.
+///
+/// A refused adjustment writes nothing.
+pub fn adjust_now(
+    register: &Register,
+    asked: &Adjustment<'_>,
+    policy: &EscalationPolicy,
+) -> IpcResult<StockSnapshot> {
+    let at = register.now();
+    let stock_event_id = StockEventId::from_uuid(register.next_id());
+    // What an approval would name, were one asked for: this event, and an
+    // amount of zero. Where the policy names `stock.adjust` none can be
+    // given here, so the context refuses it as `approval_required`.
+    let binding = ApprovalBinding {
+        entity_id: stock_event_id.as_uuid(),
+        amount_minor: 0,
+        content_hash: None,
+    };
+    let auth = authorize::<cap::StockAdjust>(register, None, &binding, policy, at)?;
+    let reason =
+        StockAdjustmentReason::from_code(asked.reason_code).map_err(|e| stock_refused(&e))?;
+    let request = StockAdjustmentRequest {
+        stock_event_id,
+        product_id: asked.product_id,
+        qty_delta: Qty::from_milli(asked.qty_delta_milli),
+        reason,
+        note: asked.note.clone(),
+    };
+    request.check().map_err(|e| stock_refused(&e))?;
+    let (mut db, session) = register.lock();
+    signed_in_as(session.as_ref(), auth.actor())?;
+    drop(session);
+    let shift = open_shift(&db, register)?;
+
+    let tx = db.transaction().map_err(sqlite)?;
+    let ledger = StockRepository::new(&tx);
+    let before = ledger
+        .position(request.product_id, register.store())
+        .map_err(stored)?;
+    let movement = request.movement(
+        register.store(),
+        &before,
+        auth.actor(),
+        at,
+        shift.business_date,
+    );
+    let prepared = ledger
+        .prepare(&tx, register.register(), &[movement])
+        .map_err(|e| adjustment_refused(&e))?;
+    let Some(event) = prepared.first() else {
+        return Err(IpcError::new("storage_failed", "error.storage.failed"));
+    };
+    let payload = event.payload();
+    audit_fact(
+        register,
+        &tx,
+        register.next_id(),
+        &Fact {
+            entity: stock::ENTITY,
+            id: stock_event_id.as_uuid(),
+            payload: &payload,
+        },
+        &AuditIntent {
+            actor: auth.actor(),
+            approver: None,
+            approval: None,
+            action: cap::StockAdjust::NAME,
+            entity: stock::ENTITY,
+            entity_id: stock_event_id.as_uuid(),
+            reason: Some(reason.as_str().to_owned()),
+            payload: json!({
+                "amount_minor": 0,
+                "product_id": request.product_id.as_uuid().hyphenated().to_string(),
+                "qty_delta_milli": request.qty_delta.milli(),
+                "reason_code": reason.as_str(),
+            }),
+            at,
+        },
+    )?;
+    ledger.append(&tx, &prepared).map_err(stored)?;
+    let after = event.event().after;
+    tx.commit().map_err(sqlite)?;
+    // Only a holder of `stock.adjust` posts, so the cost is shown.
+    Ok(StockSnapshot::of(request.product_id, &after, true))
 }
 
 /// `stock_adjust_prepare`: store the signed-in user's request to move

@@ -517,6 +517,22 @@ pub const COMMANDS: &[CommandSpec] = &[
         approval_requirement: ApprovalRequirement::Never,
         args: &[Arg::required("product_id")],
     },
+    // One person moves stock at once, audited, under the shipped policy (the
+    // owner's decision of 10 November 2026). It takes no approval: where a
+    // merchant's policy names `stock.adjust` it is refused, and the request
+    // below is prepared, approved and posted instead.
+    CommandSpec {
+        name: "stock_adjust_now",
+        access: Access::Capability(cap::StockAdjust::NAME),
+        audited: true,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[
+            Arg::required("product_id"),
+            Arg::required("qty_delta_milli"),
+            Arg::required("reason_code"),
+            Arg::optional("note"),
+        ],
+    },
     CommandSpec {
         name: "stock_adjust_prepare",
         access: Access::Capability(cap::StockAdjust::NAME),
