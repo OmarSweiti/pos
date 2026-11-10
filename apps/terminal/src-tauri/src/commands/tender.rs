@@ -60,6 +60,7 @@ use pos_domain::{
     TenderState, Tendering, Timestamp, UserId, cap, change_due, final_tender_rounding, is_settled,
     remaining_due, standard_tender_type,
 };
+use pos_hardware::PrinterAtPay;
 use rusqlite::Connection;
 use serde::Serialize;
 use serde_json::json;
@@ -110,6 +111,12 @@ pub struct PaymentSnapshot {
     /// Products the basket would leave below zero now, which the screen shows
     /// loudly. Once payment has begun a shortfall never blocks it.
     pub stock_flags: Vec<StockFlag>,
+    /// The printer, as `tender_begin` read it at Pay, before any money is
+    /// taken: paper out, a cover open or no printer is told now rather than
+    /// after the customer has paid (`ref/hardware-and-receipts.md` §3
+    /// rule 1). `None` on every other answer, because the commands that take
+    /// money do not wait on a printer.
+    pub printer: Option<PrinterAtPay>,
 }
 
 /// One tender taken.
@@ -204,11 +211,13 @@ pub fn sale_resume_in_flight(till: State<'_, Till>, sale_id: SaleId) -> IpcResul
     resume_journalled(till.register()?, sale_id)
 }
 
-/// `tender_begin`: begin paying for the till's basket. Its stock is screened
-/// once more, since another basket may have sold it; it is priced under the
-/// store's own pack and policy, and the store's coin step is fixed for every
-/// tender of the sale; then the checkout is journalled under a fresh
-/// idempotency key, before any money is taken.
+/// `tender_begin`: begin paying for the till's basket. The printer is read
+/// first, so its answer can tell the cashier of paper out before the
+/// customer pays (1.7.6). Its stock is screened once more, since another
+/// basket may have sold it; it is priced under the store's own pack and
+/// policy, and the store's coin step is fixed for every tender of the sale;
+/// then the checkout is journalled under a fresh idempotency key, before any
+/// money is taken. A printer that would not print refuses nothing.
 ///
 /// # Errors
 ///
@@ -221,6 +230,10 @@ pub fn sale_resume_in_flight(till: State<'_, Till>, sale_id: SaleId) -> IpcResul
 pub fn begin_payment(register: &Register) -> IpcResult<PaymentSnapshot> {
     let at = register.now();
     let auth = proof::<cap::SaleCreate>(register, at)?;
+    // At Pay, before any money is taken, and before the till's lock: a
+    // network printer is asked within its deadlines, and no other command
+    // waits on it. It is told, never enforced.
+    let printer = PrinterAtPay::poll(register.receipt_device().printer.as_deref());
     let mut till = register.lock_till();
     signed_in_as(till.session.as_ref(), auth.actor())?;
     let cart = building(till.working.as_ref())?.clone();
@@ -234,7 +247,10 @@ pub fn begin_payment(register: &Register) -> IpcResult<PaymentSnapshot> {
         direction: policy.cash_round_direction(),
     };
     let tendering = begin_tender(cart, &bands, &settings, coin).map_err(|e| cart_refused(&e))?;
-    let answer = payment(&till.db, register.store(), &tendering)?;
+    let answer = PaymentSnapshot {
+        printer: Some(printer),
+        ..payment(&till.db, register.store(), &tendering)?
+    };
     let key = register.next_id();
     let tx = till.db.transaction().map_err(sqlite)?;
     CheckoutOperationRepository::new(&tx)
@@ -648,6 +664,7 @@ fn payment(conn: &Connection, store: StoreId, t: &Tendering) -> IpcResult<Paymen
         }),
         change_minor: counted(change_due(t))?.minor(),
         settled: is_settled(t),
+        printer: None,
         stock_flags: flags.iter().map(StockFlag::from).collect(),
     })
 }
