@@ -84,11 +84,6 @@ PLANNED: dict[str, tuple[str, ...]] = {
         "golden_receipt_ar_58mm",
         "golden_receipt_ar_80mm",
     ),
-    "1.7.6b": (
-        "a_queued_artifact_prints_unchanged_once_a_printer_returns",
-        "a_sale_completes_with_no_printer_and_queues_the_artifact",
-        "the_missing_printer_is_an_alarm_not_a_modal",
-    ),
     "1.8.5b": (
         "a_backup_opens_with_the_recovery_code_alone",
         "key_generation_refuses_when_a_database_already_exists",
@@ -493,6 +488,8 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "a_handle_used_twice_is_refused",
         "a_multipack_barcode_adds_its_pack_quantity",
         "a_pack_quantity_of_zero_is_refused_at_save",
+        "a_queued_artifact_prints_unchanged_once_a_printer_returns",
+        "a_sale_completes_with_no_printer_and_queues_the_artifact",
         "a_second_live_barcode_claim_is_refused",
         "a_single_letter_query_does_not_match_a_vocalised_name",
         "age_decline_removes_line_and_audits",
@@ -539,6 +536,7 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "search_survives_every_fts5_metacharacter",
         "tail_deletion_is_detected_against_the_last_anchor",
         "the_effect_and_the_consumption_commit_together_or_not_at_all",
+        "the_missing_printer_is_an_alarm_not_a_modal",
         "training_auto_off_at_shift_close",
         "two_offline_registers_selling_the_last_unit_both_succeed",
         "unicode_names_roundtrip_through_db_and_fts",
