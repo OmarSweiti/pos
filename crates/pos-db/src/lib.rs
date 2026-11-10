@@ -286,6 +286,15 @@ pub enum DbError {
          so it is not what a manager was shown"
     )]
     StockAdjustmentAltered(pos_domain::StockEventId),
+    #[error(
+        "prepared stock adjustment {id} was asked for by {requested_by}, and only they \
+         post it, not {actor}"
+    )]
+    StockAdjustmentNotYours {
+        id: pos_domain::StockEventId,
+        requested_by: pos_domain::UserId,
+        actor: pos_domain::UserId,
+    },
     #[error("the approval does not authorise this operation: {0}")]
     ApprovalRefused(pos_domain::PermissionError),
     #[error("no approval {0} is stored")]

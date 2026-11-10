@@ -167,7 +167,7 @@ fn adjust(
         day(),
     )?;
     let facts: Vec<(String, [u8; 16], String)> = effect
-        .facts()
+        .facts("{}".to_owned())
         .into_iter()
         .map(|(entity, entity_id, payload)| (entity.to_owned(), entity_id, payload))
         .collect();
@@ -452,6 +452,42 @@ fn stock_adjust_approval_for_another_event_is_refused() {
     );
 }
 
+/// The approver was shown who asked, which the digest binds, so only the
+/// person who asked posts the request: under anyone else's proof the event
+/// would name someone the approval never did.
+#[test]
+fn a_request_is_posted_only_by_the_person_who_asked() {
+    let w = world();
+    open(&w, opening(&w));
+    let req = request(0x30, w.item, -1_000, StockAdjustmentReason::Damage, None);
+    let tx = w.conn.unchecked_transaction().unwrap();
+    repo(&w).prepare(&tx, &req, owner(), at()).unwrap();
+    tx.commit().unwrap();
+    // An approval of exactly this request, given to the manager.
+    let handle = approve(&w, req.stock_event_id, 0x20);
+    let bound = binding(&w, req.stock_event_id).unwrap();
+    let changes = w.conn.total_changes();
+
+    assert!(matches!(
+        adjust(&w, req.stock_event_id, &proof(Some(&handle), &bound).unwrap(), 0x41),
+        Err(DbError::StockAdjustmentNotYours { id, requested_by, actor })
+            if id == req.stock_event_id && requested_by == owner() && actor == manager()
+    ));
+    assert_eq!(w.conn.total_changes(), changes, "the refusal wrote nothing");
+    assert!(
+        !ApprovalRepository::new(&w.conn)
+            .is_consumed(handle.id())
+            .unwrap(),
+        "and spent nothing"
+    );
+    assert_eq!(
+        StockRepository::new(&w.conn)
+            .on_hand(w.item, w.store())
+            .unwrap(),
+        Qty::from_milli(12_000)
+    );
+}
+
 /// An approval issued by the owner and never stored.
 fn approve_unstored(bound: &ApprovalBinding) -> ApprovalHandle {
     let approver = authorize::<cap::StockAdjust>(
@@ -642,7 +678,7 @@ fn stock_effect_consumption_and_audit_share_the_persisted_event_id() {
             )
             .unwrap();
         let facts: Vec<(String, [u8; 16], String)> = effect
-            .facts()
+            .facts("{}".to_owned())
             .into_iter()
             .map(|(e, id, p)| (e.to_owned(), id, p))
             .collect();
