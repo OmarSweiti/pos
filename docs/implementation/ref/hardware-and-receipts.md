@@ -255,6 +255,8 @@ The fiscal question sits on top of this and is not settled: a cleared QR is supp
 
 **Tests:** `a_sale_completes_with_no_printer_and_queues_the_artifact` · `the_missing_printer_is_an_alarm_not_a_modal` · `a_queued_artifact_prints_unchanged_once_a_printer_returns`.
 
+*As delivered at 1.7.6b:* the alarm is `health_status`'s (`apps/terminal/src-tauri/src/health.rs`), which the lock screen reads before anyone signs in. It carries the printer as read now, the receipts waiting and the receipts only a person can close, each raised as an alarm, never a modal. The finalize keeps every receipt in the sale's transaction, as it always has. A kept receipt prints with the next sale once a printer can take it: one that was offline once its retry is due, or one a register is opened with. Until 1.7.14's worker drains the queue off the command path, no sale means no drain.
+
 ---
 
 ## 4 · Cash drawer

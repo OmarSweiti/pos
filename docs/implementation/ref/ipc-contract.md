@@ -717,6 +717,21 @@ sales excluded **with a visible count**, so the exclusion is stated rather than 
 
 `health_status` is unauthenticated because the lock screen shows it — sync state, offline queue depth, uncleared fiscal count, backup age, clock confidence. A cashier who cannot sign in still needs to know whether the register is healthy.
 
+> **As delivered at 1.7.6b (10 November 2026).** `health_status` is registered under no capability
+> and is not audited. `HealthSnapshot` holds what exists today:
+>
+> - **`printer`:** `reading`, the printer as read now, the reading Pay takes (`ready`, `paper_out`,
+>   `cover_open`, `offline`, `no_status`, `no_printer`); `receipts_waiting`, queued or refused and due
+>   to be tried again; and `receipts_unconfirmed`, those only a person closes.
+> - **`alarms`,** the loudest first: `printer_unavailable` when the reading warns,
+>   `receipts_unconfirmed` and `receipts_waiting`. Each is a status line, never a dialogue, and none
+>   stops a sale.
+>
+> It reads the printer before the database and holds no lock while it does. It carries no grant,
+> PIN, key or receipt content. A failure to read the queue is `health_unreadable`. Backup age
+> (1.8.6), disk space (1.8.8), the fiscal queue (Phase 2), sync state and clock confidence join it
+> as the steps that build them land.
+
 Diagnostics has no drawer-kick bypass. From Phase 2 its drawer action invokes the same
 `drawer_open_no_sale { reason, approval_id? }` command as the shift screen, producing the same
 `drawer_event`, audit row and conditional approval. `fiscal_rebuild_failed` is `Always` with entity
