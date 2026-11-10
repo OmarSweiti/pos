@@ -193,7 +193,7 @@ Header and footer text, logo, and toggles are editable in the back office and **
 
 These are the rules that decide whether a paper jam costs a receipt, a sale, or a drawer of cash.
 
-1. **Poll status before finalize, at Pay.** Paper-out warns *before* the money is taken, not after (master plan C.15). A warning after payment is a warning that helps nobody.
+1. **Poll status before finalize, at Pay.** Paper-out warns *before* the money is taken, not after (master plan C.15). A warning after payment is a warning that helps nobody. *As delivered at 1.7.6:* `tender_begin` reads the printer through `pos_hardware::PrinterAtPay::poll`, before it takes the till's lock, and its answer carries one of six readings: ready, paper out, cover open, offline, no real-time status, or no printer. The reading is told, never enforced.
 
 2. **A print failure after finalize never un-finalizes the sale.** The money moved. The sale stands. An incident is logged, an alarm is raised, and a reprint is offered — marked DUPLICATE (E.46).
 

@@ -973,9 +973,16 @@ Seven fixtures: Arabic 80 mm · Arabic 58 mm · bilingual 80 mm · multi-rate ta
 **Done when:** `cargo nextest run -p pos-hardware golden_ && python3 scripts/check-golden-review.py` exits zero, proving every `.bin` has a same-stem `.png` and every changed Arabic/bilingual pair has a dated `docs/drills/` record naming the commit and native reader. A hexdump cannot show a lost medial form.
 
 ### 1.7.6 — Printer status before finalize
-**Files:** `crates/pos-hardware/src/lib.rs`
+**Files:** `crates/pos-hardware/src/lib.rs` · as delivered, also `apps/terminal/src-tauri/src/commands/tender.rs` (`tender_begin` polls; `PaymentSnapshot.printer`) · `apps/terminal/src-tauri/tests/tender.rs` · [`ref/ipc-contract.md`](ref/ipc-contract.md) §3 · [`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §3 · [`README.md`](README.md) · this file
 `status()` is polled **at Pay, before money is taken** (master plan C.15). Paper-out warns then, not after the customer has paid.
-**Tests:** `paper_out_warns_before_tender_not_after`
+**Tests:** `paper_out_warns_before_tender_not_after` · as delivered, also `each_printer_state_is_read_at_pay` · `pay_reads_the_printer_the_register_has_or_says_it_has_none`
+**Done when:** `cargo nextest run -p pos-hardware at_pay && cargo nextest run -p terminal --test tender` exits zero, with paper out told in `tender_begin`'s answer before any tender is taken, not in the answers that take money, and the sale still completing with its receipt kept. *(Added at delivery, 10 November 2026: the step had no `Done when` line.)*
+
+> **As delivered, 10 November 2026.** `cargo nextest run -p pos-hardware at_pay && cargo nextest run -p terminal --test tender` passes.
+>
+> - **`PrinterAtPay::poll` reads a printer, or its absence, into six answers:** ready, paper out, cover open, offline, no real-time status (`NoStatus`, from 1.7.10's `Unsupported`), and no printer. `warns` is true for paper out, cover open, offline and no printer. A device that cannot say is not a warning, because nothing can be said of it before tender.
+> - **Pay is `tender_begin`.** It polls after the proof and before it takes the till's lock, so a network printer's deadlines hold no other command, and `PaymentSnapshot.printer` carries the answer. `tender_add_cash` and `tender_remove` answer `None`: the commands that take money do not wait on a printer.
+> - **It is told, never enforced.** A sale whose printer would not print is paid for and completes, and the receipt waits in the queue, because a print failure never un-finalizes a sale (§3 rule 2). What the screen says for each answer, and the alarm when there is no printer, are 1.7.6b's and 1.11.5's.
 
 ### 1.7.6b — Printer-unavailable operating mode
 **Scheduled in:** Phase 1B, after 1.7.7 and 1.8.3
