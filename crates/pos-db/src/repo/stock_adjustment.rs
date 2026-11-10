@@ -18,10 +18,10 @@
 //!    carry: the event's id, an amount of 0, and the digest recomputed from the
 //!    stored row. The shell issues the handle against it.
 //! 3. **[`StockAdjustmentRepository::prepare_effect`]** reloads the row,
-//!    recomputes its digest and refuses one that no longer matches. It loads
-//!    the approval the caller's proof names and holds it to the same binding,
-//!    then prepares the stock event. The caller writes the envelope with
-//!    [`ApprovedAdjustment::facts`].
+//!    recomputes its digest and refuses one that no longer matches, or one
+//!    someone else asked for. It loads the approval the caller's proof names
+//!    and holds it to the same binding, then prepares the stock event. The
+//!    caller writes the envelope with [`ApprovedAdjustment::facts`].
 //! 4. **[`StockAdjustmentRepository::commit`]** writes the audit row, the
 //!    event, the consumption, and removes the request, in the order `0004`'s
 //!    and `0006`'s triggers require.
@@ -73,13 +73,40 @@ impl ApprovedAdjustment {
         &self.event
     }
 
-    /// Every fact the effect writes, as `(entity, entity_id, payload)`, in
-    /// the order they are written: the audit row, the stock event, and the
-    /// approval's consumption. The caller's envelope names exactly these.
+    /// The audit row the effect writes: its id, and the intent
+    /// [`StockAdjustmentRepository::commit`] appends. The caller encodes the
+    /// payload that row travels as from these (`ref/sync-protocol.md` §3), so
+    /// what travels is what is chained.
     #[must_use]
-    pub fn facts(&self) -> Vec<(&'static str, [u8; 16], String)> {
+    pub fn audit(&self) -> (Uuid, AuditIntent) {
+        let request = &self.request;
+        let intent = AuditIntent {
+            actor: self.actor,
+            approver: Some(self.handle.approver()),
+            approval: Some(self.handle.id()),
+            action: cap::StockAdjust::NAME,
+            entity: stock::ENTITY,
+            entity_id: self.event.event().id.as_uuid(),
+            reason: Some(self.handle.reason().to_owned()),
+            payload: json!({
+                "amount_minor": 0,
+                "product_id": request.product_id.as_uuid().hyphenated().to_string(),
+                "qty_delta_milli": request.qty_delta.milli(),
+                "reason_code": request.reason.as_str(),
+            }),
+            at: self.at,
+        };
+        (self.audit_id, intent)
+    }
+
+    /// Every fact the effect writes, as `(entity, entity_id, payload)`, in
+    /// the order they are written: the audit row, travelling as
+    /// `audit_payload`, the stock event, and the approval's consumption. The
+    /// caller's envelope names exactly these.
+    #[must_use]
+    pub fn facts(&self, audit_payload: String) -> Vec<(&'static str, [u8; 16], String)> {
         vec![
-            ("audit_log", *self.audit_id.as_bytes(), "{}".to_owned()),
+            ("audit_log", *self.audit_id.as_bytes(), audit_payload),
             (
                 stock::ENTITY,
                 *self.event.event().id.as_uuid().as_bytes(),
@@ -174,13 +201,15 @@ impl<'c> StockAdjustmentRepository<'c> {
     }
 
     /// `stock_adjust`'s first half: reload the request, refuse it if its row
-    /// no longer matches its digest, hold the approval `approved` names to
-    /// that digest and to this event, and prepare the event the effect posts,
-    /// for register `register` in `store`.
+    /// no longer matches its digest or `approved` is not the proof of the
+    /// person who asked for it, hold the approval `approved` names to that
+    /// digest and to this event, and prepare the event the effect posts, for
+    /// register `register` in `store`.
     ///
     /// # Errors
     ///
-    /// Those of [`Self::binding`]; [`DbError::ApprovalRefused`] when the proof
+    /// Those of [`Self::binding`]; [`DbError::StockAdjustmentNotYours`] when
+    /// someone else asked for it; [`DbError::ApprovalRefused`] when the proof
     /// names no approval, or the approval is for another event, another actor,
     /// another digest, or is outside its validity; [`DbError::ApprovalMissing`]
     /// for an approval the database does not hold;
@@ -198,6 +227,15 @@ impl<'c> StockAdjustmentRepository<'c> {
         business_date: BusinessDate,
     ) -> Result<ApprovedAdjustment, DbError> {
         let (row, request) = load_checked(tx, id)?;
+        // The approver was shown who asked, which the digest binds. Posted by
+        // anyone else, the event would name someone the approval never did.
+        if row.requested_by.as_slice() != approved.actor().as_uuid().as_bytes() {
+            return Err(DbError::StockAdjustmentNotYours {
+                id,
+                requested_by: requester(&row)?,
+                actor: approved.actor(),
+            });
+        }
         let binding = binding_of(id, row.hash());
         let approval = approved.approval().ok_or(DbError::ApprovalRefused(
             PermissionError::EscalationRequired(cap::StockAdjust::NAME),
@@ -250,28 +288,8 @@ impl<'c> StockAdjustmentRepository<'c> {
     ) -> Result<StockPosition, DbError> {
         let event = approved.event.event();
         let event_id = event.id.as_uuid();
-        let request = &approved.request;
-        AuditRepository::new(self.conn).append(
-            tx,
-            approved.event.register(),
-            approved.audit_id,
-            &AuditIntent {
-                actor: approved.actor,
-                approver: Some(approved.handle.approver()),
-                approval: Some(approved.handle.id()),
-                action: cap::StockAdjust::NAME,
-                entity: stock::ENTITY,
-                entity_id: event_id,
-                reason: Some(approved.handle.reason().to_owned()),
-                payload: json!({
-                    "amount_minor": 0,
-                    "product_id": request.product_id.as_uuid().hyphenated().to_string(),
-                    "qty_delta_milli": request.qty_delta.milli(),
-                    "reason_code": request.reason.as_str(),
-                }),
-                at: approved.at,
-            },
-        )?;
+        let (audit_id, intent) = approved.audit();
+        AuditRepository::new(self.conn).append(tx, approved.event.register(), audit_id, &intent)?;
         StockRepository::new(self.conn).append(tx, std::slice::from_ref(&approved.event))?;
         ApprovalRepository::new(self.conn).consume(
             tx,
@@ -375,6 +393,16 @@ fn load_checked(
         note: row.note.clone(),
     };
     Ok((row, request))
+}
+
+/// Who asked for the stored request `row`.
+fn requester(row: &Row) -> Result<UserId, DbError> {
+    let bytes: [u8; 16] = row
+        .requested_by
+        .as_slice()
+        .try_into()
+        .map_err(|_| stored_invalid("requested_by is not sixteen bytes"))?;
+    Ok(UserId::from_uuid(Uuid::from_bytes(bytes)))
 }
 
 fn stored_invalid(reason: &str) -> DbError {

@@ -498,6 +498,53 @@ pub const COMMANDS: &[CommandSpec] = &[
             Arg::required(APPROVAL_ARGUMENT),
         ],
     },
+    // 1.10.5, its terminal half: stock read, and moved by hand. Preparing
+    // stores a register-local request and moves nothing, so it is not
+    // audited; posting it is privileged on every call.
+    CommandSpec {
+        name: "stock_on_hand",
+        access: Access::Capability(cap::SaleCreate::NAME),
+        audited: false,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[Arg::required("product_id")],
+    },
+    CommandSpec {
+        name: "stock_adjust_prepare",
+        access: Access::Capability(cap::StockAdjust::NAME),
+        audited: false,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[
+            Arg::required("product_id"),
+            Arg::required("qty_delta_milli"),
+            Arg::required("reason_code"),
+            Arg::optional("note"),
+        ],
+    },
+    // The approval names the event the request will post as, exactly zero,
+    // and the request's digest, which binds its reason code with every other
+    // column. The handler recomputes the digest from the stored row before
+    // the effect, and `0006` refuses any change to the row once an approval
+    // names it.
+    CommandSpec {
+        name: "stock_adjust",
+        access: Access::Capability(cap::StockAdjust::NAME),
+        audited: true,
+        approval_requirement: ApprovalRequirement::Always {
+            binding: ApprovalBindingSpec {
+                entity: EntityBindingSpec::Argument("stock_event_id"),
+                amount: AmountBindingSpec::Exact(0),
+                content: ContentBindingSpec::PreparedIntent {
+                    table: "stock_adjustment_request",
+                    hash_field: "content_hash",
+                },
+                reason: ReasonBindingSpec::PreparedEffect("reason_code"),
+            },
+        },
+        args: &[
+            Arg::required("stock_event_id"),
+            Arg::required(APPROVAL_ARGUMENT),
+        ],
+    },
 ];
 
 /// Names the commands the shell registers, once.

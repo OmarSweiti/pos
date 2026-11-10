@@ -7,6 +7,7 @@ pub mod auth;
 pub mod cart;
 pub mod sale;
 pub mod shift;
+pub mod stock;
 pub mod tender;
 pub mod user;
 

@@ -309,9 +309,10 @@ aside as a sign-out sets it aside. Its two screens wait for `1.11.3b`'s design d
 Group 1.10's `1.10.5` is **partially delivered**: stock moved by hand, with a reason from five, a
 note, and an approval bound to the exact request by its digest, posts its event, audit row and
 consumption together; opening stock is read from its three-column file and posted as ledger events,
-never cache rows. Its commands and screen run in the shell's database and session state, which `1.8.2c`
-created. That step was added on 4 November 2026 (#373), once two steps had stopped at the same
-missing wiring.
+never cache rows. Its three commands landed on 10 November 2026: `stock_on_hand` reads the store's
+stock, `stock_adjust_prepare` stores what a manager asks for, and `stock_adjust` posts it with a
+second person's approval, dated by the open shift, and only for the person who asked. Its screen
+waits for `1.11.3b`'s design direction.
 Repository-hardening and documentation work may land between numbered product steps, but it does
 not advance that frontier.
 
