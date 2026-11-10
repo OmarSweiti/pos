@@ -268,6 +268,9 @@ fn reset_rows(register: &Register) -> Vec<ResetRow> {
     })
 }
 
+fn changes(register: &Register) -> u64 {
+    register.with_db(|conn| conn.total_changes())
+}
 
 fn spent(register: &Register, approval: ApprovalId) -> bool {
     register.with_db(|conn| {
@@ -383,6 +386,73 @@ fn manager_reset_retires_old_hash_and_audits() {
         "auth_refused"
     );
     login_pin(&register, CASHIER_CODE, NEW_PIN).unwrap();
+}
+
+/// The owner's decision of 10 November 2026: a lone reset names why by a
+/// code from the list, `forgot_pin`, `locked_out` or `pin_disclosed`. Any
+/// other reason, free text among them, is refused and writes nothing. Each
+/// code is recorded as given, with no second person named, and an approval
+/// offered where the policy asks for none is not spent.
+#[test]
+fn a_lone_reset_names_its_reason_from_the_list() {
+    let (_dir, register) = office();
+    add_staff(
+        &register,
+        SECOND_ID,
+        SECOND_CODE,
+        "Synthetic Second",
+        "cashier",
+    );
+    let before = changes(&register);
+    for wrong in [
+        "forgot their PIN",
+        "",
+        "Forgot_pin",
+        "forgot_pin ",
+        "shrinkage",
+    ] {
+        let refused = refusal(reset_pin(
+            &register,
+            user(CASHIER_ID),
+            NEW_PIN,
+            wrong,
+            None,
+            &merchant_policy(),
+        ));
+        assert_eq!(refused.code, "pin_reset_reason_unknown", "{wrong:?}");
+    }
+    assert_eq!(changes(&register), before, "nothing was written");
+    assert!(pin_is(&register, CASHIER_ID, CASHIER_PIN));
+
+    let offered = owners_approval(&register, DEPUTY_ID);
+    for (account, reason, approval) in [
+        (CASHIER_ID, "forgot_pin", None),
+        (SECOND_ID, "locked_out", None),
+        (DEPUTY_ID, "pin_disclosed", Some(offered)),
+    ] {
+        reset_pin(
+            &register,
+            user(account),
+            NEW_PIN,
+            reason,
+            approval,
+            &merchant_policy(),
+        )
+        .unwrap();
+        assert!(pin_is(&register, account, NEW_PIN));
+    }
+    assert_eq!(
+        reset_rows(&register),
+        vec![
+            ResetRow::alone(CASHIER_ID, "forgot_pin"),
+            ResetRow::alone(SECOND_ID, "locked_out"),
+            ResetRow::alone(DEPUTY_ID, "pin_disclosed"),
+        ]
+    );
+    assert!(
+        !spent(&register, offered),
+        "an approval the policy does not ask for is not spent"
+    );
 }
 
 /// Where the merchant's policy names `user.admin`, every reset needs an
