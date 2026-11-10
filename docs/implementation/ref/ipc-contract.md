@@ -503,6 +503,14 @@ is the input E.2's status-query needs and which nothing previously persisted.
 >   `tender_not_positive`, `tender_underpaid`, `tender_amount_invalid`, `tender_unknown`,
 >   `tender_collected` and `checkout_unreadable`.
 
+> **As delivered at 1.7.6 (10 November 2026).** `tender_begin` reads the register's printer at Pay,
+> before any money is taken (`hardware-and-receipts.md` §3 rule 1), and `PaymentSnapshot.printer`
+> carries what it read: `ready`, `paper_out`, `cover_open`, `offline`, `no_status` for a device
+> that answers no real-time status, or `no_printer`. Every other answer that is a
+> `PaymentSnapshot` carries `null`, because the commands that take money do not wait on a printer.
+> It is read before the till's lock, within the device's deadlines, and refuses nothing: a sale
+> whose printer would not print is paid for and completes, and its receipt waits in the queue.
+
 > **As delivered at 1.8.3, its third part.** `sale_finalize` is registered under `sale.create`,
 > audited on every call, with no approval. It completes the sale the till is paying for in one
 > transaction (`phase-1-sellable-mvp.md` 1.8.3, its third note). Four things the table did not say:

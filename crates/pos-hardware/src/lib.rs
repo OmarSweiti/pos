@@ -87,6 +87,55 @@ pub enum PrintOutcome {
     Unknown,
 }
 
+/// The printer as the till reads it at Pay, before any money is taken
+/// (`ref/hardware-and-receipts.md` §3 rule 1, master plan C.15; microstep
+/// 1.7.6). A warning after payment is a warning that helps nobody.
+///
+/// It is read and told, never enforced: a printer that would not print now
+/// stops no sale, because a print failure never un-finalizes one (§3 rule 2)
+/// and the receipt is kept and printed later (§3a).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrinterAtPay {
+    /// It answers that it is ready to print.
+    Ready,
+    /// It answers that its paper is out.
+    PaperOut,
+    /// It answers that its cover is open.
+    CoverOpen,
+    /// It cannot be reached, or answers that it is offline.
+    Offline,
+    /// The device answers no real-time status, so nothing can be said before
+    /// tender (1.7.10). Neither ready nor offline.
+    NoStatus,
+    /// No printer is attached to this register.
+    NoPrinter,
+}
+
+impl PrinterAtPay {
+    /// Ask `printer`, or answer that there is none. A network device is
+    /// asked over the network, within its profile's deadlines, so the caller
+    /// polls before it takes any lock another command needs.
+    pub fn poll(printer: Option<&dyn ReceiptPrinter>) -> PrinterAtPay {
+        let Some(printer) = printer else {
+            return PrinterAtPay::NoPrinter;
+        };
+        match printer.status() {
+            PrinterStatus::Ready => PrinterAtPay::Ready,
+            PrinterStatus::PaperOut => PrinterAtPay::PaperOut,
+            PrinterStatus::CoverOpen => PrinterAtPay::CoverOpen,
+            PrinterStatus::Offline => PrinterAtPay::Offline,
+            PrinterStatus::Unsupported => PrinterAtPay::NoStatus,
+        }
+    }
+
+    /// Whether the cashier is told, before the customer pays, that the
+    /// receipt will not print now.
+    pub const fn warns(self) -> bool {
+        !matches!(self, PrinterAtPay::Ready | PrinterAtPay::NoStatus)
+    }
+}
+
 pub trait ReceiptPrinter: Send + Sync {
     /// Send one document and classify what happened to it. Never retries:
     /// retrying is the print queue's decision, and only for `Failed`.
@@ -361,5 +410,38 @@ mod tests {
         assert_eq!(p.print(&doc), PrintOutcome::Partial { acknowledged: 3 });
         assert_eq!(p.status(), PrinterStatus::PaperOut);
         assert_eq!(p.print(&doc), PrintOutcome::Failed(FailReason::PaperOut));
+    }
+
+    /// At Pay the till reads each state the printer can be in, and the
+    /// absence of one, into what the cashier is told before the customer
+    /// pays. Only a printer that says it is ready, or cannot say, is not a
+    /// warning; the poll prints nothing and opens no drawer.
+    #[test]
+    fn each_printer_state_is_read_at_pay() {
+        for (status, read, warns) in [
+            (PrinterStatus::Ready, PrinterAtPay::Ready, false),
+            (PrinterStatus::PaperOut, PrinterAtPay::PaperOut, true),
+            (PrinterStatus::CoverOpen, PrinterAtPay::CoverOpen, true),
+            (PrinterStatus::Offline, PrinterAtPay::Offline, true),
+            (PrinterStatus::Unsupported, PrinterAtPay::NoStatus, false),
+        ] {
+            let p = SimulatedPrinter::new();
+            *p.force_status.lock().unwrap() = status;
+            let at_pay = PrinterAtPay::poll(Some(&p));
+            assert_eq!((at_pay, at_pay.warns()), (read, warns), "{status:?}");
+            assert!(p.printed.lock().unwrap().is_empty());
+            assert_eq!(*p.drawer_opens.lock().unwrap(), 0);
+        }
+        let none = PrinterAtPay::poll(None);
+        assert_eq!((none, none.warns()), (PrinterAtPay::NoPrinter, true));
+        // The webview reads each answer by its snake-case name.
+        assert_eq!(
+            serde_json::to_string(&PrinterAtPay::PaperOut).unwrap(),
+            "\"paper_out\""
+        );
+        assert_eq!(
+            serde_json::to_string(&PrinterAtPay::NoPrinter).unwrap(),
+            "\"no_printer\""
+        );
     }
 }
