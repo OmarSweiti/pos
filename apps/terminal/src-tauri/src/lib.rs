@@ -63,6 +63,9 @@ ipc::registry::commands![
     commands::shift::shift_current,
     commands::shift::shift_close,
     commands::user::user_reset_pin,
+    commands::stock::stock_on_hand,
+    commands::stock::stock_adjust_prepare,
+    commands::stock::stock_adjust,
 ];
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

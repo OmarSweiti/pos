@@ -32,7 +32,8 @@ use uuid::Uuid;
 // ── Rows from the contract's catalogue (`ref/ipc-contract.md` §3) ──────────
 
 /// `stock_adjust`: entity `stock_event_id`, exactly zero, the prepared reason
-/// and the prepared request's digest.
+/// and the prepared request's digest. Registered at 1.10.5's terminal half,
+/// and held to the registry's row below.
 const STOCK_ADJUST: CommandSpec = CommandSpec {
     name: "stock_adjust",
     access: Access::Capability(cap::StockAdjust::NAME),
@@ -122,8 +123,8 @@ const DEPARTMENT_ARGS: &[Arg] = &[
     Arg::optional(APPROVAL_ARGUMENT),
 ];
 
+/// The contract's privileged rows no shell registers yet.
 const CONTRACT_ROWS: &[CommandSpec] = &[
-    STOCK_ADJUST,
     FISCAL_REBUILD_FAILED,
     SHIFT_FORCE_CLOSE_STALE,
     CART_ADD_DEPARTMENT_SALE,
@@ -295,14 +296,19 @@ fn every_privileged_command_binds_its_approval() {
         .copied()
         .filter(is_privileged)
         .collect();
-    // The registry's privileged rows, the conditional override and the
-    // always-privileged reset, then the contract's.
+    // The registry's privileged rows, the conditional override, the
+    // always-privileged reset and stock adjustment, then the contract's.
     let names: Vec<&str> = privileged.iter().map(|row| row.name).collect();
-    let expected: Vec<&str> = ["cart_override_price", "user_reset_pin"]
+    let expected: Vec<&str> = ["cart_override_price", "user_reset_pin", "stock_adjust"]
         .into_iter()
         .chain(CONTRACT_ROWS.iter().map(|row| row.name))
         .collect();
     assert_eq!(names, expected);
+    // The adjustment is registered exactly as the contract binds it.
+    assert_eq!(
+        COMMANDS.iter().find(|row| row.name == "stock_adjust"),
+        Some(&STOCK_ADJUST)
+    );
     for row in &privileged {
         assert_eq!(refusals(&[*row]), Vec::new(), "{}", row.name);
     }
@@ -457,10 +463,10 @@ fn a_registry_fixture_without_a_command_spec_is_refused() {
     );
     // The other direction: a row for a command nothing registers.
     let mut rows = COMMANDS.to_vec();
-    rows.push(STOCK_ADJUST);
+    rows.push(FISCAL_REBUILD_FAILED);
     assert_eq!(
         check(&rows, REGISTERED),
-        Err(vec![RegistryError::Unregistered("stock_adjust")])
+        Err(vec![RegistryError::Unregistered("fiscal_rebuild_failed")])
     );
     // And neither list may name a command twice.
     assert_eq!(
