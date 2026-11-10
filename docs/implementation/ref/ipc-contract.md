@@ -633,7 +633,9 @@ actor-versus-approver separation that applies to every handle path.
 >   yet, so today every opening needs one, and none is `business_date_required`. Under a trusted
 >   clock one is `business_date_not_accepted`, and the date is derived from the store's own zone
 >   and cutover. A zone or cutover that cannot date a shift is `store_day_unreadable`. A second
->   opening is `shift_already_open`.
+>   opening is `shift_already_open`. One dated earlier than the register's last shift is
+>   `business_date_before_last_shift` (the owner's decision of 10 November 2026): a register's
+>   business days never run backwards.
 > - **Each fact travels with its audit row,** one envelope holding the opening and its `shift.open`
 >   row, or the close and its `shift.close` row.
 > - **A sale in flight keeps the shift open.** A sale journalled mid-payment in the shift, on this

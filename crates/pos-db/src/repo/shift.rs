@@ -94,7 +94,10 @@ impl<'c> ShiftRepository<'c> {
     /// # Errors
     ///
     /// [`DbError::ShiftAlreadyOpen`] when the register already has an open
-    /// shift; [`DbError::ShiftFloatCurrencyMismatch`] for a float in another
+    /// shift; [`DbError::ShiftDateBeforePrevious`] when the register's last
+    /// shift is dated a later day than this one, because a register's
+    /// business days never run backwards (the owner's decision of
+    /// 10 November 2026); [`DbError::ShiftFloatCurrencyMismatch`] for a float in another
     /// currency than the store's; [`DbError::ShiftEnvelopeMissing`] and
     /// [`DbError::ShiftEnvelopeMismatch`] when no ready envelope names it with
     /// exactly [`opening_payload`]; and [`DbError::Sqlite`] for what `0005`
@@ -104,6 +107,18 @@ impl<'c> ShiftRepository<'c> {
             return Err(DbError::ShiftAlreadyOpen {
                 register: shift.register_id,
                 open: open.id,
+            });
+        }
+        // The same day again is a second shift that day; an earlier one would
+        // file this shift's sales under a day already traded, and perhaps
+        // reported.
+        if let Some(previous) = last_business_date(tx, shift.register_id)?
+            && shift.business_date < previous
+        {
+            return Err(DbError::ShiftDateBeforePrevious {
+                register: shift.register_id,
+                previous,
+                asked: shift.business_date,
             });
         }
         let currency = store_currency(tx, shift.store_id)?;
@@ -325,4 +340,25 @@ fn invalid(reason: &str) -> DbError {
     DbError::StoredShiftRecordInvalid {
         reason: reason.to_owned(),
     }
+}
+
+/// The latest business date of any shift the register has opened, or `None`
+/// for a register that has opened none. `YYYY-MM-DD` text orders as its days
+/// do.
+fn last_business_date(
+    conn: &Connection,
+    register: RegisterId,
+) -> Result<Option<BusinessDate>, DbError> {
+    let latest: Option<String> = conn.query_row(
+        "SELECT max(business_date) FROM shift WHERE register_id = ?1",
+        [register.as_uuid().as_bytes().as_slice()],
+        |row| row.get(0),
+    )?;
+    latest
+        .map(|text| {
+            BusinessDate::parse(&text).map_err(|_| DbError::StoredShiftRecordInvalid {
+                reason: "a shift's business_date is not a date".to_owned(),
+            })
+        })
+        .transpose()
 }
