@@ -1080,6 +1080,310 @@ mod tests {
         assert_eq!(costs(&register), shown, "the cashier, granted stock.adjust");
     }
 
+    /// `product` moved by `qty` for `reason`, as `stock_adjust_now` is asked.
+    fn by_hand<'a>(product: u128, qty: i64, reason: &'a str, note: Option<&str>) -> Adjustment<'a> {
+        Adjustment {
+            product_id: product_id(product),
+            qty_delta_milli: qty,
+            reason_code: reason,
+            note: note.map(str::to_owned),
+        }
+    }
+
+    /// The owner's decision of 10 November 2026 (D1 B): one manager writes
+    /// off a bottle of oil at once, under their own `stock.adjust`. The event
+    /// names its reason, its note and the manager, on the shift's day. Its
+    /// audit row names the manager, no second person, and the reason code,
+    /// and the two travel in one envelope, the event first. Nothing is stored
+    /// for anyone to approve, and no approval is spent. Stock found by a count
+    /// arrives at the cost basis in force, marked projected.
+    #[test]
+    fn one_manager_adjusts_stock_at_once_and_it_is_audited() {
+        let (_dir, register) = back_office();
+        let oil = product_id(OIL);
+        let after = adjust_now(
+            &register,
+            &by_hand(OIL, -1_000, "damage", Some(NOTE)),
+            &merchant_policy(),
+        )
+        .unwrap();
+        assert_eq!(
+            after,
+            StockSnapshot {
+                product_id: oil,
+                on_hand_milli: 9_000,
+                cost: carried_at(Some(100), false),
+            }
+        );
+        assert_eq!(on_hand(&register, oil).unwrap(), after);
+        assert_eq!(requests(&register), 0, "nothing is stored for approval");
+
+        type Posted = (String, i64, Option<i64>, Option<String>, Vec<u8>, String);
+        let (event, posted): (Vec<u8>, Posted) = register.with_db(|conn| {
+            conn.query_row(
+                "SELECT id, kind, qty_delta_milli, unit_cost_minor, note, actor_id, business_date
+                       FROM stock_ledger WHERE reason_code = 'damage'",
+                [],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        (
+                            r.get(1)?,
+                            r.get(2)?,
+                            r.get(3)?,
+                            r.get(4)?,
+                            r.get(5)?,
+                            r.get(6)?,
+                        ),
+                    ))
+                },
+            )
+            .unwrap()
+        });
+        assert_eq!(
+            posted,
+            (
+                "adjust".to_owned(),
+                -1_000,
+                Some(100),
+                Some(NOTE.to_owned()),
+                MANAGER_ID.to_vec(),
+                "2026-11-05".to_owned(),
+            ),
+            "posted by the manager, on the shift's day"
+        );
+
+        // The audit row: the manager, no second person, and the reason code.
+        type Audited = (
+            Vec<u8>,
+            Option<Vec<u8>>,
+            Option<Vec<u8>>,
+            String,
+            Vec<u8>,
+            String,
+        );
+        let (who, payload, audit_id): (Audited, String, Vec<u8>) = register.with_db(|conn| {
+            conn.query_row(
+                "SELECT actor_id, approver_id, approval_handle_id, entity, entity_id, reason,
+                        payload, id
+                   FROM audit_log WHERE action = 'stock.adjust'",
+                [],
+                |r| {
+                    Ok((
+                        (
+                            r.get(0)?,
+                            r.get(1)?,
+                            r.get(2)?,
+                            r.get(3)?,
+                            r.get(4)?,
+                            r.get(5)?,
+                        ),
+                        r.get(6)?,
+                        r.get(7)?,
+                    ))
+                },
+            )
+            .unwrap()
+        });
+        assert_eq!(
+            who,
+            (
+                MANAGER_ID.to_vec(),
+                None,
+                None,
+                "stock_ledger".to_owned(),
+                event.clone(),
+                "damage".to_owned(),
+            )
+        );
+        let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(
+            payload,
+            serde_json::json!({
+                "amount_minor": 0,
+                "product_id": oil.as_uuid().hyphenated().to_string(),
+                "qty_delta_milli": -1_000,
+                "reason_code": "damage",
+            })
+        );
+        assert_eq!(
+            count(&register, "SELECT count(*) FROM approval_consumption"),
+            0
+        );
+
+        // One envelope: the event, then the audit row as the row it chains.
+        let members: Vec<(String, Vec<u8>, String)> = register.with_db(|conn| {
+            conn.prepare(
+                "SELECT entity, entity_id, payload FROM fact_commit_member
+                  WHERE commit_id = (SELECT commit_id FROM fact_commit_member
+                                      WHERE entity = 'stock_ledger' AND entity_id = ?1)
+                  ORDER BY commit_index",
+            )
+            .unwrap()
+            .query_map([event.as_slice()], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+        });
+        let entities: Vec<(&str, &[u8])> = members
+            .iter()
+            .map(|(entity, id, _)| (entity.as_str(), id.as_slice()))
+            .collect();
+        assert_eq!(
+            entities,
+            vec![
+                ("stock_ledger", event.as_slice()),
+                ("audit_log", audit_id.as_slice()),
+            ]
+        );
+        let travelling: serde_json::Value = members
+            .last()
+            .map(|(_, _, payload)| serde_json::from_str(payload).unwrap())
+            .unwrap();
+        assert_eq!(field(&travelling, "action"), "stock.adjust");
+        assert_eq!(field(&travelling, "approver_id"), &serde_json::Value::Null);
+        assert_eq!(field(&travelling, "reason"), "damage");
+        assert_eq!(
+            field(&travelling, "payload"),
+            &payload,
+            "what travels is what is chained"
+        );
+
+        // Two bottles found by a count: valued at the cost in force, projected.
+        let found = adjust_now(
+            &register,
+            &by_hand(OIL, 2_000, "count_correction", None),
+            &merchant_policy(),
+        )
+        .unwrap();
+        assert_eq!(
+            found,
+            StockSnapshot {
+                product_id: oil,
+                on_hand_milli: 11_000,
+                cost: carried_at(Some(100), true),
+            }
+        );
+        let captured: (Option<i64>, i64) = register.with_db(|conn| {
+            conn.query_row(
+                "SELECT unit_cost_minor, is_cost_estimated
+                   FROM stock_ledger WHERE reason_code = 'count_correction'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+        });
+        assert_eq!(captured, (Some(100), 1));
+    }
+
+    /// Where a merchant's policy names `stock.adjust`, a direct adjustment is
+    /// `approval_required` and writes nothing. The request is prepared,
+    /// approved by someone else and posted instead, as before.
+    #[test]
+    fn a_direct_adjustment_is_refused_where_the_policy_escalates() {
+        let (_dir, register) = back_office();
+        let escalating = EscalationPolicy::empty().with_escalation::<cap::StockAdjust>();
+        let before = changes(&register);
+        assert_eq!(
+            refusal(adjust_now(
+                &register,
+                &by_hand(OIL, -1_000, "damage", None),
+                &escalating
+            ))
+            .code,
+            "approval_required"
+        );
+        assert_eq!(changes(&register), before, "the refusal wrote nothing");
+        let asked = one_bottle_damaged(&register);
+        let approval = owners(&register, asked.stock_event_id);
+        assert_eq!(
+            adjust(&register, asked.stock_event_id, approval)
+                .unwrap()
+                .on_hand_milli,
+            9_000
+        );
+    }
+
+    /// A direct adjustment is held to every rule the two steps are: only a
+    /// holder of `stock.adjust` moves stock, by one of the five reasons and
+    /// its direction, a whole number of the product's steps, of a product
+    /// that exists, dated by an open shift. Each refusal writes nothing.
+    #[test]
+    fn a_direct_adjustment_is_held_to_the_rules_of_the_two_steps() {
+        let (_dir, register) = shop();
+        staff(&register);
+        let before = changes(&register);
+        let now = |register: &Register, product: u128, qty: i64, reason: &str| {
+            refusal(adjust_now(
+                register,
+                &by_hand(product, qty, reason, None),
+                &merchant_policy(),
+            ))
+        };
+        assert_eq!(
+            now(&register, OIL, -1_000, "damage").code,
+            "permission_denied"
+        );
+        assert_eq!(
+            changes(&register),
+            before,
+            "the cashier's refusal wrote nothing"
+        );
+        logout(&register).unwrap();
+        assert_eq!(now(&register, OIL, -1_000, "damage").code, "not_signed_in");
+        login_pin(&register, MANAGER_CODE, CASHIER_PIN).unwrap();
+        let before_manager = changes(&register);
+        assert_eq!(
+            now(&register, OIL, -1_000, "shrinkage").code,
+            "stock_reason_unknown"
+        );
+        for (qty, reason, detail) in [
+            (
+                1_000,
+                "damage",
+                "damage, theft and expiry only take stock away",
+            ),
+            (-1_000, "opening_stock", "opening stock only arrives"),
+            (
+                0,
+                "count_correction",
+                "a count correction moves stock one way or the other",
+            ),
+        ] {
+            let refused = now(&register, OIL, qty, reason);
+            assert_eq!(
+                (refused.code, refused.detail),
+                ("stock_adjustment_against_reason", Some(detail))
+            );
+        }
+        assert_eq!(
+            now(&register, 0x99, -1_000, "damage").code,
+            "product_unknown"
+        );
+        assert_eq!(now(&register, OIL, -1_500, "damage").code, "qty_not_whole");
+        assert_eq!(
+            changes(&register),
+            before_manager,
+            "no refusal wrote anything"
+        );
+        assert_eq!(
+            on_hand(&register, product_id(OIL)).unwrap().on_hand_milli,
+            10_000
+        );
+
+        // With no shift open there is no day to date it by.
+        let dir = tempfile::tempdir().unwrap();
+        seed(dir.path(), false);
+        let closed = open(dir.path());
+        staff(&closed);
+        login_pin(&closed, MANAGER_CODE, CASHIER_PIN).unwrap();
+        let before = changes(&closed);
+        assert_eq!(now(&closed, OIL, -1_000, "damage").code, "shift_not_open");
+        assert_eq!(changes(&closed), before);
+    }
+
     /// Only a holder of `stock.adjust` asks or posts; a cashier holds it
     /// not, and no one signed in holds nothing. A cashier learns nothing of a
     /// stored request.
