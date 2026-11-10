@@ -254,6 +254,15 @@ pub enum DbError {
     #[error("a shift's float is counted in its store's currency")]
     ShiftFloatCurrencyMismatch,
     #[error(
+        "register {register}'s last shift is dated {previous}, so a shift is not opened \
+         on {asked}, an earlier day"
+    )]
+    ShiftDateBeforePrevious {
+        register: pos_domain::RegisterId,
+        previous: pos_domain::BusinessDate,
+        asked: pos_domain::BusinessDate,
+    },
+    #[error(
         "refusing to write a {entity} with no delivery envelope naming it: write the \
          commit and its manifest first, in the same transaction (I-9)"
     )]
