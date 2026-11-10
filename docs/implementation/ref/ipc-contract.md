@@ -779,8 +779,11 @@ stable event id.
 >
 > - **The answers are snapshots**, which this table called `StockPosition` and
 >   `StockAdjustmentRequest` until then, because the domain's types carry a `Qty` and a `Money`
->   rather than wire fields. `StockSnapshot` is `{ product_id, on_hand_milli, currency, wac_minor,
->   is_wac_estimated }`, where `wac_minor` is `null` when no cost was ever recorded, never zero.
+>   rather than wire fields. `StockSnapshot` is `{ product_id, on_hand_milli, cost }`, and `cost` is
+>   `{ currency, wac_minor, is_wac_estimated }`, where `wac_minor` is `null` when no cost was ever
+>   recorded, never zero. `cost` itself is `null` for anyone who does not hold `stock.adjust` (the
+>   owner's decision of 10 November 2026): a cashier is shown what the shelf holds, never what it
+>   cost, and the signed-in user's grants decide, not their role's name.
 >   `StockAdjustmentSnapshot` is `{ stock_event_id, product_id, qty_delta_milli, reason_code,
 >   note }`: what the approver is shown, and the id `stock_adjust` takes.
 > - **A request no approval could make right is refused before it is stored:** a code that names
