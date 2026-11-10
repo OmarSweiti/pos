@@ -268,7 +268,9 @@ pub fn adjust_now(
         reason,
         note: asked.note.clone(),
     };
-    request.check().map_err(|e| stock_refused(&e))?;
+    // A movement its reason does not allow is refused as the event is
+    // captured (`StockEvent::capture`), with the error `stock_adjust_prepare`
+    // gives, so the rule is held in one place.
     let (mut db, session) = register.lock();
     signed_in_as(session.as_ref(), auth.actor())?;
     drop(session);
