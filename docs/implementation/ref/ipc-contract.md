@@ -763,6 +763,7 @@ they also hold `reports.all`, which is the answer to "who may see another cashie
 | Command | Args → Returns | Ph | Cap | A | E |
 |---|---|---|---|---|---|
 | `stock_on_hand` | `{ product_id }` → `StockSnapshot` | 1 | `sale.create` | | |
+| `stock_adjust_now` | `{ product_id, qty_delta_milli, reason_code, note? }` → `StockSnapshot` | 1 | `stock.adjust` | ✓ | |
 | `stock_adjust_prepare` | `{ product_id, qty_delta_milli, reason_code, note? }` → `StockAdjustmentSnapshot` | 1 | `stock.adjust` | | |
 | `stock_adjust` | `{ stock_event_id, approval_id }` → `StockSnapshot` | 1 | `stock.adjust` | ✓ | ✓ |
 | `stock_count_begin` | `{ scope }` → `CountSession` | 4 | `stock.adjust` | ✓ | |
@@ -813,6 +814,15 @@ stable event id.
 > - **The event, its `stock.adjust` audit row and the approval's consumption travel in one
 >   envelope,** the row as the payload it chains (`ref/sync-protocol.md` §3). The row's reason is
 >   the approver's, its payload the product, the signed quantity and the reason code.
+
+> **`stock_adjust_now`, the owner's decision of 10 November 2026 (D1 B).** One holder of
+> `stock.adjust` adjusts stock alone, audited, as one overrides a price or resets a PIN. The command
+> takes no approval and stores no request: it posts the `adjust` event an approved request would,
+> dated by the open shift, and the event and its `stock.adjust` audit row travel in one envelope, the
+> event first. The row names no second person, and its reason is the reason code. Its refusals are
+> `stock_adjust_prepare`'s and `stock_adjust`'s, and a refusal writes nothing. Where a merchant's
+> policy names `stock.adjust`, it is `approval_required`, and the two steps above are the way. No
+> policy is stored yet, so it names nothing.
 
 ### Provisioning, sync, settings
 
