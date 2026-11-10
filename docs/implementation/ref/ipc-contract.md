@@ -726,9 +726,9 @@ they also hold `reports.all`, which is the answer to "who may see another cashie
 
 | Command | Args → Returns | Ph | Cap | A | E |
 |---|---|---|---|---|---|
-| `stock_on_hand` | `{ product_id }` → `StockPosition` | 1 | `sale.create` | | |
-| `stock_adjust_prepare` | `{ product_id, qty_delta_milli, reason_code, note? }` → `StockAdjustmentRequest` | 1 | `stock.adjust` | | |
-| `stock_adjust` | `{ stock_event_id, approval_id }` → `StockPosition` | 1 | `stock.adjust` | ✓ | ✓ |
+| `stock_on_hand` | `{ product_id }` → `StockSnapshot` | 1 | `sale.create` | | |
+| `stock_adjust_prepare` | `{ product_id, qty_delta_milli, reason_code, note? }` → `StockAdjustmentSnapshot` | 1 | `stock.adjust` | | |
+| `stock_adjust` | `{ stock_event_id, approval_id }` → `StockSnapshot` | 1 | `stock.adjust` | ✓ | ✓ |
 | `stock_count_begin` | `{ scope }` → `CountSession` | 4 | `stock.adjust` | ✓ | |
 | `stock_count_record` | `{ session_id, product_id, counted_milli }` → `()` | 4 | `stock.adjust` | | |
 | `stock_count_preview` | `{ session_id }` → `CountVariance` | 4 | `stock.adjust` | | |
@@ -746,6 +746,34 @@ content from `PreparedIntent { table: "stock_adjustment_request", hash_field: "c
 Issue and commit each recompute the hash from every request field, and the database refuses an
 update after approval, so quantity cannot be smuggled through a money binding or changed under a
 stable event id.
+
+> **As delivered at 1.10.5, its terminal half (10 November 2026).** `stock_on_hand` is registered
+> under `sale.create`, `stock_adjust_prepare` under `stock.adjust`, neither audited, and
+> `stock_adjust` under `stock.adjust`, audited and privileged on every call, with the row above.
+> Six things the table did not say:
+>
+> - **The answers are snapshots**, which this table called `StockPosition` and
+>   `StockAdjustmentRequest` until then, because the domain's types carry a `Qty` and a `Money`
+>   rather than wire fields. `StockSnapshot` is `{ product_id, on_hand_milli, currency, wac_minor,
+>   is_wac_estimated }`, where `wac_minor` is `null` when no cost was ever recorded, never zero.
+>   `StockAdjustmentSnapshot` is `{ stock_event_id, product_id, qty_delta_milli, reason_code,
+>   note }`: what the approver is shown, and the id `stock_adjust` takes.
+> - **A request no approval could make right is refused before it is stored:** a code that names
+>   none of the five is `stock_reason_unknown`; a movement its reason does not allow, a movement of
+>   nothing among them, is `stock_adjustment_against_reason`; an id that names no product is
+>   `product_unknown`; and a quantity that is not a whole number of the product's steps is
+>   `qty_not_whole`. Preparing writes only the register-local request, which travels nowhere.
+> - **Only the person who asked posts the request** (`stock_adjustment_not_yours`), because the
+>   digest the approver was shown binds who asked. An approval given to someone else is
+>   `approval_mismatch` anyway.
+> - **A stored request that no longer matches its digest is `stock_adjustment_altered`;** one that
+>   does not exist, or was already posted, is `stock_adjustment_unknown`. Only a holder of
+>   `stock.adjust` learns either: anyone else is refused first.
+> - **The event is dated by the register's open shift,** as a sale is, because the register trusts
+>   no clock yet. With none open, `stock_adjust` is `shift_not_open`, and nothing is spent.
+> - **The event, its `stock.adjust` audit row and the approval's consumption travel in one
+>   envelope,** the row as the payload it chains (`ref/sync-protocol.md` §3). The row's reason is
+>   the approver's, its payload the product, the signed quantity and the reason code.
 
 ### Provisioning, sync, settings
 
