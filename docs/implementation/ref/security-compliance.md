@@ -430,6 +430,8 @@ The second factor is a hardware and cost decision, not a code decision, and it i
 > - **Still open.** The second-factor item above, whose default stands.
 >
 > **As delivered at 1.6.2, its command (9 November 2026).** `user_reset_pin` resets a forgotten PIN under that default: the signed-in user's `user.admin` and a second person's approval, bound to the account and carrying the reason the audit row repeats. A holder of `user.admin` limited to their own store cannot reset an account whose `user.admin` has no such limit, such as the owner's, since whoever sets a PIN can sign in as its account. The old hash is retired and the account's lockout on this register released, in the transaction that writes the audit row and spends the approval; no timeout and no restart releases one. Neither the PIN nor its hash reaches the audit row or an error.
+>
+> **The owner's decision of 10 November 2026 (D1 B).** A reset needs one person, unless the merchant's escalation policy names `user.admin`. That is the OPEN item's default as written: the resetter's own manager PIN of six digits or more, and a mandatory audited reason. The reason is a code from a fixed list, `forgot_pin`, `locked_out` or `pin_disclosed`, because a free-text reason is unreportable and anything typed into it stays in the audit chain. A second person's approval, bound to the account, zero and that reason, returns where a policy names `user.admin`. No step builds the daily exception report yet; until one does, these audit rows and their reason codes are what it will read.
 
 ### The offline authorization lease
 
