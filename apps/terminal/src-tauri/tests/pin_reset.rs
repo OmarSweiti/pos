@@ -4,9 +4,11 @@
 //! the registered migration chain, with synthetic staff whose PIN is the
 //! fixture's.
 //!
-//! Every approval here is stored as the approval screen will store one, behind
-//! its envelope: `auth_verify_pin`, which issues them at the counter, is
-//! 1.11.4b's.
+//! One manager resets alone under the shipped policy, which escalates
+//! nothing (the owner's decision of 10 November 2026). Where a merchant's
+//! policy names `user.admin`, a second person approves. Every approval here
+//! is stored as the approval screen will store one, behind its envelope:
+//! `auth_verify_pin`, which issues them at the counter, is 1.11.4b's.
 
 mod shop;
 
@@ -18,7 +20,7 @@ use pos_domain::{
     ApprovalBinding, ApprovalHandle, ApprovalId, EscalationPolicy, GrantSet, RegisterId, Role,
     UserId, cap,
 };
-use rusqlite::{OptionalExtension, params};
+use rusqlite::params;
 use serde_json::json;
 use shop::{
     AT, CASHIER_CODE, CASHIER_ID, CASHIER_PIN, MANAGER_CODE, MANAGER_ID, OWNER_CODE, OWNER_ID,
@@ -26,6 +28,8 @@ use shop::{
 };
 use terminal_lib::commands::auth::{login_pin, logout};
 use terminal_lib::commands::user::reset_pin;
+use terminal_lib::ipc::IpcError;
+use terminal_lib::ipc::context::merchant_policy;
 use terminal_lib::state::Register;
 use uuid::Uuid;
 
@@ -38,10 +42,39 @@ const OTHER_REGISTER: [u8; 16] = [0x53; 16];
 /// A live account that holds no role at this store.
 const ROLELESS_ID: [u8; 16] = [0xC3; 16];
 const NEW_PIN: &str = "735104";
-const REASON: &str = "forgot their PIN";
+const REASON: &str = "forgot_pin";
 
 fn user(id: [u8; 16]) -> UserId {
     UserId::from_uuid(Uuid::from_bytes(id))
+}
+
+/// A merchant's policy that names `user.admin`: every reset needs a second
+/// person.
+fn escalating() -> EscalationPolicy {
+    EscalationPolicy::empty().with_escalation::<cap::UserAdmin>()
+}
+
+/// The manager resets `target` to `pin` alone, under the shipped policy.
+fn alone(register: &Register, target: [u8; 16], pin: &str) -> Result<(), IpcError> {
+    reset_pin(
+        register,
+        user(target),
+        pin,
+        REASON,
+        None,
+        &merchant_policy(),
+    )
+}
+
+/// The reset of `target` to `pin` under an escalating policy, with
+/// `approval`.
+fn approved(
+    register: &Register,
+    target: [u8; 16],
+    pin: &str,
+    approval: Option<ApprovalId>,
+) -> Result<(), IpcError> {
+    reset_pin(register, user(target), pin, REASON, approval, &escalating())
 }
 
 /// The shop, its cashier signed out, with a manager, a deputy manager and
@@ -185,39 +218,56 @@ fn pin_is(register: &Register, who: [u8; 16], pin: &str) -> bool {
     })
 }
 
-/// The audit row a reset wrote, as it names the people, the approval, the
+/// An audit row a reset wrote, as it names the people, the approval, the
 /// account and the reason.
 #[derive(Debug, PartialEq, Eq)]
 struct ResetRow {
     actor: Vec<u8>,
-    approver: Vec<u8>,
-    approval: Vec<u8>,
+    approver: Option<Vec<u8>>,
+    approval: Option<Vec<u8>>,
     entity: String,
     entity_id: Vec<u8>,
     reason: String,
 }
 
-fn reset_row(register: &Register) -> Option<ResetRow> {
+impl ResetRow {
+    /// The manager's reset of `account` for `reason`, with no second person.
+    fn alone(account: [u8; 16], reason: &str) -> ResetRow {
+        ResetRow {
+            actor: MANAGER_ID.to_vec(),
+            approver: None,
+            approval: None,
+            entity: "app_user".to_owned(),
+            entity_id: account.to_vec(),
+            reason: reason.to_owned(),
+        }
+    }
+}
+
+/// Every reset's audit row, in the order they were written.
+fn reset_rows(register: &Register) -> Vec<ResetRow> {
     register.with_db(|conn| {
-        conn.query_row(
+        conn.prepare(
             "SELECT actor_id, approver_id, approval_handle_id, entity, entity_id, reason
-               FROM audit_log WHERE action = 'user.admin'",
-            [],
-            |row| {
-                Ok(ResetRow {
-                    actor: row.get(0)?,
-                    approver: row.get(1)?,
-                    approval: row.get(2)?,
-                    entity: row.get(3)?,
-                    entity_id: row.get(4)?,
-                    reason: row.get(5)?,
-                })
-            },
+               FROM audit_log WHERE action = 'user.admin' ORDER BY seq",
         )
-        .optional()
         .unwrap()
+        .query_map([], |row| {
+            Ok(ResetRow {
+                actor: row.get(0)?,
+                approver: row.get(1)?,
+                approval: row.get(2)?,
+                entity: row.get(3)?,
+                entity_id: row.get(4)?,
+                reason: row.get(5)?,
+            })
+        })
+        .unwrap()
+        .map(Result::unwrap)
+        .collect()
     })
 }
+
 
 fn spent(register: &Register, approval: ApprovalId) -> bool {
     register.with_db(|conn| {
@@ -231,13 +281,13 @@ fn spent(register: &Register, approval: ApprovalId) -> bool {
 }
 
 /// E.51: a cashier who forgets their PIN, and has locked themselves out
-/// trying, is reset by a manager with the owner's approval. The old PIN stops
-/// working, the new one signs in, and the lockout is released: by this path
-/// only, since a restart does not. The audit row names the manager, the owner,
-/// the approval and its reason, and carries neither PIN nor hash; the
-/// approval is spent with it. A manager's own account needs six digits, so a
-/// four-digit PIN for one is refused. Nothing unrelated is cleared: another
-/// account's attempts here, and the cashier's on another register, stand.
+/// trying, is reset by one manager, alone under the shipped policy. The old
+/// PIN stops working, the new one signs in, and the lockout is released: by
+/// this path only, since a restart does not. The audit row names the manager
+/// and the reason, and no second person, and carries neither PIN nor hash. A
+/// manager's own account needs six digits, so a four-digit PIN for one is
+/// refused. Nothing unrelated is cleared: another account's attempts here,
+/// and the cashier's on another register, stand.
 #[test]
 fn manager_reset_retires_old_hash_and_audits() {
     let (dir, register) = office();
@@ -284,16 +334,26 @@ fn manager_reset_retires_old_hash_and_audits() {
     login_pin(&register, MANAGER_CODE, CASHIER_PIN).unwrap();
 
     // A manager's account needs six digits.
-    let deputy = owners_approval(&register, DEPUTY_ID);
-    let short = refusal(reset_pin(&register, user(DEPUTY_ID), "4826", deputy));
+    let short = refusal(alone(&register, DEPUTY_ID, "4826"));
     assert_eq!(
         (short.code, short.detail),
         ("pin_shape", Some("this account needs six digits or more"))
     );
-    assert!(!spent(&register, deputy), "a refused reset spends nothing");
+    assert_eq!(
+        reset_rows(&register),
+        Vec::new(),
+        "a refused reset writes nothing"
+    );
 
-    let granted = owners_approval(&register, CASHIER_ID);
-    reset_pin(&register, user(CASHIER_ID), NEW_PIN, granted).unwrap();
+    reset_pin(
+        &register,
+        user(CASHIER_ID),
+        NEW_PIN,
+        "locked_out",
+        None,
+        &merchant_policy(),
+    )
+    .unwrap();
     assert!(
         !pin_is(&register, CASHIER_ID, CASHIER_PIN),
         "the old hash is retired"
@@ -304,15 +364,8 @@ fn manager_reset_retires_old_hash_and_audits() {
     assert_eq!(failed_attempts(&register, SECOND_ID, REGISTER_ID), 2);
 
     assert_eq!(
-        reset_row(&register),
-        Some(ResetRow {
-            actor: MANAGER_ID.to_vec(),
-            approver: OWNER_ID.to_vec(),
-            approval: granted.as_uuid().as_bytes().to_vec(),
-            entity: "app_user".to_owned(),
-            entity_id: CASHIER_ID.to_vec(),
-            reason: REASON.to_owned(),
-        })
+        reset_rows(&register),
+        vec![ResetRow::alone(CASHIER_ID, "locked_out")]
     );
     let rows = audited(&register, "user.admin");
     let row = rows.first().unwrap();
@@ -323,11 +376,6 @@ fn manager_reset_retires_old_hash_and_audits() {
     let text = row.to_string();
     assert!(!text.contains(NEW_PIN), "the audit row carries no PIN");
     assert!(!text.contains("argon2"), "the audit row carries no hash");
-    assert!(spent(&register, granted));
-    assert_eq!(
-        refusal(reset_pin(&register, user(CASHIER_ID), "246813", granted)).code,
-        "approval_used"
-    );
 
     logout(&register).unwrap();
     assert_eq!(
@@ -337,14 +385,20 @@ fn manager_reset_retires_old_hash_and_audits() {
     login_pin(&register, CASHIER_CODE, NEW_PIN).unwrap();
 }
 
-/// Every reset needs `user.admin` and an approval bound to it: this account,
-/// exactly zero, issued to the person resetting. A cashier holds no
-/// `user.admin`; an approval for another account, another amount or another
-/// resetter is refused, and so is a missing one. Each refusal leaves the PIN
-/// and the approval as they were.
+/// Where the merchant's policy names `user.admin`, every reset needs an
+/// approval bound to it: this account, exactly zero, issued to the person
+/// resetting, for the same reason. A missing one is `approval_required`; one
+/// for another account, amount, resetter or reason is refused, and so is an
+/// unknown one. Each refusal leaves the PIN and the approval as they were.
+/// The bound one is spent with the audit row, which names the approver, and
+/// only once. A cashier holds no `user.admin`, approval or not.
 #[test]
-fn a_reset_needs_its_own_bound_approval() {
+fn a_reset_the_policy_escalates_needs_its_own_bound_approval() {
     let (_dir, register) = office();
+    assert_eq!(
+        refusal(approved(&register, CASHIER_ID, NEW_PIN, None)).code,
+        "approval_required"
+    );
     let for_the_deputy = owners_approval(&register, DEPUTY_ID);
     let for_ten_fils = approval(
         &register,
@@ -362,6 +416,14 @@ fn a_reset_needs_its_own_bound_approval() {
         0,
         REASON,
     );
+    let for_another_reason = approval(
+        &register,
+        MANAGER_ID,
+        (OWNER_ID, Role::Owner),
+        CASHIER_ID,
+        0,
+        "pin_disclosed",
+    );
     for (wrong, detail) in [
         (for_the_deputy, "the approval names something else"),
         (for_ten_fils, "the approval is for another amount"),
@@ -369,8 +431,12 @@ fn a_reset_needs_its_own_bound_approval() {
             for_the_deputy_to_use,
             "the approval was given to someone else",
         ),
+        (
+            for_another_reason,
+            "the approval was given for another reason",
+        ),
     ] {
-        let refused = refusal(reset_pin(&register, user(CASHIER_ID), NEW_PIN, wrong));
+        let refused = refusal(approved(&register, CASHIER_ID, NEW_PIN, Some(wrong)));
         assert_eq!(
             (refused.code, refused.detail),
             ("approval_mismatch", Some(detail))
@@ -379,36 +445,75 @@ fn a_reset_needs_its_own_bound_approval() {
     }
     let missing = ApprovalId::from_uuid(Uuid::from_u128(0xAB5E));
     assert_eq!(
-        refusal(reset_pin(&register, user(CASHIER_ID), NEW_PIN, missing)).code,
+        refusal(approved(&register, CASHIER_ID, NEW_PIN, Some(missing))).code,
         "approval_unknown"
+    );
+    assert!(pin_is(&register, CASHIER_ID, CASHIER_PIN));
+    assert_eq!(reset_rows(&register), Vec::new());
+
+    let granted = owners_approval(&register, CASHIER_ID);
+    approved(&register, CASHIER_ID, NEW_PIN, Some(granted)).unwrap();
+    assert!(pin_is(&register, CASHIER_ID, NEW_PIN));
+    assert_eq!(
+        reset_rows(&register),
+        vec![ResetRow {
+            approver: Some(OWNER_ID.to_vec()),
+            approval: Some(granted.as_uuid().as_bytes().to_vec()),
+            ..ResetRow::alone(CASHIER_ID, REASON)
+        }]
+    );
+    assert!(spent(&register, granted));
+    assert_eq!(
+        refusal(approved(&register, CASHIER_ID, "246813", Some(granted))).code,
+        "approval_used"
     );
 
     // A cashier holds no `user.admin`, whatever approval they carry.
-    let granted = owners_approval(&register, SECOND_ID);
-    logout(&register).unwrap();
-    login_pin(&register, CASHIER_CODE, CASHIER_PIN).unwrap();
-    assert_eq!(
-        refusal(reset_pin(&register, user(SECOND_ID), NEW_PIN, granted)).code,
-        "permission_denied"
+    add_staff(
+        &register,
+        SECOND_ID,
+        SECOND_CODE,
+        "Synthetic Second",
+        "cashier",
     );
+    let for_second = owners_approval(&register, SECOND_ID);
+    logout(&register).unwrap();
+    login_pin(&register, CASHIER_CODE, NEW_PIN).unwrap();
+    for policy in [merchant_policy(), escalating()] {
+        assert_eq!(
+            refusal(reset_pin(
+                &register,
+                user(SECOND_ID),
+                NEW_PIN,
+                REASON,
+                Some(for_second),
+                &policy,
+            ))
+            .code,
+            "permission_denied"
+        );
+    }
     logout(&register).unwrap();
     assert_eq!(
-        refusal(reset_pin(&register, user(SECOND_ID), NEW_PIN, granted)).code,
+        refusal(alone(&register, SECOND_ID, NEW_PIN)).code,
         "not_signed_in"
     );
-    assert!(pin_is(&register, CASHIER_ID, CASHIER_PIN));
-    assert!(!spent(&register, granted));
-    assert_eq!(reset_row(&register), None);
+    assert!(pin_is(&register, SECOND_ID, CASHIER_PIN));
+    assert!(!spent(&register, for_second));
 }
 
 /// A store's administrator does not reset the organisation's: a manager,
 /// whose `user.admin` is their own store's, is refused the owner's account,
-/// approval or not, while the owner may reset a manager's. A reset reaches
-/// only a live account with a role here, and a new PIN is all digits and as
-/// long as its account's grants need.
+/// alone or with an approval, while the owner may reset a manager's alone. A
+/// reset reaches only a live account with a role here, and a new PIN is all
+/// digits and as long as its account's grants need.
 #[test]
 fn a_reset_reaches_only_the_accounts_it_may() {
     let (_dir, register) = office();
+    assert_eq!(
+        refusal(alone(&register, OWNER_ID, NEW_PIN)).code,
+        "permission_outside_limit"
+    );
     let deputys = approval(
         &register,
         MANAGER_ID,
@@ -417,9 +522,10 @@ fn a_reset_reaches_only_the_accounts_it_may() {
         0,
         REASON,
     );
-    let refused = refusal(reset_pin(&register, user(OWNER_ID), NEW_PIN, deputys));
+    let refused = refusal(approved(&register, OWNER_ID, NEW_PIN, Some(deputys)));
     assert_eq!(refused.code, "permission_outside_limit");
     assert!(!spent(&register, deputys));
+    assert!(pin_is(&register, OWNER_ID, CASHIER_PIN));
 
     // An account that is not live, one live with no role at this store, and
     // no account at all.
@@ -445,9 +551,8 @@ fn a_reset_reaches_only_the_accounts_it_may() {
         .unwrap();
     });
     for gone in [SECOND_ID, ROLELESS_ID, [0x5A; 16]] {
-        let granted = owners_approval(&register, gone);
         assert_eq!(
-            refusal(reset_pin(&register, user(gone), NEW_PIN, granted)).code,
+            refusal(alone(&register, gone, NEW_PIN)).code,
             "user_unknown"
         );
     }
@@ -456,8 +561,7 @@ fn a_reset_reaches_only_the_accounts_it_may() {
     // grid a cashier holds `refund.receipted` within its threshold, a
     // manager's capability, so a cashier needs six digits too.
     for bad in ["73510", "73a510", "٧٣٥١٠٤"] {
-        let granted = owners_approval(&register, CASHIER_ID);
-        let refused = refusal(reset_pin(&register, user(CASHIER_ID), bad, granted));
+        let refused = refusal(alone(&register, CASHIER_ID, bad));
         assert_eq!(
             (refused.code, refused.detail),
             ("pin_shape", Some("this account needs six digits or more")),
@@ -475,26 +579,17 @@ fn a_reset_reaches_only_the_accounts_it_may() {
         )
         .unwrap();
     });
-    let granted = owners_approval(&register, CASHIER_ID);
-    let refused = refusal(reset_pin(&register, user(CASHIER_ID), "735", granted));
+    let refused = refusal(alone(&register, CASHIER_ID, "735"));
     assert_eq!(
         (refused.code, refused.detail),
         ("pin_shape", Some("this account needs four digits or more"))
     );
-    reset_pin(&register, user(CASHIER_ID), "7351", granted).unwrap();
+    alone(&register, CASHIER_ID, "7351").unwrap();
     assert!(pin_is(&register, CASHIER_ID, "7351"));
 
     // The owner, whose reach is the whole organisation, resets a manager.
     logout(&register).unwrap();
     login_pin(&register, OWNER_CODE, CASHIER_PIN).unwrap();
-    let managers = approval(
-        &register,
-        OWNER_ID,
-        (DEPUTY_ID, Role::Manager),
-        MANAGER_ID,
-        0,
-        REASON,
-    );
-    reset_pin(&register, user(MANAGER_ID), NEW_PIN, managers).unwrap();
+    alone(&register, MANAGER_ID, NEW_PIN).unwrap();
     assert!(pin_is(&register, MANAGER_ID, NEW_PIN));
 }

@@ -296,8 +296,8 @@ fn every_privileged_command_binds_its_approval() {
         .copied()
         .filter(is_privileged)
         .collect();
-    // The registry's privileged rows, the conditional override, the
-    // always-privileged reset and stock adjustment, then the contract's.
+    // The registry's privileged rows, the conditional override and reset,
+    // the always-privileged stock adjustment, then the contract's.
     let names: Vec<&str> = privileged.iter().map(|row| row.name).collect();
     let expected: Vec<&str> = ["cart_override_price", "user_reset_pin", "stock_adjust"]
         .into_iter()
@@ -389,6 +389,7 @@ fn conditional_privilege_cannot_cross_threshold_without_approval() {
         predicates,
         vec![
             ApprovalPredicate::PriceOverrideEscalatedByPolicy,
+            ApprovalPredicate::UserAdminEscalatedByPolicy,
             ApprovalPredicate::DepartmentAmountAboveEscalation,
         ]
     );
@@ -911,6 +912,7 @@ fn holds_at_its_boundary(predicate: ApprovalPredicate) {
     match predicate {
         ApprovalPredicate::DepartmentAmountAboveEscalation => department_threshold(),
         ApprovalPredicate::PriceOverrideEscalatedByPolicy => override_escalation(),
+        ApprovalPredicate::UserAdminEscalatedByPolicy => reset_escalation(),
     }
 }
 
@@ -1183,6 +1185,113 @@ fn override_escalation() {
     for policy in [&alone, &escalating] {
         assert!(matches!(
             over(CASHIER, Role::Cashier, policy, Some(&cashiers)),
+            Err(PermissionError::Denied(..))
+        ));
+    }
+}
+
+const OWNER: UserId = UserId::from_uuid(Uuid::from_u128(0x0e));
+const ACCOUNT: UserId = UserId::from_uuid(Uuid::from_u128(0xc1));
+const OTHER_ACCOUNT: UserId = UserId::from_uuid(Uuid::from_u128(0xc2));
+
+/// The owner's approval of `actor`'s reset of `account` for `amount_minor`,
+/// read back through `ApprovalHandle::restore`.
+fn reset_approval(actor: UserId, account: UserId, amount_minor: i64) -> ApprovalHandle {
+    let id = ApprovalId::from_uuid(Uuid::from_u128(0xa993));
+    let issued = ApprovalHandle::issue(
+        id,
+        actor,
+        &proof::<cap::UserAdmin>(OWNER, Role::Owner),
+        &ApprovalBinding {
+            entity_id: account.as_uuid(),
+            amount_minor,
+            content_hash: None,
+        },
+        "forgot_pin".to_owned(),
+        at(),
+        120_000,
+        *id.as_uuid().as_bytes(),
+    )
+    .unwrap();
+    ApprovalHandle::restore(issued.to_stored()).unwrap()
+}
+
+/// `user.admin` under the merchant's escalation policy, through the proof
+/// `user_reset_pin` takes. Its binding is the command's: this account and
+/// exactly zero. The reason is the audit row's, which the schema holds an
+/// approval's to as it is spent (`tests/pin_reset.rs`).
+fn reset_escalation() {
+    let reset = |actor: UserId,
+                 role: Role,
+                 policy: &EscalationPolicy,
+                 approval: Option<&ApprovalHandle>|
+     -> Result<(Option<UserId>, Option<ApprovalId>), PermissionError> {
+        // What the audit row will name: the approver and the approval.
+        authorize::<cap::UserAdmin>(
+            actor,
+            &GrantSet::of_role(role),
+            approval,
+            &ApprovalBinding {
+                entity_id: ACCOUNT.as_uuid(),
+                amount_minor: 0,
+                content_hash: None,
+            },
+            policy,
+            at(),
+        )
+        .map(|proof| (proof.approver(), proof.approval()))
+    };
+    let alone = EscalationPolicy::empty();
+    let escalating = EscalationPolicy::empty().with_escalation::<cap::UserAdmin>();
+
+    // Where the policy names nothing, a manager resets alone, and an
+    // approval offered anyway is not consumed.
+    assert_eq!(
+        reset(MANAGER, Role::Manager, &alone, None),
+        Ok((None, None))
+    );
+    let bound = reset_approval(MANAGER, ACCOUNT, 0);
+    assert_eq!(
+        reset(MANAGER, Role::Manager, &alone, Some(&bound)),
+        Ok((None, None))
+    );
+
+    // Where it names `user.admin`, the reset is refused without a handle...
+    assert_eq!(
+        reset(MANAGER, Role::Manager, &escalating, None).unwrap_err(),
+        PermissionError::EscalationRequired(cap::UserAdmin::NAME)
+    );
+    // ...and passes with one bound to this account and zero, which the
+    // proof then names.
+    assert_eq!(
+        reset(MANAGER, Role::Manager, &escalating, Some(&bound)),
+        Ok((Some(OWNER), Some(bound.id())))
+    );
+    // A handle for another account, or another amount, does not.
+    assert!(matches!(
+        reset(
+            MANAGER,
+            Role::Manager,
+            &escalating,
+            Some(&reset_approval(MANAGER, OTHER_ACCOUNT, 0))
+        ),
+        Err(PermissionError::ApprovalEntityMismatch(..))
+    ));
+    assert!(matches!(
+        reset(
+            MANAGER,
+            Role::Manager,
+            &escalating,
+            Some(&reset_approval(MANAGER, ACCOUNT, 1))
+        ),
+        Err(PermissionError::ApprovalAmountMismatch(..))
+    ));
+    // An approval adds a second person, never the capability: a cashier is
+    // refused under either policy, with a handle made out to them.
+    let cashiers = reset_approval(CASHIER, ACCOUNT, 0);
+    for policy in [&alone, &escalating] {
+        assert!(matches!(
+            reset(CASHIER, Role::Cashier, policy, Some(&cashiers)),
             Err(PermissionError::Denied(..))
         ));
     }
