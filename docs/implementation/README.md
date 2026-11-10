@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **81 of 124 executable microsteps fully complete (~65%)**: `1.1.0`
+Phase 1 has **82 of 124 executable microsteps fully complete (~66%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -205,7 +205,9 @@ row twice), and `1.6.2` (PINs under a reviewed Argon2id profile, with wrong PINs
 then locking a user out until a manager releases them, and a forgotten PIN reset by a manager with a
 second person's approval, the old hash retired and the reset audited), and `1.7.6` (the printer read at
 Pay, before any money is taken, so paper out or no printer is told before the customer pays and never
-refuses the sale).
+refuses the sale), and `1.7.6b` (no printer, and selling never stops: every receipt kept in the
+sale's own transaction and printed unchanged once a printer can take it, and the missing printer an
+alarm on the register's health, never a modal).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on

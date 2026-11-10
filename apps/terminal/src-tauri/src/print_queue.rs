@@ -1856,3 +1856,331 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod unavailable {
+    //! 1.7.6b, through the shell: a register with no printer, or one that
+    //! would not print, keeps selling and keeps every receipt
+    //! (`ref/hardware-and-receipts.md` §3a, E.85). The shop is the integration
+    //! suites' (`tests/shop/mod.rs`), its register opened as `run` opens it,
+    //! with a clock the test moves and the simulated printer it is given.
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicI64, Ordering};
+
+    use pos_domain::{Clock, SaleId, Timestamp};
+    use pos_hardware::profile::PrinterProfile;
+    use pos_hardware::render::PaperWidth;
+    use pos_hardware::{Fault, PrinterAtPay, PrinterStatus, ReceiptPrinter, SimulatedPrinter};
+    use rusqlite::params;
+    use tempfile::TempDir;
+
+    use crate::commands::auth::{login_pin, logout};
+    use crate::commands::cart::{add_product, open_cart};
+    use crate::commands::sale::{CompletedSaleRef, DrawerOutcome, ReceiptOutcome, finalize};
+    use crate::commands::tender::{add_cash, begin_payment};
+    use crate::health::{Alarm, health};
+    use crate::shop::{AT, CASHIER_CODE, CASHIER_PIN, KEY, OIL, product_id, seed};
+    use crate::state::{ReceiptDevice, Register, V7Ids};
+
+    /// A clock the test moves; the register and its print worker read it.
+    #[derive(Clone)]
+    struct Hands(Arc<AtomicI64>);
+
+    impl Hands {
+        fn new() -> Hands {
+            let at = Timestamp::parse_iso8601(AT).unwrap();
+            Hands(Arc::new(AtomicI64::new(at.epoch_milliseconds())))
+        }
+
+        fn forward(&self, seconds: i64) {
+            self.0.fetch_add(seconds * 1_000, Ordering::SeqCst);
+        }
+    }
+
+    impl Clock for Hands {
+        fn now(&self) -> Timestamp {
+            Timestamp::from_epoch_milliseconds(self.0.load(Ordering::SeqCst)).unwrap()
+        }
+    }
+
+    /// The register on `dir`, opened at `hands`, with `printer` attached on
+    /// the profile an unbound register renders for, or none.
+    fn open(dir: &TempDir, hands: &Hands, printer: Option<&Arc<SimulatedPrinter>>) -> Register {
+        let register = Register::open_with(
+            dir.path(),
+            KEY,
+            Box::new(hands.clone()),
+            Box::new(V7Ids::default()),
+        )
+        .unwrap();
+        let register = match printer {
+            Some(printer) => {
+                let attached: Arc<dyn ReceiptPrinter> = printer.clone();
+                register.with_receipt_device(ReceiptDevice {
+                    profile: PrinterProfile::simulator(PaperWidth::Mm80),
+                    printer: Some(attached),
+                })
+            }
+            None => register,
+        };
+        login_pin(&register, CASHIER_CODE, CASHIER_PIN).unwrap();
+        register
+    }
+
+    /// A fresh shop, and a simulated printer in `status`.
+    fn shop(status: PrinterStatus) -> (TempDir, Hands, Arc<SimulatedPrinter>) {
+        let dir = tempfile::tempdir().unwrap();
+        seed(dir.path(), true);
+        let printer = Arc::new(SimulatedPrinter::new());
+        *printer.force_status.lock().unwrap() = status;
+        (dir, Hands::new(), printer)
+    }
+
+    /// One bottle of oil, paid in cash and completed.
+    fn sell_one(register: &Register) -> CompletedSaleRef {
+        open_cart(register).unwrap();
+        add_product(register, product_id(OIL), None).unwrap();
+        let paying = begin_payment(register).unwrap();
+        add_cash(register, paying.cash_due_minor).unwrap();
+        finalize(register).unwrap()
+    }
+
+    fn count(register: &Register, sql: &str) -> i64 {
+        register.with_db(|conn| conn.query_row(sql, [], |r| r.get(0)).unwrap())
+    }
+
+    /// A sale's original receipt, as stored: its bytes, its job's state, and
+    /// what each attempt on that job came to.
+    fn original(register: &Register, sale: SaleId) -> (Vec<u8>, String, Vec<String>) {
+        register.with_db(|conn| {
+            let (artifact, bytes, state): (Vec<u8>, Vec<u8>, String) = conn
+                .query_row(
+                    "SELECT a.id, a.content_bytes, j.state
+                       FROM receipt_artifact a JOIN print_job j ON j.artifact_id = a.id
+                      WHERE a.sale_id = ?1 AND a.artifact_kind = 'original'",
+                    params![sale.as_uuid().as_bytes().as_slice()],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .unwrap();
+            let outcomes = conn
+                .prepare(
+                    "SELECT t.outcome || coalesce(':' || t.error_code, '')
+                       FROM print_attempt t JOIN print_job j ON j.id = t.job_id
+                      WHERE j.artifact_id = ?1 ORDER BY t.attempt_no",
+                )
+                .unwrap()
+                .query_map([artifact.as_slice()], |r| r.get::<_, String>(0))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
+            (bytes, state, outcomes)
+        })
+    }
+
+    /// §3a, "At Pay": with no printer the cashier is told so before the
+    /// customer pays, and with one that cannot be reached, that; nothing is
+    /// taken, and nothing is queued, until the sale completes.
+    #[test]
+    fn printer_unavailable_at_pay_warns_before_tender() {
+        for (attached, read) in [
+            (false, PrinterAtPay::NoPrinter),
+            (true, PrinterAtPay::Offline),
+        ] {
+            let (dir, hands, printer) = shop(PrinterStatus::Offline);
+            let register = open(&dir, &hands, attached.then_some(&printer));
+            open_cart(&register).unwrap();
+            add_product(&register, product_id(OIL), None).unwrap();
+            let paying = begin_payment(&register).unwrap();
+            assert_eq!(paying.printer, Some(read));
+            assert!(read.warns(), "{read:?} is told before the customer pays");
+            assert!(paying.tenders.is_empty() && paying.collected_minor == 0);
+            assert_eq!(count(&register, "SELECT count(*) FROM print_job"), 0);
+            assert!(printer.printed.lock().unwrap().is_empty());
+        }
+    }
+
+    /// `1.7.6b`'s `Done when`: a sale completes with no printer, and with one
+    /// that is offline, each leaving one completed sale, one original
+    /// artifact, one job still owed a print, and no claimed print success.
+    #[test]
+    fn a_sale_completes_with_no_printer_and_queues_the_artifact() {
+        let (dir, hands, _) = shop(PrinterStatus::Ready);
+        let register = open(&dir, &hands, None);
+        let sold = sell_one(&register);
+        assert_eq!(
+            (sold.receipt, sold.drawer),
+            (ReceiptOutcome::Queued, DrawerOutcome::NoDevice)
+        );
+        let (bytes, state, outcomes) = original(&register, sold.sale_id);
+        assert!(
+            !bytes.is_empty(),
+            "the document exists whether or not paper does"
+        );
+        assert_eq!((state.as_str(), outcomes), ("queued", Vec::<String>::new()));
+
+        let (dir, hands, printer) = shop(PrinterStatus::Offline);
+        let register = open(&dir, &hands, Some(&printer));
+        let sold = sell_one(&register);
+        assert_eq!(sold.receipt, ReceiptOutcome::Refused);
+        let (_, state, outcomes) = original(&register, sold.sale_id);
+        assert_eq!(
+            (state.as_str(), outcomes),
+            ("failed", vec!["failed:offline".to_owned()]),
+            "refused before a byte, and waiting to be tried again"
+        );
+        assert!(printer.printed.lock().unwrap().is_empty());
+        for (sql, expected) in [
+            ("SELECT count(*) FROM sale WHERE status = 'completed'", 1),
+            (
+                "SELECT count(*) FROM receipt_artifact WHERE artifact_kind = 'original'",
+                1,
+            ),
+            (
+                "SELECT count(*) FROM print_job WHERE state IN ('queued', 'failed')",
+                1,
+            ),
+            (
+                "SELECT count(*) FROM print_attempt WHERE outcome = 'printed'",
+                0,
+            ),
+        ] {
+            assert_eq!(count(&register, sql), expected, "{sql}");
+        }
+    }
+
+    /// §3a: the missing printer is a status line the lock screen shows, read
+    /// with no one signed in, and never a question. A sale with no printer is
+    /// never refused nor held for an answer, however many receipts wait, and
+    /// each one waiting is counted.
+    #[test]
+    fn the_missing_printer_is_an_alarm_not_a_modal() {
+        let (dir, hands, _) = shop(PrinterStatus::Ready);
+        let register = open(&dir, &hands, None);
+        logout(&register).unwrap();
+        let before = health(&register).unwrap();
+        assert_eq!(before.printer.reading, PrinterAtPay::NoPrinter);
+        assert_eq!(
+            (before.printer.receipts_waiting, before.alarms),
+            (0, vec![Alarm::PrinterUnavailable])
+        );
+
+        login_pin(&register, CASHIER_CODE, CASHIER_PIN).unwrap();
+        for _ in 0..3 {
+            assert_eq!(sell_one(&register).receipt, ReceiptOutcome::Queued);
+        }
+        logout(&register).unwrap();
+        let after = health(&register).unwrap();
+        assert_eq!(
+            (
+                after.printer.receipts_waiting,
+                after.printer.receipts_unconfirmed,
+                after.alarms
+            ),
+            (
+                3,
+                0,
+                vec![Alarm::PrinterUnavailable, Alarm::ReceiptsWaiting]
+            )
+        );
+        assert_eq!(
+            count(
+                &register,
+                "SELECT count(*) FROM sale WHERE status = 'completed'"
+            ),
+            3
+        );
+    }
+
+    /// §3a, "The printer returns": receipts kept while no printer could take
+    /// them print with the next sale once one can, byte for byte as stored,
+    /// with nothing re-rendered. Both ways a printer returns: one that was
+    /// offline comes back once its retry is due, and a register with none is
+    /// opened with one.
+    #[test]
+    fn a_queued_artifact_prints_unchanged_once_a_printer_returns() {
+        let (dir, hands, printer) = shop(PrinterStatus::Offline);
+        let register = open(&dir, &hands, Some(&printer));
+        let refused = sell_one(&register);
+        assert_eq!(refused.receipt, ReceiptOutcome::Refused);
+        *printer.force_status.lock().unwrap() = PrinterStatus::Ready;
+        let back = health(&register).unwrap();
+        assert_eq!(back.printer.reading, PrinterAtPay::Ready);
+        assert_eq!(
+            (back.printer.receipts_waiting, back.alarms),
+            (1, vec![Alarm::ReceiptsWaiting])
+        );
+        hands.forward(31);
+        let next = sell_one(&register);
+        assert_eq!(next.receipt, ReceiptOutcome::Printed);
+        let (bytes, state, outcomes) = original(&register, refused.sale_id);
+        assert_eq!(
+            (state.as_str(), outcomes),
+            (
+                "printed",
+                vec!["failed:offline".to_owned(), "printed".to_owned()]
+            )
+        );
+        let printed: Vec<Vec<u8>> = printer
+            .printed
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|doc| doc.bytes.clone())
+            .collect();
+        assert_eq!(printed.len(), 2);
+        assert!(printed.contains(&bytes), "the stored bytes, unchanged");
+        let after = health(&register).unwrap();
+        assert_eq!(
+            (after.printer.receipts_waiting, after.alarms),
+            (0, Vec::new())
+        );
+
+        // A register with no printer, opened again with one.
+        let (dir, hands, printer) = shop(PrinterStatus::Ready);
+        let register = open(&dir, &hands, None);
+        let kept = sell_one(&register);
+        assert_eq!(kept.receipt, ReceiptOutcome::Queued);
+        drop(register);
+        let register = open(&dir, &hands, Some(&printer));
+        assert_eq!(sell_one(&register).receipt, ReceiptOutcome::Printed);
+        let (bytes, state, outcomes) = original(&register, kept.sale_id);
+        assert_eq!(
+            (state.as_str(), outcomes),
+            ("printed", vec!["printed".to_owned()])
+        );
+        assert_eq!(
+            printer
+                .printed
+                .lock()
+                .unwrap()
+                .first()
+                .map(|doc| doc.bytes.clone()),
+            Some(bytes),
+            "the kept receipt prints first, as stored"
+        );
+    }
+
+    /// A print that went silent partway may have put paper in the customer's
+    /// hand, so it is not waiting to be printed again: it waits for a person
+    /// to say whether a readable receipt came out (§3 rule 5), and the health
+    /// says so apart from the receipts that wait for a printer.
+    #[test]
+    fn a_print_that_may_have_come_out_waits_for_a_person() {
+        let (dir, hands, printer) = shop(PrinterStatus::Ready);
+        let register = open(&dir, &hands, Some(&printer));
+        printer.script(Fault::SilentAfter(64));
+        assert_eq!(sell_one(&register).receipt, ReceiptOutcome::Unconfirmed);
+        let health = health(&register).unwrap();
+        assert_eq!(health.printer.reading, PrinterAtPay::Ready);
+        assert_eq!(
+            (
+                health.printer.receipts_waiting,
+                health.printer.receipts_unconfirmed,
+                health.alarms
+            ),
+            (0, 1, vec![Alarm::ReceiptsUnconfirmed])
+        );
+    }
+}

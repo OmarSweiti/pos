@@ -986,7 +986,7 @@ Seven fixtures: Arabic 80 mm · Arabic 58 mm · bilingual 80 mm · multi-rate ta
 
 ### 1.7.6b — Printer-unavailable operating mode
 **Scheduled in:** Phase 1B, after 1.7.7 and 1.8.3
-**Files:** `apps/terminal/src-tauri/src/print_queue.rs` (new), `apps/terminal/src-tauri/src/health.rs` (new), `crates/pos-db/src/repo/receipt.rs`
+**Files:** `apps/terminal/src-tauri/src/print_queue.rs` (new), `apps/terminal/src-tauri/src/health.rs` (new), `crates/pos-db/src/repo/receipt.rs` · as delivered: `apps/terminal/src-tauri/src/health.rs` (new: `HealthSnapshot`, `PrinterHealth`, `Alarm`, `health_status`) · `apps/terminal/src-tauri/src/lib.rs` (`pub mod health`, the command) · `apps/terminal/src-tauri/src/ipc/registry.rs` (its row) · `apps/terminal/src-tauri/src/print_queue.rs` (the step's four tests, in `print_queue::unavailable`) · `scripts/check-test-catalog.py` (three names: `PLANNED` → `PLANNED_RETIRED`) · [`ref/ipc-contract.md`](ref/ipc-contract.md) §3 · [`ref/hardware-and-receipts.md`](ref/hardware-and-receipts.md) §3a · [`README.md`](README.md) · this file. `crates/pos-db/src/repo/receipt.rs` needed no change.
 
 ```rust
 pub fn enqueue_unprinted(tx: &Transaction, receipts: &ReceiptRepository<'_>,
@@ -995,8 +995,16 @@ pub fn enqueue_unprinted(tx: &Transaction, receipts: &ReceiptRepository<'_>,
 ```
 
 At Pay, warn before tender when the printer is unavailable. The shell owns the transaction and delegates the same unconditional initial job write as every sale to `ReceiptRepository::queue_initial`; `reason` drives the health alarm and does not invent a separate print-job schema. The shell never writes SQL or constructs persistence rows itself. Finalize still persists the immutable receipt artifact and queued print job, then raises an operator alarm; selling never invents a printed receipt or loses the document. The unresolved fiscally-enabled-store rule remains owned by `2.7.0` in [`ref/test-catalog.md`](ref/test-catalog.md) E.85.
-**Tests:** `printer_unavailable_at_pay_warns_before_tender` · `a_sale_completes_with_no_printer_and_queues_the_artifact` · `the_missing_printer_is_an_alarm_not_a_modal` · `a_queued_artifact_prints_unchanged_once_a_printer_returns`
+**Tests:** `printer_unavailable_at_pay_warns_before_tender` · `a_sale_completes_with_no_printer_and_queues_the_artifact` · `the_missing_printer_is_an_alarm_not_a_modal` · `a_queued_artifact_prints_unchanged_once_a_printer_returns` · as delivered, also `a_print_that_may_have_come_out_waits_for_a_person`
 **Done when:** `cargo nextest run -p terminal print_queue::` passes and a simulated offline printer leaves one completed sale, one original artifact, one queued job and no claimed print success.
+
+> **As delivered, 10 November 2026.** `cargo nextest run -p terminal print_queue::` passes 19 tests, among them the step's four and `a_print_that_may_have_come_out_waits_for_a_person`, which holds a print that may have produced paper apart from the receipts waiting for a printer. A simulated offline printer leaves one completed sale, one original artifact, one job refused before a byte and waiting to be tried again, and no attempt claiming a print. With no printer at all, the job is queued and nothing is attempted.
+>
+> - **At Pay, the warning is 1.7.6's reading.** With no printer it reads `no_printer`, and with one that cannot be reached, `offline`. Either warns before the customer pays.
+> - **The alarm is `health_status`, new in `health.rs`.** The lock screen reads it before anyone signs in, so it proves no capability. It carries the printer as read now, the receipts waiting for it and those only a person closes, with an alarm for each, loudest first. It is a status line, never a modal, and nothing in it stops a sale: three sales with no printer complete, and three receipts wait.
+> - **`enqueue_unprinted` is not built.** Its sketch predates 1.8.3, whose finalize already writes every original and its job through `ReceiptRepository::queue_initial`, in the sale's transaction, whatever the printer. A second path for the same write is what the sketch itself forbids ("does not invent a separate print-job schema"). And the reason is not stored: the alarm reads the printer live, and the job's attempts record why it was refused.
+> - **A kept receipt prints unchanged with the next sale once a printer can take it,** because the finalize drains every due job after it commits. That covers a printer that was offline, once its retry is due, and a register opened with a printer it lacked. The stored bytes are sent and nothing is re-rendered. Until 1.7.14's worker drains the queue off the command path, a printer that returns prints nothing until the next sale.
+> - **The fiscally-enabled store's rule stays open** (E.85, owned by 2.7.0). The tests encode its default: the sale completes, the receipt is kept and queued, and an alarm is raised.
 
 ### 1.7.7 — Print retry queue and unprinted flag
 **Scheduled in:** Phase 1B, after 1.9.1 creates migration `0005` and before 1.8.3 consumes the repository
