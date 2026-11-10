@@ -1872,7 +1872,7 @@ mod unavailable {
     use pos_domain::{Clock, SaleId, Timestamp};
     use pos_hardware::profile::PrinterProfile;
     use pos_hardware::render::PaperWidth;
-    use pos_hardware::{PrinterAtPay, PrinterStatus, ReceiptPrinter, SimulatedPrinter};
+    use pos_hardware::{Fault, PrinterAtPay, PrinterStatus, ReceiptPrinter, SimulatedPrinter};
     use rusqlite::params;
     use tempfile::TempDir;
 
@@ -2159,6 +2159,28 @@ mod unavailable {
                 .map(|doc| doc.bytes.clone()),
             Some(bytes),
             "the kept receipt prints first, as stored"
+        );
+    }
+
+    /// A print that went silent partway may have put paper in the customer's
+    /// hand, so it is not waiting to be printed again: it waits for a person
+    /// to say whether a readable receipt came out (§3 rule 5), and the health
+    /// says so apart from the receipts that wait for a printer.
+    #[test]
+    fn a_print_that_may_have_come_out_waits_for_a_person() {
+        let (dir, hands, printer) = shop(PrinterStatus::Ready);
+        let register = open(&dir, &hands, Some(&printer));
+        printer.script(Fault::SilentAfter(64));
+        assert_eq!(sell_one(&register).receipt, ReceiptOutcome::Unconfirmed);
+        let health = health(&register).unwrap();
+        assert_eq!(health.printer.reading, PrinterAtPay::Ready);
+        assert_eq!(
+            (
+                health.printer.receipts_waiting,
+                health.printer.receipts_unconfirmed,
+                health.alarms
+            ),
+            (0, 1, vec![Alarm::ReceiptsUnconfirmed])
         );
     }
 }
