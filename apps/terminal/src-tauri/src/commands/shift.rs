@@ -142,7 +142,9 @@ pub fn shift_close(till: State<'_, Till>, shift_id: ShiftId) -> IpcResult<ShiftC
 ///
 /// What the context refuses; `business_date_invalid` for a date that is not
 /// `YYYY-MM-DD`; `shift_already_open` while the register has an open shift;
-/// `store_day_unreadable` when the store's zone or cutover cannot date a
+/// `business_date_before_last_shift` for a date earlier than the register's
+/// last shift's, because its business days never run backwards (the owner's
+/// decision of 10 November 2026); `store_day_unreadable` when the store's zone or cutover cannot date a
 /// shift; `float_not_a_denomination` for a piece the currency does not have;
 /// `float_invalid` for a float too large to count; `business_date_required`
 /// when the clock is not trusted and no date is confirmed;
@@ -206,6 +208,12 @@ pub fn begin_shift(
         .open(&tx, &opened)
         .map_err(|error| match error {
             DbError::ShiftAlreadyOpen { .. } => already_open(),
+            earlier @ DbError::ShiftDateBeforePrevious { .. } => IpcError::from_source(
+                "business_date_before_last_shift",
+                "error.shift.business_date_before_last_shift",
+                &earlier,
+            )
+            .with_detail("the register's last shift is on a later day"),
             other => stored(other),
         })?;
     tx.commit().map_err(sqlite)?;
