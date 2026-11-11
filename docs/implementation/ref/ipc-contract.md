@@ -535,7 +535,11 @@ is the input E.2's status-query needs and which nothing previously persisted.
 >   charged (the priced total with the final cash tender's rounding), the change, and what became of
 >   the receipt and of the drawer once the sale committed.
 >   - **The receipt** is `queued` (no printer attached), `printed`, `refused` (the queue retries it),
->     `unconfirmed` (a person answers through `print_resolve_unknown`) or `withheld`.
+>     `unconfirmed` (a person answers through `print_resolve_unknown`) or `withheld`. *Since 1.7.14c
+>     (11 November 2026)* it is `queued` (no printer attached) or `sent_to_printer`: the finalize hands
+>     the receipt to the print worker, which prints it off the command, and never waits on the device.
+>     What the device did is the print queue's, and a refusal, an unconfirmed print or a withheld
+>     receipt is raised on `health_status`.
 >   - **The drawer** is `not_opened`, `no_device`, `opened` or `failed`.
 >
 >   Neither outcome un-completes the sale.
