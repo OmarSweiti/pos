@@ -1,13 +1,15 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! The merchant's settings, read against the exact registered migration
-//! chain: a store's own list of price-override reasons, or the default.
+//! chain: a store's own list of price-override reasons, or the default; and a
+//! register's printer binding (1.7.14b).
 
 use pos_db::DbError;
 use pos_db::fixtures::registered_chain::RegisteredChain;
 use pos_db::repo::setting::{
-    DEFAULT_PRICE_OVERRIDE_REASONS, PRICE_OVERRIDE_REASONS, SettingRepository, is_reason_code,
+    DEFAULT_PRICE_OVERRIDE_REASONS, PRICE_OVERRIDE_REASONS, PRINTER_BINDING, PrinterBinding,
+    SettingRepository, is_reason_code,
 };
-use pos_domain::StoreId;
+use pos_domain::{RegisterId, StoreId};
 use rusqlite::{Connection, params};
 use uuid::Uuid;
 
@@ -176,5 +178,104 @@ fn a_reason_code_is_a_short_lowercase_identifier() {
         &"a".repeat(33),
     ] {
         assert!(!is_reason_code(code), "{code:?}");
+    }
+}
+
+/// 1.7.14b: a register's printer binding is its own row, and is checked as it
+/// is read. None set reads as none, and so does a binding set for another
+/// register, for the store or for the organisation. A value that is not
+/// exactly a profile id, a version from 1 and an IP address with a port is
+/// refused by name, never read as no binding: a register whose binding was
+/// mistyped must say so, not quietly print nowhere.
+#[test]
+fn a_printer_binding_is_the_registers_own_and_is_checked_as_it_is_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let conn = pos_db::open(&dir.path().join("register.db"), KEY).unwrap();
+    let chain = RegisteredChain::seed(&conn);
+    let store = StoreId::from_uuid(Uuid::from_slice(&chain.store).unwrap());
+    let chain_register = [0x52u8; 16];
+    let other_register = [0x53u8; 16];
+    chain.add_register(&conn, &chain_register, "REG01");
+    chain.add_register(&conn, &other_register, "REG02");
+    let register = RegisterId::from_uuid(Uuid::from_bytes(chain_register));
+    let binding = |conn: &Connection| SettingRepository::new(conn).printer_binding(register);
+    assert_eq!(binding(&conn).unwrap(), None);
+
+    let bound = r#"{"profile_id": "emulator-80mm", "version": 1, "address": "192.0.2.10:9100"}"#;
+    set(
+        &conn,
+        "register",
+        Uuid::from_bytes(other_register),
+        PRINTER_BINDING,
+        bound,
+    );
+    set(&conn, "store", store.as_uuid(), PRINTER_BINDING, bound);
+    assert_eq!(
+        binding(&conn).unwrap(),
+        None,
+        "another register's, or the store's, is not this one's"
+    );
+
+    set(
+        &conn,
+        "register",
+        register.as_uuid(),
+        PRINTER_BINDING,
+        bound,
+    );
+    assert_eq!(
+        binding(&conn).unwrap(),
+        Some(PrinterBinding {
+            profile_id: "emulator-80mm".to_owned(),
+            version: core::num::NonZeroU32::MIN,
+            address: "192.0.2.10:9100".parse().unwrap(),
+        })
+    );
+
+    for (value, why) in [
+        ("not json", "not a JSON object"),
+        (r#"["emulator-80mm", 1]"#, "not a JSON object"),
+        (
+            r#"{"profile_id": "emulator-80mm", "version": 1}"#,
+            "not exactly profile_id, version and address",
+        ),
+        (
+            r#"{"profile_id": "emulator-80mm", "version": 1, "address": "192.0.2.10:9100", "port": 9100}"#,
+            "not exactly profile_id, version and address",
+        ),
+        (
+            r#"{"profile_id": 7, "version": 1, "address": "192.0.2.10:9100"}"#,
+            "profile_id is not text",
+        ),
+        (
+            r#"{"profile_id": "emulator-80mm", "version": 0, "address": "192.0.2.10:9100"}"#,
+            "version is not a whole number from 1",
+        ),
+        (
+            r#"{"profile_id": "emulator-80mm", "version": "1", "address": "192.0.2.10:9100"}"#,
+            "version is not a whole number from 1",
+        ),
+        (
+            r#"{"profile_id": "emulator-80mm", "version": 1, "address": "printer.local:9100"}"#,
+            "address is not an IP address and a port",
+        ),
+        (
+            r#"{"profile_id": "emulator-80mm", "version": 1, "address": "192.0.2.10"}"#,
+            "address is not an IP address and a port",
+        ),
+    ] {
+        set(
+            &conn,
+            "register",
+            register.as_uuid(),
+            PRINTER_BINDING,
+            value,
+        );
+        match binding(&conn) {
+            Err(DbError::StoredSettingInvalid { key, reason }) => {
+                assert_eq!((key, reason), (PRINTER_BINDING, why), "{value}");
+            }
+            other => panic!("{value} was read as {other:?}"),
+        }
     }
 }
