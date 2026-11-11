@@ -37,6 +37,15 @@
 //!
 //! A file states no qualification. Qualification is §6a's matrix, which needs a
 //! device somebody held, so every profile read from a file is a candidate.
+//!
+//! # What an installed register carries
+//!
+//! A register is bound to its printer by a profile's id and version (1.7.14),
+//! and an installed register has no checkout of this repository beside it. So
+//! the receipt-printer files are compiled in, as [`SHIPPED_PRINTERS`], and a
+//! binding goes through one door, [`printer`]: it answers the profile a binding
+//! names, or refuses one the build does not carry and one that leaves a
+//! parameter the driver needs unknown.
 
 use core::fmt;
 use core::num::NonZeroU32;
@@ -48,9 +57,10 @@ use serde::de::{DeserializeOwned, Error as _};
 use serde::{Deserialize, Deserializer};
 
 use super::{
-    CutCommand, DrawerPin, DrawerPulse, Fact, PrinterProfile, Qualification, RasterCommand,
-    StatusProtocol, Transport,
+    CutCommand, DrawerPin, DrawerPulse, Fact, Parameter, PrinterProfile, Qualification,
+    RasterCommand, StatusProtocol, Transport,
 };
+use crate::render::PaperWidth;
 
 /// The file format this build reads.
 pub const SCHEMA: u32 = 1;
@@ -612,6 +622,124 @@ pub fn load_dir(root: &Path) -> Result<Vec<(PathBuf, DeviceProfile)>, ProfileFil
     }
     profiles.sort_by(|left, right| left.0.cmp(&right.0));
     Ok(profiles)
+}
+
+/// Every receipt-printer profile file, compiled in: its path under [`DIR`],
+/// and its text. `tests/profiles.rs`'s
+/// `the_shipped_printer_profiles_are_the_profile_files` holds this list to the
+/// directory and each copy to its file, byte for byte, so a profile added,
+/// changed or removed on disk fails until it is here too.
+pub const SHIPPED_PRINTERS: [(&str, &str); 8] = [
+    (
+        "receipt_printer/bixolon-srp-332iii-58mm.v1.json",
+        include_str!("../../profiles/receipt_printer/bixolon-srp-332iii-58mm.v1.json"),
+    ),
+    (
+        "receipt_printer/bixolon-srp-332iii-80mm.v1.json",
+        include_str!("../../profiles/receipt_printer/bixolon-srp-332iii-80mm.v1.json"),
+    ),
+    (
+        "receipt_printer/epson-tm-m10-58mm.v1.json",
+        include_str!("../../profiles/receipt_printer/epson-tm-m10-58mm.v1.json"),
+    ),
+    (
+        "receipt_printer/epson-tm-t20iii-ethernet-80mm.v1.json",
+        include_str!("../../profiles/receipt_printer/epson-tm-t20iii-ethernet-80mm.v1.json"),
+    ),
+    (
+        "receipt_printer/epson-tm-t20iv-80mm.v1.json",
+        include_str!("../../profiles/receipt_printer/epson-tm-t20iv-80mm.v1.json"),
+    ),
+    (
+        "receipt_printer/epson-tm-t88vii-80mm.v1.json",
+        include_str!("../../profiles/receipt_printer/epson-tm-t88vii-80mm.v1.json"),
+    ),
+    (
+        "receipt_printer/hprt-tp585-58mm.v1.json",
+        include_str!("../../profiles/receipt_printer/hprt-tp585-58mm.v1.json"),
+    ),
+    (
+        "receipt_printer/xprinter-xp-n160ii-ethernet-80mm.v1.json",
+        include_str!("../../profiles/receipt_printer/xprinter-xp-n160ii-ethernet-80mm.v1.json"),
+    ),
+];
+
+/// Why a binding names no profile a register can print through.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum BindingError {
+    /// This build carries no such profile, or no such version of it.
+    #[error("no receipt-printer profile {profile_id} version {version} ships with this build")]
+    NotShipped {
+        profile_id: String,
+        version: NonZeroU32,
+    },
+    /// The profile leaves a parameter the driver needs unknown: every one, in
+    /// [`super::BINDING`]'s order.
+    #[error(
+        "receipt-printer profile {profile_id} version {version} does not know {}",
+        list(parameters)
+    )]
+    Unresolved {
+        profile_id: String,
+        version: NonZeroU32,
+        parameters: Vec<Parameter>,
+    },
+}
+
+fn list(parameters: &[Parameter]) -> String {
+    parameters
+        .iter()
+        .map(|parameter| parameter.key())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The receipt-printer profile a register's binding names, from those this
+/// build ships: the simulator's and the emulator's, which are code, and every
+/// file in [`SHIPPED_PRINTERS`] (1.7.14).
+///
+/// # Errors
+///
+/// [`BindingError::NotShipped`] for an id or version this build does not
+/// carry, and [`BindingError::Unresolved`] for one that leaves a parameter the
+/// driver needs unknown ([`PrinterProfile::bindable`]). Every profile of a real
+/// device is refused this way until milestone 5.8 measures it.
+pub fn printer(profile_id: &str, version: NonZeroU32) -> Result<PrinterProfile, BindingError> {
+    let named =
+        |profile: &PrinterProfile| profile.profile_id == profile_id && profile.version == version;
+    let built_in = PaperWidth::ALL
+        .into_iter()
+        .flat_map(|paper| {
+            [
+                PrinterProfile::simulator(paper),
+                PrinterProfile::emulator(paper),
+            ]
+        })
+        .find(named);
+    // Every shipped copy parses: the test that holds them to their files
+    // reads each one through `parse`.
+    let profile = built_in
+        .or_else(|| {
+            SHIPPED_PRINTERS
+                .iter()
+                .filter_map(|(_, text)| parse(text).ok())
+                .filter_map(|file| file.printer_profile())
+                .find(named)
+        })
+        .ok_or_else(|| BindingError::NotShipped {
+            profile_id: profile_id.to_owned(),
+            version,
+        })?;
+    let parameters = profile.unresolved();
+    if parameters.is_empty() {
+        Ok(profile)
+    } else {
+        Err(BindingError::Unresolved {
+            profile_id: profile.profile_id,
+            version,
+            parameters,
+        })
+    }
 }
 
 #[cfg(test)]
