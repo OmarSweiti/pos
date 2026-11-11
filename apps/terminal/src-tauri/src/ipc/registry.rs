@@ -40,6 +40,13 @@ pub enum Access {
     /// The handler holds an `Authorized<C>` for this capability, named as
     /// `pos_domain::cap` names it.
     Capability(&'static str),
+    /// The handler holds an `Authorized<C>` for the first of these the
+    /// signed-in user holds, tried in order: a read that more than one role
+    /// is owed for different reasons, such as stock, which a cashier reads to
+    /// sell and an owner to adjust. Two at least, each a capability. A
+    /// command that takes an approval proves one capability, the one its
+    /// handle is issued under, so it never takes this.
+    AnyOf(&'static [&'static str]),
     /// The handler proves no capability, for this reason: the lock screen,
     /// first-run provisioning, or a restore that runs before the database
     /// holding the grants can open. A blank reason is refused, so "none" is
@@ -510,9 +517,12 @@ pub const COMMANDS: &[CommandSpec] = &[
     // 1.10.5, its terminal half: stock read, and moved by hand. Preparing
     // stores a register-local request and moves nothing, so it is not
     // audited; posting it is privileged on every call.
+    // A cashier reads stock to sell, and an owner, who sells nothing, to
+    // adjust it (the owner's decision of 11 November 2026). Only a holder of
+    // `stock.adjust` is shown what it cost.
     CommandSpec {
         name: "stock_on_hand",
-        access: Access::Capability(cap::SaleCreate::NAME),
+        access: Access::AnyOf(&[cap::SaleCreate::NAME, cap::StockAdjust::NAME]),
         audited: false,
         approval_requirement: ApprovalRequirement::Never,
         args: &[Arg::required("product_id")],
@@ -626,6 +636,13 @@ pub enum RegistryError {
     },
     #[error("{0} proves no capability and does not say why")]
     UnexplainedAccess(&'static str),
+    /// One alternative is a capability, written the long way.
+    #[error("{0} names fewer than two capabilities as alternatives")]
+    TooFewAlternatives(&'static str),
+    /// A handle is issued for one capability, so a command that takes one
+    /// cannot prove whichever of several the user holds.
+    #[error("{0} takes an approval but proves any of several capabilities")]
+    PrivilegedWithAlternatives(&'static str),
     /// `approval_id` is not taken the way the requirement needs: required
     /// when `Always`, optional when `Conditional`, absent when `Never`.
     #[error(
@@ -760,6 +777,23 @@ fn check_spec(spec: &CommandSpec, errors: &mut Vec<RegistryError>) {
             }
             Some(capability)
         }
+        Access::AnyOf(alternatives) => {
+            for capability in alternatives {
+                if !cap::ALL.contains(capability) {
+                    errors.push(RegistryError::UnknownCapability {
+                        command,
+                        capability,
+                    });
+                }
+            }
+            if alternatives.len() < 2 {
+                errors.push(RegistryError::TooFewAlternatives(command));
+            }
+            if spec.approval_requirement != ApprovalRequirement::Never {
+                errors.push(RegistryError::PrivilegedWithAlternatives(command));
+            }
+            None
+        }
         Access::NoCapability { reason } => {
             if reason.trim().is_empty() {
                 errors.push(RegistryError::UnexplainedAccess(command));
@@ -792,6 +826,8 @@ fn check_spec(spec: &CommandSpec, errors: &mut Vec<RegistryError>) {
         return;
     };
     match capability {
+        // Alternatives are refused as such above.
+        None if matches!(spec.access, Access::AnyOf(_)) => {}
         None => errors.push(RegistryError::PrivilegedWithoutCapability(command)),
         Some(capability) => {
             if let Some(gates) = predicate.map(ApprovalPredicate::capability)

@@ -316,7 +316,7 @@ Group 1.10's `1.10.5` is **partially delivered**: stock moved by hand, with a re
 note, and an approval bound to the exact request by its digest, posts its event, audit row and
 consumption together; opening stock is read from its three-column file and posted as ledger events,
 never cache rows. Its three commands landed on 10 November 2026: `stock_on_hand` reads the store's
-stock, its cost shown only to a holder of `stock.adjust`; `stock_adjust_prepare` stores what a manager
+stock for a holder of `sale.create` or `stock.adjust`, its cost shown only to the latter; `stock_adjust_prepare` stores what a manager
 asks for, and `stock_adjust` posts it with a second person's approval, dated by the open shift, and
 only for the person who asked. Since the owner's decisions of 10 November 2026, `stock_adjust_now`
 posts one manager's adjustment at once, audited, and the two steps are the way only where the

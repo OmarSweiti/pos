@@ -38,8 +38,11 @@
 //! shift open, `stock_adjust` is refused as `shift_not_open`.
 //!
 //! `stock_on_hand` reads the store's projection, `stock_cache`, under
-//! `sale.create`: what the shelf should hold, and the cost a unit is carried
-//! at, which is unknown rather than zero when no cost was ever recorded.
+//! `sale.create` or `stock.adjust`: what the shelf should hold, and the cost
+//! a unit is carried at, which is unknown rather than zero when no cost was
+//! ever recorded. A cashier reads it to sell, and the owner, who holds
+//! `stock.adjust` and sells nothing, to adjust it (the owner's decision of 11
+//! November 2026).
 //!
 //! **Only a holder of `stock.adjust` is shown the cost** (the owner's
 //! decision of 10 November 2026). A product's cost is what the shop paid for
@@ -56,7 +59,8 @@ use pos_db::repo::stock::StockRepository;
 use pos_db::repo::stock_adjustment::StockAdjustmentRepository;
 use pos_domain::{
     ApprovalBinding, ApprovalId, AuditIntent, Capability, EscalationPolicy, ProductId, Qty,
-    StockAdjustmentReason, StockAdjustmentRequest, StockError, StockEventId, StockPosition, cap,
+    StockAdjustmentReason, StockAdjustmentRequest, StockError, StockEventId, StockPosition,
+    Timestamp, UserId, cap,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -185,13 +189,13 @@ pub fn stock_adjust(
 ///
 /// # Errors
 ///
-/// What the context refuses (`not_signed_in`, `permission_denied` without
-/// `sale.create`); `product_unknown` for an id that names no product; and
-/// `storage_failed`.
+/// What the context refuses (`not_signed_in`, `permission_denied` holding
+/// neither `sale.create` nor `stock.adjust`); `product_unknown` for an id
+/// that names no product; and `storage_failed`.
 pub fn on_hand(register: &Register, product_id: ProductId) -> IpcResult<StockSnapshot> {
-    let auth = proof::<cap::SaleCreate>(register, register.now())?;
+    let actor = stock_reader(register, register.now())?;
     let (db, session) = register.lock();
-    signed_in_as(session.as_ref(), auth.actor())?;
+    signed_in_as(session.as_ref(), actor)?;
     // What the signed-in user holds decides, read from the grants they
     // signed in with, as every proof is.
     let sees_cost = session
@@ -206,6 +210,20 @@ pub fn on_hand(register: &Register, product_id: ProductId) -> IpcResult<StockSna
         .position(product_id, register.store())
         .map_err(stored)?;
     Ok(StockSnapshot::of(product_id, &position, sees_cost))
+}
+
+/// `stock_on_hand`'s proof, as its registry row names it: `sale.create`,
+/// which every role that sells holds, or else `stock.adjust`, which the
+/// owner holds without selling. Answers who proved it. Holding neither is
+/// `permission_denied`, as it was.
+fn stock_reader(register: &Register, at: Timestamp) -> IpcResult<UserId> {
+    match proof::<cap::SaleCreate>(register, at) {
+        Ok(auth) => Ok(auth.actor()),
+        Err(refused) if refused.code == "permission_denied" => {
+            proof::<cap::StockAdjust>(register, at).map(|auth| auth.actor())
+        }
+        Err(other) => Err(other),
+    }
 }
 
 /// A movement of stock by hand, as `stock_adjust_now` is asked for it.
@@ -1080,6 +1098,50 @@ mod tests {
         logout(&register).unwrap();
         login_pin(&register, CASHIER_CODE, CASHIER_PIN).unwrap();
         assert_eq!(costs(&register), shown, "the cashier, granted stock.adjust");
+    }
+
+    /// The owner's decision of 11 November 2026: stock is read under
+    /// `sale.create` or `stock.adjust`. The owner, who holds `stock.adjust`
+    /// and not `sale.create`, reads it, and its cost. One holding neither is
+    /// refused, and the grants decide, not the role's name: where the
+    /// merchant withholds `sale.create` from the cashier, who holds no
+    /// `stock.adjust`, the cashier's next sign-in is refused.
+    #[test]
+    fn the_owner_reads_stock_and_one_holding_neither_capability_is_refused() {
+        let (_dir, register) = shop();
+        staff(&register);
+        logout(&register).unwrap();
+        login_pin(&register, OWNER_CODE, CASHIER_PIN).unwrap();
+        assert_eq!(
+            on_hand(&register, product_id(OIL)).unwrap(),
+            StockSnapshot {
+                product_id: product_id(OIL),
+                on_hand_milli: 10_000,
+                cost: carried_at(Some(100), false),
+            }
+        );
+        assert_eq!(
+            on_hand(&register, product_id(BREAD)).unwrap().cost,
+            carried_at(None, true)
+        );
+
+        register.with_db(|conn| {
+            conn.execute(
+                "UPDATE role_capability SET decision = 'withheld', limit_json = NULL
+                  WHERE capability = 'sale.create'
+                    AND role_id = (SELECT id FROM role WHERE code = 'cashier')",
+                [],
+            )
+            .unwrap()
+        });
+        logout(&register).unwrap();
+        login_pin(&register, CASHIER_CODE, CASHIER_PIN).unwrap();
+        let before = changes(&register);
+        assert_eq!(
+            refusal(on_hand(&register, product_id(OIL))).code,
+            "permission_denied"
+        );
+        assert_eq!(changes(&register), before, "the refusal wrote nothing");
     }
 
     /// `product` moved by `qty` for `reason`, as `stock_adjust_now` is asked.
