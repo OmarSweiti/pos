@@ -193,7 +193,7 @@ Header and footer text, logo, and toggles are editable in the back office and **
 
 These are the rules that decide whether a paper jam costs a receipt, a sale, or a drawer of cash.
 
-1. **Poll status before finalize, at Pay.** Paper-out warns *before* the money is taken, not after (master plan C.15). A warning after payment is a warning that helps nobody. *As delivered at 1.7.6:* `tender_begin` reads the printer through `pos_hardware::PrinterAtPay::poll`, before it takes the till's lock, and its answer carries one of six readings: ready, paper out, cover open, offline, no real-time status, or no printer. The reading is told, never enforced.
+1. **Poll status before finalize, at Pay.** Paper-out warns *before* the money is taken, not after (master plan C.15). A warning after payment is a warning that helps nobody. *As delivered at 1.7.6:* `tender_begin` reads the printer through `pos_hardware::PrinterAtPay::poll`, before it takes the till's lock, and its answer carries one of six readings: ready, paper out, cover open, offline, no real-time status, or no printer. The reading is told, never enforced. *The owner's decision of 10 November 2026 (D7):* a printer with no real-time status is no warning at Pay, because it cannot say whether it would print, and a warning on every sale on such a device teaches the cashier to ignore the one that matters.
 
 2. **A print failure after finalize never un-finalizes the sale.** The money moved. The sale stands. An incident is logged, an alarm is raised, and a reprint is offered — marked DUPLICATE (E.46).
 
@@ -255,7 +255,7 @@ The fiscal question sits on top of this and is not settled: a cleared QR is supp
 
 **Tests:** `a_sale_completes_with_no_printer_and_queues_the_artifact` · `the_missing_printer_is_an_alarm_not_a_modal` · `a_queued_artifact_prints_unchanged_once_a_printer_returns`.
 
-*As delivered at 1.7.6b:* the alarm is `health_status`'s (`apps/terminal/src-tauri/src/health.rs`), which the lock screen reads before anyone signs in. It carries the printer as read now, the receipts waiting and the receipts only a person can close, each raised as an alarm, never a modal. The finalize keeps every receipt in the sale's transaction, as it always has. A kept receipt prints with the next sale once a printer can take it: one that was offline once its retry is due, or one a register is opened with. Until 1.7.14's worker drains the queue off the command path, no sale means no drain.
+*As delivered at 1.7.6b:* the alarm is `health_status`'s (`apps/terminal/src-tauri/src/health.rs`), which the lock screen reads before anyone signs in. It carries the printer as read now, the receipts waiting and the receipts only a person can close, each raised as an alarm, never a modal. The finalize keeps every receipt in the sale's transaction, as it always has. A kept receipt prints with the next sale once a printer can take it: one that was offline once its retry is due, or one a register is opened with. Until 1.7.14's worker drains the queue off the command path, no sale means no drain. *The owner's decision of 10 November 2026 (D8)* keeps it so until then: the next sale is minutes away at a counter, and the finalize's drain needs no thread and no timer.
 
 ---
 
@@ -286,6 +286,8 @@ Almost always kicked via the printer's drawer port (`ESC p m t1 t2`). That is th
 An observation with no matching command inside a short window is an **unexplained opening** and is reported as one. A manual key, a wedged drawer, or a cash sale never rung up remains invisible to any software, and [`security-compliance.md`](security-compliance.md) §9 states that residual rather than letting the anti-theft claim outrun the mechanism. Spikes in no-sale opens are still the classic theft tell (E.35), and the count still appears on X and Z reports.
 
 A drawer jammed or left open at shift close does not block the close; the state is logged and an alert raised (E.50).
+
+*Seen at 1.7.6b, tracked as #414 (the owner's decision of 10 November 2026, D9):* the finalize answers that the drawer was `opened` once the pulse is written, whatever the printer's state, so with the printer offline the answer claims more than the driver knows. The audit row records the drawer as `requested`. 1.7.14 settles it against the qualified profiles.
 
 **Tests:** `no_sale_open_is_logged_and_counted` · `receipt_retry_never_repeats_the_drawer_pulse` · `every_privileged_command_binds_its_approval` · `no_sale_past_the_threshold_requires_a_manager_reason` · `an_observed_drawer_transition_without_a_command_is_reported` · `jammed_drawer_does_not_block_shift_close`.
 
