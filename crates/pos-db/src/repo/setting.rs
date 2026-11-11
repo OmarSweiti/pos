@@ -3,8 +3,10 @@
 //!
 //! **A setting is read at its store.** `setting` also holds org and register
 //! rows, and no precedence among the three scopes is decided yet, so nothing
-//! here reads them: a value set for the whole organisation is not mistaken
-//! for one store's.
+//! here reads org rows: a value set for the whole organisation is not mistaken
+//! for one store's. The one register row read here is the printer binding
+//! (1.7.14), which is a register's own and has no store or organisation form,
+//! so no precedence is needed to read it.
 //!
 //! **A value is checked as it is read.** A stored value that is not the shape
 //! its key promises is refused as [`DbError::StoredSettingInvalid`], naming
@@ -12,7 +14,10 @@
 //! either: a store that narrowed a list must not find it widened again by a
 //! typo.
 
-use pos_domain::StoreId;
+use std::net::SocketAddr;
+use std::num::NonZeroU32;
+
+use pos_domain::{RegisterId, StoreId};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::DbError;
@@ -31,6 +36,25 @@ pub const DEFAULT_PRICE_OVERRIDE_REASONS: &[&str] =
 /// customer pays what the shelf showed. `pos_domain::OverrideReason`'s own
 /// code for it.
 const DISPLAYED_PRICE: &str = "displayed_price";
+
+/// The setting that binds a register to its receipt printer (1.7.14): a
+/// register-scope row whose value is
+/// `{ "profile_id": "…", "version": 1, "address": "192.0.2.10:9100" }`.
+pub const PRINTER_BINDING: &str = "printer.binding";
+
+/// A register's printer binding, as its row states it: which shipped profile,
+/// by id and version, and where the device is. Whether the build ships that
+/// profile, and whether the driver can work from it, is
+/// `pos_hardware::profile::data::printer`'s to say.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrinterBinding {
+    pub profile_id: String,
+    pub version: NonZeroU32,
+    /// An IP address and a port, never a host name: the register opens without
+    /// a network lookup, which could hold the till for as long as a resolver
+    /// takes to give up.
+    pub address: SocketAddr,
+}
 
 /// The longest reason code, in bytes.
 pub const REASON_CODE_MAX_LEN: usize = 32;
@@ -99,6 +123,60 @@ impl<'c> SettingRepository<'c> {
         }
         reasons.extend(listed.into_iter().filter(|code| code != DISPLAYED_PRICE));
         Ok(reasons)
+    }
+
+    /// `register`'s printer binding, or `None` when none is set. Only the
+    /// register's own row is read: a binding is never a store's or an
+    /// organisation's.
+    ///
+    /// # Errors
+    ///
+    /// [`DbError::StoredSettingInvalid`] for a value that is not an object of
+    /// exactly `profile_id` (text), `version` (a whole number from 1) and
+    /// `address` (an IP address and a port), and [`DbError::Sqlite`] if the
+    /// read fails.
+    pub fn printer_binding(&self, register: RegisterId) -> Result<Option<PrinterBinding>, DbError> {
+        let stored: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT value_json FROM setting
+                  WHERE scope = 'register' AND scope_id = ?1 AND key = ?2",
+                params![register.as_uuid().as_bytes().as_slice(), PRINTER_BINDING],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(json) = stored else {
+            return Ok(None);
+        };
+        let invalid = |reason: &'static str| DbError::StoredSettingInvalid {
+            key: PRINTER_BINDING,
+            reason,
+        };
+        let Ok(serde_json::Value::Object(fields)) = serde_json::from_str(&json) else {
+            return Err(invalid("not a JSON object"));
+        };
+        if fields.len() != 3 {
+            return Err(invalid("not exactly profile_id, version and address"));
+        }
+        let Some(serde_json::Value::String(profile_id)) = fields.get("profile_id") else {
+            return Err(invalid("profile_id is not text"));
+        };
+        let version = fields
+            .get("version")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|version| u32::try_from(version).ok())
+            .and_then(NonZeroU32::new)
+            .ok_or_else(|| invalid("version is not a whole number from 1"))?;
+        let address = fields
+            .get("address")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|address| address.parse::<SocketAddr>().ok())
+            .ok_or_else(|| invalid("address is not an IP address and a port"))?;
+        Ok(Some(PrinterBinding {
+            profile_id: profile_id.clone(),
+            version,
+            address,
+        }))
     }
 
     /// `key`'s value at `store`, parsed, or `None` when the store set none.

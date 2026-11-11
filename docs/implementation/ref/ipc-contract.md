@@ -750,6 +750,14 @@ sales excluded **with a visible count**, so the exclusion is stated rather than 
 > (1.8.6), disk space (1.8.8), the fiscal queue (Phase 2), sync state and clock confidence join it
 > as the steps that build them land.
 
+> **At 1.7.14b (11 November 2026),** `printer` also carries `binding`: what the register's
+> `printer.binding` setting came to when the till opened. It is `{ "state": "unbound" }`;
+> `{ "state": "bound", "profile_id", "version", "address" }`; or `{ "state": "refused", "reason",
+> "profile_id", "version", "unresolved" }`. The `reason` is `profile_not_shipped`,
+> `profile_unresolved`, `not_a_network_printer` or `setting_unreadable`. A refused binding raises
+> `printer_binding_refused`, the loudest alarm, and the till opens with no device rather than staying
+> closed.
+
 Diagnostics has no drawer-kick bypass. From Phase 2 its drawer action invokes the same
 `drawer_open_no_sale { reason, approval_id? }` command as the shift screen, producing the same
 `drawer_event`, audit row and conditional approval. `fiscal_rebuild_failed` is `Always` with entity
