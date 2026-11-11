@@ -1100,6 +1100,50 @@ mod tests {
         assert_eq!(costs(&register), shown, "the cashier, granted stock.adjust");
     }
 
+    /// The owner's decision of 11 November 2026: stock is read under
+    /// `sale.create` or `stock.adjust`. The owner, who holds `stock.adjust`
+    /// and not `sale.create`, reads it, and its cost. One holding neither is
+    /// refused, and the grants decide, not the role's name: where the
+    /// merchant withholds `sale.create` from the cashier, who holds no
+    /// `stock.adjust`, the cashier's next sign-in is refused.
+    #[test]
+    fn the_owner_reads_stock_and_one_holding_neither_capability_is_refused() {
+        let (_dir, register) = shop();
+        staff(&register);
+        logout(&register).unwrap();
+        login_pin(&register, OWNER_CODE, CASHIER_PIN).unwrap();
+        assert_eq!(
+            on_hand(&register, product_id(OIL)).unwrap(),
+            StockSnapshot {
+                product_id: product_id(OIL),
+                on_hand_milli: 10_000,
+                cost: carried_at(Some(100), false),
+            }
+        );
+        assert_eq!(
+            on_hand(&register, product_id(BREAD)).unwrap().cost,
+            carried_at(None, true)
+        );
+
+        register.with_db(|conn| {
+            conn.execute(
+                "UPDATE role_capability SET decision = 'withheld', limit_json = NULL
+                  WHERE capability = 'sale.create'
+                    AND role_id = (SELECT id FROM role WHERE code = 'cashier')",
+                [],
+            )
+            .unwrap()
+        });
+        logout(&register).unwrap();
+        login_pin(&register, CASHIER_CODE, CASHIER_PIN).unwrap();
+        let before = changes(&register);
+        assert_eq!(
+            refusal(on_hand(&register, product_id(OIL))).code,
+            "permission_denied"
+        );
+        assert_eq!(changes(&register), before, "the refusal wrote nothing");
+    }
+
     /// `product` moved by `qty` for `reason`, as `stock_adjust_now` is asked.
     fn by_hand<'a>(product: u128, qty: i64, reason: &'a str, note: Option<&str>) -> Adjustment<'a> {
         Adjustment {
