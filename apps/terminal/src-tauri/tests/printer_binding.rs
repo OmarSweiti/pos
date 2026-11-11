@@ -13,10 +13,11 @@
 mod shop;
 
 use std::path::Path;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use pos_hardware::PrinterAtPay;
-use pos_hardware::emulator::{Emulator, EmulatorConfig};
+use pos_hardware::emulator::{ConnectionFault, Emulator, EmulatorConfig};
 use pos_hardware::profile::PrinterProfile;
 use pos_hardware::render::PaperWidth;
 use rusqlite::params;
@@ -24,9 +25,10 @@ use shop::{CASHIER_CODE, CASHIER_PIN, KEY, OIL, REGISTER_ID, open, product_id, s
 use terminal_lib::commands::auth::login_pin;
 use terminal_lib::commands::cart::{add_product, open_cart};
 use terminal_lib::commands::sale::{ReceiptOutcome, finalize};
+use terminal_lib::commands::stock::on_hand;
 use terminal_lib::commands::tender::{add_cash, begin_payment};
 use terminal_lib::health::{Alarm, health};
-use terminal_lib::print_service::drain;
+use terminal_lib::print_service::{self, drain};
 use terminal_lib::state::{BindingRefusal, DATABASE_FILE, PrinterBindingState, Register};
 
 /// An address in TEST-NET-1, which no test ever connects to: a binding it
@@ -109,6 +111,15 @@ fn jobs(register: &Register) -> Vec<(String, String, Vec<String>)> {
         .map(Result::unwrap)
         .collect()
     })
+}
+
+/// Wait, a bounded while, for the worker to bring the jobs to `done`.
+fn until(register: &Register, what: &str, done: impl Fn(&[(String, String, Vec<String>)]) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !done(&jobs(register)) {
+        assert!(Instant::now() < deadline, "{what}: {:?}", jobs(register));
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 /// The profile every original receipt was rendered for, oldest first.
@@ -271,4 +282,131 @@ fn a_binding_the_register_cannot_honour_opens_the_till_with_no_device() {
         }
         assert_eq!(sell_one(&register), ReceiptOutcome::Queued, "{value:?}");
     }
+}
+
+/// 1.7.14's third named test, and its `Done when`: a sale finalized on a
+/// register bound to the emulator's 80 mm profile prints through the print
+/// worker, off the command path. The finalize answers having printed nothing.
+/// The worker, started after it, prints the receipt on a printer slow to
+/// answer; while the device takes its time, a command that needs the
+/// register's database is answered, and the job is still printing.
+#[test]
+fn the_print_worker_drains_off_the_command_path() {
+    let emulator = emulator();
+    let address = emulator.address().to_string();
+    let (_dir, register) = bound_shop(Some(&binding_to("emulator-80mm", &address)));
+    let register = Arc::new(register);
+
+    assert_eq!(sell_one(&register), ReceiptOutcome::SentToPrinter);
+    assert_eq!(
+        jobs(&register),
+        [("emulator-80mm".to_owned(), "queued".to_owned(), Vec::new())],
+        "the finalize printed nothing"
+    );
+    assert!(emulator.jobs().is_empty());
+
+    // A printer slow to answer: every reply and every read waits.
+    emulator.script(ConnectionFault::Slow(Duration::from_millis(300)));
+    let worker = print_service::start(&register, Duration::from_secs(60)).unwrap();
+    until(&register, "the worker leases the job", |jobs| {
+        jobs.iter().any(|(_, state, _)| state == "printing")
+    });
+    // The register's database is free while the device is written to.
+    assert_eq!(
+        on_hand(&register, product_id(OIL)).unwrap().on_hand_milli,
+        9_000
+    );
+    assert_eq!(
+        jobs(&register),
+        [(
+            "emulator-80mm".to_owned(),
+            "printing".to_owned(),
+            Vec::new()
+        )],
+        "the command was not held behind the device"
+    );
+    until(&register, "the worker prints the job", |jobs| {
+        jobs.iter().all(|(_, state, _)| state == "printed")
+    });
+    worker.stop();
+    // Pay's status read, the drawer's pulse, and the worker's print.
+    assert!(emulator.settled(3, Duration::from_secs(5)));
+    let printed = emulator.jobs();
+    let [job] = printed.as_slice() else {
+        panic!("one job, got {}", printed.len())
+    };
+    assert!(job.cut, "the receipt arrived whole, and was cut");
+}
+
+/// 1.7.14's fourth named test: a receipt rendered for another profile before
+/// the register was bound cannot be printed byte for byte on this device (§3
+/// rule 7). The worker withholds it, never sending a byte, and leaves it on
+/// the unprinted worklist for a person, where the health counts it; the bound
+/// register's own receipts print.
+#[test]
+fn a_receipt_rendered_for_another_profile_is_withheld_not_printed() {
+    let emulator = emulator();
+    let dir = tempfile::tempdir().unwrap();
+    seed(dir.path(), true);
+    let register = open(dir.path());
+    login_pin(&register, CASHIER_CODE, CASHIER_PIN).unwrap();
+    assert_eq!(
+        sell_one(&register),
+        ReceiptOutcome::Queued,
+        "no printer yet"
+    );
+    drop(register);
+
+    bind(
+        dir.path(),
+        &binding_to("emulator-80mm", &emulator.address().to_string()),
+    );
+    let register = Arc::new(open(dir.path()));
+    login_pin(&register, CASHIER_CODE, CASHIER_PIN).unwrap();
+    // The worker drains as it starts: the kept receipt is withheld.
+    let worker = print_service::start(&register, Duration::from_secs(60)).unwrap();
+    until(&register, "the worker withholds the kept receipt", |jobs| {
+        jobs.iter().any(|(_, _, attempts)| !attempts.is_empty())
+    });
+    assert_eq!(sell_one(&register), ReceiptOutcome::SentToPrinter);
+    until(&register, "the worker prints the new receipt", |jobs| {
+        jobs.iter().any(|(_, state, _)| state == "printed")
+    });
+    worker.stop();
+    assert_eq!(
+        jobs(&register),
+        [
+            (
+                "simulator-80mm".to_owned(),
+                "failed".to_owned(),
+                vec!["failed:profile_mismatch".to_owned()]
+            ),
+            (
+                "emulator-80mm".to_owned(),
+                "printed".to_owned(),
+                vec!["printed:".to_owned()]
+            ),
+        ]
+    );
+    let withheld_retry: Option<String> = register.with_db(|conn| {
+        conn.query_row(
+            "SELECT next_attempt_at FROM print_job ORDER BY rowid LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    });
+    assert_eq!(
+        withheld_retry, None,
+        "never tried again: it is for a person"
+    );
+    assert!(emulator.settled(3, Duration::from_secs(5)));
+    assert_eq!(
+        emulator.jobs().len(),
+        1,
+        "only the bound register's own receipt reached the device"
+    );
+    let health = health(&register).unwrap();
+    assert_eq!(health.printer.receipts_waiting, 1);
+    assert_eq!(health.alarms, [Alarm::ReceiptsWaiting]);
 }
