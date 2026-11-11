@@ -351,6 +351,8 @@ The record is `pos_hardware::profile::PrinterProfile` ([1.7.9](../phase-1-sellab
 | Register hardware | the reference register — the **lowest** row is what "the slowest supported hardware" means in every performance budget in this plan |
 | Register OS | the exact Windows, macOS and Linux versions CI builds for and the vendor supports |
 
+*As delivered at 1.7.14a:* the receipt-printer profile files ship with the app (`pos_hardware::profile::data::SHIPPED_PRINTERS`), and a register's binding names one by its id and version through `profile::data::printer`, which refuses a profile the build does not carry and one that leaves a parameter the driver needs unknown. Every real device's profile is refused that way until milestone 5.8 measures it. The emulator's profile, `PrinterProfile::emulator` (the simulator's values over TCP 9100), is the one a register can be bound to before then.
+
 **The matrix ships empty except the simulator, and that is the honest state.** Filling it with model numbers nobody has held would be the same defect as a compliance claim nobody earned. Until a class has a row, this product supports no device in that class and says so. It stays empty until milestone 5.8 qualifies the first devices (§6b), and a device profile does not change that: a profile describes a candidate, a row describes a device somebody held.
 
 ### 6a.1 · The register-hardware rows, and the reference register

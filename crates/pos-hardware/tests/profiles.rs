@@ -2,7 +2,9 @@
 //! `ref/hardware-and-receipts.md` §6b.2, and the seed the files start from.
 //!
 //! Every test here reads the committed files under `profiles/`, so a file that
-//! changes is a file these tests see.
+//! changes is a file these tests see. The last two hold what an installed
+//! register carries to those files, and the one door a binding goes through
+//! (microstep 1.7.14a).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -10,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use pos_hardware::profile::data::{self, Describes, DeviceClass, DeviceProfile};
+use pos_hardware::profile::data::{self, BindingError, Describes, DeviceClass, DeviceProfile};
 use pos_hardware::profile::{BINDING, Fact, Parameter, PrinterProfile, ProfileError};
 use pos_hardware::render::PaperWidth;
 
@@ -461,6 +463,100 @@ fn every_seeded_profile_is_unknown_exactly_where_the_seed_table_says() {
             unknown,
             seeded_unknowns(profile.class(), *describes, row),
             "{file}: unknown where the seed table says it is not, or known where it says it is unknown"
+        );
+    }
+}
+
+/// 1.7.14a: an installed register has no checkout beside it, so the
+/// receipt-printer files are compiled in. The copies are the files, byte for
+/// byte, one for every file in the directory and none besides, and each sits
+/// where its class, id and version say.
+#[test]
+fn the_shipped_printer_profiles_are_the_profile_files() {
+    let on_disk: BTreeMap<String, Vec<u8>> = profiles()
+        .into_iter()
+        .filter(|(_, profile)| profile.class() == DeviceClass::ReceiptPrinter)
+        .map(|(path, _)| (relative(&path), fs::read(&path).unwrap()))
+        .collect();
+    let shipped: BTreeMap<String, Vec<u8>> = data::SHIPPED_PRINTERS
+        .iter()
+        .map(|(path, text)| ((*path).to_owned(), text.as_bytes().to_vec()))
+        .collect();
+    assert_eq!(
+        shipped.keys().collect::<Vec<_>>(),
+        on_disk.keys().collect::<Vec<_>>(),
+        "one shipped copy for every printer file, and none besides"
+    );
+    for (path, bytes) in &shipped {
+        assert!(
+            on_disk.get(path) == Some(bytes),
+            "{path}: the shipped copy is not the file"
+        );
+        let text = std::str::from_utf8(bytes).unwrap();
+        let profile = data::parse(text).unwrap_or_else(|error| panic!("{path}: {error}"));
+        assert_eq!(
+            profile.relative_path().to_string_lossy().replace('\\', "/"),
+            *path
+        );
+    }
+}
+
+/// 1.7.14a: a binding names a profile by its id and version, and goes through
+/// one door. The simulator's and the emulator's profiles, which are code, know
+/// every parameter the driver needs and are answered as they are. Every
+/// shipped file is refused naming exactly the parameters it leaves unknown,
+/// and before milestone 5.8 that is every one of them. An id or a version the
+/// build does not carry is not shipped.
+#[test]
+fn a_binding_names_a_shipped_profile_the_driver_knows_in_full() {
+    let v1 = core::num::NonZeroU32::MIN;
+    for paper in PaperWidth::ALL {
+        for profile in [
+            PrinterProfile::simulator(paper),
+            PrinterProfile::emulator(paper),
+        ] {
+            assert_eq!(data::printer(&profile.profile_id, v1), Ok(profile.clone()));
+        }
+    }
+    assert_eq!(
+        data::printer("emulator-80mm", v1).map(|profile| profile.transport),
+        Ok(Fact::Known(pos_hardware::profile::Transport::Tcp9100)),
+        "the emulator is reached over TCP 9100"
+    );
+
+    for (path, text) in data::SHIPPED_PRINTERS {
+        let file = data::parse(text).unwrap();
+        let record = file.printer_profile().unwrap();
+        assert_eq!(
+            data::printer(&file.profile_id, file.version),
+            Err(BindingError::Unresolved {
+                profile_id: file.profile_id.clone(),
+                version: file.version,
+                parameters: record.unresolved(),
+            }),
+            "{path}"
+        );
+    }
+    let t20iii = data::printer("epson-tm-t20iii-ethernet-80mm", v1).unwrap_err();
+    assert_eq!(
+        t20iii.to_string(),
+        "receipt-printer profile epson-tm-t20iii-ethernet-80mm version 1 does not know \
+         cut_command, cut_feed_rows, drawer_pulse, supports_raster_arabic"
+    );
+
+    let v2 = core::num::NonZeroU32::new(2).unwrap();
+    for (id, version) in [
+        ("no-such-printer", v1),
+        ("emulator-80mm", v2),
+        ("epson-tm-t20iii-ethernet-80mm", v2),
+    ] {
+        assert_eq!(
+            data::printer(id, version),
+            Err(BindingError::NotShipped {
+                profile_id: id.to_owned(),
+                version,
+            }),
+            "{id} v{version}"
         );
     }
 }

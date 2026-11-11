@@ -345,6 +345,29 @@ impl PrinterProfile {
         }
     }
 
+    /// The emulator's profile for one paper: the simulator's values, reached
+    /// over TCP 9100 as 1.7.12's emulator is, with the 24 V drawer port its
+    /// drawer model expects. Like the simulator's it describes no device, so
+    /// it is code rather than a [`data`] file.
+    ///
+    /// Until milestone 5.8 measures a device, it is the one profile a register
+    /// can be bound to and print through (1.7.14): every profile of a real
+    /// device leaves a parameter in [`BINDING`] unknown.
+    #[must_use]
+    pub fn emulator(paper: PaperWidth) -> Self {
+        let profile_id = match paper {
+            PaperWidth::Mm80 => "emulator-80mm",
+            PaperWidth::Mm58 => "emulator-58mm",
+        };
+        Self {
+            profile_id: profile_id.to_owned(),
+            model: Fact::Known("pos-hardware emulator".to_owned()),
+            transport: Fact::Known(Transport::Tcp9100),
+            drawer_port_volts: Fact::Known(24),
+            ..Self::simulator(paper)
+        }
+    }
+
     /// Whether this profile states `parameter`.
     #[must_use]
     pub const fn states(&self, parameter: Parameter) -> bool {

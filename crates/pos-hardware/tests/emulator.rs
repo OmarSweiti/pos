@@ -13,9 +13,7 @@ use pos_hardware::emulator::{ConnectionFault, DrawerModel, Emulator, EmulatorCon
 use pos_hardware::escpos::encode;
 use pos_hardware::net::{Deadlines, NetworkPrinter};
 use pos_hardware::profile::data::{self, Bounds, ClassValues, DeviceProfile, SensorPolarity};
-use pos_hardware::profile::{
-    DrawerPin, DrawerPulse, Fact, PrinterProfile, StatusProtocol, Transport as ProfileTransport,
-};
+use pos_hardware::profile::{DrawerPin, DrawerPulse, Fact, PrinterProfile, StatusProtocol};
 use pos_hardware::render::{Bitmap, PaperWidth, render_receipt};
 use pos_hardware::transport::TcpTransport;
 use pos_hardware::{FailReason, PrintOutcome, PrinterStatus, ReceiptPrinter, RenderedReceipt};
@@ -48,12 +46,9 @@ fn drawer_file(id: &str) -> DrawerModel {
     DrawerModel::from_profile(id, values)
 }
 
-/// The simulator's profile, on the network: what a test needs to be known.
+/// The emulator's own profile: the simulator's, on the network.
 fn network(paper: PaperWidth) -> PrinterProfile {
-    let mut profile = PrinterProfile::simulator(paper);
-    profile.transport = Fact::Known(ProfileTransport::Tcp9100);
-    profile.drawer_port_volts = Fact::Known(24);
-    profile
+    PrinterProfile::emulator(paper)
 }
 
 fn start(
