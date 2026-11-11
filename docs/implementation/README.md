@@ -202,8 +202,9 @@ each step under the version it read, and after a restart taken up by a cashier f
 alone: a checkout with nothing taken goes back to its basket, one with tenders taken comes back with
 every one, and a finalize begun replays under its own key, never posting a stock event or a delivery
 row twice), and `1.6.2` (PINs under a reviewed Argon2id profile, with wrong PINs waiting longer and
-then locking a user out until a manager releases them, and a forgotten PIN reset by a manager with a
-second person's approval, the old hash retired and the reset audited), and `1.7.6` (the printer read at
+then locking a user out until a manager releases them, and a forgotten PIN reset by one manager for a
+reason from a short list, a second person's approval only where the merchant's policy asks for it, the
+old hash retired and the reset audited), and `1.7.6` (the printer read at
 Pay, before any money is taken, so paper out or no printer is told before the customer pays and never
 refuses the sale), and `1.7.6b` (no printer, and selling never stops: every receipt kept in the
 sale's own transaction and printed unchanged once a printer can take it, and the missing printer an
@@ -306,7 +307,8 @@ register to its printer, every receipt is rendered for the 80 mm simulator profi
 Group 1.9's `1.9.5` is **partially delivered**: a shift opens with a float counted by denomination,
 on a business date the clock derives when it is trusted and the operator confirms, audited, when it
 is not; one stays open per register; and only its opener closes it, with a fact of its own and no
-approval. A sale completes only in the open shift and on its business date. Its three commands landed
+approval. A shift is never dated before the register's last. A sale completes only in the open shift
+and on its business date. Its three commands landed
 on 9 November 2026: `shift_open`, `shift_current` and `shift_close` open, read and close a shift
 from the till, a close refused while a sale in the shift is mid-payment, and the till's basket set
 aside as a sign-out sets it aside. Its two screens wait for `1.11.3b`'s design direction.
@@ -314,9 +316,11 @@ Group 1.10's `1.10.5` is **partially delivered**: stock moved by hand, with a re
 note, and an approval bound to the exact request by its digest, posts its event, audit row and
 consumption together; opening stock is read from its three-column file and posted as ledger events,
 never cache rows. Its three commands landed on 10 November 2026: `stock_on_hand` reads the store's
-stock, `stock_adjust_prepare` stores what a manager asks for, and `stock_adjust` posts it with a
-second person's approval, dated by the open shift, and only for the person who asked. Its screen
-waits for `1.11.3b`'s design direction.
+stock, its cost shown only to a holder of `stock.adjust`; `stock_adjust_prepare` stores what a manager
+asks for, and `stock_adjust` posts it with a second person's approval, dated by the open shift, and
+only for the person who asked. Since the owner's decisions of 10 November 2026, `stock_adjust_now`
+posts one manager's adjustment at once, audited, and the two steps are the way only where the
+merchant's policy names `stock.adjust`. Its screen waits for `1.11.3b`'s design direction.
 Repository-hardening and documentation work may land between numbered product steps, but it does
 not advance that frontier.
 
