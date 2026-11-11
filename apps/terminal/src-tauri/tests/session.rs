@@ -373,7 +373,7 @@ fn the_register_database_is_opened_once_with_its_key() {
     assert_eq!(register.recovered().empty_carts_dropped, 0);
     assert_eq!(register.recovered().stock_cache, CacheCheck::True);
     assert_eq!(
-        state_of(&Till::Open(Box::new(register))),
+        state_of(&Till::Open(std::sync::Arc::new(register))),
         SessionState::SignedOut
     );
 
@@ -892,7 +892,7 @@ fn an_approval_is_revoked_when_its_approver_is_deactivated() {
 #[test]
 fn the_webview_sees_who_is_signed_in_and_nothing_more() {
     let (_dir, register) = seeded();
-    let till = Till::Open(Box::new(register));
+    let till = Till::Open(std::sync::Arc::new(register));
     assert_eq!(
         serde_json::to_value(state_of(&till)).unwrap(),
         json!({ "state": "signed_out" })

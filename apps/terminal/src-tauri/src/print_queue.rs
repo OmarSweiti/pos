@@ -8,7 +8,10 @@
 //! * **No transaction is open while the device is.** A job is leased and that
 //!   lease committed, then the bytes are sent, then the outcome is appended in a
 //!   second transaction. A printer that takes seconds to answer must not hold the
-//!   register's one write lock while a sale waits behind it.
+//!   register's one write lock while a sale waits behind it. The three steps are
+//!   [`PrintWorker::lease`], [`PrintWorker::print`] and [`PrintWorker::record`],
+//!   so a caller that shares the register's connection takes it only for the
+//!   first and the last (1.7.14c, `crate::print_service`).
 //! * **The bytes are checked before they leave.** A stored artifact whose bytes
 //!   no longer match their BLAKE3 digest is never sent, and neither is one
 //!   rendered for a printer other than the one this register is bound to (§3
@@ -42,7 +45,7 @@ use pos_db::DbError;
 use pos_db::repo::audit::AuditRepository;
 use pos_db::repo::outbox::{CommitEnvelope, FactMember, OutboxRepository};
 use pos_db::repo::receipt::{
-    ArtifactKind, AttemptOutcome, Id, JobState, Lease, PrintAttempt, ReceiptArtifact,
+    ArtifactKind, AttemptOutcome, Id, JobState, Lease, PrintAttempt, PrintJob, ReceiptArtifact,
     ReceiptRepository, StoredArtifact,
 };
 use pos_domain::{
@@ -298,7 +301,8 @@ impl<'w> PrintWorker<'w> {
     }
 
     /// Lease the next due job, send it, and append what the device did.
-    /// `None` when nothing is due.
+    /// `None` when nothing is due. [`Self::lease`], [`Self::print`] and
+    /// [`Self::record`], on one connection.
     ///
     /// # Errors
     ///
@@ -307,6 +311,24 @@ impl<'w> PrintWorker<'w> {
     /// resolves it as `unknown`, which is the safe direction: its bytes may
     /// have been sent.
     pub fn run_once(&self, conn: &Connection) -> Result<Option<Attempted>, PrintQueueError> {
+        let Some(leased) = self.lease(conn)? else {
+            return Ok(None);
+        };
+        let answer = self.print(&leased);
+        self.record(conn, &leased, &answer).map(Some)
+    }
+
+    /// Lease the next due job under this worker's name, and read the document
+    /// it prints: two short reads and one committed write, and no device.
+    /// `None` when nothing is due.
+    ///
+    /// # Errors
+    ///
+    /// [`PrintQueueError`] when the queue cannot be read or written, and
+    /// [`PrintQueueError::ArtifactMissing`] for a job whose document is gone.
+    /// A job leased and then not recorded keeps its lease until
+    /// [`Self::recover`] resolves it as `unknown`.
+    pub fn lease(&self, conn: &Connection) -> Result<Option<Leased>, PrintQueueError> {
         let now = self.clock.now();
         let until = later(now, self.timing.lease_ms)?;
         let tx = conn.unchecked_transaction()?;
@@ -322,20 +344,46 @@ impl<'w> PrintWorker<'w> {
         let Some(job) = leased else {
             return Ok(None);
         };
-
         let stored = ReceiptRepository::new(conn)
             .artifact(&job.artifact_id)?
             .ok_or(PrintQueueError::ArtifactMissing)?;
+        Ok(Some(Leased { job, stored }))
+    }
+
+    /// Hand a leased job's document to the device, and classify what came
+    /// back. It touches no database, so a caller holds none while the device
+    /// takes its time.
+    #[must_use]
+    pub fn print(&self, leased: &Leased) -> DeviceAnswer {
         let started_at = self.clock.now();
-        let sent = self.send(&stored);
-        let finished_at = self.clock.now();
+        let sent = self.send(&leased.stored);
+        DeviceAnswer {
+            sent,
+            started_at,
+            finished_at: self.clock.now(),
+        }
+    }
+
+    /// Append what the device did to a leased job, in one transaction.
+    ///
+    /// # Errors
+    ///
+    /// [`PrintQueueError`] when the queue cannot be written; the job keeps its
+    /// lease until [`Self::recover`] resolves it as `unknown`.
+    pub fn record(
+        &self,
+        conn: &Connection,
+        leased: &Leased,
+        answer: &DeviceAnswer,
+    ) -> Result<Attempted, PrintQueueError> {
+        let job = &leased.job;
+        let (sent, started_at, finished_at) = (&answer.sent, answer.started_at, answer.finished_at);
         let retry_at = match sent.outcome {
             AttemptOutcome::Failed if sent.retry => {
                 Some(later(finished_at, self.timing.retry_after_ms)?)
             }
             _ => None,
         };
-
         let tx = conn.unchecked_transaction()?;
         ReceiptRepository::new(&tx).append_attempt(
             &tx,
@@ -352,11 +400,11 @@ impl<'w> PrintWorker<'w> {
             },
         )?;
         tx.commit()?;
-        Ok(Some(Attempted {
+        Ok(Attempted {
             job_id: job.id,
             outcome: sent.outcome,
             error_code: sent.error_code,
-        }))
+        })
     }
 
     /// Check the stored document, then hand it to the device and classify
@@ -388,6 +436,20 @@ impl<'w> PrintWorker<'w> {
             }
         }
     }
+}
+
+/// A job a worker holds the lease on, and the document it prints.
+pub struct Leased {
+    pub job: PrintJob,
+    stored: StoredArtifact,
+}
+
+/// What the device did with one leased job, and when: what
+/// [`PrintWorker::record`] appends.
+pub struct DeviceAnswer {
+    sent: Sent,
+    started_at: Timestamp,
+    finished_at: Timestamp,
 }
 
 /// One send, classified.
@@ -2023,7 +2085,8 @@ mod unavailable {
         let (dir, hands, printer) = shop(PrinterStatus::Offline);
         let register = open(&dir, &hands, Some(&printer));
         let sold = sell_one(&register);
-        assert_eq!(sold.receipt, ReceiptOutcome::Refused);
+        assert_eq!(sold.receipt, ReceiptOutcome::SentToPrinter);
+        crate::print_service::drain(&register).unwrap();
         let (_, state, outcomes) = original(&register, sold.sale_id);
         assert_eq!(
             (state.as_str(), outcomes),
@@ -2094,16 +2157,17 @@ mod unavailable {
     }
 
     /// §3a, "The printer returns": receipts kept while no printer could take
-    /// them print with the next sale once one can, byte for byte as stored,
-    /// with nothing re-rendered. Both ways a printer returns: one that was
-    /// offline comes back once its retry is due, and a register with none is
-    /// opened with one.
+    /// them print on the print worker's next pass once one can (1.7.14c),
+    /// byte for byte as stored, with nothing re-rendered. Both ways a printer
+    /// returns: one that was offline comes back once its retry is due, and a
+    /// register with none is opened with one.
     #[test]
     fn a_queued_artifact_prints_unchanged_once_a_printer_returns() {
         let (dir, hands, printer) = shop(PrinterStatus::Offline);
         let register = open(&dir, &hands, Some(&printer));
         let refused = sell_one(&register);
-        assert_eq!(refused.receipt, ReceiptOutcome::Refused);
+        assert_eq!(refused.receipt, ReceiptOutcome::SentToPrinter);
+        crate::print_service::drain(&register).unwrap();
         *printer.force_status.lock().unwrap() = PrinterStatus::Ready;
         let back = health(&register).unwrap();
         assert_eq!(back.printer.reading, PrinterAtPay::Ready);
@@ -2112,8 +2176,7 @@ mod unavailable {
             (1, vec![Alarm::ReceiptsWaiting])
         );
         hands.forward(31);
-        let next = sell_one(&register);
-        assert_eq!(next.receipt, ReceiptOutcome::Printed);
+        crate::print_service::drain(&register).unwrap();
         let (bytes, state, outcomes) = original(&register, refused.sale_id);
         assert_eq!(
             (state.as_str(), outcomes),
@@ -2129,8 +2192,7 @@ mod unavailable {
             .iter()
             .map(|doc| doc.bytes.clone())
             .collect();
-        assert_eq!(printed.len(), 2);
-        assert!(printed.contains(&bytes), "the stored bytes, unchanged");
+        assert_eq!(printed, [bytes], "the stored bytes, unchanged");
         let after = health(&register).unwrap();
         assert_eq!(
             (after.printer.receipts_waiting, after.alarms),
@@ -2144,7 +2206,8 @@ mod unavailable {
         assert_eq!(kept.receipt, ReceiptOutcome::Queued);
         drop(register);
         let register = open(&dir, &hands, Some(&printer));
-        assert_eq!(sell_one(&register).receipt, ReceiptOutcome::Printed);
+        assert_eq!(sell_one(&register).receipt, ReceiptOutcome::SentToPrinter);
+        crate::print_service::drain(&register).unwrap();
         let (bytes, state, outcomes) = original(&register, kept.sale_id);
         assert_eq!(
             (state.as_str(), outcomes),
@@ -2171,7 +2234,8 @@ mod unavailable {
         let (dir, hands, printer) = shop(PrinterStatus::Ready);
         let register = open(&dir, &hands, Some(&printer));
         printer.script(Fault::SilentAfter(64));
-        assert_eq!(sell_one(&register).receipt, ReceiptOutcome::Unconfirmed);
+        assert_eq!(sell_one(&register).receipt, ReceiptOutcome::SentToPrinter);
+        crate::print_service::drain(&register).unwrap();
         let health = health(&register).unwrap();
         assert_eq!(health.printer.reading, PrinterAtPay::Ready);
         assert_eq!(

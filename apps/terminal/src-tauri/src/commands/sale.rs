@@ -32,11 +32,15 @@
 //! writes is a [`FinalizeWritePoint`], and [`FinalizeWritePoint::ALL`] is
 //! their catalog. A failure anywhere rolls all of it back.
 //!
-//! *After the commit only*, the printer and the drawer. Their failure never
-//! un-completes the sale (`ref/hardware-and-receipts.md` §3 rule 2): a refused
-//! receipt waits in the queue, an unconfirmed one waits for a person, and the
-//! drawer, whose opening the audit row recorded before it was asked, is never
-//! asked twice.
+//! *After the commit only*, the drawer, then the printer. Neither's failure
+//! un-completes the sale (`ref/hardware-and-receipts.md` §3 rule 2). The
+//! drawer, whose opening the audit row recorded before it was asked, is
+//! kicked at once and never asked twice. The receipt is handed to the print
+//! worker, which prints it off the command path (1.7.14c,
+//! [`crate::print_service`]): the finalize answers without waiting on the
+//! device, by the owner's decision of 11 November 2026. A refused receipt
+//! waits in the queue and an unconfirmed one for a person, as before, and
+//! either is raised on `health_status`.
 //!
 //! **What it does not do yet.** It spends no approval: no command brings an
 //! approval bound to the sale to payment yet, so
@@ -52,7 +56,7 @@ use pos_db::repo::audit::AuditRepository;
 use pos_db::repo::checkout_operation::CheckoutOperationRepository;
 use pos_db::repo::outbox::{CommitEnvelope, FactMember, OutboxRepository};
 use pos_db::repo::parked_cart::ParkedCartRepository;
-use pos_db::repo::receipt::{ArtifactKind, AttemptOutcome, Id, ReceiptArtifact, ReceiptRepository};
+use pos_db::repo::receipt::{ArtifactKind, Id, ReceiptArtifact, ReceiptRepository};
 use pos_db::repo::sale::SaleRepository;
 use pos_db::repo::sequence::{SeqKind, SequenceRepository, SequenceScope};
 use pos_db::repo::shift::ShiftRepository;
@@ -80,7 +84,7 @@ use super::tender::paying;
 use super::{sqlite, stored};
 use crate::ipc::{IpcError, IpcResult};
 use crate::payload::{artifact_payload, audit_payload};
-use crate::print_queue::{PrintQueueError, PrintWorker, paper_of};
+use crate::print_queue::{PrintQueueError, paper_of};
 use crate::state::{PRODUCER_VERSION, Paying, Register, SYNC_PROTOCOL_VERSION, Till, Working};
 
 /// The digits a receipt number's counter is zero-padded to.
@@ -95,9 +99,6 @@ pub const TEMPLATE_VERSION: &str = "receipt-v1";
 
 /// The byte format a receipt printer receives.
 const FORMAT: &str = "escpos";
-
-/// The name the finalize's print worker leases a job under.
-const WORKER: &str = "sale-finalize";
 
 /// The prefix a register's receipts carry: its code, then a hyphen.
 #[must_use]
@@ -239,22 +240,20 @@ pub struct CompletedSaleRef {
 
 /// What became of a completed sale's receipt. It exists whatever the answer:
 /// the original was written with the sale.
+///
+/// The finalize never waits on a printer (1.7.14c), so it says where the
+/// receipt went, not what the device did. What the device did is the print
+/// queue's to record; a refusal, a print nobody can confirm, or a receipt
+/// withheld is raised on `health_status`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReceiptOutcome {
     /// No printer is attached. The receipt waits in the queue, unchanged,
     /// for one (`ref/hardware-and-receipts.md` §3a).
     Queued,
-    /// The printer printed it.
-    Printed,
-    /// The printer took no byte of it. The queue tries again.
-    Refused,
-    /// Paper may exist and nothing can say whether it is readable: a person
-    /// answers, and only a duplicate may follow (§3 rule 5).
-    Unconfirmed,
-    /// Never sent: the stored bytes did not match their digest, or were
-    /// rendered for another printer.
-    Withheld,
+    /// A printer is attached, and the print worker prints the receipt now,
+    /// off the command path.
+    SentToPrinter,
 }
 
 /// What became of the drawer.
@@ -575,7 +574,7 @@ pub(crate) fn finalize_with(
     drop(till);
 
     // ── After the commit only ──────────────────────────────────────────
-    let (receipt, drawer) = effects(register, &minted.job, opens_drawer);
+    let (receipt, drawer) = effects(register, opens_drawer);
     let answer = CompletedSaleRef {
         sale_id: cart.id,
         receipt_number: sale.receipt_number().to_owned(),
@@ -690,10 +689,11 @@ fn stock_movements(
     Ok(events)
 }
 
-/// The printer and the drawer, once the sale has committed. Device time
-/// holds the register's database while the print worker records its
-/// attempt; the worker `run` will start moves it off the command.
-fn effects(register: &Register, job: &Id, opens_drawer: bool) -> (ReceiptOutcome, DrawerOutcome) {
+/// The drawer, then the printer, once the sale has committed. The drawer is
+/// kicked first, while the device is free, so the cash drawer opens at once
+/// and the receipt prints after it. The receipt is handed to the print
+/// worker, never sent from here: a slow printer holds no command.
+fn effects(register: &Register, opens_drawer: bool) -> (ReceiptOutcome, DrawerOutcome) {
     let device = register.receipt_device();
     let Some(printer) = device.printer.as_deref() else {
         let drawer = if opens_drawer {
@@ -703,31 +703,6 @@ fn effects(register: &Register, job: &Id, opens_drawer: bool) -> (ReceiptOutcome
         };
         return (ReceiptOutcome::Queued, drawer);
     };
-    let ids = RegisterIds(register);
-    let clock = RegisterClock(register);
-    let worker = PrintWorker::new(printer, &device.profile.profile_id, &clock, &ids, WORKER);
-    let receipt = match register.with_db(|conn| worker.drain(conn)) {
-        Ok(drained) => drained
-            .attempted
-            .iter()
-            .find(|attempt| attempt.job_id == *job)
-            .map_or(ReceiptOutcome::Queued, |attempt| match attempt.outcome {
-                AttemptOutcome::Printed => ReceiptOutcome::Printed,
-                AttemptOutcome::Failed if attempt.error_code.is_some_and(withheld) => {
-                    ReceiptOutcome::Withheld
-                }
-                AttemptOutcome::Failed => ReceiptOutcome::Refused,
-                AttemptOutcome::Partial | AttemptOutcome::Unknown | AttemptOutcome::Cancelled => {
-                    ReceiptOutcome::Unconfirmed
-                }
-            }),
-        Err(error) => {
-            // The job may have been leased and sent; recovery resolves it as
-            // unknown, never back into the queue.
-            tracing::error!(error = %error, "the receipt's print attempt was not recorded");
-            ReceiptOutcome::Unconfirmed
-        }
-    };
     let drawer = if !opens_drawer {
         DrawerOutcome::NotOpened
     } else if printer.open_drawer().is_ok() {
@@ -736,13 +711,10 @@ fn effects(register: &Register, job: &Id, opens_drawer: bool) -> (ReceiptOutcome
         tracing::warn!("the drawer did not open; it is never kicked twice");
         DrawerOutcome::Failed
     };
-    (receipt, drawer)
-}
-
-/// Whether a refusal's code means the bytes were never sent.
-fn withheld(code: &str) -> bool {
-    code == crate::print_queue::code::CONTENT_HASH_MISMATCH
-        || code == crate::print_queue::code::PROFILE_MISMATCH
+    if !register.nudge_printer() {
+        tracing::warn!("no print worker runs; the receipt waits in the queue for one");
+    }
+    (ReceiptOutcome::SentToPrinter, drawer)
 }
 
 /// What the finalize logs: identifiers and amounts, never a name, a buyer or
@@ -869,24 +841,6 @@ impl IdSource for Pool<'_> {
             self.overdrawn.set(true);
             self.register.next_id()
         }
-    }
-}
-
-/// The register's ids, for the print worker.
-struct RegisterIds<'r>(&'r Register);
-
-impl IdSource for RegisterIds<'_> {
-    fn next(&self) -> Uuid {
-        self.0.next_id()
-    }
-}
-
-/// The register's clock, for the print worker.
-struct RegisterClock<'r>(&'r Register);
-
-impl pos_domain::Clock for RegisterClock<'_> {
-    fn now(&self) -> Timestamp {
-        self.0.now()
     }
 }
 
@@ -1207,8 +1161,9 @@ mod tests {
     }
 
     /// A printer that refuses the receipt, and a drawer that does not open,
-    /// never un-complete the sale: the receipt waits in the queue for its
-    /// retry, the drawer is not kicked again, and the answer says both.
+    /// never un-complete the sale: the drawer is not kicked again and the
+    /// answer says so; the receipt is handed to the print worker, whose pass
+    /// records the refusal and leaves it in the queue for its retry (1.7.14c).
     #[test]
     fn hardware_failure_after_commit_leaves_sale_complete() {
         /// The simulator, behind a drawer that is jammed.
@@ -1231,9 +1186,10 @@ mod tests {
         let (_dir, register) = shop_with(Arc::new(Jammed(Arc::clone(&printer))));
         let sale = settled(&register);
         let answer = finalize(&register).unwrap();
-        assert_eq!(answer.receipt, ReceiptOutcome::Refused);
+        assert_eq!(answer.receipt, ReceiptOutcome::SentToPrinter);
         assert_eq!(answer.drawer, DrawerOutcome::Failed);
         assert!(completed(&register, sale));
+        crate::print_service::drain(&register).unwrap();
         assert!(printer.printed.lock().unwrap().is_empty());
         let job = register.with_db(|conn| {
             ReceiptRepository::new(conn)
@@ -1260,10 +1216,25 @@ mod tests {
         let (_dir, register) = shop_with(Arc::clone(&printer) as Arc<dyn ReceiptPrinter>);
         let sale = settled(&register);
         let answer = finalize(&register).unwrap();
-        assert_eq!(answer.receipt, ReceiptOutcome::Unconfirmed);
+        assert_eq!(answer.receipt, ReceiptOutcome::SentToPrinter);
         assert_eq!(answer.drawer, DrawerOutcome::Opened);
         assert_eq!(*printer.drawer_opens.lock().unwrap(), 1);
         assert!(completed(&register, sale));
+        crate::print_service::drain(&register).unwrap();
+        let states: Vec<JobState> = register.with_db(|conn| {
+            ReceiptRepository::new(conn)
+                .unprinted()
+                .unwrap()
+                .into_iter()
+                .map(|job| job.state)
+                .collect()
+        });
+        assert_eq!(states, [JobState::Unknown], "a person answers");
+        assert_eq!(
+            *printer.drawer_opens.lock().unwrap(),
+            1,
+            "never kicked twice"
+        );
     }
 
     /// A completed sale's facts are named by exactly one commit, and that

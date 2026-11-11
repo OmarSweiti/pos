@@ -703,10 +703,14 @@ fn paper_out_warns_before_tender_not_after() {
     let sold = finalize(&register).unwrap();
     assert_eq!(
         sold.receipt,
-        ReceiptOutcome::Refused,
-        "kept, to print later"
+        ReceiptOutcome::SentToPrinter,
+        "kept, for the print worker"
     );
-    assert!(printer.printed.lock().unwrap().is_empty());
+    terminal_lib::print_service::drain(&register).unwrap();
+    assert!(
+        printer.printed.lock().unwrap().is_empty(),
+        "refused for its paper, to print later"
+    );
 
     // Paper back in, the next sale's Pay reads a ready printer.
     *printer.force_status.lock().unwrap() = PrinterStatus::Ready;

@@ -7,6 +7,8 @@
 //! till opens (1.7.14b). By the owner's decisions of 11 November 2026, a
 //! binding the register can honour becomes its printer, and one it cannot
 //! opens the till with no device and an alarm saying why, never a closed till.
+//! The finalize hands each receipt to the print worker, which prints it off
+//! the command path (1.7.14c).
 
 mod shop;
 
@@ -24,6 +26,7 @@ use terminal_lib::commands::cart::{add_product, open_cart};
 use terminal_lib::commands::sale::{ReceiptOutcome, finalize};
 use terminal_lib::commands::tender::{add_cash, begin_payment};
 use terminal_lib::health::{Alarm, health};
+use terminal_lib::print_service::drain;
 use terminal_lib::state::{BindingRefusal, DATABASE_FILE, PrinterBindingState, Register};
 
 /// An address in TEST-NET-1, which no test ever connects to: a binding it
@@ -77,6 +80,37 @@ fn sell_one(register: &Register) -> ReceiptOutcome {
     finalize(register).unwrap().receipt
 }
 
+/// Every print job, oldest first: the profile its receipt was rendered for,
+/// its state, and each attempt's outcome and error code.
+fn jobs(register: &Register) -> Vec<(String, String, Vec<String>)> {
+    register.with_db(|conn| {
+        conn.prepare(
+            "SELECT a.printer_profile, j.state,
+                    coalesce((SELECT group_concat(outcome || ':' || coalesce(error_code, ''), ' ')
+                                FROM (SELECT outcome, error_code FROM print_attempt
+                                       WHERE job_id = j.id ORDER BY attempt_no)), '')
+               FROM print_job j JOIN receipt_artifact a ON a.id = j.artifact_id
+              ORDER BY j.rowid",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            let attempts: String = row.get(2)?;
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                attempts
+                    .split(' ')
+                    .filter(|a| !a.is_empty())
+                    .map(str::to_owned)
+                    .collect(),
+            ))
+        })
+        .unwrap()
+        .map(Result::unwrap)
+        .collect()
+    })
+}
+
 /// The profile every original receipt was rendered for, oldest first.
 fn rendered_for(register: &Register) -> Vec<String> {
     register.with_db(|conn| {
@@ -91,7 +125,8 @@ fn rendered_for(register: &Register) -> Vec<String> {
 
 /// 1.7.14's first named test: a register bound to the emulator's 80 mm profile
 /// renders every receipt for that profile and prints it on the device at the
-/// bound address. Its health names the binding and raises nothing.
+/// bound address. Its health names the binding and raises nothing. The
+/// finalize hands the receipt off; one pass of the print worker prints it.
 #[test]
 fn a_register_renders_for_its_bound_profile() {
     let emulator = emulator();
@@ -113,8 +148,17 @@ fn a_register_renders_for_its_bound_profile() {
     assert_eq!(health.printer.reading, PrinterAtPay::Ready);
     assert_eq!(health.alarms, Vec::new());
 
-    assert_eq!(sell_one(&register), ReceiptOutcome::Printed);
+    assert_eq!(sell_one(&register), ReceiptOutcome::SentToPrinter);
     assert_eq!(rendered_for(&register), ["emulator-80mm"]);
+    drain(&register).unwrap();
+    assert_eq!(
+        jobs(&register),
+        [(
+            "emulator-80mm".to_owned(),
+            "printed".to_owned(),
+            vec!["printed:".to_owned()]
+        )]
+    );
     assert!(emulator.settled(3, Duration::from_secs(5)));
     let jobs = emulator.jobs();
     let [job] = jobs.as_slice() else {
