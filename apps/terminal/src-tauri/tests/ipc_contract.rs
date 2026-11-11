@@ -247,8 +247,8 @@ fn the_shell_names_its_commands_once() {
 // ── The five tests ──────────────────────────────────────────────────────────
 
 /// Every registered command has exactly one row, every row a registered
-/// command, and every row names the capability its handler proves, or says
-/// why it proves none.
+/// command, and every row names the capability its handler proves, the
+/// alternatives it proves the first held of, or says why it proves none.
 #[test]
 fn ipc_commands_all_declare_a_capability() {
     the_shell_names_its_commands_once();
@@ -256,6 +256,11 @@ fn ipc_commands_all_declare_a_capability() {
     for row in COMMANDS {
         match row.access {
             Access::Capability(capability) => assert!(cap::ALL.contains(&capability)),
+            Access::AnyOf(alternatives) => {
+                assert!(alternatives.len() >= 2, "{}", row.name);
+                assert!(alternatives.iter().all(|c| cap::ALL.contains(c)));
+                assert_eq!(row.approval_requirement, ApprovalRequirement::Never);
+            }
             Access::NoCapability { reason } => assert!(!reason.trim().is_empty()),
         }
     }
@@ -281,6 +286,44 @@ fn ipc_commands_all_declare_a_capability() {
     assert_eq!(
         refusals(&[unexplained]),
         vec![RegistryError::UnexplainedAccess("split_tender")]
+    );
+
+    // Alternatives are each a capability, two at least, and never on a
+    // command that takes an approval, whose handle is issued for one.
+    let read = *COMMANDS
+        .iter()
+        .find(|row| row.name == "stock_on_hand")
+        .unwrap();
+    assert_eq!(
+        read.access,
+        Access::AnyOf(&[cap::SaleCreate::NAME, cap::StockAdjust::NAME])
+    );
+    const MISSPELT: &[&str] = &[cap::SaleCreate::NAME, "stock.adjsut"];
+    assert_eq!(
+        refusals(&[CommandSpec {
+            access: Access::AnyOf(MISSPELT),
+            ..read
+        }]),
+        vec![RegistryError::UnknownCapability {
+            command: "stock_on_hand",
+            capability: "stock.adjsut",
+        }]
+    );
+    const ONE: &[&str] = &[cap::SaleCreate::NAME];
+    assert_eq!(
+        refusals(&[CommandSpec {
+            access: Access::AnyOf(ONE),
+            ..read
+        }]),
+        vec![RegistryError::TooFewAlternatives("stock_on_hand")]
+    );
+    const EITHER: &[&str] = &[cap::StockAdjust::NAME, cap::SaleCreate::NAME];
+    assert_eq!(
+        refusals(&[CommandSpec {
+            access: Access::AnyOf(EITHER),
+            ..STOCK_ADJUST
+        }]),
+        vec![RegistryError::PrivilegedWithAlternatives("stock_adjust")]
     );
 }
 

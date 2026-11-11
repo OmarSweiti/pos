@@ -38,8 +38,11 @@
 //! shift open, `stock_adjust` is refused as `shift_not_open`.
 //!
 //! `stock_on_hand` reads the store's projection, `stock_cache`, under
-//! `sale.create`: what the shelf should hold, and the cost a unit is carried
-//! at, which is unknown rather than zero when no cost was ever recorded.
+//! `sale.create` or `stock.adjust`: what the shelf should hold, and the cost
+//! a unit is carried at, which is unknown rather than zero when no cost was
+//! ever recorded. A cashier reads it to sell, and the owner, who holds
+//! `stock.adjust` and sells nothing, to adjust it (the owner's decision of 11
+//! November 2026).
 //!
 //! **Only a holder of `stock.adjust` is shown the cost** (the owner's
 //! decision of 10 November 2026). A product's cost is what the shop paid for
@@ -56,7 +59,8 @@ use pos_db::repo::stock::StockRepository;
 use pos_db::repo::stock_adjustment::StockAdjustmentRepository;
 use pos_domain::{
     ApprovalBinding, ApprovalId, AuditIntent, Capability, EscalationPolicy, ProductId, Qty,
-    StockAdjustmentReason, StockAdjustmentRequest, StockError, StockEventId, StockPosition, cap,
+    StockAdjustmentReason, StockAdjustmentRequest, StockError, StockEventId, StockPosition,
+    Timestamp, UserId, cap,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -185,13 +189,13 @@ pub fn stock_adjust(
 ///
 /// # Errors
 ///
-/// What the context refuses (`not_signed_in`, `permission_denied` without
-/// `sale.create`); `product_unknown` for an id that names no product; and
-/// `storage_failed`.
+/// What the context refuses (`not_signed_in`, `permission_denied` holding
+/// neither `sale.create` nor `stock.adjust`); `product_unknown` for an id
+/// that names no product; and `storage_failed`.
 pub fn on_hand(register: &Register, product_id: ProductId) -> IpcResult<StockSnapshot> {
-    let auth = proof::<cap::SaleCreate>(register, register.now())?;
+    let actor = stock_reader(register, register.now())?;
     let (db, session) = register.lock();
-    signed_in_as(session.as_ref(), auth.actor())?;
+    signed_in_as(session.as_ref(), actor)?;
     // What the signed-in user holds decides, read from the grants they
     // signed in with, as every proof is.
     let sees_cost = session
@@ -206,6 +210,20 @@ pub fn on_hand(register: &Register, product_id: ProductId) -> IpcResult<StockSna
         .position(product_id, register.store())
         .map_err(stored)?;
     Ok(StockSnapshot::of(product_id, &position, sees_cost))
+}
+
+/// `stock_on_hand`'s proof, as its registry row names it: `sale.create`,
+/// which every role that sells holds, or else `stock.adjust`, which the
+/// owner holds without selling. Answers who proved it. Holding neither is
+/// `permission_denied`, as it was.
+fn stock_reader(register: &Register, at: Timestamp) -> IpcResult<UserId> {
+    match proof::<cap::SaleCreate>(register, at) {
+        Ok(auth) => Ok(auth.actor()),
+        Err(refused) if refused.code == "permission_denied" => {
+            proof::<cap::StockAdjust>(register, at).map(|auth| auth.actor())
+        }
+        Err(other) => Err(other),
+    }
 }
 
 /// A movement of stock by hand, as `stock_adjust_now` is asked for it.
