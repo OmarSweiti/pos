@@ -32,14 +32,19 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pos_db::DbError;
+use pos_db::repo::setting::{PrinterBinding, SettingRepository};
 use pos_domain::{
     Cart, Clock, ClockConfidence, GrantSet, IdSource, RegisterId, Role, StoreId, Tendering,
     Timestamp, UserId,
 };
 use pos_hardware::ReceiptPrinter;
+use pos_hardware::net::{Deadlines, NetworkPrinter};
 use pos_hardware::profile::PrinterProfile;
+use pos_hardware::profile::data::{self as profiles, BindingError};
 use pos_hardware::render::PaperWidth;
+use pos_hardware::transport::TcpTransport;
 use rusqlite::{Connection, OptionalExtension};
+use serde::Serialize;
 use uuid::Uuid;
 
 use crate::ipc::IpcError;
@@ -220,11 +225,13 @@ pub struct Paying {
 /// The printer a register renders its receipts for, and the device itself
 /// when one is attached.
 ///
-/// No step binds a register to a real printer yet. Until one does, every
-/// register renders for the 80 mm simulator profile with no device attached,
-/// by the owner's decision of 8 November 2026: each sale's receipt is still
-/// rendered and queued in its own transaction, and simply never reaches a
-/// device (`ref/hardware-and-receipts.md` §3a, selling never stops).
+/// It comes from the register's printer binding, read when the till opens
+/// (1.7.14b; [`PrinterBindingState`]). With no binding, or one the register
+/// cannot honour, the register renders for the 80 mm simulator profile with
+/// no device attached, as every register did by the owner's decision of 8
+/// November 2026: each sale's receipt is still rendered and queued in its own
+/// transaction, and simply never reaches a device
+/// (`ref/hardware-and-receipts.md` §3a, selling never stops).
 pub struct ReceiptDevice {
     /// The profile every original receipt is rendered for.
     pub profile: PrinterProfile,
@@ -245,6 +252,121 @@ impl ReceiptDevice {
     }
 }
 
+/// What a register's printer binding came to when the till opened (1.7.14b),
+/// as `health_status` tells it.
+///
+/// A binding the register cannot honour never keeps the till closed (the
+/// owner's decision of 11 November 2026): the register opens as an unbound
+/// one, and the refusal is an alarm on its health, naming why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum PrinterBindingState {
+    /// None is set. The register renders for the simulator's profile and
+    /// attaches no device.
+    Unbound,
+    /// The register renders for this profile and prints to the device at
+    /// this address.
+    Bound {
+        profile_id: String,
+        version: u32,
+        address: String,
+    },
+    /// A binding is set and the register cannot honour it, so the till opened
+    /// as an unbound one. `profile_id` and `version` are what the binding
+    /// names, when it could be read; `unresolved` the parameters the driver
+    /// needs that the profile leaves unknown.
+    Refused {
+        reason: BindingRefusal,
+        profile_id: Option<String>,
+        version: Option<u32>,
+        unresolved: Vec<&'static str>,
+    },
+}
+
+/// Why a register could not honour its printer binding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BindingRefusal {
+    /// The stored value is not the shape `printer.binding` promises, or it
+    /// could not be read.
+    SettingUnreadable,
+    /// The build ships no such profile, or no such version of it.
+    ProfileNotShipped,
+    /// The profile leaves a parameter the driver needs unknown: every real
+    /// device's does until milestone 5.8 measures it.
+    ProfileUnresolved,
+    /// The profile's device is not reached over TCP 9100, the one transport
+    /// a register binds today.
+    NotANetworkPrinter,
+}
+
+/// The register's printer, from its binding: the device and what the binding
+/// came to. Nothing here is written, and nothing refused closes the till.
+fn bind_printer(conn: &Connection, register: RegisterId) -> (ReceiptDevice, PrinterBindingState) {
+    let refused =
+        |reason: BindingRefusal, named: Option<&PrinterBinding>, unresolved: Vec<&'static str>| {
+            tracing::warn!(
+                reason = ?reason,
+                profile_id = named.map(|binding| binding.profile_id.as_str()),
+                "the register's printer binding was refused; the till opens with no device"
+            );
+            (
+                ReceiptDevice::unbound(),
+                PrinterBindingState::Refused {
+                    reason,
+                    profile_id: named.map(|binding| binding.profile_id.clone()),
+                    version: named.map(|binding| binding.version.get()),
+                    unresolved,
+                },
+            )
+        };
+    let binding = match SettingRepository::new(conn).printer_binding(register) {
+        Ok(Some(binding)) => binding,
+        Ok(None) => return (ReceiptDevice::unbound(), PrinterBindingState::Unbound),
+        Err(_) => return refused(BindingRefusal::SettingUnreadable, None, Vec::new()),
+    };
+    let profile = match profiles::printer(&binding.profile_id, binding.version) {
+        Ok(profile) => profile,
+        Err(BindingError::NotShipped { .. }) => {
+            return refused(
+                BindingRefusal::ProfileNotShipped,
+                Some(&binding),
+                Vec::new(),
+            );
+        }
+        Err(BindingError::Unresolved { parameters, .. }) => {
+            let unresolved = parameters.iter().map(|parameter| parameter.key()).collect();
+            return refused(
+                BindingRefusal::ProfileUnresolved,
+                Some(&binding),
+                unresolved,
+            );
+        }
+    };
+    match NetworkPrinter::new(
+        TcpTransport::new(binding.address),
+        profile.clone(),
+        Deadlines::default(),
+    ) {
+        Ok(printer) => (
+            ReceiptDevice {
+                profile,
+                printer: Some(Arc::new(printer)),
+            },
+            PrinterBindingState::Bound {
+                profile_id: binding.profile_id,
+                version: binding.version.get(),
+                address: binding.address.to_string(),
+            },
+        ),
+        Err(_) => refused(
+            BindingRefusal::NotANetworkPrinter,
+            Some(&binding),
+            Vec::new(),
+        ),
+    }
+}
+
 /// The register, open.
 pub struct Register {
     db: Mutex<Connection>,
@@ -259,6 +381,7 @@ pub struct Register {
     working: Mutex<Option<Working>>,
     recovered: Recovered,
     receipt_device: ReceiptDevice,
+    printer_binding: PrinterBindingState,
 }
 
 /// The register's identity and what recovery did; never the session's
@@ -272,6 +395,7 @@ impl std::fmt::Debug for Register {
             .field("code", &self.code)
             .field("printer_profile", &self.receipt_device.profile.profile_id)
             .field("printer_attached", &self.receipt_device.printer.is_some())
+            .field("printer_binding", &self.printer_binding)
             .field("recovered", &self.recovered)
             .finish_non_exhaustive()
     }
@@ -320,6 +444,7 @@ impl Register {
         let (register, store, code) = own_register(&conn, &device_id)?;
         let process_nonce = process_nonce(ids.as_ref());
         let recovered = recovery::recover(&mut conn, register, store, process_nonce, clock.now())?;
+        let (receipt_device, printer_binding) = bind_printer(&conn, register);
         Ok(Register {
             db: Mutex::new(conn),
             register,
@@ -331,12 +456,14 @@ impl Register {
             session: Mutex::new(None),
             working: Mutex::new(None),
             recovered,
-            receipt_device: ReceiptDevice::unbound(),
+            receipt_device,
+            printer_binding,
         })
     }
 
-    /// This register, rendering its receipts for `device` instead of
-    /// [`ReceiptDevice::unbound`].
+    /// This register, rendering its receipts for `device` instead of what its
+    /// binding gave it. A device attached this way is not a binding: the
+    /// register's [`PrinterBindingState`] is what was read at open.
     #[must_use]
     pub fn with_receipt_device(mut self, device: ReceiptDevice) -> Self {
         self.receipt_device = device;
@@ -348,6 +475,12 @@ impl Register {
     #[must_use]
     pub fn receipt_device(&self) -> &ReceiptDevice {
         &self.receipt_device
+    }
+
+    /// What the register's printer binding came to when the till opened.
+    #[must_use]
+    pub fn printer_binding(&self) -> &PrinterBindingState {
+        &self.printer_binding
     }
 
     #[must_use]

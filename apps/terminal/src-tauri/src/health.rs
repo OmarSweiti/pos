@@ -17,6 +17,11 @@
 //! printer, read now as Pay reads it, and how many receipts wait. It carries
 //! no grant, PIN or key, and nothing of any receipt but a count.
 //!
+//! **A printer binding the register could not honour is the loudest alarm**
+//! (1.7.14b). The till opened anyway, with no device, by the owner's decision
+//! of 11 November 2026, so the binding's refusal is said here, with why,
+//! rather than by a till that will not open.
+//!
 //! **It holds what exists today.** Backup age (1.8.6), disk space (1.8.8),
 //! the fiscal queue (Phase 2) and sync (Phase 3) join this snapshot as the
 //! steps that build them land.
@@ -28,7 +33,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::ipc::{IpcError, IpcResult};
-use crate::state::{Register, Till};
+use crate::state::{PrinterBindingState, Register, Till};
 
 /// The register's devices as the lock screen and the status strip show them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -42,6 +47,8 @@ pub struct HealthSnapshot {
 /// The receipt printer, and the receipts waiting for it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PrinterHealth {
+    /// What the register's printer binding came to when the till opened.
+    pub binding: PrinterBindingState,
     /// The printer as read now, the reading Pay takes (1.7.6).
     pub reading: PrinterAtPay,
     /// Receipts kept and not yet printed, which print once a printer can
@@ -57,6 +64,9 @@ pub struct PrinterHealth {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Alarm {
+    /// A printer binding is set and the register could not honour it, so it
+    /// opened with no device. The binding says why.
+    PrinterBindingRefused,
     /// No printer, or one that would not print now. Receipts are kept, and
     /// print later.
     PrinterUnavailable,
@@ -92,7 +102,10 @@ pub fn health(register: &Register) -> IpcResult<HealthSnapshot> {
         .map_err(|error| {
             IpcError::from_source("health_unreadable", "error.health.unreadable", &error)
         })?;
+    let binding = register.printer_binding().clone();
+    let refused = matches!(binding, PrinterBindingState::Refused { .. });
     let alarms = [
+        (refused, Alarm::PrinterBindingRefused),
         (reading.warns(), Alarm::PrinterUnavailable),
         (unconfirmed > 0, Alarm::ReceiptsUnconfirmed),
         (waiting > 0, Alarm::ReceiptsWaiting),
@@ -102,6 +115,7 @@ pub fn health(register: &Register) -> IpcResult<HealthSnapshot> {
     .collect();
     Ok(HealthSnapshot {
         printer: PrinterHealth {
+            binding,
             reading,
             receipts_waiting: waiting,
             receipts_unconfirmed: unconfirmed,
