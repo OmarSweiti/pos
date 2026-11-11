@@ -80,6 +80,10 @@ pub struct CommandSpec {
 
 pub enum Access {
     Capability(&'static str),                // as `pos_domain::cap` names it
+    /// The first of these the user holds, tried in order: a read owed to more
+    /// than one role for different reasons (`stock_on_hand`). Two at least;
+    /// never on a command that takes an approval.
+    AnyOf(&'static [&'static str]),
     /// Deliberate, and readable as such: a lock-screen command, first-run
     /// recovery-code provisioning, or `recovery_restore_backup`, which runs
     /// before the database that holds the grants can be opened.
@@ -142,7 +146,8 @@ no row as well as a row nothing registers. The commands are named once, in `lib.
 exactly the list `tauri::generate_handler!` is given.
 
 `check` refuses a capability `pos_domain::cap` does not define, and a `NoCapability` without its
-reason. It refuses an `approval_id` taken other than as the requirement says: required for
+reason. It refuses an `AnyOf` naming fewer than two capabilities, and one on a command that takes an
+approval, which is issued for one capability. It refuses an `approval_id` taken other than as the requirement says: required for
 `Always`, optional for `Conditional`, absent for `Never`. A privileged row is refused when it
 proves no capability for the handle to be issued under, or writes no audit entry for the handle to
 be consumed beside. So is a privileged row whose binding leaves a part blank, or binds a part to an
@@ -762,7 +767,7 @@ they also hold `reports.all`, which is the answer to "who may see another cashie
 
 | Command | Args → Returns | Ph | Cap | A | E |
 |---|---|---|---|---|---|
-| `stock_on_hand` | `{ product_id }` → `StockSnapshot` | 1 | `sale.create` | | |
+| `stock_on_hand` | `{ product_id }` → `StockSnapshot` | 1 | `sale.create` or `stock.adjust` | | |
 | `stock_adjust_now` | `{ product_id, qty_delta_milli, reason_code, note? }` → `StockSnapshot` | 1 | `stock.adjust` | ✓ | |
 | `stock_adjust_prepare` | `{ product_id, qty_delta_milli, reason_code, note? }` → `StockAdjustmentSnapshot` | 1 | `stock.adjust` | | |
 | `stock_adjust` | `{ stock_event_id, approval_id }` → `StockSnapshot` | 1 | `stock.adjust` | ✓ | ✓ |
@@ -814,6 +819,12 @@ stable event id.
 > - **The event, its `stock.adjust` audit row and the approval's consumption travel in one
 >   envelope,** the row as the payload it chains (`ref/sync-protocol.md` §3). The row's reason is
 >   the approver's, its payload the product, the signed quantity and the reason code.
+
+> **`stock_on_hand` under `sale.create` or `stock.adjust`, the owner's decision of 11 November
+> 2026.** The owner holds `stock.adjust` and not `sale.create`, so under `sale.create` alone the
+> owner, who may adjust stock, could not read it first. The row is `Access::AnyOf`, and the handler
+> proves `sale.create`, or else `stock.adjust`; holding neither is `permission_denied`, as before.
+> The cost is still shown only to a holder of `stock.adjust`.
 
 > **`stock_adjust_now`, the owner's decision of 10 November 2026 (D1 B).** One holder of
 > `stock.adjust` adjusts stock alone, audited, as one overrides a price or resets a PIN. The command
