@@ -452,7 +452,10 @@ fn each_scripted_fault_reaches_the_driver_as_its_outcome() {
 
 /// The named test: nothing a register ships enables the emulator. Cargo's own
 /// resolution of the terminal's dependency graph, with the features it turns
-/// on, must not contain `pos-hardware`'s `emulator` feature.
+/// on, must not contain `pos-hardware`'s `emulator` feature. The graph read is
+/// the one a register ships, without its dev-dependencies: the terminal's own
+/// tests bind a register to the emulator (1.7.14), and a dev-dependency's
+/// features never reach a build that ships.
 #[test]
 fn the_register_bundle_never_enables_the_emulator() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -469,7 +472,9 @@ fn the_register_bundle_never_enables_the_emulator() {
             "-p",
             "terminal",
             "-e",
-            "features",
+            // The graph a register ships: its dev-dependencies, which may
+            // enable the emulator for its own tests, are never built into it.
+            "features,no-dev",
             "--prefix",
             "none",
         ])
