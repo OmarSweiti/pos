@@ -8,17 +8,19 @@
 //! so a machine with no database opens [`crate::state::Till::Unprovisioned`]
 //! and writes nothing at all until a person chooses.
 //!
-//! **A new register's custody, in the order a crash can survive:**
-//! [`provision_recovery_code`] takes the key from the credential store, minting
-//! one only when there is none and no database ([`pos_db::key`]); wraps it under
-//! a fresh code into a *pending* envelope; creates the empty database; and
-//! shows the code, once. The code is held in memory only. A crash at any point
-//! leaves a machine that comes back to this same choice, or to a fresh code:
+//! **A new register's custody:** [`provision_recovery_code`] takes the key from
+//! the credential store, minting one only when there is none and no database
+//! ([`pos_db::key`]); wraps it under a fresh code into a *pending* envelope;
+//! creates the empty database; and shows the code, once. The code is held in
+//! memory only. A crash at any point leaves a machine that comes back to this
+//! same choice, or to a fresh code, whatever order the writes reached the
+//! disk in:
 //!
-//! - before the database exists, it is still a new machine, and the key the
-//!   store kept is the one used again;
-//! - after it, the pending envelope says the code was never confirmed, and the
-//!   next code is wrapped over it, so the unconfirmed one opens nothing.
+//! - with no database, it is still a new machine, and the key the store kept
+//!   is the one used again;
+//! - with a database but neither a confirmed envelope nor a device id, custody
+//!   never completed: the next code is wrapped over whatever pending envelope
+//!   there is, so an unconfirmed code opens nothing.
 //!
 //! [`acknowledge_recovery_code`] is the merchant saying the code is recorded.
 //! The pending envelope must open with the code held, to this register's key,
@@ -104,7 +106,9 @@ impl SetupStage {
 }
 
 /// The stage of the machine whose data is in `data_dir`, read from the files
-/// beside its database, or `None` when it holds a register to open.
+/// beside its database, or `None` when it holds a register to open: one with a
+/// device id. A database with neither a confirmed envelope nor a device id is
+/// a first run that never completed, however far its writes got.
 ///
 /// An answer the file system cannot give is `None`: opening never mints a
 /// key, so the refusal it meets says what is wrong, and nothing is created.
@@ -113,15 +117,14 @@ pub fn stage_of(data_dir: &Path) -> Option<SetupStage> {
     if !here(DATABASE_FILE)? {
         return Some(SetupStage::NewMachine);
     }
-    let pending = here(PENDING_ENVELOPE_FILE)?;
-    let confirmed = here(ENVELOPE_FILE)?;
-    if pending && !confirmed {
-        return Some(SetupStage::CodeNotConfirmed);
+    if here(DEVICE_ID_FILE)? {
+        return None;
     }
-    if confirmed && !here(DEVICE_ID_FILE)? {
-        return Some(SetupStage::StoreNotSetUp);
+    if here(ENVELOPE_FILE)? {
+        Some(SetupStage::StoreNotSetUp)
+    } else {
+        Some(SetupStage::CodeNotConfirmed)
     }
-    None
 }
 
 /// What `provision_recovery_code` shows: the code, once, and the id its
