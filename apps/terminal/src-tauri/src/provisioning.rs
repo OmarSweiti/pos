@@ -522,6 +522,37 @@ mod recovery_code_provisioning_tests {
         pos_db::open(&dir.path().join(DATABASE_FILE), key.expose()).unwrap();
     }
 
+    /// A first run stopped part-way comes back to a fresh code, whichever write
+    /// it stopped after. Stopped after the key was kept, it is still a new
+    /// machine, and that key is the one used. Stopped after the database was
+    /// made but before any envelope reached the disk, it is a first run that
+    /// never completed: a code is issued for the same key, and confirms.
+    #[test]
+    fn recovery_code_provisioning_survives_a_first_run_stopped_part_way() {
+        let (dir, store) = machine();
+        let kept = DatabaseKey::new(KEY.to_owned());
+        store.write(&kept).unwrap();
+        let till = Till::open_in(dir.path(), keys(&store));
+        assert_eq!(stage(&till), SetupStage::NewMachine);
+        let shown = setup(&till).issue().unwrap();
+        assert_eq!(store.held(), Some(kept.clone()), "the key kept is used");
+        let code = RecoveryCode::parse(&shown.formatted_code).unwrap();
+        let pending = envelope(dir.path(), PENDING_ENVELOPE_FILE);
+        assert_eq!(unwrap_data_key(&pending, &code).unwrap(), kept);
+        drop(till);
+
+        // The database made, and no envelope on the disk at all.
+        fs::remove_file(dir.path().join(PENDING_ENVELOPE_FILE)).unwrap();
+        let till = Till::open_in(dir.path(), keys(&store));
+        assert_eq!(stage(&till), SetupStage::CodeNotConfirmed);
+        let shown = setup(&till).issue().unwrap();
+        setup(&till).confirm(shown.provisioning_id).unwrap();
+        let code = RecoveryCode::parse(&shown.formatted_code).unwrap();
+        let confirmed = envelope(dir.path(), ENVELOPE_FILE);
+        assert_eq!(unwrap_data_key(&confirmed, &code).unwrap(), kept);
+        assert_eq!(store.held(), Some(kept));
+    }
+
     /// A machine with a register opens it as before, and provisioning refuses
     /// there. The same file with its key gone stays closed, by name: it is
     /// never offered a new code, and no key is minted.
