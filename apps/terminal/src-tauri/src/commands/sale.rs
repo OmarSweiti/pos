@@ -1245,6 +1245,31 @@ mod tests {
         );
     }
 
+    /// The drawer's four answers as the wire spells them, written out by hand.
+    /// None says the drawer opened: the driver sends a pulse and reads nothing
+    /// back, so the most it knows is `pulse_sent` (#414, 1.7.14d).
+    #[test]
+    fn the_drawers_answers_say_no_more_than_the_driver_knows() {
+        let wire: Vec<serde_json::Value> = [
+            DrawerOutcome::NotOpened,
+            DrawerOutcome::NoDevice,
+            DrawerOutcome::PulseSent,
+            DrawerOutcome::Failed,
+        ]
+        .into_iter()
+        .map(|answer| serde_json::to_value(answer).unwrap())
+        .collect();
+        assert_eq!(
+            wire,
+            [
+                serde_json::json!("not_opened"),
+                serde_json::json!("no_device"),
+                serde_json::json!("pulse_sent"),
+                serde_json::json!("failed"),
+            ]
+        );
+    }
+
     /// A completed sale's facts are named by exactly one commit, and that
     /// commit is ready: its manifest names the sale, its supply context, each
     /// line, tax component, summary row, tender and first tender event, each
