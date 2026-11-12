@@ -1074,6 +1074,47 @@ mod key_custody {
         assert!(!file.contains(PASSPHRASE));
     }
 
+    /// A pending envelope becomes the register's only through the code it was
+    /// made with, and only when it holds the register's own key. Every refusal
+    /// leaves it pending and writes no envelope.
+    #[test]
+    fn a_pending_envelope_is_confirmed_only_by_its_own_code() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = DatabaseKey::new(PASSPHRASE.to_owned());
+        let code = RecoveryCode::generate().unwrap();
+        wrap_data_key(&key, &code, &KdfParams::fresh().unwrap())
+            .unwrap()
+            .write(&dir.path().join(PENDING_ENVELOPE_FILE))
+            .unwrap();
+        let pending_only = |dir: &Path| {
+            (
+                dir.join(PENDING_ENVELOPE_FILE).exists(),
+                dir.join(ENVELOPE_FILE).exists(),
+            )
+        };
+
+        let other = RecoveryCode::generate().unwrap();
+        assert!(matches!(
+            confirm_pending(dir.path(), &other, &key),
+            Err(KeyError::WrongRecoveryCode)
+        ));
+        let another_key = DatabaseKey::new("another".to_owned());
+        assert!(matches!(
+            confirm_pending(dir.path(), &code, &another_key),
+            Err(KeyError::Malformed(_))
+        ));
+        assert_eq!(pending_only(dir.path()), (true, false));
+
+        confirm_pending(dir.path(), &code, &key).unwrap();
+        assert_eq!(pending_only(dir.path()), (false, true));
+        let kept = RecoveryEnvelope::read(&dir.path().join(ENVELOPE_FILE)).unwrap();
+        assert_eq!(unwrap_data_key(&kept, &code).unwrap(), key);
+        assert!(matches!(
+            confirm_pending(dir.path(), &code, &key),
+            Err(KeyError::EnvelopeIo(_))
+        ));
+    }
+
     /// The Damm table's published example: 572 is closed by 4, and 5724 checks.
     #[test]
     fn the_check_digit_is_damms() {
