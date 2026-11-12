@@ -892,7 +892,7 @@ old one.
 
 > **As delivered at 1.8.5b, its second part (12 November 2026).** A machine with no register opens as
 > a till of its own state, and `session_state` says `{ "state": "not_set_up", "stage" }`: `new_machine`
-> (no database, and nothing created), `code_not_confirmed` (a code shown and never confirmed) or
+> (no database, and nothing created), `code_not_confirmed` (a first run that never completed) or
 > `store_not_set_up` (custody complete; the register's identity is 1.8.5c's). Every other command
 > answers `not_set_up` with the stage's detail.
 >
