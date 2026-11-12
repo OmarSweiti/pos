@@ -256,7 +256,13 @@ pub enum ReceiptOutcome {
     SentToPrinter,
 }
 
-/// What became of the drawer.
+/// What became of the drawer: what the driver knows, and no more.
+///
+/// A drawer is kicked by a pulse on the printer's drawer port, and nothing
+/// reads back whether it opened. So the answer is that the pulse was sent,
+/// never that the drawer opened (#414, by the owner's decision of 11 November
+/// 2026). Reading a drawer's sensor waits for a device that has one, at
+/// milestone 5.8.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DrawerOutcome {
@@ -264,9 +270,11 @@ pub enum DrawerOutcome {
     NotOpened,
     /// One does, and no printer is attached to kick it: open it by hand.
     NoDevice,
-    /// The drawer was kicked.
-    Opened,
-    /// The kick failed. It is never sent again (§4 rule 3): open it by hand.
+    /// The pulse was sent to the printer's drawer port. Whether the drawer
+    /// opened is not known: the cashier sees it.
+    PulseSent,
+    /// The pulse could not be sent. It is never sent again (§4 rule 3): open
+    /// the drawer by hand.
     Failed,
 }
 
@@ -706,9 +714,9 @@ fn effects(register: &Register, opens_drawer: bool) -> (ReceiptOutcome, DrawerOu
     let drawer = if !opens_drawer {
         DrawerOutcome::NotOpened
     } else if printer.open_drawer().is_ok() {
-        DrawerOutcome::Opened
+        DrawerOutcome::PulseSent
     } else {
-        tracing::warn!("the drawer did not open; it is never kicked twice");
+        tracing::warn!("the drawer's pulse could not be sent; it is never sent twice");
         DrawerOutcome::Failed
     };
     if !register.nudge_printer() {
@@ -1210,14 +1218,14 @@ mod tests {
         );
 
         // A printer that goes silent mid-receipt: paper may exist, so a
-        // person answers, and the drawer, which works, opens once.
+        // person answers, and the drawer, which works, is pulsed once.
         let printer = Arc::new(SimulatedPrinter::new());
         printer.script(Fault::SilentAfter(16));
         let (_dir, register) = shop_with(Arc::clone(&printer) as Arc<dyn ReceiptPrinter>);
         let sale = settled(&register);
         let answer = finalize(&register).unwrap();
         assert_eq!(answer.receipt, ReceiptOutcome::SentToPrinter);
-        assert_eq!(answer.drawer, DrawerOutcome::Opened);
+        assert_eq!(answer.drawer, DrawerOutcome::PulseSent);
         assert_eq!(*printer.drawer_opens.lock().unwrap(), 1);
         assert!(completed(&register, sale));
         crate::print_service::drain(&register).unwrap();
