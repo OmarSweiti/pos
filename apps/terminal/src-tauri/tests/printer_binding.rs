@@ -8,7 +8,8 @@
 //! binding the register can honour becomes its printer, and one it cannot
 //! opens the till with no device and an alarm saying why, never a closed till.
 //! The finalize hands each receipt to the print worker, which prints it off
-//! the command path (1.7.14c).
+//! the command path (1.7.14c), and answers that the drawer's pulse was sent,
+//! never that the drawer opened (1.7.14d, #414).
 
 mod shop;
 
@@ -17,14 +18,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use pos_hardware::PrinterAtPay;
-use pos_hardware::emulator::{ConnectionFault, Emulator, EmulatorConfig};
-use pos_hardware::profile::PrinterProfile;
+use pos_hardware::emulator::{ConnectionFault, DrawerModel, Emulator, EmulatorConfig, Event};
+use pos_hardware::profile::data::Bounds;
+use pos_hardware::profile::{DrawerPin, Fact, PrinterProfile};
 use pos_hardware::render::PaperWidth;
 use rusqlite::params;
 use shop::{CASHIER_CODE, CASHIER_PIN, KEY, OIL, REGISTER_ID, open, product_id, seed};
 use terminal_lib::commands::auth::login_pin;
 use terminal_lib::commands::cart::{add_product, open_cart};
-use terminal_lib::commands::sale::{ReceiptOutcome, finalize};
+use terminal_lib::commands::sale::{DrawerOutcome, ReceiptOutcome, finalize};
 use terminal_lib::commands::stock::on_hand;
 use terminal_lib::commands::tender::{add_cash, begin_payment};
 use terminal_lib::health::{Alarm, health};
@@ -37,9 +39,14 @@ const NOWHERE: &str = "192.0.2.10:9100";
 
 /// 1.7.12's emulated printer, under the emulator's own 80 mm profile.
 fn emulator() -> Emulator {
+    emulator_with(None)
+}
+
+/// The emulated printer, with `drawer` plugged into its drawer port.
+fn emulator_with(drawer: Option<DrawerModel>) -> Emulator {
     Emulator::start(EmulatorConfig {
         printer: PrinterProfile::emulator(PaperWidth::Mm80),
-        drawer: None,
+        drawer,
         listen: "127.0.0.1:0".parse().unwrap(),
         out_dir: None,
     })
@@ -409,4 +416,77 @@ fn a_receipt_rendered_for_another_profile_is_withheld_not_printed() {
     let health = health(&register).unwrap();
     assert_eq!(health.printer.receipts_waiting, 1);
     assert_eq!(health.alarms, [Alarm::ReceiptsWaiting]);
+}
+
+/// A drawer on pin 2 that a 12–24 V pulse opens, as the emulator's 24 V port
+/// drives it: written out here, not read from a profile, so the test says
+/// what opens it.
+fn a_drawer_that_opens() -> DrawerModel {
+    DrawerModel {
+        profile_id: "test-drawer".to_owned(),
+        pin: Fact::Known(DrawerPin::Pin2),
+        solenoid_volts: Fact::Known(Bounds { min: 12, max: 24 }),
+        sensor: Fact::Unknown,
+        polarity: Fact::Unknown,
+    }
+}
+
+/// The pulses the emulator received, once the first has arrived.
+fn pulses(emulator: &Emulator) -> Vec<Fact<bool>> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let pulses: Vec<Fact<bool>> = emulator
+            .events()
+            .into_iter()
+            .filter_map(|event| match event {
+                Event::DrawerPulse { opened, .. } => Some(opened),
+                _ => None,
+            })
+            .collect();
+        if !pulses.is_empty() || Instant::now() >= deadline {
+            return pulses;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// 1.7.14d (#414): the finalize answers what the driver knows of the drawer,
+/// and no more. A drawer is kicked by a pulse on the printer's drawer port and
+/// nothing reads back whether it opened, so the answer is `pulse_sent`
+/// whatever became of the drawer: here one that opens, a port with no drawer
+/// plugged in, and a printer that reports itself offline. The emulator sees
+/// one pulse each time, and only the first opens anything. The old answer,
+/// `opened`, was wrong for the other two.
+#[test]
+fn the_drawer_is_answered_pulse_sent_whatever_the_printer_says() {
+    for (drawer, fault, opened) in [
+        (Some(a_drawer_that_opens()), None, true),
+        (None, None, false),
+        (None, Some(ConnectionFault::Offline), false),
+    ] {
+        let case = format!("drawer plugged in: {}, fault: {fault:?}", drawer.is_some());
+        let emulator = emulator_with(drawer);
+        let address = emulator.address().to_string();
+        let (_dir, register) = bound_shop(Some(&binding_to("emulator-80mm", &address)));
+        open_cart(&register).unwrap();
+        add_product(&register, product_id(OIL), None).unwrap();
+        let paying = begin_payment(&register).unwrap();
+        add_cash(&register, paying.cash_due_minor).unwrap();
+        // The finalize kicks the drawer first, so the next connection is the
+        // drawer's.
+        if let Some(fault) = fault {
+            emulator.script(fault);
+        }
+
+        let answer = finalize(&register).unwrap();
+        assert_eq!(answer.drawer, DrawerOutcome::PulseSent, "{case}");
+        assert_eq!(
+            serde_json::to_value(answer.drawer).unwrap(),
+            serde_json::json!("pulse_sent"),
+            "{case}"
+        );
+        assert_eq!(answer.receipt, ReceiptOutcome::SentToPrinter, "{case}");
+        assert_eq!(pulses(&emulator), [Fact::Known(opened)], "{case}");
+        assert_eq!(emulator.drawer_open(), opened, "{case}");
+    }
 }

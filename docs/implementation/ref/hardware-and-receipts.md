@@ -287,7 +287,7 @@ An observation with no matching command inside a short window is an **unexplaine
 
 A drawer jammed or left open at shift close does not block the close; the state is logged and an alert raised (E.50).
 
-*Seen at 1.7.6b, tracked as #414 (the owner's decision of 10 November 2026, D9):* the finalize answers that the drawer was `opened` once the pulse is written, whatever the printer's state, so with the printer offline the answer claims more than the driver knows. The audit row records the drawer as `requested`. 1.7.14 settles it against the qualified profiles.
+*Seen at 1.7.6b, tracked as #414 (the owner's decision of 10 November 2026, D9):* the finalize answers that the drawer was `opened` once the pulse is written, whatever the printer's state, so with the printer offline the answer claims more than the driver knows. The audit row records the drawer as `requested`. 1.7.14 settles it against the qualified profiles. *Settled at 1.7.14d (12 November 2026), by the owner's decision of 11 November 2026:* the answer is `pulse_sent`, named for the one thing the driver knows. It is the same whether a drawer opened, none is plugged in, or the printer reports itself offline. Reading a drawer's sensor, the `sensor_observation` above, waits for a device that has one, at milestone 5.8.
 
 **Tests:** `no_sale_open_is_logged_and_counted` · `receipt_retry_never_repeats_the_drawer_pulse` · `every_privileged_command_binds_its_approval` · `no_sale_past_the_threshold_requires_a_manager_reason` · `an_observed_drawer_transition_without_a_command_is_reported` · `jammed_drawer_does_not_block_shift_close`.
 

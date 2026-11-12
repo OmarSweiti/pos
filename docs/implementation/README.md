@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **82 of 124 executable microsteps fully complete (~66%)**: `1.1.0`
+Phase 1 has **83 of 124 executable microsteps fully complete (~67%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -208,7 +208,10 @@ old hash retired and the reset audited), and `1.7.6` (the printer read at
 Pay, before any money is taken, so paper out or no printer is told before the customer pays and never
 refuses the sale), and `1.7.6b` (no printer, and selling never stops: every receipt kept in the
 sale's own transaction and printed unchanged once a printer can take it, and the missing printer an
-alarm on the register's health, never a modal).
+alarm on the register's health, never a modal), and `1.7.14` (a register bound to its printer: the
+binding a register-scope setting read when the till opens, one the register cannot honour opening the
+till with no device and an alarm saying why, every receipt printed by a worker off the command path,
+and the drawer's answer `pulse_sent`, never a claim that it opened).
 <!-- frontier:end -->
 Group 1.1 is **complete**. `1.1.9` was the last of it: its pure-domain time values, clock policy
 and terminal IANA-zone resolution landed first, and its database persistence half followed on
@@ -302,8 +305,9 @@ queued, its journal removed and its basket consumed, with a fault injected at ev
 and nothing but the journal's own step left behind. The printer and the drawer run after the commit,
 and their failure never un-completes the sale. Two of its ten named tests wait, by the owner's
 decision of 8 November 2026: the approval one for the first command that brings an approval bound to
-the sale to payment, and the department one for #330. Until `1.7.14`, added that day, binds a
-register to its printer, every receipt is rendered for the 80 mm simulator profile and queued.
+the sale to payment, and the department one for #330. `1.7.14`, added that day, binds a register
+to its printer; a register with no binding, or one it cannot honour, renders every receipt for the
+80 mm simulator profile and queues it.
 Group 1.9's `1.9.5` is **partially delivered**: a shift opens with a float counted by denomination,
 on a business date the clock derives when it is trusted and the operator confirms, audited, when it
 is not; one stays open per register; and only its opener closes it, with a fact of its own and no
