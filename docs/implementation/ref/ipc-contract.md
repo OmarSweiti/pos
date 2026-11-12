@@ -540,7 +540,10 @@ is the input E.2's status-query needs and which nothing previously persisted.
 >     the receipt to the print worker, which prints it off the command, and never waits on the device.
 >     What the device did is the print queue's, and a refusal, an unconfirmed print or a withheld
 >     receipt is raised on `health_status`.
->   - **The drawer** is `not_opened`, `no_device`, `opened` or `failed`.
+>   - **The drawer** is `not_opened`, `no_device`, `opened` or `failed`. *Since 1.7.14d
+>     (12 November 2026)* `pulse_sent` replaces `opened`, by the owner's decision of 11 November 2026
+>     (#414): the pulse was sent to the printer's drawer port, and nothing reads back whether the
+>     drawer opened. `failed` is a pulse that could not be sent.
 >
 >   Neither outcome un-completes the sale.
 > - **It takes no argument.** The sale is the one the till is paying for, settled by its tenders.
