@@ -841,6 +841,39 @@ mod key_custody {
             unwrap_data_key(&short, &code),
             Err(KeyError::Malformed(_))
         ));
+
+        // Sealed properly under the right code, but naming another key: the
+        // key inside is checked against the name, not only the seal.
+        let named_wrongly = DatabaseKey::new("another".to_owned()).id();
+        let wrapping = envelope.kdf_params.derive(&code).unwrap();
+        let aad = associated_data(
+            ENVELOPE_FORMAT,
+            &named_wrongly,
+            WRAP_ALGORITHM,
+            KDF_ALGORITHM,
+            &envelope.kdf_params,
+        );
+        let mut nonce = [0u8; NONCE_BYTES];
+        getrandom::fill(&mut nonce).unwrap();
+        let sealed = XChaCha20Poly1305::new_from_slice(wrapping.as_slice())
+            .unwrap()
+            .encrypt(
+                &XNonce::from(nonce),
+                Payload {
+                    msg: PASSPHRASE.as_bytes(),
+                    aad: &aad,
+                },
+            )
+            .unwrap();
+        let misnamed = RecoveryEnvelope {
+            key_id: named_wrongly,
+            wrapped_key: nonce.iter().chain(sealed.iter()).copied().collect(),
+            ..envelope.clone()
+        };
+        assert!(matches!(
+            unwrap_data_key(&misnamed, &code),
+            Err(KeyError::Malformed(_))
+        ));
     }
 
     /// A database whose key is gone is never given a new one: the key would open
