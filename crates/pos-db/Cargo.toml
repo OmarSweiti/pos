@@ -28,6 +28,9 @@ keyring.workspace = true
 getrandom.workspace = true
 # Staff PINs are hashed with Argon2id under a reviewed profile (1.6.2).
 argon2.workspace = true
+# The data key is wrapped under the merchant's recovery code (1.8.5b).
+chacha20poly1305.workspace = true
+zeroize.workspace = true
 # Repositories return owned domain values. The capability grid this crate's
 # migration seeds also remains declared once in `pos_domain::permissions`.
 pos-domain.workspace = true
@@ -35,6 +38,9 @@ pos-domain.workspace = true
 # canonical JSON by DDL, so the audit repository cannot read a row back
 # without it (microstep 1.6.6). Already a runtime dependency of
 # `pos-domain`, so nothing new enters the register binary's graph.
+# The recovery envelope is a versioned JSON file beside every backup
+# (1.8.5b). Already a runtime dependency of `pos-domain`.
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 uuid.workspace = true

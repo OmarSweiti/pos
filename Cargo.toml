@@ -93,6 +93,15 @@ getrandom = "0.4"
 # is done with a PIN. 0.6 writes the same PHC strings 0.5 did, and
 # `the_profile_hashes_to_its_known_answer` holds every later version to that.
 argon2 = { version = "0.6", default-features = false, features = ["alloc", "password-hash", "zeroize"] }
+# The register's data key is wrapped under the merchant's recovery code with
+# XChaCha20-Poly1305 (1.8.5b, the owner's decision of 12 November 2026):
+# RustCrypto's implementation, audited by NCC Group, constant-time on any CPU,
+# with a 192-bit nonce that is safe to draw at random. No default features: the
+# nonce comes from our own `getrandom` call, as the PIN salt does.
+chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc", "zeroize"] }
+# Wipes the recovery code, the derived wrapping key and the data key from
+# memory when they are dropped. Already in the graph through `argon2`.
+zeroize = "1"
 keyring  = "4"
 dotenvy = "0.15"
 sqlx = { version = "0.9", default-features = false, features = [
