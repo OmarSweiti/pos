@@ -592,6 +592,30 @@ pub const COMMANDS: &[CommandSpec] = &[
         approval_requirement: ApprovalRequirement::Never,
         args: &[],
     },
+    // 1.8.5b, its second part: first-run custody, on a machine with no
+    // register yet. No database exists, so no user, role or grant does.
+    CommandSpec {
+        name: "provision_recovery_code",
+        access: Access::NoCapability {
+            reason: "it answers only a machine with no register, before any database, user or \
+                     grant exists: it keeps the new register's key and shows its recovery code \
+                     once, which is how custody begins",
+        },
+        audited: false,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[],
+    },
+    CommandSpec {
+        name: "acknowledge_recovery_code",
+        access: Access::NoCapability {
+            reason: "it confirms the recovery code just shown, by the id it was shown under, on a \
+                     machine with no register: nothing exists yet that a capability could be \
+                     checked against",
+        },
+        audited: false,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[Arg::required("provisioning_id")],
+    },
 ];
 
 /// Names the commands the shell registers, once.

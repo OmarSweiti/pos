@@ -44,6 +44,8 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 # A failure's trace id is random, from the same OS source as the database key.
 getrandom.workspace = true
+# Wipes the recovery code a new register shows once (1.8.5b).
+zeroize.workspace = true
 thiserror.workspace = true
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
