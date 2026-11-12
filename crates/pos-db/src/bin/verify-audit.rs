@@ -521,12 +521,14 @@ fn verify(database: &Path, anchor_path: Option<&Path>) -> Verdict {
         ));
     }
 
-    let (key, key_source) = match pos_db::key::get_or_create_with_source() {
+    // Read the key, never mint one: a verifier must not provision the
+    // machine it runs on any more than it creates the file it reads.
+    let (key, key_source) = match pos_db::key::get_existing() {
         Ok(pair) => pair,
         Err(error) => return refuse(&format!("no database key: {error}")),
     };
 
-    let (connection, schema) = match pos_db::open_for_inspection(database, &key) {
+    let (connection, schema) = match pos_db::open_for_inspection(database, key.expose()) {
         Ok(opened) => opened,
         Err(error) => {
             return refuse(&format!("cannot open {}: {error}", database.display()));

@@ -29,6 +29,18 @@ pub enum DbError {
     Keyring(#[from] keyring::Error),
     #[error("could not generate a database key from the OS: {0}")]
     KeyGeneration(String),
+    /// A database exists and the credential store holds no key for it. It is
+    /// opened with the merchant's recovery code (microstep 1.8.5b), never with
+    /// a new key: a new key opens nothing, and keeping it would leave the
+    /// store holding the wrong key for the one database it serves.
+    #[error(
+        "the database at the register path exists, but the credential store holds no key \
+         for it: it is opened with the recovery code, never with a new key"
+    )]
+    KeyMissingForExistingDatabase,
+    /// Whether a database exists could not be told, so no key is minted.
+    #[error("cannot tell whether a database exists at the register path, so no key is minted: {0}")]
+    DatabasePresenceUnknown(String),
     #[error(
         "database schema is version {found}, but this build only knows {supported}; \
          it was written by a newer version of the application"

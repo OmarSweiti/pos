@@ -408,7 +408,8 @@ impl std::fmt::Debug for Register {
 impl Register {
     /// Open the register in `data_dir`, with the database key 1.8.5's policy
     /// supplies: `POS_DB_KEY` in a debug build, the OS credential store
-    /// otherwise.
+    /// otherwise. A key is minted only when there is no database yet: one
+    /// whose key is gone is the recovery code's to open (1.8.5b).
     ///
     /// # Errors
     ///
@@ -417,10 +418,11 @@ impl Register {
         // The device id first: an install that is not a register here never
         // creates a database file, nor a key for one.
         read_device_id(data_dir)?;
-        let key = pos_db::key::get_or_create().map_err(StartupError::Key)?;
+        let (key, _) =
+            pos_db::key::get_or_create(&data_dir.join(DATABASE_FILE)).map_err(StartupError::Key)?;
         Self::open_with(
             data_dir,
-            &key,
+            key.expose(),
             Box::new(SystemClock),
             Box::new(V7Ids::default()),
         )
