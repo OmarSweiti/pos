@@ -12,6 +12,7 @@ pub mod auth;
 #[cfg(feature = "fixtures")]
 pub mod fixtures;
 pub mod key;
+pub mod recovery;
 pub mod repo;
 pub mod search;
 pub mod seed;
