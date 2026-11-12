@@ -664,3 +664,473 @@ mod hex_bytes {
         decode(&text).ok_or_else(|| D::Error::custom("expected hex"))
     }
 }
+
+#[cfg(test)]
+mod key_custody {
+    //! Microstep 1.8.5b's tests for the envelope and the key. The step's
+    //! `Done when` runs them as `cargo nextest run -p pos-db key_custody::`.
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use std::path::Path;
+
+    use pos_test_support::domain_proptest_config;
+    use proptest::prelude::*;
+
+    use super::*;
+    use crate::DbError;
+    use crate::key::{self, KeySource, MemoryCredentialStore};
+
+    const DATABASE: &str = "register.db";
+
+    /// One way to forge an envelope, and what it changes.
+    type Alteration = (&'static str, fn(&mut RecoveryEnvelope));
+
+    /// A passphrase as production mints one, 64 hex characters, written out.
+    const PASSPHRASE: &str = "3f1c9a7e0b2d4c6e8f1a3b5c7d9e0f2a4b6c8d0e1f3a5b7c9d0e2f4a6b8c0d1e";
+
+    /// Something only this database holds: one setting row.
+    fn keep_a_row(database: &Path, key: &DatabaseKey) {
+        let conn = crate::open(database, key.expose()).unwrap();
+        conn.execute(
+            "INSERT INTO setting (scope, scope_id, key, value_json)
+             VALUES ('register', x'01', 'recovery.drill', '\"kept\"')",
+            [],
+        )
+        .unwrap();
+    }
+
+    fn the_row(database: &Path, key: &DatabaseKey) -> String {
+        crate::open(database, key.expose())
+            .unwrap()
+            .query_row(
+                "SELECT value_json FROM setting WHERE key = 'recovery.drill'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    /// The code's thirty digits, with no separator.
+    fn digits_of(code: &RecoveryCode) -> String {
+        code.formatted()
+            .chars()
+            .filter(char::is_ascii_digit)
+            .collect()
+    }
+
+    /// A code from 24 random digits, four to a group.
+    fn code_from(random: [u8; 24]) -> RecoveryCode {
+        RecoveryCode::from_random_digits(&random).unwrap()
+    }
+
+    /// The step's `Done when`: a fixture backup opens after its credential-store
+    /// entry is deleted, with only its envelope and the once-displayed code. The
+    /// register mints its key on a clean machine and writes a row; the backup is
+    /// the database file copied beside the envelope. Then the machine and its
+    /// credential store are lost, and the code, typed back from what was
+    /// printed, opens the copy, whose row is there.
+    #[test]
+    fn a_backup_opens_with_the_recovery_code_alone() {
+        let machine = tempfile::tempdir().unwrap();
+        let backups = tempfile::tempdir().unwrap();
+        let store = MemoryCredentialStore::new();
+        let database = machine.path().join(DATABASE);
+
+        let (key, source) = key::resolve(None, &store, &database).unwrap();
+        assert_eq!(source, KeySource::CredentialStore);
+        assert_eq!(store.held().as_ref(), Some(&key), "the key was kept");
+        keep_a_row(&database, &key);
+        let code = RecoveryCode::generate().unwrap();
+        let printed = code.formatted();
+        let envelope = wrap_data_key(&key, &code, &KdfParams::fresh().unwrap()).unwrap();
+        envelope.write(&backups.path().join(ENVELOPE_FILE)).unwrap();
+        fs::copy(&database, backups.path().join(DATABASE)).unwrap();
+        drop((key, code, envelope));
+
+        // The machine and its credential store are lost together.
+        store.forget();
+        drop(machine);
+
+        let envelope = RecoveryEnvelope::read(&backups.path().join(ENVELOPE_FILE)).unwrap();
+        let typed = RecoveryCode::parse(&printed).unwrap();
+        let key = unwrap_data_key(&envelope, &typed).unwrap();
+        assert_eq!(the_row(&backups.path().join(DATABASE), &key), "\"kept\"");
+        assert_eq!(store.held(), None, "nothing was minted along the way");
+    }
+
+    /// A code that is not the envelope's opens nothing, and so does an envelope
+    /// with any field altered: authenticated encryption binds them all. A
+    /// derivation outside the bounds this build accepts, and a format or
+    /// algorithm it does not read, are refused before anything is derived.
+    #[test]
+    fn wrong_recovery_code_is_refused() {
+        let key = DatabaseKey::new(PASSPHRASE.to_owned());
+        let code = code_from([
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4,
+        ]);
+        let other = code_from([
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 5,
+        ]);
+        let envelope = wrap_data_key(&key, &code, &KdfParams::fresh().unwrap()).unwrap();
+
+        assert_eq!(unwrap_data_key(&envelope, &code).unwrap(), key);
+        assert!(matches!(
+            unwrap_data_key(&envelope, &other),
+            Err(KeyError::WrongRecoveryCode)
+        ));
+
+        let altered: [Alteration; 4] = [
+            ("the key id", |e| {
+                e.key_id = DatabaseKey::new("another".to_owned()).id();
+            }),
+            ("a byte of the sealed key", |e| {
+                if let Some(byte) = e.wrapped_key.last_mut() {
+                    *byte ^= 1;
+                }
+            }),
+            ("a byte of the salt", |e| {
+                if let Some(byte) = e.kdf_params.salt.first_mut() {
+                    *byte ^= 1;
+                }
+            }),
+            ("the passes", |e| e.kdf_params.t_cost += 1),
+        ];
+        for (what, alter) in altered {
+            let mut forged = envelope.clone();
+            alter(&mut forged);
+            assert!(
+                matches!(
+                    unwrap_data_key(&forged, &code),
+                    Err(KeyError::WrongRecoveryCode)
+                ),
+                "{what}"
+            );
+        }
+
+        let refused_first: [Alteration; 7] = [
+            ("4 GiB asked of the register", |e| {
+                e.kdf_params.m_cost_kib = 4 * 1024 * 1024;
+            }),
+            ("less memory than this build writes", |e| {
+                e.kdf_params.m_cost_kib = 1024
+            }),
+            ("one pass", |e| e.kdf_params.t_cost = 1),
+            ("a short salt", |e| e.kdf_params.salt.truncate(8)),
+            ("a later format", |e| e.format = 2),
+            ("another wrap", |e| {
+                e.wrap_algorithm = "aes256gcm".to_owned()
+            }),
+            ("another derivation", |e| {
+                e.kdf_algorithm = "scrypt".to_owned()
+            }),
+        ];
+        for (what, alter) in refused_first {
+            let mut forged = envelope.clone();
+            alter(&mut forged);
+            assert!(
+                matches!(
+                    unwrap_data_key(&forged, &code),
+                    Err(KeyError::KdfParamsOutOfBounds | KeyError::UnsupportedEnvelope(_))
+                ),
+                "{what}"
+            );
+        }
+        let mut short = envelope.clone();
+        short.wrapped_key.truncate(NONCE_BYTES + TAG_BYTES);
+        assert!(matches!(
+            unwrap_data_key(&short, &code),
+            Err(KeyError::Malformed(_))
+        ));
+    }
+
+    /// A database whose key is gone is never given a new one: the key would open
+    /// nothing, and keeping it would leave the store holding the wrong key. The
+    /// store that kept its key still answers with it, and a clean machine, with
+    /// neither a key nor a database, mints one once and keeps it.
+    #[test]
+    fn key_generation_refuses_when_a_database_already_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join(DATABASE);
+        let kept = MemoryCredentialStore::new();
+        let (key, _) = key::resolve(None, &kept, &database).unwrap();
+        keep_a_row(&database, &key);
+
+        let wiped = MemoryCredentialStore::new();
+        assert!(matches!(
+            key::resolve(None, &wiped, &database),
+            Err(DbError::KeyMissingForExistingDatabase)
+        ));
+        assert_eq!(wiped.held(), None, "no key was minted");
+        assert!(matches!(
+            key::resolve_existing(None, &wiped),
+            Err(DbError::KeyMissingForExistingDatabase)
+        ));
+
+        let (again, source) = key::resolve(None, &kept, &database).unwrap();
+        assert_eq!((again, source), (key.clone(), KeySource::CredentialStore));
+
+        let clean = MemoryCredentialStore::new();
+        let (minted, _) = key::resolve(None, &clean, &dir.path().join("another.db")).unwrap();
+        assert_eq!(clean.held().as_ref(), Some(&minted));
+        assert_ne!(minted, key);
+        assert_eq!(minted.expose().len(), 64);
+        assert!(minted.expose().chars().all(|c| c.is_ascii_hexdigit()));
+
+        // Whether a database is there cannot be told through a file: no key.
+        #[cfg(unix)]
+        {
+            let file = dir.path().join("a-file");
+            fs::write(&file, b"").unwrap();
+            assert!(matches!(
+                key::resolve(None, &MemoryCredentialStore::new(), &file.join(DATABASE)),
+                Err(DbError::DatabasePresenceUnknown(_))
+            ));
+        }
+    }
+
+    /// The envelope is a file a later process reads back exactly, written whole:
+    /// nothing staged is left beside it, and a rewrite replaces it, after which
+    /// the old code opens nothing there. Its shape is written out here.
+    #[test]
+    fn recovery_envelope_survives_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(ENVELOPE_FILE);
+        let key = DatabaseKey::new(PASSPHRASE.to_owned());
+        let code = RecoveryCode::generate().unwrap();
+        let envelope = wrap_data_key(&key, &code, &KdfParams::fresh().unwrap()).unwrap();
+        envelope.write(&path).unwrap();
+
+        let read = RecoveryEnvelope::read(&path).unwrap();
+        assert_eq!(read, envelope);
+        assert_eq!(unwrap_data_key(&read, &code).unwrap(), key);
+        let names: Vec<String> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(names, [ENVELOPE_FILE]);
+
+        let json: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let field = |name: &str| json.get(name).cloned().unwrap();
+        assert_eq!(field("format"), serde_json::json!(1));
+        assert_eq!(field("key_id"), serde_json::json!(key.id()));
+        assert_eq!(
+            field("wrap_algorithm"),
+            serde_json::json!("xchacha20poly1305")
+        );
+        assert_eq!(field("kdf_algorithm"), serde_json::json!("argon2id"));
+        let params = field("kdf_params");
+        for (name, value) in [
+            ("version", 19),
+            ("m_cost_kib", 65_536),
+            ("t_cost", 3),
+            ("p_cost", 4),
+        ] {
+            assert_eq!(params.get(name), Some(&serde_json::json!(value)), "{name}");
+        }
+        let hex_len = |value: Option<&serde_json::Value>| {
+            value.and_then(serde_json::Value::as_str).map(str::len)
+        };
+        assert_eq!(hex_len(params.get("salt")), Some(32), "a 16-byte salt");
+        assert_eq!(
+            hex_len(json.get("wrapped_key")),
+            Some(2 * (24 + 64 + 16)),
+            "a nonce, the sealed passphrase and its tag"
+        );
+
+        let reissued = RecoveryCode::generate().unwrap();
+        let replacement = wrap_data_key(&key, &reissued, &KdfParams::fresh().unwrap()).unwrap();
+        replacement.write(&path).unwrap();
+        let read = RecoveryEnvelope::read(&path).unwrap();
+        assert_eq!(read, replacement);
+        assert!(matches!(
+            unwrap_data_key(&read, &code),
+            Err(KeyError::WrongRecoveryCode)
+        ));
+
+        for not_an_envelope in [&b"{\"format\": 1}"[..], b"not json", b""] {
+            fs::write(&path, not_an_envelope).unwrap();
+            assert!(matches!(
+                RecoveryEnvelope::read(&path),
+                Err(KeyError::EnvelopeUnreadable { .. })
+            ));
+        }
+        let mut extra = serde_json::to_value(&envelope).unwrap();
+        if let Some(object) = extra.as_object_mut() {
+            object.insert("note".to_owned(), serde_json::json!("x"));
+        }
+        fs::write(&path, serde_json::to_vec(&extra).unwrap()).unwrap();
+        assert!(matches!(
+            RecoveryEnvelope::read(&path),
+            Err(KeyError::EnvelopeUnreadable { .. })
+        ));
+    }
+
+    /// The code, the key and the wrapped key never print themselves, a typed
+    /// code's refusal names a place and never a digit, and the envelope's file
+    /// holds neither the code nor the key.
+    #[test]
+    fn recovery_code_and_wrapped_key_are_redacted() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = DatabaseKey::new(PASSPHRASE.to_owned());
+        let code = RecoveryCode::generate().unwrap();
+        let printed = code.formatted();
+        let envelope = wrap_data_key(&key, &code, &KdfParams::fresh().unwrap()).unwrap();
+
+        assert_eq!(format!("{code:?}"), "RecoveryCode(redacted)");
+        assert_eq!(format!("{key:?}"), "DatabaseKey(redacted)");
+        let shown = format!("{envelope:?}");
+        assert!(
+            shown.contains("wrapped_key: 104 bytes, redacted"),
+            "{shown}"
+        );
+        assert!(!shown.contains(&hex_bytes::encode(&envelope.wrapped_key)));
+        assert!(!shown.contains(PASSPHRASE));
+
+        let mut typo: Vec<char> = printed.chars().collect();
+        if let Some(first) = typo.first_mut() {
+            *first = if *first == '9' { '0' } else { '9' };
+        }
+        let typo: String = typo.into_iter().collect();
+        let refusals = [
+            RecoveryCode::parse(&typo).unwrap_err(),
+            RecoveryCode::parse(&format!("{}x", printed.as_str())).unwrap_err(),
+            RecoveryCode::parse(&format!("{}1", printed.as_str())).unwrap_err(),
+        ];
+        assert_eq!(
+            refusals.clone().map(|refusal| refusal.to_string()),
+            [
+                "group 1 does not check: a digit in it was mistyped".to_owned(),
+                "character 36 is not a digit".to_owned(),
+                "a recovery code has 30 digits, and this has 31".to_owned(),
+            ]
+        );
+
+        envelope.write(&dir.path().join(ENVELOPE_FILE)).unwrap();
+        let file = fs::read_to_string(dir.path().join(ENVELOPE_FILE)).unwrap();
+        assert!(!file.contains(printed.as_str()));
+        assert!(!file.contains(&digits_of(&code)));
+        assert!(!file.contains(PASSPHRASE));
+    }
+
+    /// The Damm table's published example: 572 is closed by 4, and 5724 checks.
+    #[test]
+    fn the_check_digit_is_damms() {
+        assert_eq!(damm(&[5, 7, 2]), Some(4));
+        assert_eq!(damm(&[5, 7, 2, 4]), Some(0));
+        assert_eq!(damm(&[5, 10]), None, "ten is not a digit");
+    }
+
+    /// Bytes become digits without bias: each digit from exactly 25 of the 250
+    /// bytes kept, and the six above them drawn again.
+    #[test]
+    fn recovery_digits_are_drawn_without_bias() {
+        let mut counts = [0usize; 10];
+        for byte in u8::MIN..=u8::MAX {
+            if let Some(digit) = digit_from_byte(byte)
+                && let Some(count) = counts.get_mut(usize::from(digit))
+            {
+                *count += 1;
+            }
+        }
+        assert_eq!(counts, [25; 10]);
+        assert!((250..=255).all(|byte| digit_from_byte(byte).is_none()));
+    }
+
+    /// Two generated codes read back from their printed form, and differ.
+    #[test]
+    fn generated_codes_check_and_never_repeat() {
+        let a = RecoveryCode::generate().unwrap();
+        let b = RecoveryCode::generate().unwrap();
+        assert_eq!(RecoveryCode::parse(&a.formatted()).unwrap(), a);
+        assert_eq!(RecoveryCode::parse(&b.formatted()).unwrap(), b);
+        assert_ne!(a, b);
+        assert_eq!(a.formatted().len(), 35, "six groups of five, five hyphens");
+    }
+
+    const ARABIC_INDIC: [char; 10] = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
+    const EASTERN_ARABIC_INDIC: [char; 10] = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
+
+    /// `text` with its Western digits written from `script`.
+    fn in_script(text: &str, script: &[char; 10]) -> String {
+        text.chars()
+            .map(|character| {
+                character
+                    .to_digit(10)
+                    .and_then(|digit| script.get(usize::try_from(digit).ok()?).copied())
+                    .unwrap_or(character)
+            })
+            .collect()
+    }
+
+    proptest! {
+        #![proptest_config(domain_proptest_config())]
+
+        /// Any code reads back from its printed form, from its digits run
+        /// together, from spaces and a right-to-left mark in place of hyphens,
+        /// and from Arabic-Indic or Eastern Arabic-Indic digits.
+        #[test]
+        fn prop_a_code_reads_back_however_it_is_typed(random in proptest::array::uniform24(0u8..10)) {
+            let code = code_from(random);
+            let printed = code.formatted();
+            let spaced = printed.replace('-', " \u{200F}");
+            for typed in [
+                printed.to_string(),
+                digits_of(&code),
+                spaced,
+                in_script(&printed, &ARABIC_INDIC),
+                in_script(&printed, &EASTERN_ARABIC_INDIC),
+            ] {
+                prop_assert_eq!(&RecoveryCode::parse(&typed).unwrap(), &code);
+            }
+        }
+
+        /// Any one digit typed wrong is refused, naming its group.
+        #[test]
+        fn prop_one_mistyped_digit_names_its_group(
+            random in proptest::array::uniform24(0u8..10),
+            position in 0usize..30,
+            shift in 1u32..10,
+        ) {
+            let code = code_from(random);
+            let typed: String = digits_of(&code)
+                .chars()
+                .enumerate()
+                .map(|(index, digit)| {
+                    if index == position {
+                        char::from_digit((digit.to_digit(10).unwrap() + shift) % 10, 10).unwrap()
+                    } else {
+                        digit
+                    }
+                })
+                .collect();
+            prop_assert_eq!(
+                RecoveryCode::parse(&typed),
+                Err(RecoveryCodeError::Mistyped { groups: vec![position / 5 + 1] })
+            );
+        }
+
+        /// Any two neighbouring digits of a group swapped are refused, naming
+        /// the group; two equal digits swapped are the same code.
+        #[test]
+        fn prop_two_swapped_neighbours_name_their_group(
+            random in proptest::array::uniform24(0u8..10),
+            group in 0usize..6,
+            offset in 0usize..4,
+        ) {
+            let code = code_from(random);
+            let digits: Vec<char> = digits_of(&code).chars().collect();
+            let first = group * 5 + offset;
+            let mut swapped = digits.clone();
+            swapped.swap(first, first + 1);
+            let typed: String = swapped.into_iter().collect();
+            if digits.get(first) == digits.get(first + 1) {
+                prop_assert_eq!(RecoveryCode::parse(&typed), Ok(code));
+            } else {
+                prop_assert_eq!(
+                    RecoveryCode::parse(&typed),
+                    Err(RecoveryCodeError::Mistyped { groups: vec![group + 1] })
+                );
+            }
+        }
+    }
+}
