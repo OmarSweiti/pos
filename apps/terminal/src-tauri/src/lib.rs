@@ -6,6 +6,7 @@ pub mod health;
 pub mod ipc;
 pub(crate) mod payload;
 pub mod print_queue;
+pub mod print_service;
 pub mod recovery;
 pub mod scan;
 pub mod state;
@@ -87,6 +88,17 @@ pub fn run() {
                 Ok(data_dir) => state::Till::open(&data_dir),
                 Err(_) => state::Till::from_result(Err(state::StartupError::DataDirUnavailable)),
             };
+            // The print worker, off the command path (1.7.14c). A worker that
+            // cannot start leaves every receipt kept and queued, as with no
+            // printer: selling never stops for one.
+            if let state::Till::Open(register) = &till {
+                match print_service::start(register, print_service::POLL) {
+                    Ok(worker) => {
+                        app.manage(worker);
+                    }
+                    Err(error) => tracing::error!(error = %error, "the print worker did not start"),
+                }
+            }
             app.manage(till);
             Ok(())
         })

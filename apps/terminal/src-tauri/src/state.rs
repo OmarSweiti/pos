@@ -28,7 +28,8 @@ use std::fs;
 use std::io;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pos_db::DbError;
@@ -70,7 +71,8 @@ pub const PRODUCER_VERSION: &str = concat!("terminal/", env!("CARGO_PKG_VERSION"
 
 /// The till: open on a register, or closed with the reason it did not open.
 pub enum Till {
-    Open(Box<Register>),
+    /// Shared, because the print worker `run` starts holds it too (1.7.14c).
+    Open(Arc<Register>),
     Closed(StartupError),
 }
 
@@ -84,7 +86,7 @@ impl Till {
     /// The till a start-up attempt leaves.
     pub fn from_result(opened: Result<Register, StartupError>) -> Till {
         match opened {
-            Ok(register) => Till::Open(Box::new(register)),
+            Ok(register) => Till::Open(Arc::new(register)),
             Err(refusal) => {
                 tracing::error!(refusal = %refusal, "the till stays closed");
                 Till::Closed(refusal)
@@ -382,6 +384,8 @@ pub struct Register {
     recovered: Recovered,
     receipt_device: ReceiptDevice,
     printer_binding: PrinterBindingState,
+    /// The print worker's nudge, once one runs (1.7.14c).
+    print_nudge: OnceLock<Sender<()>>,
 }
 
 /// The register's identity and what recovery did; never the session's
@@ -458,6 +462,7 @@ impl Register {
             recovered,
             receipt_device,
             printer_binding,
+            print_nudge: OnceLock::new(),
         })
     }
 
@@ -481,6 +486,20 @@ impl Register {
     #[must_use]
     pub fn printer_binding(&self) -> &PrinterBindingState {
         &self.printer_binding
+    }
+
+    /// Give the register its print worker's nudge. `false` when it already
+    /// has one: a register has one worker.
+    pub(crate) fn set_print_nudge(&self, nudge: Sender<()>) -> bool {
+        self.print_nudge.set(nudge).is_ok()
+    }
+
+    /// Ask the print worker to drain the queue now. `false` when no worker
+    /// runs, or it has stopped; the receipt then waits for one.
+    pub fn nudge_printer(&self) -> bool {
+        self.print_nudge
+            .get()
+            .is_some_and(|nudge| nudge.send(()).is_ok())
     }
 
     #[must_use]
