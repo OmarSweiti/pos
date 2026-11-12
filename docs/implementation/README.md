@@ -308,6 +308,11 @@ decision of 8 November 2026: the approval one for the first command that brings 
 the sale to payment, and the department one for #330. `1.7.14`, added that day, binds a register
 to its printer; a register with no binding, or one it cannot honour, renders every receipt for the
 80 mm simulator profile and queues it.
+`1.8.5b` is **partially delivered**: the merchant's recovery code, thirty digits with a check digit
+in each group of five, wraps the register's data key with XChaCha20-Poly1305 under Argon2id, and a
+copy of the database opens with that code alone after the credential store is lost. A key is no
+longer minted beside a database whose key is gone. First-run provisioning, the printed sheet and the
+screen are its remaining three parts.
 Group 1.9's `1.9.5` is **partially delivered**: a shift opens with a float counted by denomination,
 on a business date the clock derives when it is trusted and the operator confirms, audited, when it
 is not; one stays open per register; and only its opener closes it, with a fact of its own and no

@@ -84,11 +84,7 @@ PLANNED: dict[str, tuple[str, ...]] = {
         "golden_receipt_ar_58mm",
         "golden_receipt_ar_80mm",
     ),
-    "1.8.5b": (
-        "a_backup_opens_with_the_recovery_code_alone",
-        "key_generation_refuses_when_a_database_already_exists",
-        "the_wrapped_envelope_travels_with_every_backup",
-    ),
+    "1.8.5b": ("the_wrapped_envelope_travels_with_every_backup",),
     "1.8.7": ("bad_key_yields_recovery_state_not_panic",),
     "1.8.8": ("low_disk_blocks_new_sales_and_alarms",),
     "1.11.10b": (
@@ -481,6 +477,7 @@ zero_due_tender_completes_and_issues_a_fiscal_doc
 # the initial ceiling into a monotonic history rather than a one-time maximum.
 PLANNED_RETIRED: frozenset[str] = frozenset(
     {
+        "a_backup_opens_with_the_recovery_code_alone",
         "a_checkout_operation_row_never_outlives_its_commit",
         "a_consumed_handle_is_still_consumed_after_restart",
         "a_different_actor_is_refused",
@@ -513,6 +510,7 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "inactive_product_cannot_be_added_but_can_be_refunded",
         "interrupted_finalize_resumes_without_double_outbox_row",
         "interrupted_finalize_resumes_without_double_stock_event",
+        "key_generation_refuses_when_a_database_already_exists",
         "manager_reset_retires_old_hash_and_audits",
         "manager_self_approval_denied_when_policy_bans_it",
         "mutating_an_identity_column_breaks_the_chain",

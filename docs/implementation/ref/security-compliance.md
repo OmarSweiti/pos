@@ -585,6 +585,8 @@ The backup was "SQLCipher-encrypted with the same key" as the live database, and
 - Key generation **refuses to mint a new key when a database file already exists** at the register path. Minting one silently is how an openable database becomes an unopenable one.
 - Backups go to **two** destinations, one of them off the machine, and each destination's age is a device-health metric. Theft, fire and ransomware take the machine and its local backup directory together.
 
+*As delivered at 1.8.5b's first part (12 November 2026), by the owner's decisions of that day:* the recovery code is **30 digits in six groups of five**, each group four random digits and a Damm check digit, typed alike on an Arabic or an English keyboard. The wrapping key is derived from it with **Argon2id at RFC 9106's second recommended profile** (64 MiB, three passes, four lanes, a 16-byte salt), and the data key is sealed with **XChaCha20-Poly1305** under a random 192-bit nonce, every other field of the envelope bound in as associated data. The envelope is the file `recovery-envelope.json`; the code is never written to a disk, and nothing prints it but the provisioning screen and sheet. `key::get_or_create` refuses to mint a key beside an existing database (`KeyMissingForExistingDatabase`).
+
 **The demonstration this makes possible** — destroy the database and the credential-store entry, restore from the off-machine backup using only the printed recovery code, and find every unsynced sale — is the one that was written down. It is now the one that can pass.
 
 ### The credential store, described accurately
