@@ -509,6 +509,10 @@ mod tests {
         {
             std::thread::sleep(Duration::from_millis(50));
         }
+        assert!(
+            !backup::generations(&destination).unwrap().is_empty(),
+            "a backup is taken as the worker starts, not an hour later"
+        );
         worker.stop();
         let taken = backup::generations(&destination).unwrap();
         assert_eq!(
