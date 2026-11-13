@@ -233,6 +233,8 @@ It contains nothing else — no cart, no tender detail, no customer record. The 
 
 **Tests:** `paper_out_warns_before_tender_not_after` · `print_failure_after_finalize_leaves_sale_complete` · `reprint_is_byte_identical_including_qr` · `queue_survives_restart` · `an_unknown_print_outcome_never_auto_retries_the_drawer_pulse` · `receipt_retry_never_repeats_the_drawer_pulse` · `simulator_fails_midway_when_scripted` · `duplicate_artifact_links_the_original_and_adds_the_duplicate_watermark`.
 
+**The recovery sheet is the one page these rules do not keep** (microstep 1.8.5b, its third part, 13 November 2026). It carries the merchant's recovery code, so it is a hardware effect and nothing else: no `receipt_artifact`, no `print_job`, no retry, and no reprint, because a stored copy is a copy of the code. `pos_hardware::recovery_sheet` renders it through the receipt's layout and rasteriser, in Arabic and English, sends it once, and wipes its page and bytes once the printer answers. The classification above still decides what a person may do next: `Failed` proves no paper, so the sheet may be asked for again; `Printed`, `Partial` and `Unknown` each count as the one sheet on paper. A new machine has no printer binding yet, so the screen names the printer as a binding names it, and only the emulator's profiles pass before milestone 5.8. [`ipc-contract.md`](ipc-contract.md) has `print_recovery_code`.
+
 ---
 
 ## 3a · When there is no printer
