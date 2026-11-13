@@ -334,3 +334,295 @@ fn to_the_minute(instant: Timestamp) -> String {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    use super::*;
+    use crate::emulator::{ConnectionFault, Emulator, EmulatorConfig};
+    use crate::net::NetworkPrinter;
+    use crate::{FailReason, HwError, PrinterStatus};
+
+    /// A code of the screen's shape. Its check digits are not this crate's
+    /// to know, so any digits will do.
+    const CODE: &str = "12340-56781-90122-34563-78904-13575";
+    const KEY_ID: &str = "0123456789abcdef0123456789abcdef";
+
+    fn at() -> Timestamp {
+        Timestamp::from_epoch_milliseconds(1_794_590_717_123).unwrap()
+    }
+
+    fn sheet() -> RecoverySheet {
+        RecoverySheet::new(CODE, KEY_ID, at()).unwrap()
+    }
+
+    /// The text of every block, in order.
+    fn texts(sheet: &RecoverySheet) -> Vec<(String, TextStyle, bool)> {
+        sheet
+            .blocks()
+            .into_iter()
+            .filter_map(|block| match block {
+                Block::Text {
+                    text, style, rtl, ..
+                } => Some((text.to_owned(), style, rtl)),
+                Block::Gap | Block::Rule => None,
+            })
+            .collect()
+    }
+
+    /// A printer that answers every document with one outcome, and counts
+    /// what it was sent.
+    struct Answers {
+        outcome: PrintOutcome,
+        sent: Mutex<Vec<Vec<u8>>>,
+    }
+
+    impl Answers {
+        fn new(outcome: PrintOutcome) -> Self {
+            Self {
+                outcome,
+                sent: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl ReceiptPrinter for Answers {
+        fn print(&self, doc: &RenderedReceipt) -> PrintOutcome {
+            self.sent.lock().unwrap().push(doc.bytes.clone());
+            self.outcome
+        }
+        fn open_drawer(&self) -> Result<(), HwError> {
+            Ok(())
+        }
+        fn status(&self) -> PrinterStatus {
+            PrinterStatus::Ready
+        }
+    }
+
+    /// The sheet takes the code exactly as the screen shows it, and refuses
+    /// any other shape without repeating what it was given.
+    #[test]
+    fn recovery_sheet_takes_the_code_as_the_screen_shows_it() {
+        assert!(RecoverySheet::new(CODE, KEY_ID, at()).is_ok());
+        assert!(RecoverySheet::new(CODE, KEY_ID.get(..KEY_ID_DIGITS).unwrap(), at()).is_ok());
+
+        for code in [
+            "",
+            "12340-56781-90122-34563-78904",
+            "12340-56781-90122-34563-78904-13575-24686",
+            "1234-56781-90122-34563-78904-13575",
+            "123400-56781-90122-34563-78904-13575",
+            "12340 56781 90122 34563 78904 13575",
+            "123405678190122345637890413575",
+            "12340-56781-90122-34563-78904-13575-",
+            "-12340-56781-90122-34563-78904-13575",
+            "12340--56781-90122-34563-78904-13575",
+            "12340-56781-90122-34563-78904-1357a",
+            "١٢٣٤٠-56781-90122-34563-78904-13575",
+        ] {
+            let refused = RecoverySheet::new(code, KEY_ID, at()).unwrap_err();
+            assert_eq!(refused, SheetError::NotACode, "{code:?}");
+            assert!(
+                !refused.to_string().contains("12340"),
+                "a refusal never repeats the code"
+            );
+        }
+        for key_id in ["", "0123abc", "0123ABCD", "0123abcg", "g123abcd"] {
+            assert_eq!(
+                RecoverySheet::new(CODE, key_id, at()).unwrap_err(),
+                SheetError::NotAKeyId,
+                "{key_id:?}"
+            );
+        }
+    }
+
+    /// The code is set in three lines of two groups, in order, large, bold
+    /// and left to right, and nowhere else on the sheet. Under it, the key
+    /// id's first eight digits and the minute it was printed, in UTC; every
+    /// fixed sentence in Arabic, then in English.
+    #[test]
+    fn recovery_sheet_sets_the_code_in_three_lines_of_two_groups() {
+        let sheet = sheet();
+        let texts = texts(&sheet);
+        let code_style = TextStyle {
+            px_per_em: CODE_PX_PER_EM,
+            weight: Weight::Bold,
+        };
+        let code_lines: Vec<&str> = texts
+            .iter()
+            .filter(|(_, style, _)| *style == code_style)
+            .map(|(text, _, rtl)| {
+                assert!(!rtl, "the code is set left to right");
+                text.as_str()
+            })
+            .collect();
+        assert_eq!(
+            code_lines,
+            ["12340-56781", "90122-34563", "78904-13575"],
+            "three lines of two groups, in the order they are typed"
+        );
+        const { assert!(CODE_PX_PER_EM > BODY_PX_PER_EM) };
+        for group in CODE.split('-') {
+            let carrying = texts.iter().filter(|(text, ..)| text.contains(group));
+            assert_eq!(carrying.count(), 1, "group {group} is printed once");
+        }
+
+        let all: Vec<&str> = texts.iter().map(|(text, ..)| text.as_str()).collect();
+        assert!(all.contains(&"01234567"), "the key id's first eight digits");
+        assert!(!all.iter().any(|text| text.contains("89abcdef")));
+        assert!(all.contains(&"2026-11-13 17:25 UTC"), "{all:?}");
+        let titles = [words::TITLE_AR, words::TITLE_EN];
+        assert_eq!(
+            all.get(..2),
+            Some(titles.as_slice()),
+            "Arabic first, then English"
+        );
+        for (arabic, english) in [
+            (words::KEEP_AR, words::KEEP_EN),
+            (words::LOST_AR, words::LOST_EN),
+            (words::HOLDER_AR, words::HOLDER_EN),
+        ] {
+            let at = all.iter().position(|text| *text == arabic).unwrap();
+            assert_eq!(all.get(at + 1), Some(&english));
+            let rtl = |wanted: &str| texts.iter().find(|(text, ..)| text == wanted).unwrap().2;
+            assert!(rtl(arabic) && !rtl(english), "each in its own direction");
+        }
+    }
+
+    /// The sheet fits both papers: no glyph outside the page, and each line
+    /// of the code on one row of its own, never broken.
+    #[test]
+    fn recovery_sheet_fits_both_papers_with_each_code_line_whole() {
+        let faces = Faces::load().unwrap();
+        let sheet = sheet();
+        for paper in PaperWidth::ALL {
+            let page = sheet.lay_out(&faces, paper).unwrap();
+            let width = i32::try_from(paper.width_px()).unwrap();
+            for glyph in page.lines.iter().flat_map(|line| &line.glyphs) {
+                assert!((0..width).contains(&glyph.x_px), "{paper:?}: {glyph:?}");
+            }
+            for line in &sheet.lines {
+                let alone = layout::lay_out_blocks(
+                    &faces,
+                    &[Block::Text {
+                        text: line.as_str(),
+                        style: TextStyle {
+                            px_per_em: CODE_PX_PER_EM,
+                            weight: Weight::Bold,
+                        },
+                        rtl: false,
+                        alignment: Alignment::Center,
+                    }],
+                    paper,
+                    TextDirection::RightToLeft,
+                )
+                .unwrap();
+                assert_eq!(alone.lines.len(), 1, "{paper:?}: a code line is whole");
+            }
+
+            let rendered = sheet.render(paper).unwrap();
+            assert_eq!(rendered.bitmap().width_px, paper.width_px());
+            assert!(rendered.bitmap().ink() > 0, "{paper:?}");
+        }
+    }
+
+    /// Whatever the printer answers, the sheet is sent to it exactly once,
+    /// whole, and its answer is returned as it was given: a refusal is never
+    /// tried again here.
+    #[test]
+    fn recovery_sheet_is_sent_once_whatever_the_printer_answers() {
+        let profile = PrinterProfile::simulator(PaperWidth::Mm80);
+        for outcome in [
+            PrintOutcome::Printed,
+            PrintOutcome::Failed(FailReason::PaperOut),
+            PrintOutcome::Failed(FailReason::CoverOpen),
+            PrintOutcome::Failed(FailReason::Offline),
+            PrintOutcome::Failed(FailReason::Unreachable),
+            PrintOutcome::Partial { acknowledged: 7 },
+            PrintOutcome::Unknown,
+        ] {
+            let printer = Answers::new(outcome);
+            assert_eq!(sheet().print(&printer, &profile).unwrap(), outcome);
+            let sent = printer.sent.lock().unwrap();
+            assert_eq!(sent.len(), 1, "{outcome:?}: sent once");
+            let document = sent.first().unwrap();
+            assert!(document.starts_with(&[0x1B, 0x40]), "it begins ESC @");
+            assert!(
+                document.ends_with(&[0x1D, 0x56, 0x01]),
+                "and ends with a cut"
+            );
+        }
+    }
+
+    /// A profile whose paper the build does not render for is refused before
+    /// anything is sent.
+    #[test]
+    fn recovery_sheet_is_not_sent_for_a_paper_it_cannot_render() {
+        let mut profile = PrinterProfile::simulator(PaperWidth::Mm80);
+        profile.dot_width = Fact::Unknown;
+        let printer = Answers::new(PrintOutcome::Printed);
+        assert_eq!(
+            sheet().print(&printer, &profile).unwrap_err(),
+            SheetError::NoPaper {
+                profile_id: profile.profile_id.clone()
+            }
+        );
+        assert!(printer.sent.lock().unwrap().is_empty());
+    }
+
+    /// The sheet reaches 1.7.12's emulated printer over TCP 9100 as one
+    /// document, cut, whose page is the sheet's own, dot for dot; and a
+    /// printer out of paper is refused before a byte, with nothing printed.
+    #[test]
+    fn recovery_sheet_reaches_the_emulated_printer_as_rendered() {
+        let profile = PrinterProfile::emulator(PaperWidth::Mm80);
+        let emulator = Emulator::start(EmulatorConfig {
+            printer: profile.clone(),
+            drawer: None,
+            listen: "127.0.0.1:0".parse().unwrap(),
+            out_dir: None,
+        })
+        .unwrap();
+        let printer = NetworkPrinter::tcp(emulator.address(), profile.clone()).unwrap();
+
+        emulator.script(ConnectionFault::PaperOut);
+        assert_eq!(
+            sheet().print(&printer, &profile).unwrap(),
+            PrintOutcome::Failed(FailReason::PaperOut)
+        );
+        assert!(emulator.settled(1, Duration::from_secs(5)));
+        assert!(emulator.jobs().is_empty(), "nothing reached paper");
+
+        assert_eq!(
+            sheet().print(&printer, &profile).unwrap(),
+            PrintOutcome::Printed
+        );
+        assert!(emulator.settled(2, Duration::from_secs(5)));
+        let jobs = emulator.jobs();
+        assert_eq!(jobs.len(), 1, "one sheet");
+        let job = jobs.first().unwrap();
+        assert!(job.cut);
+        let expected = sheet().render(PaperWidth::Mm80).unwrap();
+        assert_eq!(
+            &job.page,
+            expected.bitmap(),
+            "the page printed is the sheet"
+        );
+    }
+
+    /// Neither the sheet nor its page shows the code in a log.
+    #[test]
+    fn recovery_sheet_never_shows_its_code_in_a_log() {
+        let sheet = sheet();
+        assert_eq!(format!("{sheet:?}"), "RecoverySheet(redacted)");
+        let page = sheet.render(PaperWidth::Mm58).unwrap();
+        let shown = format!("{page:?}");
+        assert!(shown.starts_with("SheetPage(384x") && shown.ends_with(", redacted)"));
+        for group in CODE.split('-') {
+            assert!(!shown.contains(group));
+        }
+    }
+}
