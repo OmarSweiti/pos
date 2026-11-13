@@ -84,7 +84,6 @@ PLANNED: dict[str, tuple[str, ...]] = {
         "golden_receipt_ar_58mm",
         "golden_receipt_ar_80mm",
     ),
-    "1.8.5b": ("the_wrapped_envelope_travels_with_every_backup",),
     "1.8.7": ("bad_key_yields_recovery_state_not_panic",),
     "1.8.8": ("low_disk_blocks_new_sales_and_alarms",),
     "1.11.10b": (
@@ -535,6 +534,7 @@ PLANNED_RETIRED: frozenset[str] = frozenset(
         "tail_deletion_is_detected_against_the_last_anchor",
         "the_effect_and_the_consumption_commit_together_or_not_at_all",
         "the_missing_printer_is_an_alarm_not_a_modal",
+        "the_wrapped_envelope_travels_with_every_backup",
         "training_auto_off_at_shift_close",
         "two_offline_registers_selling_the_last_unit_both_succeed",
         "unicode_names_roundtrip_through_db_and_fts",
