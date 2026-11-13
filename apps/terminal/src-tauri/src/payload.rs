@@ -10,6 +10,7 @@
 
 use std::collections::BTreeMap;
 
+use pos_db::repo::checkpoint::AuditCheckpoint;
 use pos_db::repo::receipt::{ArtifactKind, Id, ReceiptArtifact};
 use pos_domain::audit::VERSION as AUDIT_CANONICAL_VERSION;
 use pos_domain::{AuditIntent, RegisterId};
@@ -61,6 +62,22 @@ pub(crate) fn audit_payload(
         "payload": intent.payload,
         "reason": intent.reason,
         "register_id": register.as_uuid().hyphenated().to_string(),
+    }))
+}
+
+/// An `audit_checkpoint` row as it travels: its columns, ids as text and the
+/// head's hash in hex (1.8.6).
+pub(crate) fn checkpoint_payload(
+    checkpoint: &AuditCheckpoint,
+) -> Result<String, serde_json::Error> {
+    canonical(&json!({
+        "anchor_ref": checkpoint.anchor_ref,
+        "anchored_at": checkpoint.anchored_at.to_iso8601(),
+        "id": checkpoint.id.hyphenated().to_string(),
+        "last_hash": hex(&checkpoint.last_hash),
+        "last_seq": checkpoint.last_seq,
+        "register_id": checkpoint.register.as_uuid().hyphenated().to_string(),
+        "source_kind": checkpoint.source.as_str(),
     }))
 }
 

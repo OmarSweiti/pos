@@ -1,6 +1,7 @@
 //! Tauri shell: the UI → IPC → pure-domain boundary.
 //! Business rules live in `pos-domain`; this crate only marshals.
 
+pub mod backup_service;
 pub mod commands;
 pub mod health;
 pub mod ipc;
@@ -88,9 +89,10 @@ pub fn run() {
         // (1.8.2c). A refusal keeps the till closed and says why: every
         // command answers with it rather than with an empty till.
         .setup(|app| {
-            let till = match app.path().app_data_dir() {
-                Ok(data_dir) => state::Till::open(&data_dir),
-                Err(_) => state::Till::from_result(Err(state::StartupError::DataDirUnavailable)),
+            let data_dir = app.path().app_data_dir().ok();
+            let till = match &data_dir {
+                Some(data_dir) => state::Till::open(data_dir),
+                None => state::Till::from_result(Err(state::StartupError::DataDirUnavailable)),
             };
             // The print worker, off the command path (1.7.14c). A worker that
             // cannot start leaves every receipt kept and queued, as with no
@@ -101,6 +103,23 @@ pub fn run() {
                         app.manage(worker);
                     }
                     Err(error) => tracing::error!(error = %error, "the print worker did not start"),
+                }
+            }
+            // The backup worker, off the command path, hourly (1.8.6). One
+            // that cannot start stops no sale; the log says so.
+            if let (state::Till::Open(register), Some(data_dir)) = (&till, &data_dir) {
+                match backup_service::start(
+                    register,
+                    data_dir,
+                    provisioning::KeyCustody::os(),
+                    backup_service::EVERY,
+                ) {
+                    Ok(worker) => {
+                        app.manage(worker);
+                    }
+                    Err(error) => {
+                        tracing::error!(error = %error, "the backup worker did not start")
+                    }
                 }
             }
             app.manage(till);
