@@ -37,6 +37,9 @@ rust_decimal.workspace = true
 # `pos-domain`, so this adds no supply-chain surface.
 serde.workspace = true
 serde_json.workspace = true
+# The recovery sheet's dots and bytes are wiped once sent (1.8.5b): the code is
+# on that page. Already in the register's graph through `pos-db`.
+zeroize.workspace = true
 # The emulated printer's PNG pages (1.7.12) — only with the `emulator` feature.
 png = { workspace = true, optional = true }
 
