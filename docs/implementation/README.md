@@ -20,7 +20,7 @@ Then work the phase you are in, consulting `ref/` as the microsteps point you th
 remains open in [`phase-0-closeout.md`](phase-0-closeout.md), with updater signing owned by
 microstep `5.5.0`.
 <!-- frontier:begin phase=1 -->
-Phase 1 has **83 of 124 executable microsteps fully complete (~67%)**: `1.1.0`
+Phase 1 has **83 of 125 executable microsteps fully complete (~66%)**: `1.1.0`
 (the shared property harness), `1.1.1` (`Currency`), `1.1.2a` (`Money` carries `Currency`), `1.1.6`
 (`RoundingRule` and the one rounding point), `1.1.3` (`Qty` in milli-units), `1.1.4` (`Percent` in
 parts-per-million), `1.1.2b` (`Money` arithmetic and formatting), `1.1.7` (migration `0002`,
@@ -311,8 +311,10 @@ to its printer; a register with no binding, or one it cannot honour, renders eve
 `1.8.5b` is **partially delivered**: the merchant's recovery code, thirty digits with a check digit
 in each group of five, wraps the register's data key with XChaCha20-Poly1305 under Argon2id, and a
 copy of the database opens with that code alone after the credential store is lost. A key is no
-longer minted beside a database whose key is gone. First-run provisioning, the printed sheet and the
-screen are its remaining three parts.
+longer minted beside a database whose key is gone. A new machine now creates nothing until someone
+chooses a new register; then it keeps the key, creates the empty database and shows the code once,
+and confirming the code makes its envelope the register's. The printed sheet and the screen are its
+remaining two parts, and the register's identity is `1.8.5c`'s, added that day.
 Group 1.9's `1.9.5` is **partially delivered**: a shift opens with a float counted by denomination,
 on a business date the clock derives when it is trusted and the operator confirms, audited, when it
 is not; one stays open per register; and only its opener closes it, with a fact of its own and no

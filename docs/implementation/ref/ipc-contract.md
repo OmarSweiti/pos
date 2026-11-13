@@ -211,7 +211,8 @@ database in the shell, holds the signed-in user and their role's grants, and res
 
 > **As delivered at 1.8.2c.** Sign-in returns `SessionState`, the view `session_state` gives:
 > `{ "state": "signed_in", "code", "display_name", "role" }`, `{ "state": "signed_out" }`, or
-> `{ "state": "closed", "reason" }` when the till did not open. The internal `Session`, which holds
+> `{ "state": "closed", "reason" }` when the till did not open, and since 1.8.5b's second part
+> `{ "state": "not_set_up", "stage" }` on a machine with no register yet. The internal `Session`, which holds
 > the grants, is never serialised. The codes a screen branches on are `auth_refused` (an unknown
 > staff number, an account that is not live, or a wrong PIN, alike), `auth_delayed`,
 > `auth_locked_out`, `auth_role_unresolved` (with `no role at this store` or `more than one role at
@@ -888,6 +889,25 @@ a permission check. It is authorised instead by the merchant recovery code issue
 at provisioning (microstep 1.8.5b), which is also what unwraps the backup's key envelope. It audits
 into the restored database as the first entry after the restore, so the trail is not lost with the
 old one.
+
+> **As delivered at 1.8.5b, its second part (12 November 2026).** A machine with no register opens as
+> a till of its own state, and `session_state` says `{ "state": "not_set_up", "stage" }`: `new_machine`
+> (no database, and nothing created), `code_not_confirmed` (a first run that never completed) or
+> `store_not_set_up` (custody complete; the register's identity is 1.8.5c's). Every other command
+> answers `not_set_up` with the stage's detail.
+>
+> - **`provision_recovery_code`** keeps the key, minting one only on a machine with no database. It
+>   writes the key's envelope as pending, creates the empty database, and answers
+>   `RecoveryCodeDisplay { provisioning_id, formatted_code }`, the code in six groups of five digits.
+>   It shows the code once: asked again it is `recovery_code_already_shown`. After a restart it issues
+>   a fresh code over the pending envelope.
+> - **`acknowledge_recovery_code { provisioning_id }`** confirms it. The pending envelope must open
+>   with the code held, to this register's key, before it is kept. It answers
+>   `recovery_code_not_shown` with no code on the screen and `provisioning_id_unknown` for another id.
+> - **Both** answer `already_set_up` on a till with a register and `provisioning_failed`, with a fixed
+>   detail, when the key, the envelope or the database could not be made. Neither declares a
+>   capability nor is audited: no database, user or grant exists yet. `print_recovery_code` lands
+>   with the recovery sheet, 1.8.5b's third part.
 
 **The updater is wrapped, never exposed.** Tauri's `updater:default` permission puts check, download,
 install and download-and-install directly in reach of frontend JavaScript, and the product rule is

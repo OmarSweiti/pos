@@ -53,6 +53,10 @@ pub enum SessionState {
     Closed {
         reason: &'static str,
     },
+    /// No register here yet, and how far setting one up has come (1.8.5b).
+    NotSetUp {
+        stage: crate::provisioning::SetupStage,
+    },
     SignedOut,
     SignedIn {
         code: String,
@@ -113,6 +117,9 @@ pub fn state_of(till: &Till) -> SessionState {
     match till {
         Till::Closed(refusal) => SessionState::Closed {
             reason: refusal.detail(),
+        },
+        Till::Unprovisioned(machine) => SessionState::NotSetUp {
+            stage: machine.stage(),
         },
         Till::Open(register) => register
             .session()

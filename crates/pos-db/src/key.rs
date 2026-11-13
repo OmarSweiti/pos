@@ -219,12 +219,17 @@ pub fn get_or_create_in(
     store: &dyn CredentialStore,
     database: &Path,
 ) -> Result<(DatabaseKey, KeySource), crate::DbError> {
-    resolve(env_key(), store, database)
+    get_or_create_with(env_key(), store, database)
 }
 
-/// [`get_or_create_in`], with the environment's key passed in, so a test
-/// states it rather than inheriting whatever the shell that ran it exported.
-pub(crate) fn resolve(
+/// [`get_or_create_in`], with the environment's key passed in: the caller
+/// reads it once with [`env_key`], and a test states it rather than
+/// inheriting whatever the shell that ran it exported.
+///
+/// # Errors
+///
+/// As [`get_or_create_in`].
+pub fn get_or_create_with(
     env: Option<String>,
     store: &dyn CredentialStore,
     database: &Path,
@@ -262,11 +267,15 @@ pub fn get_existing() -> Result<(DatabaseKey, KeySource), crate::DbError> {
 pub fn get_existing_in(
     store: &dyn CredentialStore,
 ) -> Result<(DatabaseKey, KeySource), crate::DbError> {
-    resolve_existing(env_key(), store)
+    get_existing_with(env_key(), store)
 }
 
 /// [`get_existing_in`], with the environment's key passed in.
-pub(crate) fn resolve_existing(
+///
+/// # Errors
+///
+/// As [`get_existing`].
+pub fn get_existing_with(
     env: Option<String>,
     store: &dyn CredentialStore,
 ) -> Result<(DatabaseKey, KeySource), crate::DbError> {
@@ -304,7 +313,9 @@ fn env_key_from(raw: Option<&str>) -> Option<String> {
     raw.filter(|key| !key.is_empty()).map(str::to_owned)
 }
 
-fn env_key() -> Option<String> {
+/// `POS_DB_KEY`, when this build honours it and it is set: `None` in a
+/// release build, whatever the environment holds (1.8.5).
+pub fn env_key() -> Option<String> {
     env_key_from(std::env::var("POS_DB_KEY").ok().as_deref())
 }
 

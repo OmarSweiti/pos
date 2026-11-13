@@ -49,6 +49,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::ipc::IpcError;
+use crate::provisioning::{self, KeyCustody, Provisioning};
 use crate::recovery;
 // What start-up recovery reports lives with it, and is named here too, where
 // the register that holds it is.
@@ -69,18 +70,33 @@ pub const SYNC_PROTOCOL_VERSION: i64 = 1;
 /// The build that produced a delivery envelope's payloads.
 pub const PRODUCER_VERSION: &str = concat!("terminal/", env!("CARGO_PKG_VERSION"));
 
-/// The till: open on a register, or closed with the reason it did not open.
+/// The till: open on a register, a machine not set up as one yet, or closed
+/// with the reason it did not open.
 pub enum Till {
     /// Shared, because the print worker `run` starts holds it too (1.7.14c).
     Open(Arc<Register>),
+    /// No register here yet (1.8.5b): a new machine, a recovery code never
+    /// confirmed, or a store not set up. Nothing is created until a person
+    /// chooses.
+    Unprovisioned(Provisioning),
     Closed(StartupError),
 }
 
 impl Till {
-    /// Open the register in `data_dir`, with the key 1.8.5's policy supplies.
-    /// A refusal is logged, through the scrubbing layer, and held.
+    /// The till for the data in `data_dir`, with the key 1.8.5's policy
+    /// supplies. A refusal is logged, through the scrubbing layer, and held.
     pub fn open(data_dir: &Path) -> Till {
-        Self::from_result(Register::open(data_dir))
+        Self::open_in(data_dir, KeyCustody::os())
+    }
+
+    /// The till for the data in `data_dir`, its key kept by `keys`. A machine
+    /// with no register to open is [`Till::Unprovisioned`], at the stage the
+    /// files beside its database say; opening it creates nothing.
+    pub fn open_in(data_dir: &Path, keys: KeyCustody) -> Till {
+        match provisioning::stage_of(data_dir) {
+            Some(stage) => Till::Unprovisioned(Provisioning::new(data_dir, keys, stage)),
+            None => Self::from_result(Register::open_in(data_dir, &keys)),
+        }
     }
 
     /// The till a start-up attempt leaves.
@@ -102,6 +118,21 @@ impl Till {
     pub fn register(&self) -> Result<&Register, IpcError> {
         match self {
             Till::Open(register) => Ok(register),
+            Till::Unprovisioned(machine) => Err(machine.refusal()),
+            Till::Closed(refusal) => Err(refusal.to_ipc()),
+        }
+    }
+
+    /// The machine being set up, for the provisioning commands.
+    ///
+    /// # Errors
+    ///
+    /// `already_set_up` on a till with a register, and the refusal of a closed
+    /// one.
+    pub fn provisioning(&self) -> Result<&Provisioning, IpcError> {
+        match self {
+            Till::Unprovisioned(machine) => Ok(machine),
+            Till::Open(_) => Err(provisioning::not_provisioning()),
             Till::Closed(refusal) => Err(refusal.to_ipc()),
         }
     }
@@ -408,18 +439,27 @@ impl std::fmt::Debug for Register {
 impl Register {
     /// Open the register in `data_dir`, with the database key 1.8.5's policy
     /// supplies: `POS_DB_KEY` in a debug build, the OS credential store
-    /// otherwise. A key is minted only when there is no database yet: one
-    /// whose key is gone is the recovery code's to open (1.8.5b).
+    /// otherwise.
+    ///
+    /// # Errors
+    ///
+    /// As [`Register::open_in`].
+    pub fn open(data_dir: &Path) -> Result<Register, StartupError> {
+        Self::open_in(data_dir, &KeyCustody::os())
+    }
+
+    /// Open the register in `data_dir`, its key kept by `keys`. Opening never
+    /// mints a key: only provisioning does, on a machine with no database
+    /// (1.8.5b). A database whose key is gone is the recovery code's to open.
     ///
     /// # Errors
     ///
     /// As [`Register::open_with`], and [`StartupError::Key`].
-    pub fn open(data_dir: &Path) -> Result<Register, StartupError> {
+    pub fn open_in(data_dir: &Path, keys: &KeyCustody) -> Result<Register, StartupError> {
         // The device id first: an install that is not a register here never
-        // creates a database file, nor a key for one.
+        // looks a key up.
         read_device_id(data_dir)?;
-        let (key, _) =
-            pos_db::key::get_or_create(&data_dir.join(DATABASE_FILE)).map_err(StartupError::Key)?;
+        let key = keys.existing().map_err(StartupError::Key)?;
         Self::open_with(
             data_dir,
             key.expose(),

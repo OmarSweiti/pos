@@ -7,6 +7,7 @@ pub mod ipc;
 pub(crate) mod payload;
 pub mod print_queue;
 pub mod print_service;
+pub mod provisioning;
 pub mod recovery;
 pub mod scan;
 pub mod state;
@@ -70,6 +71,8 @@ ipc::registry::commands![
     commands::stock::stock_adjust_prepare,
     commands::stock::stock_adjust,
     health::health_status,
+    provisioning::provision_recovery_code,
+    provisioning::acknowledge_recovery_code,
 ];
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

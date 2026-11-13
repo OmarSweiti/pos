@@ -52,6 +52,10 @@ pub const WRAP_ALGORITHM: &str = "xchacha20poly1305";
 pub const KDF_ALGORITHM: &str = "argon2id";
 /// The envelope's file name, beside the database and beside every backup.
 pub const ENVELOPE_FILE: &str = "recovery-envelope.json";
+/// An envelope written at provisioning and not yet confirmed: its code was
+/// shown, and nobody has said it was recorded (1.8.5b, its second part). It
+/// becomes [`ENVELOPE_FILE`] only through [`confirm_pending`].
+pub const PENDING_ENVELOPE_FILE: &str = "recovery-envelope.pending.json";
 
 const NONCE_BYTES: usize = 24;
 const TAG_BYTES: usize = 16;
@@ -490,6 +494,30 @@ fn sync_parent(_path: &Path) -> Result<(), KeyError> {
     Ok(())
 }
 
+/// Confirm the pending envelope in `dir`: it must open with `code`, and give
+/// back `key`, before it becomes the register's envelope. So the envelope a
+/// register keeps is one its merchant's recorded code is known to open.
+///
+/// # Errors
+///
+/// Whatever reading or opening the pending envelope refuses, among them
+/// [`KeyError::WrongRecoveryCode`]; [`KeyError::Malformed`] when it holds
+/// another key; and [`KeyError::EnvelopeIo`]. The pending envelope is left
+/// where it was on any refusal.
+pub fn confirm_pending(dir: &Path, code: &RecoveryCode, key: &DatabaseKey) -> Result<(), KeyError> {
+    let pending = dir.join(PENDING_ENVELOPE_FILE);
+    let envelope = RecoveryEnvelope::read(&pending)?;
+    if unwrap_data_key(&envelope, code)? != *key {
+        return Err(KeyError::Malformed(
+            "the pending envelope holds another key than this register's",
+        ));
+    }
+    let confirmed = dir.join(ENVELOPE_FILE);
+    fs::rename(&pending, &confirmed)?;
+    sync_parent(&confirmed)?;
+    Ok(())
+}
+
 /// What the wrap authenticates besides the key: every other field of the
 /// envelope, so none of them can be changed without the unwrap failing.
 fn associated_data(
@@ -736,7 +764,7 @@ mod key_custody {
         let store = MemoryCredentialStore::new();
         let database = machine.path().join(DATABASE);
 
-        let (key, source) = key::resolve(None, &store, &database).unwrap();
+        let (key, source) = key::get_or_create_with(None, &store, &database).unwrap();
         assert_eq!(source, KeySource::CredentialStore);
         assert_eq!(store.held().as_ref(), Some(&key), "the key was kept");
         keep_a_row(&database, &key);
@@ -885,25 +913,26 @@ mod key_custody {
         let dir = tempfile::tempdir().unwrap();
         let database = dir.path().join(DATABASE);
         let kept = MemoryCredentialStore::new();
-        let (key, _) = key::resolve(None, &kept, &database).unwrap();
+        let (key, _) = key::get_or_create_with(None, &kept, &database).unwrap();
         keep_a_row(&database, &key);
 
         let wiped = MemoryCredentialStore::new();
         assert!(matches!(
-            key::resolve(None, &wiped, &database),
+            key::get_or_create_with(None, &wiped, &database),
             Err(DbError::KeyMissingForExistingDatabase)
         ));
         assert_eq!(wiped.held(), None, "no key was minted");
         assert!(matches!(
-            key::resolve_existing(None, &wiped),
+            key::get_existing_with(None, &wiped),
             Err(DbError::KeyMissingForExistingDatabase)
         ));
 
-        let (again, source) = key::resolve(None, &kept, &database).unwrap();
+        let (again, source) = key::get_or_create_with(None, &kept, &database).unwrap();
         assert_eq!((again, source), (key.clone(), KeySource::CredentialStore));
 
         let clean = MemoryCredentialStore::new();
-        let (minted, _) = key::resolve(None, &clean, &dir.path().join("another.db")).unwrap();
+        let (minted, _) =
+            key::get_or_create_with(None, &clean, &dir.path().join("another.db")).unwrap();
         assert_eq!(clean.held().as_ref(), Some(&minted));
         assert_ne!(minted, key);
         assert_eq!(minted.expose().len(), 64);
@@ -915,7 +944,7 @@ mod key_custody {
             let file = dir.path().join("a-file");
             fs::write(&file, b"").unwrap();
             assert!(matches!(
-                key::resolve(None, &MemoryCredentialStore::new(), &file.join(DATABASE)),
+                key::get_or_create_with(None, &MemoryCredentialStore::new(), &file.join(DATABASE)),
                 Err(DbError::DatabasePresenceUnknown(_))
             ));
         }
@@ -1043,6 +1072,47 @@ mod key_custody {
         assert!(!file.contains(printed.as_str()));
         assert!(!file.contains(&digits_of(&code)));
         assert!(!file.contains(PASSPHRASE));
+    }
+
+    /// A pending envelope becomes the register's only through the code it was
+    /// made with, and only when it holds the register's own key. Every refusal
+    /// leaves it pending and writes no envelope.
+    #[test]
+    fn a_pending_envelope_is_confirmed_only_by_its_own_code() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = DatabaseKey::new(PASSPHRASE.to_owned());
+        let code = RecoveryCode::generate().unwrap();
+        wrap_data_key(&key, &code, &KdfParams::fresh().unwrap())
+            .unwrap()
+            .write(&dir.path().join(PENDING_ENVELOPE_FILE))
+            .unwrap();
+        let pending_only = |dir: &Path| {
+            (
+                dir.join(PENDING_ENVELOPE_FILE).exists(),
+                dir.join(ENVELOPE_FILE).exists(),
+            )
+        };
+
+        let other = RecoveryCode::generate().unwrap();
+        assert!(matches!(
+            confirm_pending(dir.path(), &other, &key),
+            Err(KeyError::WrongRecoveryCode)
+        ));
+        let another_key = DatabaseKey::new("another".to_owned());
+        assert!(matches!(
+            confirm_pending(dir.path(), &code, &another_key),
+            Err(KeyError::Malformed(_))
+        ));
+        assert_eq!(pending_only(dir.path()), (true, false));
+
+        confirm_pending(dir.path(), &code, &key).unwrap();
+        assert_eq!(pending_only(dir.path()), (false, true));
+        let kept = RecoveryEnvelope::read(&dir.path().join(ENVELOPE_FILE)).unwrap();
+        assert_eq!(unwrap_data_key(&kept, &code).unwrap(), key);
+        assert!(matches!(
+            confirm_pending(dir.path(), &code, &key),
+            Err(KeyError::EnvelopeIo(_))
+        ));
     }
 
     /// The Damm table's published example: 572 is closed by 4, and 5724 checks.
