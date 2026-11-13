@@ -27,7 +27,7 @@
 use std::fs;
 use std::io;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -417,6 +417,10 @@ pub struct Register {
     printer_binding: PrinterBindingState,
     /// The print worker's nudge, once one runs (1.7.14c).
     print_nudge: OnceLock<Sender<()>>,
+    /// How many callers are waiting for [`Self::db`] right now. The backup
+    /// worker reads it between its steps and gives way to any of them
+    /// (1.8.6): the one connection is a sale's before it is a backup's.
+    waiting: AtomicUsize,
 }
 
 /// The register's identity and what recovery did; never the session's
@@ -505,6 +509,7 @@ impl Register {
             receipt_device,
             printer_binding,
             print_nudge: OnceLock::new(),
+            waiting: AtomicUsize::new(0),
         })
     }
 
@@ -595,12 +600,33 @@ impl Register {
 
     /// The database, for a command's transaction.
     pub fn with_db<T>(&self, work: impl FnOnce(&mut Connection) -> T) -> T {
-        work(&mut self.db.lock().unwrap_or_else(PoisonError::into_inner))
+        work(&mut self.db())
+    }
+
+    /// The database, for work that gives way to anyone else waiting for it:
+    /// `work` is handed the connection and a question it asks between steps,
+    /// whether a caller is waiting now (1.8.6's backup).
+    pub fn with_db_giving_way<T>(
+        &self,
+        work: impl FnOnce(&Connection, &dyn Fn() -> bool) -> T,
+    ) -> T {
+        let db = self.db();
+        let someone_waits = || self.waiting.load(Ordering::SeqCst) > 0;
+        work(&db, &someone_waits)
+    }
+
+    /// The database's lock, counted as waited for until it is held, so the
+    /// backup can see a sale behind it.
+    fn db(&self) -> MutexGuard<'_, Connection> {
+        self.waiting.fetch_add(1, Ordering::SeqCst);
+        let db = self.db.lock().unwrap_or_else(PoisonError::into_inner);
+        self.waiting.fetch_sub(1, Ordering::SeqCst);
+        db
     }
 
     /// The database and the session, in the one order every caller takes them.
     pub fn lock(&self) -> (MutexGuard<'_, Connection>, MutexGuard<'_, Option<Session>>) {
-        let db = self.db.lock().unwrap_or_else(PoisonError::into_inner);
+        let db = self.db();
         let session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         (db, session)
     }
