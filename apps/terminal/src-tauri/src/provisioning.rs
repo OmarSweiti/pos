@@ -517,10 +517,14 @@ mod recovery_code_provisioning_tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use std::fs;
+    use std::time::Duration;
 
     use pos_db::DbError;
     use pos_db::key::MemoryCredentialStore;
     use pos_db::recovery::{KeyError, RecoveryEnvelope, unwrap_data_key};
+    use pos_hardware::emulator::{ConnectionFault, Emulator, EmulatorConfig, Event};
+    use pos_hardware::render::PaperWidth;
+    use pos_hardware::{Fault, PrinterStatus, SimulatedPrinter};
     use serde_json::json;
 
     use super::*;
@@ -758,5 +762,293 @@ mod recovery_code_provisioning_tests {
         ));
         assert_eq!(till.provisioning().err().unwrap().code, "till_closed");
         assert_eq!(wiped.held(), None);
+    }
+
+    /// The instant every sheet here is printed at.
+    fn now() -> Timestamp {
+        Timestamp::from_epoch_milliseconds(1_794_587_117_000).unwrap()
+    }
+
+    /// 1.7.12's emulated printer, under the emulator's 80 mm profile.
+    fn emulator() -> Emulator {
+        Emulator::start(EmulatorConfig {
+            printer: PrinterProfile::emulator(PaperWidth::Mm80),
+            drawer: None,
+            listen: "127.0.0.1:0".parse().unwrap(),
+            out_dir: None,
+        })
+        .unwrap()
+    }
+
+    /// The emulator, named as the screen names a printer.
+    fn named(emulator: &Emulator) -> SheetPrinter {
+        serde_json::from_value(json!({
+            "profile_id": "emulator-80mm",
+            "version": 1,
+            "address": emulator.address().to_string(),
+        }))
+        .unwrap()
+    }
+
+    fn connections(emulator: &Emulator) -> usize {
+        emulator
+            .events()
+            .iter()
+            .filter(|event| matches!(event, Event::Connected { .. }))
+            .count()
+    }
+
+    /// The rows of every table a print could have left in the register's
+    /// database: the receipt, its print job and its attempts, and the
+    /// settings, where a printer binding would be.
+    fn printing_rows(dir: &Path, key: &DatabaseKey) -> [i64; 4] {
+        let conn = pos_db::open(&dir.join(DATABASE_FILE), key.expose()).unwrap();
+        ["receipt_artifact", "print_job", "print_attempt", "setting"].map(|table| {
+            conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap()
+        })
+    }
+
+    fn code_of(error: IpcError) -> (&'static str, Option<&'static str>) {
+        (error.code, error.detail)
+    }
+
+    /// 1.8.5b's named test, through the command's own path to 1.7.12's
+    /// emulated printer. The sheet is a hardware effect: a print the printer
+    /// refused leaves nothing waiting to be tried again, and nothing is tried
+    /// until a person asks; the sheet that prints is the code shown, dot for
+    /// dot; and neither leaves a receipt, a print job, an attempt, a setting
+    /// or a file behind. Once on paper, it is never printed again.
+    #[test]
+    fn recovery_sheet_is_never_queued_or_persisted() {
+        let (dir, store) = machine();
+        let till = Till::open_in(dir.path(), keys(&store));
+        let shown = setup(&till).issue().unwrap();
+        let key = store.held().unwrap();
+        let on_disk = files(dir.path());
+        let rows = printing_rows(dir.path(), &key);
+        assert_eq!(rows, [0, 0, 0, 0]);
+
+        let emulator = emulator();
+        let printer = named(&emulator);
+        let (profile, device) = printer.device().unwrap();
+        let print = || setup(&till).print(shown.provisioning_id, &device, &profile, now());
+
+        emulator.script(ConnectionFault::PaperOut);
+        assert_eq!(
+            code_of(print().err().unwrap()),
+            (
+                "recovery_sheet_not_printed",
+                Some("the printer is out of paper")
+            )
+        );
+        assert!(emulator.settled(1, Duration::from_secs(5)));
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(
+            connections(&emulator),
+            1,
+            "nothing is tried again by itself"
+        );
+        assert!(emulator.jobs().is_empty(), "no paper");
+
+        print().unwrap();
+        assert!(emulator.settled(2, Duration::from_secs(5)));
+        let jobs = emulator.jobs();
+        assert_eq!(jobs.len(), 1);
+        let sheet = RecoverySheet::new(&shown.formatted_code, &key.id(), now())
+            .unwrap()
+            .render(PaperWidth::Mm80)
+            .unwrap();
+        assert_eq!(
+            &jobs.first().unwrap().page,
+            sheet.bitmap(),
+            "the sheet printed is the code shown"
+        );
+
+        assert_eq!(files(dir.path()), on_disk, "no file was written");
+        assert_eq!(printing_rows(dir.path(), &key), rows, "no row was written");
+        assert_eq!(
+            code_of(print().err().unwrap()),
+            ("recovery_sheet_already_printed", None)
+        );
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(
+            connections(&emulator),
+            2,
+            "the printer is not reached again"
+        );
+
+        setup(&till).confirm(shown.provisioning_id).unwrap();
+        assert_eq!(files(dir.path()), [ENVELOPE_FILE, DATABASE_FILE]);
+        assert_eq!(printing_rows(dir.path(), &key), rows);
+    }
+
+    /// One sheet reaches paper, whatever the printer answered. A refusal
+    /// before the first byte may be printed again; paper torn part-way, or a
+    /// printer that never said it printed, counts as on paper, and is
+    /// refused again. A sheet is printed only for the code on the screen,
+    /// under its own id; a code issued after a restart is a new code, with a
+    /// sheet of its own.
+    #[test]
+    fn recovery_sheet_reaches_paper_once_whatever_the_printer_answered() {
+        let profile = PrinterProfile::simulator(PaperWidth::Mm80);
+        let (dir, store) = machine();
+        let till = Till::open_in(dir.path(), keys(&store));
+        let printer = SimulatedPrinter::new();
+        assert_eq!(
+            code_of(
+                setup(&till)
+                    .print(Uuid::nil(), &printer, &profile, now())
+                    .err()
+                    .unwrap()
+            ),
+            ("recovery_code_not_shown", None)
+        );
+        let shown = setup(&till).issue().unwrap();
+        let print = |printer: &SimulatedPrinter| {
+            setup(&till).print(shown.provisioning_id, printer, &profile, now())
+        };
+        assert_eq!(
+            code_of(
+                setup(&till)
+                    .print(Uuid::nil(), &printer, &profile, now())
+                    .err()
+                    .unwrap()
+            ),
+            ("provisioning_id_unknown", None)
+        );
+
+        *printer.force_status.lock().unwrap() = PrinterStatus::Offline;
+        assert_eq!(
+            code_of(print(&printer).err().unwrap()),
+            ("recovery_sheet_not_printed", Some("the printer is offline"))
+        );
+        *printer.force_status.lock().unwrap() = PrinterStatus::CoverOpen;
+        assert_eq!(
+            code_of(print(&printer).err().unwrap()).1,
+            Some("the printer's cover is open")
+        );
+        *printer.force_status.lock().unwrap() = PrinterStatus::Ready;
+        print(&printer).unwrap();
+        assert_eq!(printer.printed.lock().unwrap().len(), 1);
+        assert_eq!(
+            code_of(print(&printer).err().unwrap()),
+            ("recovery_sheet_already_printed", None)
+        );
+        assert_eq!(printer.printed.lock().unwrap().len(), 1);
+
+        // Started again before confirming: a fresh code, and its own sheet.
+        drop(till);
+        for fault in [
+            Fault::PaperOutAfter(64),
+            Fault::SilentAfter(64),
+            Fault::Slow,
+        ] {
+            let till = Till::open_in(dir.path(), keys(&store));
+            let fresh = setup(&till).issue().unwrap();
+            let printer = SimulatedPrinter::new();
+            printer.script(fault);
+            let print = || setup(&till).print(fresh.provisioning_id, &printer, &profile, now());
+            assert_eq!(
+                code_of(print().err().unwrap()),
+                (
+                    "recovery_sheet_unconfirmed",
+                    Some("the printer took the sheet and did not say it printed it whole")
+                ),
+                "{fault:?}"
+            );
+            assert_eq!(
+                code_of(print().err().unwrap()),
+                ("recovery_sheet_already_printed", None),
+                "{fault:?}"
+            );
+            let reached =
+                printer.printed.lock().unwrap().len() + printer.torn.lock().unwrap().len();
+            assert_eq!(reached, 1, "{fault:?}: one sheet's paper, at most");
+            setup(&till)
+                .confirm(fresh.provisioning_id)
+                .unwrap_or_else(|_| {
+                    panic!("{fault:?}: printing never stops the code being confirmed")
+                });
+            assert_eq!(
+                code_of(print().err().unwrap()),
+                ("recovery_code_not_shown", None),
+                "{fault:?}: confirmed, the code is gone"
+            );
+            fs::rename(
+                dir.path().join(ENVELOPE_FILE),
+                dir.path().join(PENDING_ENVELOPE_FILE),
+            )
+            .unwrap();
+        }
+    }
+
+    /// The screen names the printer as a binding names one: a profile this
+    /// build ships, by id and version, and an IP address and a port. The
+    /// emulator's profile is the one a sheet can be printed through before
+    /// milestone 5.8; a real device's profile, one this build does not ship
+    /// and one not reached over the network are each refused by name, and
+    /// a host name, an unknown field or a version of zero never parse.
+    #[test]
+    fn recovery_sheet_printer_is_named_as_a_binding_names_it() {
+        let named = |profile_id: &str, version: u32| -> SheetPrinter {
+            serde_json::from_value(json!({
+                "profile_id": profile_id,
+                "version": version,
+                "address": "127.0.0.1:9100",
+            }))
+            .unwrap()
+        };
+        let (profile, _) = named("emulator-80mm", 1).device().unwrap();
+        assert_eq!(profile, PrinterProfile::emulator(PaperWidth::Mm80));
+        let (profile, _) = named("emulator-58mm", 1).device().unwrap();
+        assert_eq!(profile, PrinterProfile::emulator(PaperWidth::Mm58));
+
+        for (profile_id, version, detail) in [
+            (
+                "epson-tm-m10-58mm",
+                1,
+                "the printer's profile leaves a setting the driver needs unknown",
+            ),
+            (
+                "emulator-80mm",
+                2,
+                "the printer's profile does not ship with this build",
+            ),
+            (
+                "no-such-printer",
+                1,
+                "the printer's profile does not ship with this build",
+            ),
+            (
+                "simulator-80mm",
+                1,
+                "the printer's profile is not reached over the network",
+            ),
+        ] {
+            assert_eq!(
+                code_of(named(profile_id, version).device().err().unwrap()),
+                ("printer_unusable", Some(detail)),
+                "{profile_id} v{version}"
+            );
+        }
+
+        for refused in [
+            json!({ "profile_id": "emulator-80mm", "version": 1, "address": "printer.local:9100" }),
+            json!({ "profile_id": "emulator-80mm", "version": 1, "address": "127.0.0.1" }),
+            json!({ "profile_id": "emulator-80mm", "version": 0, "address": "127.0.0.1:9100" }),
+            json!({ "profile_id": "emulator-80mm", "address": "127.0.0.1:9100" }),
+            json!({
+                "profile_id": "emulator-80mm", "version": 1, "address": "127.0.0.1:9100",
+                "keep": true,
+            }),
+        ] {
+            assert!(
+                serde_json::from_value::<SheetPrinter>(refused.clone()).is_err(),
+                "{refused}"
+            );
+        }
     }
 }
