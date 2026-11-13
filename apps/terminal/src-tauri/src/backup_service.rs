@@ -292,3 +292,230 @@ fn run(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    //! The till's half of 1.8.6's first part. The register is the suites'
+    //! shop, its credential store held in memory: the machine's real
+    //! Keychain is never touched.
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use std::sync::atomic::AtomicI64;
+    use std::time::Instant;
+
+    use pos_db::key::{CredentialStore, DatabaseKey, MemoryCredentialStore};
+    use pos_db::recovery::{ENVELOPE_FORMAT, KDF_ALGORITHM, KdfParams, WRAP_ALGORITHM};
+    use pos_domain::Clock;
+
+    use super::*;
+    use crate::commands::auth::{login_pin, logout};
+    use crate::shop::{AT, CASHIER_CODE, CASHIER_PIN, KEY, seed};
+    use crate::state::V7Ids;
+
+    /// A clock the test moves.
+    #[derive(Clone)]
+    struct Hands(Arc<AtomicI64>);
+
+    impl Hands {
+        fn new() -> Self {
+            Hands(Arc::new(AtomicI64::new(
+                Timestamp::parse_iso8601(AT).unwrap().epoch_milliseconds(),
+            )))
+        }
+
+        fn forward(&self, minutes: i64) {
+            self.0.fetch_add(minutes * 60 * 1_000, Ordering::SeqCst);
+        }
+    }
+
+    impl Clock for Hands {
+        fn now(&self) -> Timestamp {
+            Timestamp::from_epoch_milliseconds(self.0.load(Ordering::SeqCst)).unwrap()
+        }
+    }
+
+    fn key() -> DatabaseKey {
+        DatabaseKey::new(KEY.to_owned())
+    }
+
+    /// The register's key in a credential store held in memory.
+    fn keys() -> KeyCustody {
+        let store = Arc::new(MemoryCredentialStore::new());
+        store.write(&key()).unwrap();
+        KeyCustody::in_store(store)
+    }
+
+    /// A confirmed envelope for the shop's key. Nothing here unwraps it: what
+    /// travels is what is checked, and 1.8.6's `pos-db` half opens one with
+    /// its recovery code.
+    fn confirm_envelope(dir: &Path) -> RecoveryEnvelope {
+        let envelope = RecoveryEnvelope {
+            format: ENVELOPE_FORMAT,
+            key_id: key().id(),
+            wrap_algorithm: WRAP_ALGORITHM.to_owned(),
+            kdf_algorithm: KDF_ALGORITHM.to_owned(),
+            kdf_params: KdfParams::fresh().unwrap(),
+            wrapped_key: vec![0x5A; 72],
+        };
+        envelope.write(&dir.join(ENVELOPE_FILE)).unwrap();
+        envelope
+    }
+
+    /// The shop's register file, opened at `hands`.
+    fn till(dir: &Path, hands: &Hands) -> Arc<Register> {
+        Arc::new(
+            Register::open_with(
+                dir,
+                KEY,
+                Box::new(hands.clone()),
+                Box::new(V7Ids::default()),
+            )
+            .unwrap(),
+        )
+    }
+
+    fn checkpoints(register: &Register) -> Vec<(String, i64, String)> {
+        register.with_db(|conn| {
+            conn.prepare(
+                "SELECT anchor_ref, last_seq, source_kind FROM audit_checkpoint ORDER BY anchored_at",
+            )
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+        })
+    }
+
+    fn enveloped_checkpoints(register: &Register) -> i64 {
+        register.with_db(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM fact_commit_member m
+                   JOIN audit_checkpoint c ON c.id = m.entity_id
+                  WHERE m.entity = 'audit_checkpoint'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+        })
+    }
+
+    /// The till backs itself up with its envelope, verified, and records the
+    /// generation's audit head as a checkpoint with its delivery envelope. An
+    /// hour with no audit row leaves the head where it was, and the next
+    /// backup records nothing new; a sign-in moves the head, and the backup
+    /// after it anchors the new one.
+    #[test]
+    fn the_till_backs_up_and_anchors_each_new_audit_head_once() {
+        let dir = tempfile::tempdir().unwrap();
+        seed(dir.path(), true);
+        let envelope = confirm_envelope(dir.path());
+        let hands = Hands::new();
+        let register = till(dir.path(), &hands);
+        login_pin(&register, CASHIER_CODE, CASHIER_PIN).unwrap();
+
+        let first = take(&register, dir.path(), &keys()).unwrap();
+        assert!(first.anchored);
+        let generation = dir.path().join(BACKUPS_DIR).join(&first.generation);
+        let info = backup::verify(&generation, &key(), &envelope).unwrap();
+        assert!(
+            info.manifest.last_seq > 0,
+            "the sign-in's audit row is anchored"
+        );
+        assert_eq!(
+            checkpoints(&register),
+            [(
+                first.generation.clone(),
+                i64::try_from(info.manifest.last_seq).unwrap(),
+                "verified_backup".to_owned()
+            )]
+        );
+        assert_eq!(
+            enveloped_checkpoints(&register),
+            1,
+            "with its delivery envelope"
+        );
+
+        hands.forward(60);
+        let quiet = take(&register, dir.path(), &keys()).unwrap();
+        assert!(!quiet.anchored, "the same head is anchored once");
+        assert_eq!(checkpoints(&register).len(), 1);
+
+        hands.forward(60);
+        logout(&register).unwrap();
+        login_pin(&register, CASHIER_CODE, CASHIER_PIN).unwrap();
+        let moved = take(&register, dir.path(), &keys()).unwrap();
+        assert!(moved.anchored);
+        assert_eq!(checkpoints(&register).len(), 2);
+        assert_eq!(enveloped_checkpoints(&register), 2);
+        assert_eq!(
+            backup::generations(&dir.path().join(BACKUPS_DIR))
+                .unwrap()
+                .len(),
+            3,
+            "three hours, three generations"
+        );
+    }
+
+    /// A register with no confirmed recovery envelope beside its database,
+    /// such as a seeded demonstration register, is not backed up.
+    #[test]
+    fn a_register_with_no_confirmed_envelope_is_not_backed_up() {
+        let dir = tempfile::tempdir().unwrap();
+        seed(dir.path(), true);
+        let register = till(dir.path(), &Hands::new());
+        assert!(matches!(
+            take(&register, dir.path(), &keys()),
+            Err(TakeError::NoEnvelope)
+        ));
+        assert!(!dir.path().join(BACKUPS_DIR).exists());
+        assert!(checkpoints(&register).is_empty());
+    }
+
+    /// A command waiting for the database is seen by the work holding it,
+    /// which is how a backup knows to give way, and is served once that work
+    /// lets go.
+    #[test]
+    fn a_waiting_command_is_seen_by_the_backup_and_served_after_it() {
+        let dir = tempfile::tempdir().unwrap();
+        seed(dir.path(), true);
+        let register = till(dir.path(), &Hands::new());
+        let other = Arc::clone(&register);
+        let saw = register.with_db_giving_way(|_, someone_waits| {
+            assert!(!someone_waits(), "nobody waits yet");
+            let waiter = std::thread::spawn(move || other.with_db(|_| "served"));
+            let start = Instant::now();
+            while !someone_waits() && start.elapsed() < Duration::from_secs(5) {
+                std::thread::yield_now();
+            }
+            (someone_waits(), waiter)
+        });
+        assert!(saw.0, "the waiting command was seen");
+        assert_eq!(saw.1.join().unwrap(), "served");
+        register.with_db_giving_way(|_, someone_waits| assert!(!someone_waits()));
+    }
+
+    /// The worker takes a backup as it starts, and stops with its service.
+    #[test]
+    fn the_backup_worker_takes_one_as_it_starts() {
+        let dir = tempfile::tempdir().unwrap();
+        seed(dir.path(), true);
+        let envelope = confirm_envelope(dir.path());
+        let register = till(dir.path(), &Hands::new());
+        let worker = start(&register, dir.path(), keys(), EVERY).unwrap();
+        let destination = dir.path().join(BACKUPS_DIR);
+        let start = Instant::now();
+        while backup::generations(&destination).unwrap().is_empty()
+            && start.elapsed() < Duration::from_secs(20)
+        {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        worker.stop();
+        let taken = backup::generations(&destination).unwrap();
+        assert_eq!(
+            taken.len(),
+            1,
+            "one as it starts, and the next an hour away"
+        );
+        backup::verify(&taken.first().unwrap().path, &key(), &envelope).unwrap();
+    }
+}
