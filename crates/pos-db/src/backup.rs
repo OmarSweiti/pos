@@ -686,3 +686,602 @@ fn sync_dir(_path: &Path) -> Result<(), DbError> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    //! 1.8.6's first part. Its `Done when` runs these as
+    //! `cargo nextest run -p pos-db backup::`.
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use std::collections::BTreeSet;
+
+    use pos_domain::{AuditIntent, UserId};
+    use rusqlite::{Transaction, params};
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::fixtures::registered_chain::RegisteredChain;
+    use crate::recovery::{KdfParams, RecoveryCode, unwrap_data_key, wrap_data_key};
+    use crate::repo::outbox::{CommitEnvelope, FactMember, OutboxRepository};
+
+    const REGISTER: [u8; 16] = [0xF0; 16];
+    const AT: &str = "2026-11-13T17:00:00.000Z";
+
+    fn register() -> RegisterId {
+        RegisterId::from_uuid(Uuid::from_bytes(REGISTER))
+    }
+
+    fn at(ms: i64) -> Timestamp {
+        Timestamp::from_epoch_milliseconds(ms).unwrap()
+    }
+
+    /// 2026-11-13T17:00:00.000Z.
+    fn noon() -> Timestamp {
+        Timestamp::parse_iso8601(AT).unwrap()
+    }
+
+    fn key() -> DatabaseKey {
+        DatabaseKey::new("the-live-data-key-of-this-register".to_owned())
+    }
+
+    /// An envelope for `key` that nothing here unwraps: every test but the
+    /// one about the recovery code needs only its key id, and a real wrap
+    /// costs Argon2id's 64 MiB each time.
+    fn stand_in_envelope(key: &DatabaseKey) -> RecoveryEnvelope {
+        RecoveryEnvelope {
+            format: crate::recovery::ENVELOPE_FORMAT,
+            key_id: key.id(),
+            wrap_algorithm: crate::recovery::WRAP_ALGORITHM.to_owned(),
+            kdf_algorithm: crate::recovery::KDF_ALGORITHM.to_owned(),
+            kdf_params: KdfParams::fresh().unwrap(),
+            wrapped_key: vec![0x5A; 72],
+        }
+    }
+
+    /// A register's database, migrated, with its store and register rows.
+    struct Register {
+        conn: Connection,
+        dir: tempfile::TempDir,
+    }
+
+    impl Register {
+        fn new(key: &DatabaseKey) -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let conn = crate::open(&dir.path().join("register.db"), key.expose()).unwrap();
+            let chain = RegisteredChain::seed(&conn);
+            chain.add_register(&conn, &REGISTER, "REG01");
+            Self { conn, dir }
+        }
+
+        fn destination(&self) -> PathBuf {
+            self.dir.path().join("backups")
+        }
+
+        /// Rows of synthetic settings, each about two kilobytes: enough pages
+        /// that a copy takes many steps.
+        fn fill(&self, from: usize, rows: usize) {
+            let tx = self.conn.unchecked_transaction().unwrap();
+            for row in from..from + rows {
+                tx.execute(
+                    "INSERT INTO setting (scope, scope_id, key, value_json) VALUES ('register', ?1, ?2, ?3)",
+                    params![REGISTER.as_slice(), format!("bulk.{row}"), json!("x".repeat(2_000)).to_string()],
+                )
+                .unwrap();
+            }
+            tx.commit().unwrap();
+        }
+
+        fn settings(conn: &Connection) -> i64 {
+            conn.query_row("SELECT COUNT(*) FROM setting", [], |row| row.get(0))
+                .unwrap()
+        }
+
+        /// One audit row, with the delivery envelope its trigger demands.
+        fn audit(&self, tag: u8) {
+            let row = Uuid::from_bytes([tag; 16]);
+            let tx = self.conn.unchecked_transaction().unwrap();
+            let mut commit = *row.as_bytes();
+            commit[0] = 0xCC;
+            let mut change = *row.as_bytes();
+            change[2] = 0xC0;
+            write_envelope(&self.conn, &tx, &commit, &change, row);
+            AuditRepository::new(&self.conn)
+                .append(
+                    &tx,
+                    register(),
+                    row,
+                    &AuditIntent {
+                        actor: UserId::from_uuid(Uuid::from_bytes([0xA1; 16])),
+                        approver: None,
+                        approval: None,
+                        action: "drawer.open",
+                        entity: "drawer_event",
+                        entity_id: row,
+                        reason: None,
+                        payload: json!({ "tag": i64::from(tag) }),
+                        at: noon(),
+                    },
+                )
+                .unwrap();
+            tx.commit().unwrap();
+        }
+
+        fn snapshot(
+            &self,
+            key: &DatabaseKey,
+            envelope: &RecoveryEnvelope,
+            at: Timestamp,
+        ) -> Result<BackupInfo, DbError> {
+            snapshot(
+                &self.conn,
+                register(),
+                key,
+                envelope,
+                &self.destination(),
+                at,
+                &mut || Step::GoOn,
+            )
+        }
+    }
+
+    fn write_envelope(
+        conn: &Connection,
+        tx: &Transaction<'_>,
+        commit: &[u8; 16],
+        change: &[u8; 16],
+        row: Uuid,
+    ) {
+        let entity_id = *row.as_bytes();
+        OutboxRepository::new(conn)
+            .write_commit(
+                tx,
+                &CommitEnvelope {
+                    commit_id: commit,
+                    protocol_version: 1,
+                    schema_version: crate::SCHEMA_VERSION,
+                    producer_version: "test",
+                    created_at: AT,
+                },
+                &[FactMember {
+                    change_id: change,
+                    entity: "audit_log",
+                    entity_id: &entity_id,
+                    payload: "{}",
+                }],
+            )
+            .unwrap();
+    }
+
+    /// The names of the entries in `dir`, sorted.
+    fn entries(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn unverified(result: Result<BackupInfo, DbError>) -> &'static str {
+        match result {
+            Err(DbError::Backup(BackupError::Unverified(reason))) => reason,
+            other => panic!("a refusal was expected, not {other:?}"),
+        }
+    }
+
+    /// 1.8.5b's held test, which needed a backup to travel with: every
+    /// generation carries the register's envelope, and the recovery code
+    /// alone, typed back from paper, opens the generation's database with
+    /// nothing from the machine or its credential store.
+    #[test]
+    fn the_wrapped_envelope_travels_with_every_backup() {
+        let key = key();
+        let code = RecoveryCode::generate().unwrap();
+        let envelope = wrap_data_key(&key, &code, &KdfParams::fresh().unwrap()).unwrap();
+        let till = Register::new(&key);
+        till.fill(0, 10);
+        let first = till.snapshot(&key, &envelope, noon()).unwrap();
+        till.fill(10, 5);
+        let second = till
+            .snapshot(&key, &envelope, at(noon().epoch_milliseconds() + HOUR_MS))
+            .unwrap();
+
+        let paper = code.formatted();
+        for (generation, rows) in [(&first, 10), (&second, 15)] {
+            assert_eq!(
+                entries(&generation.path),
+                [MANIFEST_FILE, ENVELOPE_FILE, DATABASE_FILE]
+                    .map(str::to_owned)
+                    .iter()
+                    .cloned()
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>()
+            );
+            let carried = RecoveryEnvelope::read(&generation.path.join(ENVELOPE_FILE)).unwrap();
+            assert_eq!(carried, envelope);
+            let opened = unwrap_data_key(&carried, &RecoveryCode::parse(&paper).unwrap()).unwrap();
+            let copy = Connection::open_with_flags(
+                generation.path.join(DATABASE_FILE),
+                OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )
+            .unwrap();
+            copy.pragma_update(None, "key", opened.expose()).unwrap();
+            assert_eq!(
+                Register::settings(&copy),
+                rows,
+                "the copy holds the register's rows"
+            );
+        }
+    }
+
+    /// The copy runs on the register's own connection a few pages at a time.
+    /// Writes made on that connection between its steps reach the copy, which
+    /// verifies and holds every row written before it finished. A caller with
+    /// a write waiting makes it give way: nothing is published, no staging is
+    /// left, and the next run is whole.
+    #[test]
+    fn snapshot_serializes_with_source_writes_and_is_consistent() {
+        let key = key();
+        let envelope = stand_in_envelope(&key);
+        let till = Register::new(&key);
+        till.fill(0, 600);
+
+        let mut steps = 0;
+        let mut written = 600;
+        let taken = snapshot(
+            &till.conn,
+            register(),
+            &key,
+            &envelope,
+            &till.destination(),
+            noon(),
+            &mut || {
+                steps += 1;
+                till.fill(written, 3);
+                written += 3;
+                Step::GoOn
+            },
+        )
+        .unwrap();
+        assert!(
+            steps > 4,
+            "the copy took {steps} steps; a test of interleaving needs several"
+        );
+        let copy = Connection::open_with_flags(
+            taken.path.join(DATABASE_FILE),
+            OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        copy.pragma_update(None, "key", key.expose()).unwrap();
+        assert_eq!(
+            Register::settings(&copy),
+            Register::settings(&till.conn),
+            "every row written before it finished"
+        );
+        verify(&taken.path, &key, &envelope).unwrap();
+
+        let mut asked = 0;
+        let gave_way = snapshot(
+            &till.conn,
+            register(),
+            &key,
+            &envelope,
+            &till.destination(),
+            at(noon().epoch_milliseconds() + 1),
+            &mut || {
+                asked += 1;
+                if asked == 2 {
+                    Step::GiveWay
+                } else {
+                    Step::GoOn
+                }
+            },
+        );
+        assert!(matches!(
+            gave_way,
+            Err(DbError::Backup(BackupError::GaveWay))
+        ));
+        assert_eq!(
+            entries(&till.destination()),
+            std::slice::from_ref(&taken.manifest.generation),
+            "nothing published, no staging left"
+        );
+        till.snapshot(&key, &envelope, at(noon().epoch_milliseconds() + 2))
+            .unwrap();
+    }
+
+    /// The hourly job verifies with the data key the credential store holds,
+    /// and nothing else: [`verify`] takes no recovery code. Another key does
+    /// not verify a generation, whatever its manifest claims, and a generation
+    /// carrying another envelope does not verify either.
+    #[test]
+    fn scheduled_verify_uses_the_live_key_not_the_recovery_code() {
+        let key = key();
+        let envelope = stand_in_envelope(&key);
+        let till = Register::new(&key);
+        till.fill(0, 20);
+        let taken = till.snapshot(&key, &envelope, noon()).unwrap();
+        assert_eq!(verify(&taken.path, &key, &envelope).unwrap(), taken);
+
+        let other = DatabaseKey::new("another-register's-key".to_owned());
+        assert_eq!(
+            unverified(verify(&taken.path, &other, &stand_in_envelope(&other))),
+            "it is encrypted with another key"
+        );
+
+        // A manifest rewritten to claim the other key: the database itself
+        // still does not open with it.
+        let mut forged = taken.manifest.clone();
+        forged.key_id = other.id();
+        write_durably(&taken.path.join(MANIFEST_FILE), &forged).unwrap();
+        let mut carried = stand_in_envelope(&other);
+        carried.kdf_params = envelope.kdf_params.clone();
+        carried.write(&taken.path.join(ENVELOPE_FILE)).unwrap();
+        assert_eq!(
+            unverified(verify(&taken.path, &other, &carried)),
+            "it does not open with the live key"
+        );
+        assert_eq!(
+            unverified(verify(&taken.path, &key, &envelope)),
+            "it is encrypted with another key"
+        );
+
+        assert!(matches!(
+            till.snapshot(
+                &key,
+                &stand_in_envelope(&other),
+                at(noon().epoch_milliseconds() + 1)
+            ),
+            Err(DbError::Backup(BackupError::EnvelopeForAnotherKey))
+        ));
+    }
+
+    /// A generation cut short, or changed at the same length, is refused
+    /// before it is opened; and one whose manifest was rewritten to match a
+    /// changed file is refused by the pages themselves.
+    #[test]
+    fn verify_detects_truncation() {
+        let key = key();
+        let envelope = stand_in_envelope(&key);
+        let till = Register::new(&key);
+        till.fill(0, 40);
+        let taken = till.snapshot(&key, &envelope, noon()).unwrap();
+        let database = taken.path.join(DATABASE_FILE);
+        let whole = fs::read(&database).unwrap();
+
+        fs::write(&database, whole.get(..whole.len() - 4096).unwrap()).unwrap();
+        assert_eq!(
+            unverified(verify(&taken.path, &key, &envelope)),
+            "its database is not the size its manifest records"
+        );
+
+        let mut flipped = whole.clone();
+        let middle = flipped.len() / 2;
+        *flipped.get_mut(middle).unwrap() ^= 0x01;
+        fs::write(&database, &flipped).unwrap();
+        assert_eq!(
+            unverified(verify(&taken.path, &key, &envelope)),
+            "its database is not the one its manifest records"
+        );
+
+        let mut forged = taken.manifest.clone();
+        (forged.database_bytes, forged.database_blake3) = measure(&database).unwrap();
+        write_durably(&taken.path.join(MANIFEST_FILE), &forged).unwrap();
+        assert_eq!(
+            unverified(verify(&taken.path, &key, &envelope)),
+            "a page of it fails its authentication"
+        );
+
+        fs::write(&database, &whole).unwrap();
+        write_durably(&taken.path.join(MANIFEST_FILE), &taken.manifest).unwrap();
+        verify(&taken.path, &key, &envelope).unwrap();
+    }
+
+    /// A copy that does not verify is never published: the staging is
+    /// removed, and the last verified generation stands, unchanged. A name
+    /// already taken is never written over.
+    #[test]
+    fn unverified_copy_never_replaces_the_last_verified_generation() {
+        let key = key();
+        let envelope = stand_in_envelope(&key);
+        let till = Register::new(&key);
+        till.fill(0, 20);
+        let last = till.snapshot(&key, &envelope, noon()).unwrap();
+        let before = fs::read(last.path.join(DATABASE_FILE)).unwrap();
+
+        // Copy the next one, damage it before it is published, then publish it.
+        let later = at(noon().epoch_milliseconds() + HOUR_MS);
+        let staged = copy(
+            &till.conn,
+            register(),
+            &key,
+            &envelope,
+            &till.destination(),
+            later,
+            &mut || Step::GoOn,
+        )
+        .unwrap();
+        let staging = till
+            .destination()
+            .join(format!("{STAGING_PREFIX}{}", staged.generation()));
+        let published = till.destination().join(staged.generation());
+        let database = staging.join(DATABASE_FILE);
+        let mut bytes = fs::read(&database).unwrap();
+        bytes.truncate(bytes.len() - 1);
+        fs::write(&database, &bytes).unwrap();
+        assert!(matches!(
+            staged.publish(&key, &envelope),
+            Err(DbError::Backup(BackupError::Unverified(_)))
+        ));
+        assert!(!staging.exists(), "its staging is removed");
+        assert!(!published.exists(), "an unverified copy is never published");
+
+        assert!(matches!(
+            till.snapshot(&key, &envelope, noon()),
+            Err(DbError::Backup(BackupError::GenerationExists))
+        ));
+        assert_eq!(fs::read(last.path.join(DATABASE_FILE)).unwrap(), before);
+        assert_eq!(verify(&last.path, &key, &envelope).unwrap(), last);
+        assert_eq!(generations(&till.destination()).unwrap(), [last]);
+    }
+
+    /// The manifest anchors the register's audit head as the copy holds it,
+    /// under `audit_checkpoint`'s own names, so `verify-audit --anchor` reads
+    /// it as it stands. A register that has written nothing anchors seq 0.
+    #[test]
+    fn backup_manifest_anchors_the_audit_head_of_the_copy() {
+        let key = key();
+        let envelope = stand_in_envelope(&key);
+        let till = Register::new(&key);
+        let empty = till.snapshot(&key, &envelope, noon()).unwrap();
+        assert_eq!(
+            (empty.manifest.last_seq, empty.manifest.last_hash.as_str()),
+            (0, "0".repeat(64).as_str())
+        );
+
+        till.audit(0x11);
+        till.audit(0x12);
+        let head = AuditRepository::new(&till.conn)
+            .head(register())
+            .unwrap()
+            .unwrap();
+        let taken = till
+            .snapshot(&key, &envelope, at(noon().epoch_milliseconds() + HOUR_MS))
+            .unwrap();
+        assert_eq!(
+            (taken.manifest.last_seq, taken.manifest.last_hash.clone()),
+            (head.0, hex(&head.1))
+        );
+        assert_eq!(taken.manifest.register_id, register().as_uuid().to_string());
+
+        let anchor: serde_json::Value =
+            serde_json::from_slice(&fs::read(taken.path.join(MANIFEST_FILE)).unwrap()).unwrap();
+        for column in [
+            "register_id",
+            "last_seq",
+            "last_hash",
+            "source_kind",
+            "anchored_at",
+        ] {
+            assert!(anchor.get(column).is_some(), "{column}");
+        }
+        assert_eq!(anchor.get("source_kind").unwrap(), "verified_backup");
+        assert_eq!(
+            anchor.get("anchored_at").unwrap().as_str().unwrap(),
+            at(noon().epoch_milliseconds() + HOUR_MS)
+                .to_iso8601()
+                .as_str()
+        );
+
+        // A head the copy does not hold is refused.
+        let mut forged = taken.manifest.clone();
+        forged.last_seq += 1;
+        write_durably(&taken.path.join(MANIFEST_FILE), &forged).unwrap();
+        assert_eq!(
+            unverified(verify(&taken.path, &key, &envelope)),
+            "its audit head is not the one its manifest anchors"
+        );
+    }
+
+    /// Merchant decision 13.3: the newest generation of each hour of the last
+    /// day and of each day of the last thirty, any taken after now, and the
+    /// newest always.
+    #[test]
+    fn backup_retention_keeps_hourly_for_a_day_and_daily_for_a_month() {
+        let now = noon().epoch_milliseconds();
+        let named = |ms: i64| (generation_name(at(ms)), at(ms));
+        let mut all = Vec::new();
+        // Every quarter-hour for two days, then one every day back to 40 days.
+        for quarter in 0..(2 * 24 * 4) {
+            all.push(named(now - quarter * HOUR_MS / 4));
+        }
+        for day in 2..40 {
+            all.push(named(now - day * DAY_MS - 5 * HOUR_MS));
+        }
+        all.push(named(now + 10 * 60 * 1000));
+        let kept = retained(&all, at(now));
+
+        let within_day = all.iter().filter(|(name, at)| {
+            let age = now - at.epoch_milliseconds();
+            (0..HOURLY_FOR_MS).contains(&age) && kept.contains(name)
+        });
+        assert_eq!(
+            within_day.count(),
+            24 + 1,
+            "one per hour of the last day, and the hour of now"
+        );
+        assert!(kept.contains(&named(now).0), "the newest");
+        assert!(
+            kept.contains(&named(now + 10 * 60 * 1000).0),
+            "one taken after now"
+        );
+        assert!(
+            !kept.contains(&named(now - 35 * DAY_MS - 5 * HOUR_MS).0),
+            "older than thirty days"
+        );
+        assert!(
+            kept.contains(&named(now - 29 * DAY_MS - 5 * HOUR_MS).0),
+            "a day within thirty"
+        );
+        let days: BTreeSet<i64> = kept
+            .iter()
+            .filter_map(|name| generation_instant(name))
+            .map(|at| at.epoch_milliseconds().div_euclid(DAY_MS))
+            .collect();
+        assert!(days.len() <= 31 + 1);
+        assert_eq!(
+            retained(&[named(now - 90 * DAY_MS)], at(now)).len(),
+            1,
+            "the newest, however old"
+        );
+
+        // On the disk: a stale generation goes, a staging a stopped run left
+        // goes, and what is not a generation stays.
+        let key = key();
+        let envelope = stand_in_envelope(&key);
+        let till = Register::new(&key);
+        let old = till
+            .snapshot(&key, &envelope, at(now - 40 * DAY_MS))
+            .unwrap();
+        let recent = till
+            .snapshot(&key, &envelope, at(now - HOUR_MS / 2))
+            .unwrap();
+        let newest = till.snapshot(&key, &envelope, at(now)).unwrap();
+        fs::create_dir(
+            till.destination()
+                .join(format!("{STAGING_PREFIX}{}", generation_name(at(now + 1)))),
+        )
+        .unwrap();
+        fs::create_dir(till.destination().join("notes")).unwrap();
+        assert_eq!(
+            prune(&till.destination(), at(now)).unwrap(),
+            std::slice::from_ref(&old.manifest.generation)
+        );
+        assert_eq!(
+            entries(&till.destination()),
+            [
+                recent.manifest.generation,
+                newest.manifest.generation,
+                "notes".to_owned()
+            ]
+        );
+    }
+
+    /// A generation's name is its instant, and only a name that is one reads
+    /// back.
+    #[test]
+    fn backup_generation_name_is_its_instant() {
+        assert_eq!(generation_name(noon()), "2026-11-13T17-00-00.000Z");
+        assert_eq!(generation_instant("2026-11-13T17-00-00.000Z"), Some(noon()));
+        for name in [
+            "2026-11-13T17:00:00.000Z",
+            "notes",
+            "2026-11-13T17-00-00Z",
+            "",
+            ".staging-2026-11-13T17-00-00.000Z",
+        ] {
+            assert_eq!(generation_instant(name), None, "{name:?}");
+        }
+    }
+}
