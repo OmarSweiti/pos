@@ -72,6 +72,7 @@ ipc::registry::commands![
     commands::stock::stock_adjust,
     health::health_status,
     provisioning::provision_recovery_code,
+    provisioning::print_recovery_code,
     provisioning::acknowledge_recovery_code,
 ];
 

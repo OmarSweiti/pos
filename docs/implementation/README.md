@@ -313,8 +313,9 @@ in each group of five, wraps the register's data key with XChaCha20-Poly1305 und
 copy of the database opens with that code alone after the credential store is lost. A key is no
 longer minted beside a database whose key is gone. A new machine now creates nothing until someone
 chooses a new register; then it keeps the key, creates the empty database and shows the code once,
-and confirming the code makes its envelope the register's. The printed sheet and the screen are its
-remaining two parts, and the register's identity is `1.8.5c`'s, added that day.
+and confirming the code makes its envelope the register's. The recovery sheet prints the code once,
+in Arabic and English, on a printer the screen names, and is never queued, kept or retried. The
+screen is its remaining part, and the register's identity is `1.8.5c`'s, added on 12 November.
 Group 1.9's `1.9.5` is **partially delivered**: a shift opens with a float counted by denomination,
 on a business date the clock derives when it is trusted and the operator confirms, audited, when it
 is not; one stays open per register; and only its opener closes it, with a fact of its own and no

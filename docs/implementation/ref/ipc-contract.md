@@ -858,7 +858,7 @@ stable event id.
 | `provision_status` | `()` → `ProvisionState` | 3 | — | | |
 | `provision_enroll` | `{ server_url, enrollment_code }` → `ProvisionState` | 3 | — | ✓ | |
 | `provision_recovery_code` | `()` → `RecoveryCodeDisplay` | 1 | — | | |
-| `print_recovery_code` | `{ provisioning_id }` → `()` | 1 | — | | |
+| `print_recovery_code` | `{ provisioning_id, printer }` → `()` | 1 | — | | |
 | `acknowledge_recovery_code` | `{ provisioning_id }` → `()` | 1 | — | | |
 | `sync_status` | `()` → `SyncStatus` | 3 | — | | |
 | `sync_force_push` | `()` → `()` | 3 | `settings.edit` | ✓ | |
@@ -908,6 +908,26 @@ old one.
 >   detail, when the key, the envelope or the database could not be made. Neither declares a
 >   capability nor is audited: no database, user or grant exists yet. `print_recovery_code` lands
 >   with the recovery sheet, 1.8.5b's third part.
+
+> **As delivered at 1.8.5b, its third part (13 November 2026).** `print_recovery_code
+> { provisioning_id, printer }` prints the code on the screen on a recovery sheet, once. A new machine
+> has no register and so no printer binding, so `printer` names one as a binding does, by the
+> owner's decision of that day: `{ profile_id, version, address }`, a profile this build ships and an
+> IP address and port, refusing unknown fields. Nothing about it is kept. The sheet is never a
+> receipt artifact, a print job or a retry.
+>
+> - It answers `()` once the printer says the sheet printed. `recovery_sheet_not_printed`, with why
+>   (`the printer is out of paper`, `… cover is open`, `… is offline`, `… could not be reached`),
+>   means the printer refused before taking a byte; no paper exists, and it may be asked again.
+>   `recovery_sheet_unconfirmed` means the printer took the sheet and did not say it printed it
+>   whole. After either `()` or that, it is `recovery_sheet_already_printed`.
+> - `printer_unusable`, with why, refuses a profile this build does not ship, one that leaves a
+>   setting the driver needs unknown (every real device's, until milestone 5.8), one not reached over
+>   the network, and a paper this build does not print for. Before milestone 5.8 only the
+>   emulator's profiles pass.
+> - It answers `recovery_code_not_shown`, `provisioning_id_unknown`, `already_set_up` and
+>   `provisioning_failed` as its siblings do, declares no capability and is not audited, for their
+>   reason: no database, user or grant exists yet, and the code is already on the screen.
 
 **The updater is wrapped, never exposed.** Tauri's `updater:default` permission puts check, download,
 install and download-and-install directly in reach of frontend JavaScript, and the product rule is

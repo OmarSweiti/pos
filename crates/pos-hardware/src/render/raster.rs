@@ -31,6 +31,7 @@ use skrifa::instance::{LocationRef, Size};
 use skrifa::outline::{DrawSettings, OutlinePen};
 use skrifa::{GlyphId, MetadataProvider};
 use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Transform};
+use zeroize::Zeroize;
 
 use super::layout::{Faces, Layout};
 use super::{PaperWidth, RenderError};
@@ -155,6 +156,30 @@ pub(crate) fn rasterise_with(
     layout: &Layout,
     paper: PaperWidth,
 ) -> Result<Bitmap, RenderError> {
+    let pixmap = draw(faces, layout, paper)?;
+    Ok(threshold(&pixmap, layout.width_px, layout.height_px))
+}
+
+/// [`rasterise_with`], for a page that carries a secret: the coverage it was
+/// drawn at is wiped before it is freed, so the page's one copy left is the
+/// bitmap returned, which its caller wipes in turn (1.8.5b's recovery sheet).
+///
+/// # Errors
+///
+/// As [`rasterise_with`].
+pub(crate) fn rasterise_wiped(
+    faces: &Faces<'_>,
+    layout: &Layout,
+    paper: PaperWidth,
+) -> Result<Bitmap, RenderError> {
+    let mut pixmap = draw(faces, layout, paper)?;
+    let page = threshold(&pixmap, layout.width_px, layout.height_px);
+    pixmap.data_mut().zeroize();
+    Ok(page)
+}
+
+/// Every glyph and rule of `layout`, drawn at full coverage.
+fn draw(faces: &Faces<'_>, layout: &Layout, paper: PaperWidth) -> Result<Pixmap, RenderError> {
     let units_per_em = faces.units_per_em;
 
     if layout.height_px > super::MAX_PAGE_HEIGHT_PX {
@@ -234,7 +259,7 @@ pub(crate) fn rasterise_with(
         draw_rule(&mut pixmap, *y, paper);
     }
 
-    Ok(threshold(&pixmap, layout.width_px, layout.height_px))
+    Ok(pixmap)
 }
 
 /// An `i32` dot coordinate as `tiny-skia` wants it.

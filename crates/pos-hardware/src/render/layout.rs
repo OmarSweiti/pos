@@ -679,6 +679,26 @@ impl Page<'_> {
     fn gap(&mut self) {
         self.cursor_y_px += BODY_PX_PER_EM / 2;
     }
+
+    /// The finished page: its height is the last line's, and the bottom
+    /// margin. A page past [`super::MAX_PAGE_HEIGHT_PX`] is refused.
+    fn finish(self, direction: TextDirection) -> Result<Layout, RenderError> {
+        let height_px =
+            u32::try_from(self.cursor_y_px + self.paper.margin_px()).unwrap_or(u32::MAX);
+        if height_px > super::MAX_PAGE_HEIGHT_PX {
+            return Err(RenderError::PageTooTall {
+                height_px,
+                limit_px: super::MAX_PAGE_HEIGHT_PX,
+            });
+        }
+        Ok(Layout {
+            width_px: self.paper.width_px(),
+            height_px,
+            lines: self.lines,
+            rules: self.rules,
+            direction,
+        })
+    }
 }
 
 /// Dots to font units — wrapping's measuring stick, so a candidate line is
@@ -893,21 +913,64 @@ pub(crate) fn lay_out_with(
         page.text(thanks, body, Alignment::Center)?;
     }
 
-    let height_px = u32::try_from(page.cursor_y_px + paper.margin_px()).unwrap_or(u32::MAX);
-    if height_px > super::MAX_PAGE_HEIGHT_PX {
-        return Err(RenderError::PageTooTall {
-            height_px,
-            limit_px: super::MAX_PAGE_HEIGHT_PX,
-        });
-    }
+    page.finish(direction)
+}
 
-    Ok(Layout {
-        width_px: paper.width_px(),
-        height_px,
-        lines: page.lines,
-        rules: page.rules,
-        direction,
-    })
+/// One block of a page that is not a receipt: a paragraph set in its own base
+/// direction, or the space and the separator a receipt puts between its parts.
+///
+/// 1.8.5b's recovery sheet is the one such page. It is set in two languages,
+/// so each paragraph carries its own direction, where a receipt's one
+/// language gives the whole page one. A run of digits and hyphens, the code,
+/// is set left to right whatever the page around it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Block<'t> {
+    Text {
+        text: &'t str,
+        style: TextStyle,
+        rtl: bool,
+        alignment: Alignment,
+    },
+    Gap,
+    Rule,
+}
+
+/// Lay out a page of [`Block`]s, in order, for one paper width, under the
+/// same measures and the same height limit as a receipt.
+///
+/// # Errors
+///
+/// Refuses a page past [`super::MAX_PAGE_HEIGHT_PX`].
+pub(crate) fn lay_out_blocks(
+    faces: &Faces<'_>,
+    blocks: &[Block<'_>],
+    paper: PaperWidth,
+    direction: TextDirection,
+) -> Result<Layout, RenderError> {
+    let mut page = Page {
+        faces,
+        paper,
+        rtl: matches!(direction, TextDirection::RightToLeft),
+        lines: Vec::new(),
+        rules: Vec::new(),
+        cursor_y_px: paper.margin_px(),
+    };
+    for block in blocks {
+        match *block {
+            Block::Text {
+                text,
+                style,
+                rtl,
+                alignment,
+            } => {
+                page.rtl = rtl;
+                page.text(text, style, alignment)?;
+            }
+            Block::Gap => page.gap(),
+            Block::Rule => page.rule(),
+        }
+    }
+    page.finish(direction)
 }
 
 /// A money amount as the page prints it.

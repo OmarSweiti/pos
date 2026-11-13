@@ -3470,6 +3470,7 @@ dependencies = [
  "tiny-skia",
  "unicode-bidi",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

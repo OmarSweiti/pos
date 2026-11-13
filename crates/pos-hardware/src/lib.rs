@@ -7,6 +7,7 @@ pub mod escpos;
 pub mod font;
 pub mod net;
 pub mod profile;
+pub mod recovery_sheet;
 pub mod render;
 pub mod transport;
 
