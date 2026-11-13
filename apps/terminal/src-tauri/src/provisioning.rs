@@ -22,6 +22,16 @@
 //!   never completed: the next code is wrapped over whatever pending envelope
 //!   there is, so an unconfirmed code opens nothing.
 //!
+//! [`print_recovery_code`] prints the code on a recovery sheet, once, while it
+//! is on the screen (the third part, by the owner's decisions of 13 November
+//! 2026). A new machine has no register, so no printer binding: the screen
+//! names the printer as a binding names one, and nothing about it is kept.
+//! The sheet is a hardware effect, never a receipt artifact, a print job or a
+//! retry: it is rendered, sent and wiped ([`pos_hardware::recovery_sheet`]).
+//! One sheet reaches paper. A print the printer refused before taking a byte
+//! left none, so it may be pressed again; once the printer took any of it,
+//! another is refused.
+//!
 //! [`acknowledge_recovery_code`] is the merchant saying the code is recorded.
 //! The pending envelope must open with the code held, to this register's key,
 //! before it becomes the register's envelope; then the code is dropped from
@@ -32,6 +42,8 @@
 //! the first owner. Until it lands, a machine whose custody is complete waits
 //! at [`SetupStage::StoreNotSetUp`], and demo registers come from the seed.
 
+use std::net::SocketAddr;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -39,13 +51,20 @@ use pos_db::key::{self, CredentialStore, DatabaseKey, OsCredentialStore};
 use pos_db::recovery::{
     self as custody, ENVELOPE_FILE, KdfParams, PENDING_ENVELOPE_FILE, RecoveryCode,
 };
-use serde::{Serialize, Serializer};
+use pos_domain::{Clock, Timestamp};
+use pos_hardware::net::{Deadlines, NetworkPrinter};
+use pos_hardware::profile::PrinterProfile;
+use pos_hardware::profile::data::{self as profiles, BindingError};
+use pos_hardware::recovery_sheet::{RecoverySheet, SheetError};
+use pos_hardware::transport::TcpTransport;
+use pos_hardware::{FailReason, PrintOutcome, ReceiptPrinter};
+use serde::{Deserialize, Serialize, Serializer};
 use tauri::State;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::ipc::{IpcError, IpcResult};
-use crate::state::{DATABASE_FILE, DEVICE_ID_FILE, Till};
+use crate::state::{DATABASE_FILE, DEVICE_ID_FILE, SystemClock, Till};
 
 /// Where the register's database key is kept, and the dev/CI key this build
 /// honours (1.8.5): read once, at start-up.
@@ -160,7 +179,20 @@ enum Custody {
     Shown {
         provisioning_id: Uuid,
         code: RecoveryCode,
+        /// The register's key id, which the sheet prints the start of. It
+        /// reveals nothing of the key.
+        key_id: String,
+        sheet: Sheet,
     },
+}
+
+/// Whether the code's one sheet has reached paper.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Sheet {
+    /// Not yet, or the printer refused it before taking a byte.
+    NotPrinted,
+    /// The printer took it, whole or in part.
+    OnPaper,
 }
 
 /// A machine with no open register: its data directory, its key's custody,
@@ -250,8 +282,85 @@ impl Provisioning {
         *custody = Custody::Shown {
             provisioning_id,
             code,
+            key_id: key.id(),
+            sheet: Sheet::NotPrinted,
         };
         Ok(display)
+    }
+
+    /// `print_recovery_code`: the code shown under `provisioning_id`, printed
+    /// on a recovery sheet by `printer`, rendered for `profile`, dated `now`.
+    /// It is sent once and never queued, kept or tried again
+    /// ([`RecoverySheet::print`]).
+    ///
+    /// One sheet reaches paper. A refusal before the first byte left no
+    /// paper, so it may be printed again; once the printer took any of it,
+    /// another print is refused.
+    ///
+    /// # Errors
+    ///
+    /// `recovery_code_not_shown` when no code is on the screen;
+    /// `provisioning_id_unknown` for another id;
+    /// `recovery_sheet_already_printed` once the sheet reached paper;
+    /// `recovery_sheet_not_printed`, with why, when the printer refused it
+    /// before a byte; `recovery_sheet_unconfirmed` when the printer took it
+    /// and did not say it printed it whole; `printer_unusable` for a paper
+    /// this build does not print for; `provisioning_failed` when the sheet
+    /// could not be made. A refusal keeps the code on the screen.
+    pub fn print(
+        &self,
+        provisioning_id: Uuid,
+        printer: &dyn ReceiptPrinter,
+        profile: &PrinterProfile,
+        now: Timestamp,
+    ) -> IpcResult<()> {
+        let mut custody = self.lock();
+        let Custody::Shown {
+            provisioning_id: shown,
+            code,
+            key_id,
+            sheet,
+        } = &mut *custody
+        else {
+            return Err(not_shown());
+        };
+        if *shown != provisioning_id {
+            return Err(id_unknown());
+        }
+        if *sheet == Sheet::OnPaper {
+            return Err(IpcError::new(
+                "recovery_sheet_already_printed",
+                "error.provisioning.sheet_already_printed",
+            ));
+        }
+        let outcome = RecoverySheet::new(&code.formatted(), key_id, now)
+            .and_then(|page| page.print(printer, profile))
+            .map_err(|error| match error {
+                SheetError::NoPaper { .. } => {
+                    unusable("the printer's paper is not one this build prints for")
+                }
+                other => failed("the recovery sheet could not be made", &other),
+            })?;
+        tracing::info!(outcome = ?outcome, "the recovery sheet was sent to the printer once");
+        match outcome {
+            PrintOutcome::Printed => {
+                *sheet = Sheet::OnPaper;
+                Ok(())
+            }
+            PrintOutcome::Failed(reason) => Err(IpcError::new(
+                "recovery_sheet_not_printed",
+                "error.provisioning.sheet_not_printed",
+            )
+            .with_detail(refused(reason))),
+            PrintOutcome::Partial { .. } | PrintOutcome::Unknown => {
+                *sheet = Sheet::OnPaper;
+                Err(IpcError::new(
+                    "recovery_sheet_unconfirmed",
+                    "error.provisioning.sheet_unconfirmed",
+                )
+                .with_detail("the printer took the sheet and did not say it printed it whole"))
+            }
+        }
     }
 
     /// `acknowledge_recovery_code`: the merchant says the code shown under
@@ -270,18 +379,13 @@ impl Provisioning {
         let Custody::Shown {
             provisioning_id: shown,
             code,
+            ..
         } = &*custody
         else {
-            return Err(IpcError::new(
-                "recovery_code_not_shown",
-                "error.provisioning.not_shown",
-            ));
+            return Err(not_shown());
         };
         if *shown != provisioning_id {
-            return Err(IpcError::new(
-                "provisioning_id_unknown",
-                "error.provisioning.id_unknown",
-            ));
+            return Err(id_unknown());
         }
         let key = self
             .keys
@@ -296,6 +400,72 @@ impl Provisioning {
 
 fn already_set_up() -> IpcError {
     IpcError::new("already_set_up", "error.provisioning.already_set_up")
+}
+
+fn not_shown() -> IpcError {
+    IpcError::new("recovery_code_not_shown", "error.provisioning.not_shown")
+}
+
+fn id_unknown() -> IpcError {
+    IpcError::new("provisioning_id_unknown", "error.provisioning.id_unknown")
+}
+
+fn unusable(detail: &'static str) -> IpcError {
+    IpcError::new("printer_unusable", "error.provisioning.printer_unusable").with_detail(detail)
+}
+
+/// Why the printer refused a sheet before its first byte, as the screen is
+/// told it.
+fn refused(reason: FailReason) -> &'static str {
+    match reason {
+        FailReason::PaperOut => "the printer is out of paper",
+        FailReason::CoverOpen => "the printer's cover is open",
+        FailReason::Offline => "the printer is offline",
+        FailReason::Unreachable => "the printer could not be reached",
+    }
+}
+
+/// The printer a recovery sheet goes to, named as a printer binding names one
+/// (1.7.14b): a profile this build ships, by its id and version, and the
+/// device's IP address and port. A host name is refused, as a binding's is.
+/// Nothing about it is kept: the register's own binding is written later.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SheetPrinter {
+    pub profile_id: String,
+    pub version: NonZeroU32,
+    pub address: SocketAddr,
+}
+
+impl SheetPrinter {
+    /// The profile, through the one door a binding goes through
+    /// ([`profiles::printer`]), and the network printer at the address.
+    /// Nothing is reached until the sheet is sent.
+    ///
+    /// # Errors
+    ///
+    /// `printer_unusable`, naming why: a profile this build does not ship,
+    /// one that leaves a setting the driver needs unknown, as every real
+    /// device's does until milestone 5.8, or one not reached over the
+    /// network.
+    pub fn device(&self) -> IpcResult<(PrinterProfile, NetworkPrinter)> {
+        let profile =
+            profiles::printer(&self.profile_id, self.version).map_err(|error| match error {
+                BindingError::NotShipped { .. } => {
+                    unusable("the printer's profile does not ship with this build")
+                }
+                BindingError::Unresolved { .. } => {
+                    unusable("the printer's profile leaves a setting the driver needs unknown")
+                }
+            })?;
+        let printer = NetworkPrinter::new(
+            TcpTransport::new(self.address),
+            profile.clone(),
+            Deadlines::default(),
+        )
+        .map_err(|_| unusable("the printer's profile is not reached over the network"))?;
+        Ok((profile, printer))
+    }
 }
 
 /// A provisioning step that failed, logged through the scrubbing layer and
@@ -315,6 +485,17 @@ fn random_id() -> IpcResult<Uuid> {
 #[tauri::command]
 pub fn provision_recovery_code(till: State<'_, Till>) -> IpcResult<RecoveryCodeDisplay> {
     till.provisioning()?.issue()
+}
+
+#[tauri::command]
+pub fn print_recovery_code(
+    till: State<'_, Till>,
+    provisioning_id: Uuid,
+    printer: SheetPrinter,
+) -> IpcResult<()> {
+    let machine = till.provisioning()?;
+    let (profile, device) = printer.device()?;
+    machine.print(provisioning_id, &device, &profile, SystemClock.now())
 }
 
 #[tauri::command]

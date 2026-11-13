@@ -606,6 +606,17 @@ pub const COMMANDS: &[CommandSpec] = &[
         args: &[],
     },
     CommandSpec {
+        name: "print_recovery_code",
+        access: Access::NoCapability {
+            reason: "it prints the recovery code just shown, by the id it was shown under, once, \
+                     on a machine with no register: nothing exists yet that a capability could be \
+                     checked against, and the code is already on the screen it was shown to",
+        },
+        audited: false,
+        approval_requirement: ApprovalRequirement::Never,
+        args: &[Arg::required("provisioning_id"), Arg::required("printer")],
+    },
+    CommandSpec {
         name: "acknowledge_recovery_code",
         access: Access::NoCapability {
             reason: "it confirms the recovery code just shown, by the id it was shown under, on a \
