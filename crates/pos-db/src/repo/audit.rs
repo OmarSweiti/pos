@@ -166,7 +166,7 @@ use pos_domain::{
     ApprovalId, AuditIntent, CanonicalAuditEntry, RegisterId, Timestamp, UserId, chain_hash,
     check_payload,
 };
-use rusqlite::{Connection, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use uuid::Uuid;
 
 use crate::DbError;
@@ -604,6 +604,45 @@ impl<'c> AuditRepository<'c> {
             }
         }
         Ok(AuditChain { entries, stopped })
+    }
+
+    /// `register`'s head: the `seq` and `hash` of its newest row, or `None`
+    /// when it has written none. What an anchor records (1.8.6's verified
+    /// backup, and Z close), read on whatever connection the caller holds,
+    /// so a backup's head is read from the backup itself.
+    ///
+    /// # Errors
+    ///
+    /// [`DbError::Sqlite`] when the statement would not run;
+    /// [`DbError::AuditSeqInvalid`] when the head's `seq` is not a chain
+    /// position, and [`DbError::AuditHeadUnreadable`] when its hash is not a
+    /// digest.
+    pub fn head(&self, register: RegisterId) -> Result<Option<(u64, [u8; DIGEST_BYTES])>, DbError> {
+        let head: Option<(i64, Vec<u8>)> = self
+            .conn
+            .query_row(
+                "SELECT seq, hash FROM audit_log
+                  WHERE register_id = ?1
+                  ORDER BY seq DESC
+                  LIMIT 1",
+                [register.as_uuid().as_bytes().as_slice()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((seq, hash)) = head else {
+            return Ok(None);
+        };
+        let at = u64::try_from(seq)
+            .ok()
+            .filter(|at| *at > 0)
+            .ok_or(DbError::AuditSeqInvalid { found: seq })?;
+        let hash = hash
+            .try_into()
+            .map_err(|bytes: Vec<u8>| DbError::AuditHeadUnreadable {
+                seq,
+                reason: format!("its hash is {} bytes, not {DIGEST_BYTES}", bytes.len()),
+            })?;
+        Ok(Some((at, hash)))
     }
 
     /// Every register this database holds audit rows for.

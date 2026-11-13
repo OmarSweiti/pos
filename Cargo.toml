@@ -76,7 +76,7 @@ rust_decimal = "1"
 jiff = { version = "0.2", features = ["tzdb-bundle-always"] }
 
 # ── data ────────────────────────────────────────────────────────────────
-rusqlite = { version = "0.39", features = ["bundled-sqlcipher-vendored-openssl"] }
+rusqlite = { version = "0.39", features = ["bundled-sqlcipher-vendored-openssl", "backup"] }
 # The one hash in the system. `ref/sync-protocol.md` specifies `commit_hash` as
 # "blake3 of the commit's canonical members", and the audit chain in
 # `ref/security-compliance.md` §4 is BLAKE3 for the reason recorded there:

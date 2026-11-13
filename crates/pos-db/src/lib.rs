@@ -9,6 +9,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 pub mod auth;
+pub mod backup;
 #[cfg(feature = "fixtures")]
 pub mod fixtures;
 pub mod key;
@@ -93,6 +94,9 @@ pub enum DbError {
     StorageVersionUnparseable { engine: &'static str, found: String },
     #[error(transparent)]
     Auth(#[from] auth::AuthError),
+    /// A backup was not taken, or does not verify (1.8.6).
+    #[error(transparent)]
+    Backup(#[from] backup::BackupError),
     #[error("stored sign-in state is unusable: {reason}")]
     AuthStateInvalid { reason: &'static str },
     #[error(
