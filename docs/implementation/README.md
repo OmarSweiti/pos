@@ -316,6 +316,11 @@ chooses a new register; then it keeps the key, creates the empty database and sh
 and confirming the code makes its envelope the register's. The recovery sheet prints the code once,
 in Arabic and English, on a printer the screen names, and is never queued, kept or retried. The
 screen is its remaining part, and the register's identity is `1.8.5c`'s, added on 12 November.
+`1.8.6` is **partially delivered**: the till now backs itself up as it opens and every hour, into
+encrypted generations beside its database, each carrying the recovery envelope and an audit anchor
+`verify-audit` reads, verified with the live key before it is published and never replacing the last
+good one. A backup gives way to any sale waiting for the database. Retention keeps one an hour for a
+day and one a day for thirty. Restore is its remaining part.
 Group 1.9's `1.9.5` is **partially delivered**: a shift opens with a float counted by denomination,
 on a business date the clock derives when it is trusted and the operator confirms, audited, when it
 is not; one stays open per register; and only its opener closes it, with a fact of its own and no
