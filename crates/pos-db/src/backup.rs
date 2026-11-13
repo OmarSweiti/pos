@@ -1004,6 +1004,13 @@ mod tests {
         let taken = till.snapshot(&key, &envelope, noon()).unwrap();
         assert_eq!(verify(&taken.path, &key, &envelope).unwrap(), taken);
 
+        // Another envelope for the same key, as a second wrap would make: not
+        // the one this register's code opens.
+        assert_eq!(
+            unverified(verify(&taken.path, &key, &stand_in_envelope(&key))),
+            "it carries another recovery envelope"
+        );
+
         let other = DatabaseKey::new("another-register's-key".to_owned());
         assert_eq!(
             unverified(verify(&taken.path, &other, &stand_in_envelope(&other))),
@@ -1212,6 +1219,11 @@ mod tests {
             "one per hour of the last day, and the hour of now"
         );
         assert!(kept.contains(&named(now).0), "the newest");
+        assert!(
+            kept.contains(&named(now - HOUR_MS / 4).0)
+                && !kept.contains(&named(now - HOUR_MS / 2).0),
+            "the newest of its hour, not the oldest"
+        );
         assert!(
             kept.contains(&named(now + 10 * 60 * 1000).0),
             "one taken after now"
